@@ -1,0 +1,13 @@
+[package]
+name = "sim-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+glam = "0.27"
+sim-types = { path = "../sim-types" }

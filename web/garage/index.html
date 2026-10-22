@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Garage Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #080a0d;
+        color: #e6e8eb;
+      }
+      #view {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      #hud {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        width: min(390px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        padding: 14px 16px;
+        border: 1px solid #2a303a;
+        background: rgba(10, 13, 17, 0.9);
+        backdrop-filter: blur(8px);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      h1 {
+        margin: 0 0 2px;
+        font-size: 15px;
+      }
+      h2 {
+        margin: 14px 0 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #8f9bab;
+      }
+      p {
+        margin: 0;
+      }
+      .muted {
+        color: #8f9bab;
+      }
+      .status {
+        margin-top: 6px;
+        color: #fbbf24;
+      }
+      .status.ready {
+        color: #34d399;
+      }
+      .status.error {
+        color: #f87171;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 1px 12px;
+        margin: 0;
+      }
+      dt {
+        color: #8f9bab;
+      }
+      dd {
+        margin: 0;
+        text-align: right;
+      }
+      ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      li {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      .name {
+        flex: 1;
+      }
+      .controls {
+        display: grid;
+        gap: 8px;
+      }
+      .control-row {
+        display: grid;
+        grid-template-columns: 70px 1fr 52px;
+        gap: 8px;
+        align-items: center;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: #38bdf8;
+      }
+      .toggle {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        color: #9aa4b2;
+      }
+      code {
+        color: #cbd5e1;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <aside id="hud">
+      <h1>Garage Viewer</h1>
+      <p class="muted" id="asset">loading…</p>
+      <p class="status" id="status">booting</p>
+
+      <h2>Car</h2>
+      <dl id="car-stats" data-testid="car-stats"></dl>
+
+      <h2>Wheel Debug</h2>
+      <div class="controls">
+        <div class="control-row">
+          <span>steer</span>
+          <input id="steer" type="range" min="-0.6" max="0.6" step="0.01" value="0" />
+          <span id="steer-value">0.00</span>
+        </div>
+        <div class="control-row">
+          <span>spin</span>
+          <input id="spin" type="range" min="-6.28" max="6.28" step="0.01" value="0" />
+          <span id="spin-value">0.00</span>
+        </div>
+        <label class="toggle">
+          <input id="animate" type="checkbox" />
+          animate wheel spin
+        </label>
+      </div>
+
+      <h2>Wheels</h2>
+      <ul id="wheels" data-testid="wheels"></ul>
+
+      <h2>Frame</h2>
+      <dl id="timing" data-testid="timing">
+        <dt>fps</dt>
+        <dd id="fps">—</dd>
+        <dt>frame</dt>
+        <dd id="frame-ms">—</dd>
+      </dl>
+
+      <h2>Stats</h2>
+      <dl id="stats" data-testid="stats"></dl>
+
+      <h2>Surfaces</h2>
+      <ul id="surfaces"></ul>
+    </aside>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

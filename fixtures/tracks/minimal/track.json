@@ -1,0 +1,345 @@
+{
+  "schema": "sim-source-v1",
+  "kind": "track",
+  "id": "fixtures/track/minimal",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "time": "s",
+    "angle": "rad"
+  },
+  "frame": {
+    "handedness": "right",
+    "up": "+Y",
+    "forward": "-Z"
+  },
+  "metadata": {
+    "name": "Minimal Test Track",
+    "length": 200.0,
+    "spawns": [
+      {
+        "name": "start",
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_xyzw": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    ],
+    "pit_boxes": [
+      {
+        "name": "pit_1",
+        "position": [
+          -2.0,
+          0.0,
+          4.0
+        ],
+        "rotation_xyzw": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    ],
+    "cameras": [
+      {
+        "name": "start",
+        "position": [
+          0.0,
+          2.0,
+          8.0
+        ],
+        "target": [
+          0.0,
+          0.5,
+          -10.0
+        ],
+        "fov_y": 0.9
+      },
+      {
+        "name": "chase",
+        "position": [
+          0.0,
+          1.5,
+          6.0
+        ],
+        "target": [
+          0.0,
+          0.5,
+          0.0
+        ],
+        "fov_y": 1.0
+      }
+    ],
+    "sectors": [
+      {
+        "name": "sector_1",
+        "start_fraction": 0.0,
+        "end_fraction": 0.5
+      },
+      {
+        "name": "sector_2",
+        "start_fraction": 0.5,
+        "end_fraction": 1.0
+      }
+    ],
+    "surfaces": [
+      {
+        "id": 0,
+        "name": "asphalt",
+        "friction": 1.0,
+        "roughness": 0.02
+      },
+      {
+        "id": 1,
+        "name": "wall",
+        "friction": 0.8,
+        "roughness": 0.05
+      },
+      {
+        "id": 2,
+        "name": "line",
+        "friction": 1.0,
+        "roughness": 0.01
+      }
+    ]
+  },
+  "visual": {
+    "materials": [
+      {
+        "name": "asphalt",
+        "base_color": [
+          0.08,
+          0.08,
+          0.08,
+          1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.9,
+        "base_color_texture": null
+      },
+      {
+        "name": "wall",
+        "base_color": [
+          0.7,
+          0.7,
+          0.7,
+          1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.8,
+        "base_color_texture": null
+      },
+      {
+        "name": "line",
+        "base_color": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.6,
+        "base_color_texture": null
+      },
+      {
+        "name": "axis_x",
+        "base_color": [
+          0.9,
+          0.1,
+          0.1,
+          1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.5,
+        "base_color_texture": null
+      },
+      {
+        "name": "axis_y",
+        "base_color": [
+          0.1,
+          0.9,
+          0.1,
+          1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.5,
+        "base_color_texture": null
+      },
+      {
+        "name": "axis_neg_z",
+        "base_color": [
+          0.1,
+          0.3,
+          1.0,
+          1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.5,
+        "base_color_texture": null
+      }
+    ],
+    "textures": [],
+    "primitives": [
+      {
+        "id": "ground",
+        "shape": "plane",
+        "size": [
+          2000.0,
+          2000.0
+        ],
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "material": "asphalt"
+      },
+      {
+        "id": "wall_left",
+        "shape": "box",
+        "size": [
+          0.3,
+          1.0,
+          200.0
+        ],
+        "position": [
+          -5.0,
+          0.5,
+          0.0
+        ],
+        "material": "wall"
+      },
+      {
+        "id": "wall_right",
+        "shape": "box",
+        "size": [
+          0.3,
+          1.0,
+          200.0
+        ],
+        "position": [
+          5.0,
+          0.5,
+          0.0
+        ],
+        "material": "wall"
+      },
+      {
+        "id": "start_line",
+        "shape": "box",
+        "size": [
+          10.0,
+          0.02,
+          0.5
+        ],
+        "position": [
+          0.0,
+          0.01,
+          0.0
+        ],
+        "material": "line"
+      },
+      {
+        "id": "axis_x",
+        "shape": "box",
+        "size": [
+          2.0,
+          0.02,
+          0.02
+        ],
+        "position": [
+          1.0,
+          0.02,
+          0.0
+        ],
+        "material": "axis_x"
+      },
+      {
+        "id": "axis_y",
+        "shape": "box",
+        "size": [
+          0.02,
+          2.0,
+          0.02
+        ],
+        "position": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "material": "axis_y"
+      },
+      {
+        "id": "axis_neg_z",
+        "shape": "box",
+        "size": [
+          0.02,
+          0.02,
+          2.0
+        ],
+        "position": [
+          0.0,
+          0.02,
+          -1.0
+        ],
+        "material": "axis_neg_z"
+      }
+    ]
+  },
+  "collision": {
+    "primitives": [
+      {
+        "id": "ground",
+        "shape": "plane",
+        "size": [
+          2000.0,
+          2000.0
+        ],
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "surface": 0
+      },
+      {
+        "id": "wall_left",
+        "shape": "box",
+        "size": [
+          0.3,
+          1.0,
+          200.0
+        ],
+        "position": [
+          -5.0,
+          0.5,
+          0.0
+        ],
+        "surface": 1
+      },
+      {
+        "id": "wall_right",
+        "shape": "box",
+        "size": [
+          0.3,
+          1.0,
+          200.0
+        ],
+        "position": [
+          5.0,
+          0.5,
+          0.0
+        ],
+        "surface": 1
+      }
+    ]
+  }
+}

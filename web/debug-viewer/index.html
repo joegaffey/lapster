@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sim Debug Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #101216;
+        color: #e6e8eb;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+      p {
+        margin: 0 0 16px;
+        color: #9aa4b2;
+        line-height: 1.5;
+      }
+      canvas {
+        display: block;
+        width: min(100%, 900px);
+        height: auto;
+        border: 1px solid #2a303a;
+        background: #0b0d10;
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        margin-top: 12px;
+        font-size: 13px;
+      }
+      .x {
+        color: #ef4444;
+      }
+      .y {
+        color: #22c55e;
+      }
+      .z {
+        color: #3b82f6;
+      }
+      code {
+        color: #cbd5e1;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Sim Debug Viewer</h1>
+    <p>
+      Right-handed engine frame: <code>+Y</code> up, <code>-Z</code> forward.
+      The fixture axes must match this view.
+    </p>
+    <canvas id="view" width="900" height="600"></canvas>
+    <div class="legend">
+      <span class="x">+X right</span>
+      <span class="y">+Y up</span>
+      <span class="z">-Z forward</span>
+    </div>
+    <script type="module" src="./viewer.js"></script>
+  </body>
+</html>

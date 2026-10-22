@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Track Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #080a0d;
+        color: #e6e8eb;
+      }
+      #view {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      #hud {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        width: min(380px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        padding: 14px 16px;
+        border: 1px solid #2a303a;
+        background: rgba(10, 13, 17, 0.88);
+        backdrop-filter: blur(8px);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      h1 {
+        margin: 0 0 2px;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+      }
+      h2 {
+        margin: 14px 0 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #8f9bab;
+      }
+      p {
+        margin: 0;
+      }
+      .muted {
+        color: #8f9bab;
+      }
+      .status {
+        margin-top: 6px;
+        color: #fbbf24;
+      }
+      .status.ready {
+        color: #34d399;
+      }
+      .status.error {
+        color: #f87171;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 1px 12px;
+        margin: 0;
+      }
+      dt {
+        color: #8f9bab;
+      }
+      dd {
+        margin: 0;
+        text-align: right;
+      }
+      ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      li {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      .swatch {
+        width: 9px;
+        height: 9px;
+        flex: none;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+      }
+      .name {
+        flex: 1;
+      }
+      code {
+        color: #cbd5e1;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <aside id="hud">
+      <h1>Track Viewer</h1>
+      <p class="muted" id="asset">loading…</p>
+      <p class="status" id="status">booting</p>
+
+      <h2>Frame</h2>
+      <dl id="timing" data-testid="timing">
+        <dt>fps</dt>
+        <dd id="fps">—</dd>
+        <dt>frame</dt>
+        <dd id="frame-ms">—</dd>
+        <dt>draws</dt>
+        <dd id="draws">—</dd>
+      </dl>
+
+      <h2>Asset</h2>
+      <dl id="stats" data-testid="stats"></dl>
+
+      <h2>Bounds</h2>
+      <p class="muted" id="bounds">—</p>
+
+      <h2>Surfaces</h2>
+      <ul id="surfaces" data-testid="surfaces"></ul>
+
+      <h2>Spawn</h2>
+      <p class="muted" id="spawn">—</p>
+
+      <h2>Meshes</h2>
+      <ul id="meshes"></ul>
+    </aside>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

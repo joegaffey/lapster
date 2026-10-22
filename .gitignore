@@ -1,0 +1,17 @@
+/target
+/fixtures/real/
+node_modules/
+dist/
+.DS_Store
+*.kn5
+web/.cache/
+web/test-results/
+web/playwright-report/
+web/pkg/
+web/track-viewer/main.js
+web/drive/main.js
+web/garage/main.js
+*.log
+*.pid
+.env
+.env.*
