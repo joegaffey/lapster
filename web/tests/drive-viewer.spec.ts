@@ -160,7 +160,12 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   expect(forward.gear).toBe(1);
 
   await page.keyboard.down("ArrowDown");
-  await page.waitForTimeout(450);
+  await page.waitForFunction(
+    (before) =>
+      JSON.parse((window as any).__driveViewer.telemetry()).speedKph < before - 0.25,
+    forward.speedKph,
+    { timeout: 10_000 },
+  );
   await page.keyboard.up("ArrowDown");
   const braking = await telemetry(page);
   expect(braking.speedKph).toBeLessThan(forward.speedKph);
