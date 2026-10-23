@@ -9,6 +9,7 @@ use crate::camera::Camera;
 use crate::scene::{CarRig, Scene, SceneWheel};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{Controls, TrackCollider, Vehicle, FIXED_DT};
+use sim_types::CarTuning;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -442,7 +443,10 @@ impl DriveViewer {
             "velocity": [state.velocity.x, state.velocity.y, state.velocity.z],
             "steeringRackTorque": state.steering_rack_torque,
             "tractionControl": self.vehicle.traction_control(),
+            "tractionStrength": self.vehicle.traction_strength(),
             "stabilityControl": self.vehicle.stability_control(),
+            "stabilityStrength": self.vehicle.stability_strength(),
+            "steeringSensitivity": self.vehicle.steering_sensitivity(),
             "escActivity": self.vehicle.esc_activity(),
             "rendererBackend": self.renderer.backend(),
             "rendererFormat": self.renderer.surface_format(),
@@ -484,6 +488,41 @@ impl DriveViewer {
 
     pub fn set_stability_control(&mut self, enabled: bool) {
         self.vehicle.set_stability_control(enabled);
+    }
+
+    pub fn set_traction_strength(&mut self, strength: f32) {
+        self.vehicle.set_traction_strength(strength);
+    }
+
+    pub fn set_stability_strength(&mut self, strength: f32) {
+        self.vehicle.set_stability_strength(strength);
+    }
+
+    pub fn set_steering_sensitivity(&mut self, sensitivity: f32) {
+        self.vehicle.set_steering_sensitivity(sensitivity);
+    }
+
+    pub fn car_setup(&self) -> String {
+        serde_json::to_string(&self.vehicle.setup()).unwrap_or_else(|_| String::from("{}"))
+    }
+
+    pub fn default_car_setup(&self) -> String {
+        serde_json::to_string(&self.vehicle.default_setup()).unwrap_or_else(|_| String::from("{}"))
+    }
+
+    pub fn apply_car_setup(&mut self, json: &str) -> Result<(), JsValue> {
+        let tuning: CarTuning = serde_json::from_str(json).map_err(js_error)?;
+        self.vehicle.apply_setup(&tuning);
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
+    }
+
+    pub fn reset_car_setup(&mut self) -> Result<(), JsValue> {
+        self.vehicle.reset_setup();
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
     }
 
     pub fn set_body_visible(&mut self, visible: bool) {

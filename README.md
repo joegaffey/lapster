@@ -10,8 +10,9 @@ It is not a finished game or a complete Assetto Corsa replacement.
 
 Live demo: **https://joegaffey.com/lapster/**
 
-- **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse, steering,
-  gears, chase/cockpit cameras, wheel loads, and 500 Hz physics.
+- **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
+  steering, gears, chase/cockpit cameras, wheel loads, 500 Hz physics, and a shareable
+  tuning dialog.
 - **Garage** — RX-7 on the skidpad with wheel steering/spin controls and debug bounds.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation.
@@ -24,7 +25,7 @@ load, clearing stale pack caches and reloading when a newer deployment is availa
 
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 Lapster is installable as a PWA. The installed app launches a demo menu, and every demo has a
-`Menu` link to return there. A same-origin service worker supplies the COOP/COEP headers needed
+`Exit` link to return there. A same-origin service worker supplies the COOP/COEP headers needed
 for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. The physics
 worker/SAB port is still pending, so the current demo runs physics on the main thread.
 
@@ -43,6 +44,9 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
   - interpolated visual pose.
 - wgpu 30 renderer with WebGPU and WebGL2 support.
 - Browser viewers for track, car, and driving.
+- Runtime **Tuning** dialog for chassis, suspension, tires, engine, gearing, brakes, steering,
+  and aero; settings persist per car and can be copied/pasted as `lapster/setup@1` JSON.
+- **Settings** dialog for TC/ESC enables, independent strengths, and steering sensitivity.
 - Rust, Node, and Playwright test suites.
 
 ## Controls
@@ -57,8 +61,10 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 | `C` | Cycle chase / bonnet / cockpit camera |
 | `R` | Reset |
 
-The drive toolbar has independent **TC** and **ESC** toggles. Both default on for keyboard
-and touch driving.
+**Reset** and **Camera** remain top-level toolbar actions. **Tuning** opens the top-layer car
+tuning dialog; **Copy settings** produces a versioned JSON payload for sharing, and **Paste
+shared settings** imports one. **Settings** opens the assists menu for TC/ESC enables,
+independent strengths, and steering sensitivity; these settings persist globally.
 
 The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 276 hp,
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are

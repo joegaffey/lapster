@@ -1,5 +1,5 @@
 use glam::{Mat4, Quat, Vec3};
-use sim_types::{CarPhysics, PacejkaCoefficients, SpawnPoint, TorquePoint};
+use sim_types::{CarPhysics, CarTuning, PacejkaCoefficients, SpawnPoint, TorquePoint};
 
 use crate::collider::TrackCollider;
 
@@ -82,6 +82,7 @@ pub struct VehicleState {
 pub struct Vehicle {
     pub state: VehicleState,
     physics: CarPhysics,
+    default_tuning: CarTuning,
     collider: TrackCollider,
     spawn_position: Vec3,
     spawn_rotation: Quat,
@@ -94,7 +95,10 @@ pub struct Vehicle {
     filtered_slip_angle: [f32; 4],
     traction_scale: f32,
     traction_control: bool,
+    traction_strength: f32,
     stability_control: bool,
+    stability_strength: f32,
+    steering_sensitivity: f32,
     esc_activity: f32,
     steer_angle: f32,
 }
@@ -114,18 +118,9 @@ impl Vehicle {
         };
         let spawn_position = Vec3::from_array(spawn.position) + Vec3::Y * 0.25;
 
-        let mut wheel_attach_local = [Vec3::ZERO; 4];
-        let mut wheel_radius = [0.33; 4];
-        let mut rest_length = [0.19; 4];
-        let mut wheel_inertia = [1.0; 4];
-        for (index, wheel) in physics.wheels.iter().enumerate() {
-            let local = Vec3::from_array(wheel.position);
-            let radius = wheel.radius.max(0.05);
-            wheel_attach_local[index] = local + Vec3::Y * wheel.suspension.travel;
-            wheel_radius[index] = radius;
-            rest_length[index] = (wheel_attach_local[index].y - radius).max(0.01);
-            wheel_inertia[index] = 0.5 * WHEEL_MASS * radius * radius;
-        }
+        let default_tuning = CarTuning::from_physics(&physics);
+        let (wheel_attach_local, wheel_radius, rest_length, wheel_inertia) =
+            wheel_dimensions(&physics);
 
         let state = VehicleState {
             position: spawn_position,
@@ -142,6 +137,7 @@ impl Vehicle {
         Self {
             state,
             physics,
+            default_tuning,
             collider,
             spawn_position,
             spawn_rotation: rotation,
@@ -154,7 +150,10 @@ impl Vehicle {
             filtered_slip_angle: [0.0; 4],
             traction_scale: 1.0,
             traction_control: true,
+            traction_strength: 1.0,
             stability_control: true,
+            stability_strength: 1.0,
+            steering_sensitivity: 1.0,
             esc_activity: 0.0,
             steer_angle: 0.0,
         }
@@ -171,6 +170,14 @@ impl Vehicle {
         self.traction_control
     }
 
+    pub fn set_traction_strength(&mut self, strength: f32) {
+        self.traction_strength = strength.clamp(0.0, 1.0);
+    }
+
+    pub fn traction_strength(&self) -> f32 {
+        self.traction_strength
+    }
+
     pub fn set_stability_control(&mut self, enabled: bool) {
         self.stability_control = enabled;
         if !enabled {
@@ -182,8 +189,56 @@ impl Vehicle {
         self.stability_control
     }
 
+    pub fn set_stability_strength(&mut self, strength: f32) {
+        self.stability_strength = strength.clamp(0.0, 1.0);
+    }
+
+    pub fn stability_strength(&self) -> f32 {
+        self.stability_strength
+    }
+
+    pub fn set_steering_sensitivity(&mut self, sensitivity: f32) {
+        self.steering_sensitivity = sensitivity.clamp(0.25, 2.0);
+    }
+
+    pub fn steering_sensitivity(&self) -> f32 {
+        self.steering_sensitivity
+    }
+
     pub fn esc_activity(&self) -> f32 {
         self.esc_activity
+    }
+
+    pub fn setup(&self) -> CarTuning {
+        CarTuning::from_physics(&self.physics)
+    }
+
+    pub fn default_setup(&self) -> CarTuning {
+        self.default_tuning.clone()
+    }
+
+    pub fn apply_setup(&mut self, tuning: &CarTuning) {
+        let mut tuning = tuning.clone();
+        tuning.sanitize();
+        tuning.apply_to(&mut self.physics);
+        self.refresh_wheel_dimensions();
+        self.filtered_slip_ratio = [0.0; 4];
+        self.filtered_slip_angle = [0.0; 4];
+        self.traction_scale = 1.0;
+        self.esc_activity = 0.0;
+    }
+
+    pub fn reset_setup(&mut self) {
+        self.apply_setup(&self.default_tuning.clone());
+    }
+
+    fn refresh_wheel_dimensions(&mut self) {
+        let (attach, radius, rest, inertia) = wheel_dimensions(&self.physics);
+        self.wheel_attach_local = attach;
+        self.wheel_radius = radius;
+        self.rest_length = rest;
+        self.wheel_inertia = inertia;
+        self.previous_compression = [0.0; 4];
     }
 
     pub fn reset(&mut self) {
@@ -217,7 +272,9 @@ impl Vehicle {
         let steer_limit = (self.physics.steering.max_angle
             / (1.0 + steer_speed * STEERING_SPEED_FALLOFF))
             .max(0.08);
-        self.steer_angle = controls.steering.clamp(-1.0, 1.0) * steer_limit;
+        let steer_input =
+            (controls.steering.clamp(-1.0, 1.0) * self.steering_sensitivity).clamp(-1.0, 1.0);
+        self.steer_angle = steer_input * steer_limit;
         let gear = controls
             .gear
             .clamp(-1, self.physics.drivetrain.gear_ratios.len() as i32);
@@ -296,6 +353,7 @@ impl Vehicle {
                 esc_brake_wheel = Some(if body_slip > 0.0 { 1 } else { 0 });
             }
         }
+        let esc_activity = esc_activity * self.stability_strength;
         self.esc_activity = esc_activity;
         let drive_torque = drive_torque * (1.0 - 0.5 * esc_activity);
         let mut total_force = Vec3::new(0.0, -self.physics.mass * GRAVITY, 0.0);
@@ -388,7 +446,7 @@ impl Vehicle {
                 let slip_angle = self.filtered_slip_angle[index];
                 let mu = hit.friction * wheel.tire.friction_scale;
                 if wheel.driven {
-                    drive *= self.traction_scale;
+                    drive *= 1.0 - (1.0 - self.traction_scale) * self.traction_strength;
                 }
                 if drive != 0.0 {
                     let max_drive_torque = mu * normal_load * radius;
@@ -583,6 +641,22 @@ impl Vehicle {
     fn engine_torque(&self, rpm: f32) -> f32 {
         interpolate_torque(&self.physics.engine.torque_curve, rpm)
     }
+}
+
+fn wheel_dimensions(physics: &CarPhysics) -> ([Vec3; 4], [f32; 4], [f32; 4], [f32; 4]) {
+    let mut wheel_attach_local = [Vec3::ZERO; 4];
+    let mut wheel_radius = [0.33; 4];
+    let mut rest_length = [0.19; 4];
+    let mut wheel_inertia = [1.0; 4];
+    for (index, wheel) in physics.wheels.iter().enumerate() {
+        let local = Vec3::from_array(wheel.position);
+        let radius = wheel.radius.max(0.05);
+        wheel_attach_local[index] = local + Vec3::Y * wheel.suspension.travel;
+        wheel_radius[index] = radius;
+        rest_length[index] = (wheel_attach_local[index].y - radius).max(0.01);
+        wheel_inertia[index] = 0.5 * WHEEL_MASS * radius * radius;
+    }
+    (wheel_attach_local, wheel_radius, rest_length, wheel_inertia)
 }
 
 fn horizontal_forward(rotation: Quat) -> Vec3 {
@@ -1102,14 +1176,68 @@ mod tests {
     }
 
     #[test]
-    fn assists_can_be_toggled() {
+    fn setup_apply_and_reset() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        let default = vehicle.setup();
+        let mut tuned = default.clone();
+        tuned.rear.tire.friction_scale = 1.25;
+        tuned.front.suspension.spring_rate = 70_000.0;
+        tuned.front.suspension.travel = 0.12;
+        vehicle.apply_setup(&tuned);
+        assert_eq!(vehicle.setup(), tuned);
+        vehicle.reset_setup();
+        assert_eq!(vehicle.setup(), default);
+    }
+
+    #[test]
+    fn assists_can_be_toggled_and_adjusted() {
         let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
         assert!(vehicle.traction_control());
         assert!(vehicle.stability_control());
+        assert_eq!(vehicle.traction_strength(), 1.0);
+        assert_eq!(vehicle.stability_strength(), 1.0);
+        assert_eq!(vehicle.steering_sensitivity(), 1.0);
         vehicle.set_traction_control(false);
         vehicle.set_stability_control(false);
+        vehicle.set_traction_strength(0.4);
+        vehicle.set_stability_strength(0.6);
+        vehicle.set_steering_sensitivity(1.5);
         assert!(!vehicle.traction_control());
         assert!(!vehicle.stability_control());
+        assert_eq!(vehicle.traction_strength(), 0.4);
+        assert_eq!(vehicle.stability_strength(), 0.6);
+        assert_eq!(vehicle.steering_sensitivity(), 1.5);
+        assert_eq!(vehicle.esc_activity(), 0.0);
+        vehicle.set_steering_sensitivity(9.0);
+        assert_eq!(vehicle.steering_sensitivity(), 2.0);
+    }
+
+    #[test]
+    fn zero_stability_strength_disables_esc() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        vehicle.set_stability_strength(0.0);
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..800 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                steering: 0.5,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
         assert_eq!(vehicle.esc_activity(), 0.0);
     }
 

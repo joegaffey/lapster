@@ -6,6 +6,8 @@ import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
+import { setupCarSetupDialog } from "../src/ui/car-setup.ts";
+import { setupAssistsDialog } from "../src/ui/assists.ts";
 
 declare global {
   interface Window {
@@ -40,8 +42,6 @@ const wheelsLabel = document.querySelector<HTMLElement>("#wheels")!;
 const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
 const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
-const tcToggle = document.querySelector<HTMLButtonElement>("#tc-toggle")!;
-const escToggle = document.querySelector<HTMLButtonElement>("#esc-toggle")!;
 
 const keys = new Set<string>();
 const STOP_SPEED_MPS = 0.3;
@@ -52,8 +52,6 @@ let previousForward = false;
 let previousReverse = false;
 let cameraMode: "chase" | "bonnet" | "cockpit" = "chase";
 let bodyVisible = true;
-let tractionControl = true;
-let stabilityControl = true;
 let lastFrame = performance.now() / 1000;
 let frames = 0;
 let accumulated = 0;
@@ -108,20 +106,6 @@ function setBodyVisible(visible: boolean) {
   bodyVisible = visible;
   window.__driveViewer?.set_body_visible(visible);
   bodyToggle.textContent = visible ? "Body: Visible" : "Body: Hidden";
-}
-
-function setTractionControl(enabled: boolean) {
-  tractionControl = enabled;
-  window.__driveViewer?.set_traction_control(enabled);
-  tcToggle.textContent = enabled ? "TC: On" : "TC: Off";
-  tcToggle.setAttribute("aria-pressed", String(enabled));
-}
-
-function setStabilityControl(enabled: boolean) {
-  stabilityControl = enabled;
-  window.__driveViewer?.set_stability_control(enabled);
-  escToggle.textContent = enabled ? "ESC: On" : "ESC: Off";
-  escToggle.setAttribute("aria-pressed", String(enabled));
 }
 
 function setCameraMode(mode: "chase" | "bonnet" | "cockpit") {
@@ -227,11 +211,9 @@ async function boot() {
   resetButton.addEventListener("click", reset);
   cameraButton.addEventListener("click", toggleCameraMode);
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
-  tcToggle.addEventListener("click", () => setTractionControl(!tractionControl));
-  escToggle.addEventListener("click", () => setStabilityControl(!stabilityControl));
   setCameraMode("chase");
-  setTractionControl(true);
-  setStabilityControl(true);
+  setupCarSetupDialog(viewer, info.car.id, info.asset.id);
+  setupAssistsDialog(viewer);
   setupTouchControls(keys);
 
   const observer = new ResizeObserver(() => {

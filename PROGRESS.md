@@ -111,6 +111,11 @@ Toolchain setup scripts:
   - `W` / `↑` brakes while reversing,
   - `0` manual reverse at rest, `1`–`6` gears, `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
+- Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
+  curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
+  JSON (`lapster/setup@1`). Mass and geometry remain fixed.
+- Settings dialog: TC and ESC enables, independent strength controls, and steering
+  sensitivity. Settings persist globally; Reset and Camera remain top-level toolbar actions.
 - Responsive UI: collapsible HUD on all demos, collapsed by default. Every demo keeps Info
   and Exit in a detached toolbar; drive adds Reset, Camera, Body, TC, and ESC, and track adds
   Reset camera. Touch devices get non-selectable steering/throttle/brake controls.
@@ -158,14 +163,15 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 35 tests
+- `cargo test --workspace` — 39 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
   control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,
-  and braking to a stop while steering.
+  braking to a stop while steering, setup apply/reset/round-trip, and assist strength
+  controls.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 16 Playwright tests
+- `npm run test:viewer` — 17 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
@@ -199,7 +205,8 @@ Toolchain setup scripts:
 3. Front-axle self-aligning torque feeding a normalized FFB request and telemetry.
 4. Main-thread constant-force output at 100-250 Hz with clamp, strength/invert, watchdog, and
    stop on hide/pause/disconnect.
-5. Device/FFB controls in the detached toolbar and assist toggles for wheel use.
+5. Device/FFB controls in the detached toolbar and assist settings with independent
+   strength and steering sensitivity.
 6. Unit, Rust, and Playwright coverage; manual CAMMUS C5 hardware checklist.
 
 **Upstream `webhid-wheel` work tracked separately:**
@@ -228,6 +235,8 @@ matrix then expands to the other supported wheelbases.
 - AC track importer has no texture decoding, uses approximated material colours, skips
   trees/fences, has no wall collision, and only includes the central pad/ASP surfaces in
   collision.
+- Car setup must be re-checked against the AC `.ini` importer when that lands; the current
+  editable set is based on the GLB-derived physics model.
 - The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is
   checked in as a temporary demo fixture; confirm redistribution rights or replace it before
   a public/commercial release.

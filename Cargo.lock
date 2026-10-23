@@ -1004,6 +1004,7 @@ version = "0.1.0"
 dependencies = [
  "rkyv",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

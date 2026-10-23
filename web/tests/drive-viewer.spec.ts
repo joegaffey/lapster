@@ -92,9 +92,13 @@ test("info starts hidden and can be opened", async ({ page }) => {
   await expect(page.locator("#speed")).toBeVisible();
 });
 
-test("traction and stability assists toggle", async ({ page }) => {
+test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await waitForReady(page);
+  await page.evaluate(() => localStorage.removeItem("lapster.assists.v1"));
+
+  await page.locator("#assists-open").click();
+  await expect(page.locator("#assists-dialog")).toHaveAttribute("open", "");
 
   const tc = page.locator("#tc-toggle");
   const esc = page.locator("#esc-toggle");
@@ -105,7 +109,6 @@ test("traction and stability assists toggle", async ({ page }) => {
 
   await tc.click();
   await expect(tc).toHaveText("TC: Off");
-  await expect(tc).toHaveAttribute("aria-pressed", "false");
   let telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
@@ -114,17 +117,38 @@ test("traction and stability assists toggle", async ({ page }) => {
 
   await esc.click();
   await expect(esc).toHaveText("ESC: Off");
-  await expect(esc).toHaveAttribute("aria-pressed", "false");
   telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.tractionControl).toBe(false);
   expect(telemetry.stabilityControl).toBe(false);
 
-  await tc.click();
-  await esc.click();
-  await expect(tc).toHaveText("TC: On");
-  await expect(esc).toHaveText("ESC: On");
+  const setRange = async (id: string, value: string) => {
+    await page.locator(id).evaluate((element, next) => {
+      const input = element as HTMLInputElement;
+      input.value = next;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, value);
+  };
+  await setRange("#tc-strength", "0.5");
+  await setRange("#esc-strength", "0.6");
+  await setRange("#steering-sensitivity", "1.25");
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.tractionStrength).toBeCloseTo(0.5);
+  expect(telemetry.stabilityStrength).toBeCloseTo(0.6);
+  expect(telemetry.steeringSensitivity).toBeCloseTo(1.25);
+
+  await page.locator("#assists-reset").click();
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.tractionControl).toBe(true);
+  expect(telemetry.stabilityControl).toBe(true);
+  expect(telemetry.tractionStrength).toBe(1);
+  expect(telemetry.stabilityStrength).toBe(1);
+  expect(telemetry.steeringSensitivity).toBe(1);
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {

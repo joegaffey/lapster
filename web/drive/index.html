@@ -226,6 +226,172 @@
         fill: currentColor;
         pointer-events: none;
       }
+      #car-setup-dialog,
+      #assists-dialog {
+        width: min(760px, calc(100vw - 32px));
+        max-height: min(86vh, 900px);
+        padding: 0;
+        overflow: auto;
+        border: 1px solid #3a4350;
+        border-radius: 4px;
+        background: #0d1117;
+        color: #e6e8eb;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+      }
+      #car-setup-dialog::backdrop,
+      #assists-dialog::backdrop {
+        background: rgba(0, 0, 0, 0.62);
+        backdrop-filter: blur(2px);
+      }
+      #assists-dialog {
+        width: min(480px, calc(100vw - 32px));
+      }
+      .assist-body {
+        display: grid;
+        gap: 14px;
+        padding: 4px 16px 16px;
+      }
+      .assist-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .assist-slider {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 6px 10px;
+        align-items: center;
+        color: #cbd5e1;
+        font-size: 12px;
+      }
+      .assist-slider input {
+        grid-column: 1 / -1;
+        width: 100%;
+        accent-color: #38bdf8;
+      }
+      .assist-slider output {
+        color: #8f9bab;
+        text-align: right;
+      }
+      .setup-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid #2a303a;
+        background: #0d1117;
+      }
+      .setup-header h2 {
+        margin: 0;
+        color: #e6e8eb;
+        font-size: 14px;
+        letter-spacing: 0;
+        text-transform: none;
+      }
+      .setup-body {
+        padding: 4px 16px 8px;
+      }
+      .setup-section {
+        border-bottom: 1px solid #202630;
+      }
+      .setup-section > summary {
+        padding: 10px 0;
+        color: #cbd5e1;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        cursor: pointer;
+      }
+      .setup-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 16px;
+        padding: 0 0 12px;
+      }
+      .setup-field {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 92px auto;
+        gap: 6px;
+        align-items: center;
+        font-size: 11px;
+      }
+      .setup-field-wide {
+        grid-column: 1 / -1;
+        grid-template-columns: minmax(0, 1fr) minmax(180px, 2fr) auto;
+      }
+      .setup-field input {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #e6e8eb;
+        padding: 4px 6px;
+        font: inherit;
+        font-size: 11px;
+      }
+      .setup-field input:focus {
+        outline: 1px solid #38bdf8;
+        border-color: #38bdf8;
+      }
+      .setup-unit {
+        color: #8f9bab;
+        white-space: nowrap;
+      }
+      .setup-import {
+        margin: 4px 16px 0;
+        padding: 8px 0;
+        border-top: 1px solid #202630;
+        color: #9aa4b2;
+        font-size: 11px;
+      }
+      .setup-import summary {
+        cursor: pointer;
+      }
+      .setup-import textarea {
+        display: block;
+        width: 100%;
+        min-height: 70px;
+        margin: 8px 0;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #e6e8eb;
+        padding: 6px;
+        font: inherit;
+        font-size: 11px;
+      }
+      .setup-footer {
+        position: sticky;
+        bottom: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-top: 1px solid #2a303a;
+        background: #0d1117;
+      }
+      .setup-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .setup-status {
+        margin: 0;
+        color: #8f9bab;
+        font-size: 11px;
+      }
+      .setup-error {
+        color: #f87171;
+      }
       @media (pointer: coarse), (max-width: 720px) {
         #touch-controls {
           display: flex;
@@ -243,6 +409,9 @@
           width: min(360px, calc(100vw - 24px));
           max-height: calc(100vh - 200px);
         }
+        .setup-grid {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
@@ -253,8 +422,8 @@
       <button id="reset" data-testid="reset">Reset</button>
       <button id="camera-mode" data-testid="camera-mode">Camera: Chase</button>
       <button id="body-toggle" data-testid="body-toggle">Body: Visible</button>
-      <button id="tc-toggle" data-testid="tc-toggle" aria-pressed="true">TC: On</button>
-      <button id="esc-toggle" data-testid="esc-toggle" aria-pressed="true">ESC: On</button>
+      <button id="setup-open" data-testid="setup-open" aria-haspopup="dialog">Tuning</button>
+      <button id="assists-open" data-testid="assists-open" aria-haspopup="dialog">Settings</button>
     </nav>
     <aside id="hud">
       <h1>Drive Viewer</h1>
@@ -291,6 +460,66 @@
       <h2>Wheels</h2>
       <ul id="wheels" data-testid="wheels"></ul>
     </aside>
+    <dialog id="car-setup-dialog" aria-labelledby="car-setup-title">
+      <header class="setup-header">
+        <h2 id="car-setup-title">Tuning</h2>
+        <button id="car-setup-close" type="button">Close</button>
+      </header>
+      <p class="setup-status" style="padding: 10px 16px 0">
+        Mass, wheelbase, track width, and wheel geometry are fixed by the car model.
+      </p>
+      <div id="car-setup-body" class="setup-body"></div>
+      <details class="setup-import">
+        <summary>Paste shared settings</summary>
+        <textarea id="car-setup-import-text" spellcheck="false" placeholder="Paste the JSON copied from another session, then choose Apply pasted."></textarea>
+        <button id="car-setup-import-apply" type="button">Apply pasted</button>
+      </details>
+      <footer class="setup-footer">
+        <p id="car-setup-status" class="setup-status" aria-live="polite"></p>
+        <div class="setup-actions">
+          <button id="car-setup-reset" type="button">Reset defaults</button>
+          <button id="car-setup-copy" type="button">Copy settings</button>
+          <button id="car-setup-apply" type="button">Apply</button>
+        </div>
+      </footer>
+    </dialog>
+    <dialog id="assists-dialog" aria-labelledby="assists-title">
+      <header class="setup-header">
+        <h2 id="assists-title">Settings</h2>
+        <button id="assists-close" type="button">Close</button>
+      </header>
+      <div class="assist-body">
+        <div class="assist-row">
+          <span>Traction control</span>
+          <button id="tc-toggle" data-testid="tc-toggle" aria-pressed="true" type="button">TC: On</button>
+        </div>
+        <label class="assist-slider">
+          <span>TC strength</span>
+          <output id="tc-strength-value">100%</output>
+          <input id="tc-strength" type="range" min="0" max="1" step="0.05" value="1" />
+        </label>
+        <div class="assist-row">
+          <span>Stability control</span>
+          <button id="esc-toggle" data-testid="esc-toggle" aria-pressed="true" type="button">ESC: On</button>
+        </div>
+        <label class="assist-slider">
+          <span>ESC strength</span>
+          <output id="esc-strength-value">100%</output>
+          <input id="esc-strength" type="range" min="0" max="1" step="0.05" value="1" />
+        </label>
+        <label class="assist-slider">
+          <span>Steering sensitivity</span>
+          <output id="steering-sensitivity-value">100%</output>
+          <input id="steering-sensitivity" type="range" min="0.25" max="2" step="0.05" value="1" />
+        </label>
+      </div>
+      <footer class="setup-footer">
+        <p id="assists-status" class="setup-status" aria-live="polite">Changes apply live</p>
+        <div class="setup-actions">
+          <button id="assists-reset" type="button">Reset assists</button>
+        </div>
+      </footer>
+    </dialog>
     <div id="touch-controls" aria-label="Touch controls">
       <div class="touch-cluster">
         <button class="touch-button" data-key="a" type="button" draggable="false" aria-label="Steer left">

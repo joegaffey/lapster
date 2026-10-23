@@ -334,6 +334,32 @@ are stable. Do not combine car and track debugging.
 **Fail action:** If track scale/axes or collision are wrong, return to the asset compiler
 and fix normalization. Do not add runtime workarounds.
 
+### CP6.4: Runtime tuning dialog
+
+**Status:** Done.
+
+**Goal:** Tune every non-invariant car physics parameter at runtime, persist it per car, and
+share it as a versioned JSON payload.
+
+**Tasks:**
+
+- Add a native top-layer `<dialog>` opened by the **Tuning** button.
+- Expose chassis inertia/CG, per-axle suspension and tire parameters, engine curve, gearing,
+  brake torque, steering lock, and aero as validated runtime tuning.
+- Keep mass, wheelbase, track width, wheel dimensions, and wheel positions fixed by the car
+  model.
+- Persist settings in `localStorage` per car; reset restores the pack defaults.
+- Copy a `lapster/setup@1` envelope with app/car/track context; paste/import accepts the
+  envelope or raw setup JSON.
+- Apply values through a Rust `CarTuning` model with clamping and validation.
+
+**Exit criteria:**
+
+- Dialog opens above HUD, toolbar, and touch controls.
+- Apply changes affect the running physics; reset restores defaults.
+- Settings survive reload; clipboard copy/import round-trip works.
+- Unit, Rust, and Playwright coverage passes.
+
 ### CP6.5: Wheel input and FFB feel spike
 
 **Indicative timebox:** 3-5 days.
@@ -355,7 +381,8 @@ wheelbase supported by `webhid-wheel`. This checkpoint runs on the main thread.
   send constant force. Stop on hide, pause, disconnect, and a 50 ms stale-torque watchdog.
 - Add a device/FFB panel in the detached toolbar: Connect, Disconnect, strength, invert,
   deadzone, test force, and emergency stop.
-- Add assist toggles so TC and stability aids can be disabled for wheel use.
+- Add a **Settings** dialog with TC/ESC enables, independent strengths, and steering
+  sensitivity. Keep Reset and Camera at the top level.
 - Add unit tests for input normalization and FFB safety, Rust tests for steering torque, and
   a Playwright fallback/input test. Hardware FFB remains a manual checklist.
 
