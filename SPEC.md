@@ -88,8 +88,9 @@ versioned `SharedArrayBuffer`; lifecycle and control move through `MessageChanne
   called on the main thread from a user gesture. The HID worker then acquires the already
   authorized device via `navigator.hid.getDevices()` and matches by vendor/product ID.
 - **SAB requires cross-origin isolation:** `Cross-Origin-Opener-Policy: same-origin` and
-  `Cross-Origin-Embedder-Policy: require-corp`, plus a secure context. Static hosts must
-  support custom headers. GitHub Pages and `file://` do not.
+  `Cross-Origin-Embedder-Policy: require-corp`, plus a secure context. Static hosts without
+  custom headers can use a same-origin service worker to synthesize those headers on demo
+  navigations; the first controlled load requires one reload. GitHub Pages uses this path.
 - **No hard real-time scheduling exists on the web.** The engine targets measured budgets
   and graceful degradation, not guaranteed tick timing.
 

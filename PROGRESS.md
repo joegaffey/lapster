@@ -89,6 +89,7 @@ Toolchain setup scripts:
 | Renderer upgrade | Done | wgpu 30.0.1, WebGPU (`BrowserWebGpu`), WebGL2 fallback, sRGB output fix, wasm-opt/LTO pipeline |
 | GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
 | GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/` |
+| PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
 
 ## Current capabilities
 
@@ -144,7 +145,7 @@ Toolchain setup scripts:
 - `cargo test --workspace` — 24 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 10 Playwright tests
+- `npm run test:viewer` — 11 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
@@ -178,8 +179,9 @@ Toolchain setup scripts:
 - Playwright screenshot baselines are Linux/Chromium-specific and are skipped in CI.
 - Headless Playwright captures the WebGPU canvas as white in this environment; renderer
   stats and debug counters are asserted, and the flat-screen look was checked manually.
-- GitHub Pages cannot send COOP/COEP, so the current main-thread demo works there but the
-  planned SharedArrayBuffer worker mode will need a different host or custom headers.
+- GitHub Pages supplies no COOP/COEP headers; the PWA service worker injects them for demo
+  navigations. The first controlled load needs one reload. The physics worker/SAB port is
+  still pending, so physics remains on the main thread.
 - The live Pages URL is https://joegaffey.com/lapster/ (the github.io URL redirects there).
 
 ## Next steps

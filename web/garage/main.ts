@@ -4,6 +4,7 @@ import { loadPackFromUrl } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
+import { setupPwa } from "../src/pwa.ts";
 
 declare global {
   interface Window {
@@ -129,6 +130,10 @@ function renderDebug(debug: any) {
 }
 
 async function boot() {
+  status.textContent = "starting";
+  if (await setupPwa()) {
+    return;
+  }
   status.textContent = "loading wasm";
   await init();
 

@@ -1,0 +1,27 @@
+{
+  "name": "Lapster",
+  "short_name": "Lapster",
+  "description": "A web-native vehicle simulation engine and drivable slice.",
+  "start_url": "./drive/",
+  "scope": "./",
+  "id": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080a0d",
+  "theme_color": "#080a0d",
+  "categories": ["games", "simulation"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import { setupHud } from "../src/ui/hud.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
+import { setupPwa } from "../src/pwa.ts";
 
 declare global {
   interface Window {
@@ -128,6 +129,10 @@ function renderStats(debug: {
 }
 
 async function boot() {
+  status.textContent = "starting";
+  if (await setupPwa()) {
+    return;
+  }
   status.textContent = "loading wasm";
   await init();
 
