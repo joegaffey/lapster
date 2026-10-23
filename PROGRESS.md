@@ -135,6 +135,9 @@ Toolchain setup scripts:
     currently limited to the central pad/ASP surfaces.
 - Build freshness: generated build version in default pack URLs, `version.json` check on
   load, stale IndexedDB pack clearing, and versioned `main.js` URLs in Pages output.
+- PWA/COI: installable manifest/icons and a same-origin service worker that injects
+  COOP/COEP on demo navigations. `crossOriginIsolated` and `SharedArrayBuffer` verified.
+- PWA navigation: installed app launches the `/web/` demo menu; every demo links back to it.
 - Wasm: **2.81 MiB raw / 1.05 MiB gzip**.
 - Local warm startup measured at roughly **300–480 ms** in headless Chromium.
 

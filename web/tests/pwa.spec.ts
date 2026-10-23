@@ -20,6 +20,7 @@ test("pwa installs a service worker and enables cross-origin isolation", async (
       sharedArrayBuffer: typeof SharedArrayBuffer,
       controlled: Boolean(navigator.serviceWorker?.controller),
       manifestName: manifest?.name,
+      startUrl: manifest?.start_url,
       iconStatus: icon?.status,
     };
   });
@@ -29,5 +30,11 @@ test("pwa installs a service worker and enables cross-origin isolation", async (
   expect(state.sharedArrayBuffer).toBe("function");
   expect(state.controlled).toBe(true);
   expect(state.manifestName).toBe("Lapster");
+  expect(state.startUrl).toBe("./");
   expect(state.iconStatus).toBe(200);
+
+  await page.goto("/web/");
+  await expect(page.locator('a[href="./drive/"]')).toBeVisible();
+  await expect(page.locator('a[href="./garage/"]')).toBeVisible();
+  await expect(page.locator('a[href="./track-viewer/"]')).toBeVisible();
 });

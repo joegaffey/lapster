@@ -23,9 +23,10 @@ controls on touch devices. Builds are versioned and the demos check `web/version
 load, clearing stale pack caches and reloading when a newer deployment is available.
 
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
-Lapster is installable as a PWA. A same-origin service worker supplies the COOP/COEP headers
-needed for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. The
-physics worker/SAB port is still pending, so the current demo runs physics on the main thread.
+Lapster is installable as a PWA. The installed app launches a demo menu, and every demo has a
+`Menu` link to return there. A same-origin service worker supplies the COOP/COEP headers needed
+for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. The physics
+worker/SAB port is still pending, so the current demo runs physics on the main thread.
 
 ## Current features
 

@@ -2,7 +2,7 @@
   "name": "Lapster",
   "short_name": "Lapster",
   "description": "A web-native vehicle simulation engine and drivable slice.",
-  "start_url": "./drive/",
+  "start_url": "./",
   "scope": "./",
   "id": "./",
   "display": "standalone",

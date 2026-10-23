@@ -134,7 +134,7 @@
         background: #1c2430;
       }
       #hud > h1 {
-        padding-right: 82px;
+        padding-right: 160px;
       }
       .hud-toggle {
         position: absolute;
@@ -153,16 +153,37 @@
       .hud-toggle:hover {
         background: #1c2430;
       }
+      .hud-menu {
+        position: absolute;
+        top: 8px;
+        right: 94px;
+        z-index: 2;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 4px 8px;
+        font: inherit;
+        font-size: 11px;
+        text-decoration: none;
+      }
+      .hud-menu:hover {
+        background: #1c2430;
+      }
       #hud.hud-collapsed {
+        display: flex;
+        align-items: center;
+        gap: 8px;
         width: auto;
         max-height: none;
         overflow: visible;
         padding: 8px 10px;
       }
-      #hud.hud-collapsed > :not(.hud-toggle) {
+      #hud.hud-collapsed > :not(.hud-toggle):not(.hud-menu) {
         display: none;
       }
-      #hud.hud-collapsed .hud-toggle {
+      #hud.hud-collapsed .hud-toggle,
+      #hud.hud-collapsed .hud-menu {
         position: static;
       }
     </style>
@@ -170,6 +191,7 @@
   <body>
     <canvas id="view"></canvas>
     <aside id="hud">
+      <a class="hud-menu" href="../">Menu</a>
       <h1>Track Viewer</h1>
       <p class="muted" id="asset">loading…</p>
       <p class="status" id="status">booting</p>

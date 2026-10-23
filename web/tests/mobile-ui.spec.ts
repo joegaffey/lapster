@@ -34,6 +34,8 @@ test("mobile starts collapsed and exposes touch controls", async ({ page }) => {
   const throttle = page.locator('[data-key="w"]');
   await expect(page.locator("#touch-controls")).toBeVisible();
   await expect(page.locator("#touch-reset")).toHaveCount(0);
+  await expect(page.locator(".hud-menu")).toBeVisible();
+  await expect(page.locator(".hud-menu")).toHaveAttribute("href", "../");
   await expect(throttle).toBeVisible();
   const box = await throttle.boundingBox();
   expect(box).not.toBeNull();
