@@ -25,6 +25,12 @@ const steerValue = document.querySelector<HTMLElement>("#steer-value")!;
 const spinValue = document.querySelector<HTMLElement>("#spin-value")!;
 const animateInput = document.querySelector<HTMLInputElement>("#animate")!;
 
+const params = new URLSearchParams(window.location.search);
+const TRACK_URL =
+  params.get("track") ?? "../../fixtures/tracks/skidpad05/pack.sima?v=cp6";
+const CAR_URL =
+  params.get("car") ?? "../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=cp6";
+
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
   1: "#ff4d33",
@@ -120,8 +126,8 @@ async function boot() {
 
   status.textContent = "loading packs";
   const [trackPack, carPack] = await Promise.all([
-    loadPack("../../fixtures/tracks/minimal/pack.sima?v=cp4.2"),
-    loadPack("../../fixtures/cars/minimal/pack.sima?v=cp4.2"),
+    loadPack(TRACK_URL),
+    loadPack(CAR_URL),
   ]);
 
   resizeCanvas();

@@ -4,7 +4,7 @@ test("garage viewer renders the car on the track", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/web/garage/");
+  await page.goto("/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
@@ -20,6 +20,7 @@ test("garage viewer renders the car on the track", async ({ page }) => {
     wheels: document.querySelector("#wheels")?.textContent ?? "",
     stats: document.querySelector("#stats")?.textContent ?? "",
     meshes: document.querySelector("#stats")?.textContent ?? "",
+    debug: JSON.parse((window as any).__garageViewer.debug_info()),
   }));
 
   expect(state.error).toBeUndefined();
@@ -33,11 +34,13 @@ test("garage viewer renders the car on the track", async ({ page }) => {
   for (const wheel of ["FL front", "FR front", "RL rear drive", "RR rear drive"]) {
     expect(state.wheels).toContain(wheel);
   }
-  expect(state.stats).toContain("vertices650");
-  expect(state.stats).toContain("triangles534");
-  expect(state.stats).toContain("track tris74");
+  expect(state.stats).toContain("vertices674");
+  expect(state.stats).toContain("triangles546");
+  expect(state.stats).toContain("track tris86");
   expect(state.stats).toContain("car tris460");
-  expect(state.stats).toContain("draw calls13");
+  expect(state.stats).toContain("draw calls14");
+  expect(state.debug.stats.texturedMeshes).toBe(1);
+  expect(state.debug.stats.outlinedMeshes).toBe(9);
   expect(pageErrors).toEqual([]);
 
   if (!process.env.CI) {

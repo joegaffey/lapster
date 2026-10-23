@@ -59,9 +59,13 @@ fn track_bake_is_deterministic_and_round_trips() {
     assert!(collision.indices.len() >= 18);
 
     let visual = pack.track_visual_owned().expect("visual load failed");
-    assert_eq!(visual.meshes.len(), 7);
-    assert_eq!(visual.mesh_buffers.len(), 7);
-    assert_eq!(visual.materials.len(), 6);
+    assert_eq!(visual.meshes.len(), 8);
+    assert_eq!(visual.mesh_buffers.len(), 8);
+    assert_eq!(visual.materials.len(), 7);
+    assert_eq!(visual.textures.len(), 1);
+    assert_eq!(visual.textures[0].width, 64);
+    assert_eq!(visual.textures[0].height, 64);
+    assert_eq!(visual.textures[0].rgba8.len(), 64 * 64 * 4);
 }
 
 #[test]

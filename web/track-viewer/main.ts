@@ -22,6 +22,11 @@ const fpsLabel = document.querySelector<HTMLElement>("#fps")!;
 const frameLabel = document.querySelector<HTMLElement>("#frame-ms")!;
 const drawsLabel = document.querySelector<HTMLElement>("#draws")!;
 
+const params = new URLSearchParams(window.location.search);
+const TRACK_URL =
+  params.get("track") ??
+  "../../fixtures/tracks/skidpad05/pack.sima?v=cp6";
+
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
   1: "#ff4d33",
@@ -32,12 +37,9 @@ const SURFACE_COLORS: Record<number, string> = {
 
 async function loadPack() {
   try {
-    return await loadPackFromUrl(
-      "../../fixtures/tracks/minimal/pack.sima?v=cp4.2",
-      new IndexedDbPackCache(),
-    );
+    return await loadPackFromUrl(TRACK_URL, new IndexedDbPackCache());
   } catch {
-    return await loadPackFromUrl("../../fixtures/tracks/minimal/pack.sima?v=cp4.2");
+    return await loadPackFromUrl(TRACK_URL);
   }
 }
 

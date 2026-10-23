@@ -123,7 +123,8 @@
         ],
         "metallic": 0.0,
         "roughness": 0.9,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": false
       },
       {
         "name": "wall",
@@ -135,7 +136,8 @@
         ],
         "metallic": 0.0,
         "roughness": 0.8,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": true
       },
       {
         "name": "line",
@@ -147,7 +149,8 @@
         ],
         "metallic": 0.0,
         "roughness": 0.6,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": false
       },
       {
         "name": "axis_x",
@@ -159,7 +162,8 @@
         ],
         "metallic": 0.0,
         "roughness": 0.5,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": false
       },
       {
         "name": "axis_y",
@@ -171,7 +175,8 @@
         ],
         "metallic": 0.0,
         "roughness": 0.5,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": false
       },
       {
         "name": "axis_neg_z",
@@ -183,10 +188,32 @@
         ],
         "metallic": 0.0,
         "roughness": 0.5,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": false
+      },
+      {
+        "name": "sign",
+        "base_color": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.6,
+        "base_color_texture": 0,
+        "outline": true
       }
     ],
-    "textures": [],
+    "textures": [
+      {
+        "name": "gauge_test",
+        "mime": "image/x-rgba8",
+        "generator": "gauge",
+        "width": 64,
+        "height": 64
+      }
+    ],
     "primitives": [
       {
         "id": "ground",
@@ -291,6 +318,21 @@
           -1.0
         ],
         "material": "axis_neg_z"
+      },
+      {
+        "id": "gauge_sign",
+        "shape": "box",
+        "size": [
+          1.6,
+          0.9,
+          0.08
+        ],
+        "position": [
+          3.0,
+          1.2,
+          -4.0
+        ],
+        "material": "sign"
       }
     ]
   },

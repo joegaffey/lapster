@@ -1,6 +1,6 @@
 # Lapster Art Style: Technical Blueprint / Papercraft Toon
 
-Status: proposed direction. Flat-screen first; WebXR is a later phase.
+Status: adopted. CP4.5 implements the flat-screen forward-renderer slice; WebXR is later.
 
 ## 1. Goals
 
@@ -175,8 +175,9 @@ track is measured.
 
 ## 12. Phases
 
-1. **Style slice:** toon shading, flat vertex colors, inverted hull, grid, particles on the
-   synthetic car/track.
+1. **Style slice — done:** toon ramp/rim shading, flat vertex colors, inverted-hull outlines,
+   and a UV/base-color texture path with a generated gauge sign. The procedural grid and
+   particles remain future work.
 2. **Real car:** decimate/color-bake a simple LFS-like car, add cockpit gauges and signs.
 3. **Destruction:** part bitmask, shard pool, damage transitions.
 4. **WebXR:** runtime spike, per-eye budgets, worker physics.

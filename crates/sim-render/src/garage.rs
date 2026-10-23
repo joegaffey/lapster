@@ -7,7 +7,8 @@ use sim_types::{
 
 use crate::camera::Camera;
 use crate::scene::{
-    build_vertices, push_line, CarRig, LineVertex, MeshData, RigWheel, Scene, SceneWheel,
+    build_outline, build_vertices, push_line, scene_texture, CarRig, LineVertex, MeshData,
+    RigWheel, Scene, SceneWheel,
 };
 
 impl Scene {
@@ -47,6 +48,10 @@ impl Scene {
         };
         let car_transform = car_transform(track_metadata)?;
         let car_start = scene.meshes.len();
+        let car_texture_base = scene.textures.len();
+        for texture in &car_visual.textures {
+            scene.textures.push(scene_texture(texture)?);
+        }
 
         let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
         let body_mesh = car_visual
@@ -67,6 +72,10 @@ impl Scene {
             body_buffers,
             body_color,
             body_model,
+            CarMeshStyle {
+                texture: car_texture(car_visual, body_mesh, car_texture_base)?,
+                outline: car_outline(car_visual, body_mesh),
+            },
         )?;
         let body_bounds = world_bounds(body_buffers, body_model);
         add_box_lines(&mut scene.lines, &body_bounds, [0.25, 0.75, 1.0]);
@@ -92,6 +101,10 @@ impl Scene {
                 buffers,
                 color,
                 model,
+                CarMeshStyle {
+                    texture: car_texture(car_visual, mesh, car_texture_base)?,
+                    outline: car_outline(car_visual, mesh),
+                },
             )?;
             add_wheel_marker(
                 &mut scene.lines,
@@ -134,6 +147,10 @@ impl Scene {
                     buffers,
                     color,
                     model,
+                    CarMeshStyle {
+                        texture: car_texture(car_visual, mesh, car_texture_base)?,
+                        outline: car_outline(car_visual, mesh),
+                    },
                 )?);
                 add_wheel_marker(&mut scene.lines, model, [0.2, 1.0, 0.7]);
                 steering_local = local;
@@ -192,6 +209,8 @@ impl Scene {
                 "triangles": scene.stats.triangles,
                 "drawCalls": scene.stats.draw_calls,
                 "textures": scene.stats.textures,
+                "texturedMeshes": scene.meshes.iter().filter(|mesh| mesh.texture.is_some()).count(),
+                "outlinedMeshes": scene.meshes.iter().filter(|mesh| mesh.outline.is_some()).count(),
                 "collisionTriangles": scene.stats.collision_triangles,
                 "trackTriangles": track_stats.triangles,
                 "carTriangles": car_triangles,
@@ -229,6 +248,11 @@ impl Scene {
     }
 }
 
+struct CarMeshStyle {
+    texture: Option<usize>,
+    outline: bool,
+}
+
 fn push_car_mesh(
     scene: &mut Scene,
     name: &str,
@@ -236,6 +260,7 @@ fn push_car_mesh(
     buffers: &MeshBuffers,
     color: [f32; 3],
     model: Mat4,
+    style: CarMeshStyle,
 ) -> Result<usize, String> {
     if buffers.positions.is_empty() || buffers.indices.is_empty() {
         return Err(format!("car mesh {} is empty", mesh.name));
@@ -256,8 +281,42 @@ fn push_car_mesh(
         vertices,
         indices: buffers.indices.clone(),
         model,
+        texture: style.texture,
+        outline: if style.outline {
+            build_outline(buffers)
+        } else {
+            None
+        },
     });
     Ok(scene.meshes.len() - 1)
+}
+
+fn car_texture(
+    car_visual: &CarVisual,
+    mesh: &MeshRef,
+    texture_base: usize,
+) -> Result<Option<usize>, String> {
+    let Some(material) = car_visual.materials.get(mesh.material as usize) else {
+        return Ok(None);
+    };
+    let Some(index) = material.base_color_texture else {
+        return Ok(None);
+    };
+    if index as usize >= car_visual.textures.len() {
+        return Err(format!(
+            "car mesh {} references missing texture {}",
+            mesh.name, index
+        ));
+    }
+    Ok(Some(texture_base + index as usize))
+}
+
+fn car_outline(car_visual: &CarVisual, mesh: &MeshRef) -> bool {
+    car_visual
+        .materials
+        .get(mesh.material as usize)
+        .map(|material| material.outline)
+        .unwrap_or(false)
 }
 
 fn car_material_color(car_visual: &CarVisual, index: usize) -> [f32; 3] {

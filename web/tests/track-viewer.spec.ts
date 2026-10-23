@@ -4,7 +4,7 @@ test("track viewer renders the baked minimal track", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/web/track-viewer/");
+  await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
   await page.waitForFunction(
     () => (window as any).__trackViewerReady === true || (window as any).__trackViewerError,
     undefined,
@@ -20,21 +20,26 @@ test("track viewer renders the baked minimal track", async ({ page }) => {
     draws: document.querySelector("#draws")?.textContent,
     surfaces: document.querySelector("#surfaces")?.textContent ?? "",
     meshes: document.querySelector("#meshes")?.textContent ?? "",
+    debug: JSON.parse((window as any).__trackViewer.debug_info()),
   }));
 
   expect(state.error).toBeUndefined();
   expect(state.ready).toBe(true);
   expect(state.status).toBe("ready");
-  expect(state.draws).toBe("7");
-  expect(state.stats).toContain("vertices148");
-  expect(state.stats).toContain("triangles74");
-  expect(state.stats).toContain("draw calls7");
+  expect(state.draws).toBe("8");
+  expect(state.stats).toContain("vertices172");
+  expect(state.stats).toContain("triangles86");
+  expect(state.stats).toContain("draw calls8");
+  expect(state.stats).toContain("textures1");
   expect(state.stats).toContain("collision tris26");
+  expect(state.debug.stats.texturedMeshes).toBe(1);
+  expect(state.debug.stats.outlinedMeshes).toBe(3);
   expect(state.surfaces).toContain("asphalt");
   expect(state.surfaces).toContain("wall");
   expect(state.surfaces).toContain("line");
   expect(state.meshes).toContain("ground");
   expect(state.meshes).toContain("wall_left");
+  expect(state.meshes).toContain("gauge_sign");
   expect(state.meshes).toContain("axis_neg_z");
   expect(pageErrors).toEqual([]);
 
@@ -49,7 +54,7 @@ test("track viewer renders the baked minimal track", async ({ page }) => {
 test("reload uses the cached pack", async ({ page }) => {
   let packRequests = 0;
   page.on("request", (request) => {
-    if (request.url().includes("pack.sima")) {
+    if (request.resourceType() === "fetch" && request.url().includes("pack.sima")) {
       packRequests += 1;
     }
   });
@@ -61,7 +66,7 @@ test("reload uses the cached pack", async ({ page }) => {
       { timeout: 30_000 },
     );
 
-  await page.goto("/web/track-viewer/");
+  await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
   await waitForReady();
   expect(packRequests).toBe(1);
 

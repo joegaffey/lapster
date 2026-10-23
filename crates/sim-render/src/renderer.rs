@@ -6,12 +6,14 @@ use wasm_bindgen::JsValue;
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
-use crate::scene::{LineVertex, MeshData, MeshVertex, Scene};
+use crate::scene::{LineVertex, MeshData, MeshVertex, OutlineVertex, Scene, SceneTexture};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-static MESH_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+static MESH_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2];
+static OUTLINE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 static LINE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 
@@ -29,12 +31,27 @@ struct ModelUniform {
     model: [[f32; 4]; 4],
 }
 
+struct GpuOutline {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+}
+
+struct MeshTextureResources<'a> {
+    layout: &'a wgpu::BindGroupLayout,
+    textures: &'a [SceneTexture],
+    white_view: &'a wgpu::TextureView,
+    sampler: &'a wgpu::Sampler,
+}
+
 struct GpuMesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
     model_buffer: wgpu::Buffer,
     model_bind_group: wgpu::BindGroup,
+    texture_bind_group: wgpu::BindGroup,
+    outline: Option<GpuOutline>,
 }
 
 pub struct Renderer {
@@ -44,6 +61,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     depth_view: wgpu::TextureView,
     mesh_pipeline: wgpu::RenderPipeline,
+    outline_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -174,14 +192,47 @@ impl Renderer {
                 }],
             });
 
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("track pipeline layout"),
             bind_group_layouts: &[
                 Some(&camera_bind_group_layout),
                 Some(&model_bind_group_layout),
+                Some(&texture_bind_group_layout),
             ],
             immediate_size: 0,
         });
+        let outline_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("outline pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&camera_bind_group_layout),
+                    Some(&model_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
         let line_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("line pipeline layout"),
             bind_group_layouts: &[Some(&camera_bind_group_layout)],
@@ -218,6 +269,51 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_mesh"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("outline pipeline"),
+            layout: Some(&outline_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_outline"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<OutlineVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &OUTLINE_ATTRIBUTES,
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Front),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 1,
+                    slope_scale: 1.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_outline"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
@@ -268,10 +364,39 @@ impl Renderer {
             cache: None,
         });
 
+        let white_view = create_white_texture(&device, &queue);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("mesh sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 0.0,
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None,
+        });
+        let texture_resources = MeshTextureResources {
+            layout: &texture_bind_group_layout,
+            textures: &scene.textures,
+            white_view: &white_view,
+            sampler: &sampler,
+        };
         let meshes = scene
             .meshes
             .iter()
-            .map(|mesh| create_mesh(&device, mesh, &model_bind_group_layout))
+            .map(|mesh| {
+                create_mesh(
+                    &device,
+                    &queue,
+                    mesh,
+                    &model_bind_group_layout,
+                    &texture_resources,
+                )
+            })
             .collect::<Vec<_>>();
 
         let (line_buffer, line_count) = if scene.lines.is_empty() {
@@ -292,6 +417,7 @@ impl Renderer {
             config,
             depth_view,
             mesh_pipeline,
+            outline_pipeline,
             line_pipeline,
             camera_buffer,
             camera_bind_group,
@@ -366,10 +492,22 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            pass.set_pipeline(&self.mesh_pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_pipeline(&self.outline_pipeline);
+            for mesh in &self.meshes {
+                let Some(outline) = &mesh.outline else {
+                    continue;
+                };
+                pass.set_bind_group(1, &mesh.model_bind_group, &[]);
+                pass.set_vertex_buffer(0, outline.vertex_buffer.slice(..));
+                pass.set_index_buffer(outline.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..outline.index_count, 0, 0..1);
+            }
+
+            pass.set_pipeline(&self.mesh_pipeline);
             for mesh in &self.meshes {
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
+                pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -440,8 +578,10 @@ fn create_surface(
 
 fn create_mesh(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     mesh: &MeshData,
     model_bind_group_layout: &wgpu::BindGroupLayout,
+    texture_resources: &MeshTextureResources<'_>,
 ) -> GpuMesh {
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{} vertices", mesh.name)),
@@ -469,13 +609,139 @@ fn create_mesh(
             resource: model_buffer.as_entire_binding(),
         }],
     });
+
+    let owned_texture;
+    let texture_view = if let Some(index) = mesh.texture {
+        if let Some(texture) = texture_resources.textures.get(index) {
+            owned_texture = create_scene_texture(device, queue, texture, &mesh.name);
+            &owned_texture
+        } else {
+            texture_resources.white_view
+        }
+    } else {
+        texture_resources.white_view
+    };
+    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(&format!("{} texture bind group", mesh.name)),
+        layout: texture_resources.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(texture_resources.sampler),
+            },
+        ],
+    });
+
+    let outline = mesh.outline.as_ref().map(|outline| {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{} outline vertices", mesh.name)),
+            contents: bytemuck::cast_slice(&outline.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{} outline indices", mesh.name)),
+            contents: bytemuck::cast_slice(&outline.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        GpuOutline {
+            vertex_buffer,
+            index_buffer,
+            index_count: outline.indices.len() as u32,
+        }
+    });
+
     GpuMesh {
         vertex_buffer,
         index_buffer,
         index_count: mesh.indices.len() as u32,
         model_buffer,
         model_bind_group,
+        texture_bind_group,
+        outline,
     }
+}
+
+fn create_white_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("white texture"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[255, 255, 255, 255],
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+fn create_scene_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &SceneTexture,
+    label: &str,
+) -> wgpu::TextureView {
+    let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("{label} texture")),
+        size: wgpu::Extent3d {
+            width: texture.width,
+            height: texture.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &gpu_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &texture.rgba8,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(texture.width * 4),
+            rows_per_image: Some(texture.height),
+        },
+        wgpu::Extent3d {
+            width: texture.width,
+            height: texture.height,
+            depth_or_array_layers: 1,
+        },
+    );
+    gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 fn camera_uniform(camera: &Camera, width: u32, height: u32) -> CameraUniform {

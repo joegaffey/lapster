@@ -252,6 +252,30 @@ physics. Wheel placement bugs become much harder to diagnose once the car is mov
 **Fail action:** Do not start real car or track work until the synthetic scene is stable.
 Most coordinate, collision, and physics-mapping bugs surface here.
 
+### CP4.5: Toon style vertical slice
+
+**Indicative timebox:** 1–2 days.
+
+**Goal:** Validate the technical-blueprint/papercraft look in the forward renderer before
+converting real assets.
+
+**Status:** Done.
+
+**Tasks:**
+
+- Add a quantized toon ramp and rim light to the mesh shader.
+- Generate welded outline hulls from split-normal meshes and render an inverted-hull pass.
+- Add optional UV/base-color texture sampling with a white fallback.
+- Add a generated gauge/sign texture and a textured synthetic sign.
+- Keep all work in the forward pass; no post-processing or screen-space outlines.
+- Verify WebGPU and WebGL2 paths.
+
+**Exit criteria:**
+
+- Synthetic car and walls have stable object-space outlines.
+- The textured sign samples correctly with no color-space errors.
+- No new page/console errors on WebGPU or WebGL2.
+
 ## 6. Real Asset Checkpoints
 
 ### CP5: Real car model and physics

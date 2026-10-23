@@ -4,7 +4,7 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 pub const MAGIC: [u8; 4] = *b"LSIM";
-pub const SCHEMA_VERSION: u16 = 1;
+pub const SCHEMA_VERSION: u16 = 3;
 pub const PACK_FORMAT_VERSION: u16 = 1;
 pub const PACK_HEADER_SIZE: usize = 64;
 
@@ -852,6 +852,8 @@ pub struct MaterialRef {
     pub metallic: f32,
     pub roughness: f32,
     pub base_color_texture: Option<u32>,
+    #[serde(default)]
+    pub outline: bool,
 }
 
 #[derive(
@@ -870,6 +872,9 @@ pub struct TextureRef {
     pub name: String,
     pub mime: String,
     pub hash: [u8; 32],
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
 }
 
 #[derive(
@@ -887,6 +892,7 @@ pub struct MeshBuffers {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
+    pub colors: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
 }
 

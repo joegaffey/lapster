@@ -471,7 +471,8 @@
         ],
         "metallic": 0.2,
         "roughness": 0.35,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": true
       },
       {
         "name": "tire",
@@ -483,7 +484,8 @@
         ],
         "metallic": 0.0,
         "roughness": 0.9,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": true
       },
       {
         "name": "interior",
@@ -495,7 +497,8 @@
         ],
         "metallic": 0.0,
         "roughness": 0.8,
-        "base_color_texture": null
+        "base_color_texture": null,
+        "outline": true
       }
     ],
     "textures": [],

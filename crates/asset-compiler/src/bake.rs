@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::mesh::{bounds, build_box, build_cylinder, build_plane, merge_bounds};
 use crate::source::{
-    validate_source_header, CarSource, CollisionPrimitive, Primitive, TrackSource,
+    validate_source_header, CarSource, CollisionPrimitive, Primitive, TextureSource, TrackSource,
 };
 
 const CHUNK_ALIGN: usize = 64;
@@ -87,6 +87,113 @@ pub fn bake_car(dir: &Path) -> Result<Vec<u8>> {
     write_pack(manifest, chunks)
 }
 
+pub fn bake_car_glb(path: &Path) -> Result<Vec<u8>> {
+    let source_bytes =
+        fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let imported = crate::glb::import_car(path)?;
+    let statistics = stats(
+        &imported.visual.meshes,
+        &imported.visual.materials,
+        &imported.visual.textures,
+        &imported.visual.mesh_buffers,
+    );
+    let physics_bytes = archive(&imported.physics)?;
+    let visual_bytes = archive(&imported.visual)?;
+    let chunks = vec![
+        ChunkSpec {
+            kind: ChunkKind::Physics,
+            bytes: physics_bytes,
+        },
+        ChunkSpec {
+            kind: ChunkKind::Visual,
+            bytes: visual_bytes,
+        },
+    ];
+    let id = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("imported-car")
+        .to_string();
+    let manifest = AssetManifest {
+        magic: MAGIC,
+        schema_version: SCHEMA_VERSION,
+        kind: AssetKind::Car,
+        id,
+        source_hash: sha256(&source_bytes),
+        units: ENGINE_UNITS,
+        frame: ENGINE_FRAME,
+        bounds: imported.bounds,
+        chunks: Vec::new(),
+        entrypoints: EntryPoints {
+            physics: Some(0),
+            visual: Some(1),
+            collision: None,
+            metadata: None,
+            audio: None,
+            texture: None,
+        },
+        stats: statistics,
+        warnings: imported.warnings,
+    };
+
+    write_pack(manifest, chunks)
+}
+
+pub fn bake_ac_track(dir: &Path) -> Result<Vec<u8>> {
+    let imported = crate::ac_track::import_track(dir)?;
+    let statistics = stats(
+        &imported.visual.meshes,
+        &imported.visual.materials,
+        &imported.visual.textures,
+        &imported.visual.mesh_buffers,
+    );
+    let visual_bytes = archive(&imported.visual)?;
+    let collision_bytes = archive(&imported.collision)?;
+    let metadata_bytes = archive(&imported.metadata)?;
+    let chunks = vec![
+        ChunkSpec {
+            kind: ChunkKind::Visual,
+            bytes: visual_bytes,
+        },
+        ChunkSpec {
+            kind: ChunkKind::Collision,
+            bytes: collision_bytes,
+        },
+        ChunkSpec {
+            kind: ChunkKind::Metadata,
+            bytes: metadata_bytes,
+        },
+    ];
+    let id = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("ac-track")
+        .to_string();
+    let manifest = AssetManifest {
+        magic: MAGIC,
+        schema_version: SCHEMA_VERSION,
+        kind: AssetKind::Track,
+        id,
+        source_hash: tree_hash(dir)?,
+        units: ENGINE_UNITS,
+        frame: ENGINE_FRAME,
+        bounds: imported.bounds,
+        chunks: Vec::new(),
+        entrypoints: EntryPoints {
+            physics: None,
+            visual: Some(0),
+            collision: Some(1),
+            metadata: Some(2),
+            audio: None,
+            texture: None,
+        },
+        stats: statistics,
+        warnings: imported.warnings,
+    };
+
+    write_pack(manifest, chunks)
+}
+
 pub fn bake_track(dir: &Path) -> Result<Vec<u8>> {
     let source_path = dir.join("track.json");
     let source_bytes = fs::read(&source_path)
@@ -153,10 +260,202 @@ pub fn bake_track(dir: &Path) -> Result<Vec<u8>> {
     write_pack(manifest, chunks)
 }
 
+fn build_textures(source: &[TextureSource]) -> Result<Vec<TextureRef>> {
+    let mut textures = Vec::with_capacity(source.len());
+    for texture in source {
+        if texture.width == 0 || texture.height == 0 {
+            bail!("texture {} has zero dimensions", texture.name);
+        }
+        if texture.width > 2048 || texture.height > 2048 {
+            bail!("texture {} exceeds the 2048px budget", texture.name);
+        }
+        let rgba8 = generate_texture(&texture.generator, texture.width, texture.height)?;
+        textures.push(TextureRef {
+            name: texture.name.clone(),
+            mime: texture.mime.clone(),
+            hash: sha256(&rgba8),
+            width: texture.width,
+            height: texture.height,
+            rgba8,
+        });
+    }
+    Ok(textures)
+}
+
+fn validate_materials(materials: &[MaterialRef], texture_count: usize) -> Result<()> {
+    for material in materials {
+        if let Some(index) = material.base_color_texture {
+            if index as usize >= texture_count {
+                bail!(
+                    "material {} references missing texture {}",
+                    material.name,
+                    index
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn generate_texture(generator: &str, width: u32, height: u32) -> Result<Vec<u8>> {
+    match generator {
+        "gauge" => Ok(generate_gauge(width, height)),
+        "checker" => Ok(generate_checker(width, height)),
+        other => bail!("unsupported texture generator {other}"),
+    }
+}
+
+fn generate_checker(width: u32, height: u32) -> Vec<u8> {
+    let mut pixels = vec![0u8; width as usize * height as usize * 4];
+    let cell = (width.min(height) / 8).max(1);
+    for y in 0..height {
+        for x in 0..width {
+            let bright = ((x / cell) + (y / cell)) & 1 == 0;
+            let color = if bright {
+                [220, 230, 255, 255]
+            } else {
+                [35, 72, 120, 255]
+            };
+            set_pixel(&mut pixels, width, x, y, color);
+        }
+    }
+    pixels
+}
+
+fn generate_gauge(width: u32, height: u32) -> Vec<u8> {
+    let mut pixels = vec![0u8; width as usize * height as usize * 4];
+    let w = width as f32;
+    let h = height as f32;
+    let cx = w * 0.5;
+    let cy = h * 0.52;
+    let radius = w.min(h) * 0.37;
+    let border = (w.min(h) * 0.045).max(2.0);
+    for y in 0..height {
+        for x in 0..width {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let edge = fx < border || fy < border || fx > w - border || fy > h - border;
+            let distance = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt();
+            let mut color = if edge {
+                [214, 229, 255, 255]
+            } else {
+                [17, 29, 46, 255]
+            };
+            if distance <= radius + 1.5 && distance >= radius - 1.5 {
+                color = [120, 190, 255, 255];
+            }
+            if distance < radius - 5.0 {
+                color = [9, 16, 27, 255];
+            }
+            set_pixel(&mut pixels, width, x, y, color);
+        }
+    }
+    for tick in 0..9 {
+        let angle = -2.356 + tick as f32 * 0.589;
+        let inner = radius * 0.72;
+        let outer = radius * 0.92;
+        draw_line(
+            &mut pixels,
+            width,
+            (cx + angle.cos() * inner, cy + angle.sin() * inner),
+            (cx + angle.cos() * outer, cy + angle.sin() * outer),
+            [210, 232, 255, 255],
+            2,
+        );
+    }
+    draw_line(
+        &mut pixels,
+        width,
+        (cx, cy),
+        (
+            cx + 0.62f32.cos() * radius * 0.66,
+            cy + 0.62f32.sin() * radius * 0.66,
+        ),
+        [255, 102, 72, 255],
+        3,
+    );
+    draw_circle(
+        &mut pixels,
+        width,
+        height,
+        cx,
+        cy,
+        3.0,
+        [255, 190, 120, 255],
+    );
+    pixels
+}
+
+fn set_pixel(pixels: &mut [u8], width: u32, x: u32, y: u32, color: [u8; 4]) {
+    if x >= width {
+        return;
+    }
+    let height = pixels.len() as u32 / (width * 4);
+    if y >= height {
+        return;
+    }
+    let index = ((y * width + x) * 4) as usize;
+    pixels[index..index + 4].copy_from_slice(&color);
+}
+
+fn draw_line(
+    pixels: &mut [u8],
+    width: u32,
+    from: (f32, f32),
+    to: (f32, f32),
+    color: [u8; 4],
+    thickness: u32,
+) {
+    let (x0, y0) = from;
+    let (x1, y1) = to;
+    let steps = ((x1 - x0).abs().max((y1 - y0).abs())).ceil() as u32 + 1;
+    for step in 0..=steps {
+        let t = step as f32 / steps as f32;
+        let x = x0 + (x1 - x0) * t;
+        let y = y0 + (y1 - y0) * t;
+        for oy in 0..thickness {
+            for ox in 0..thickness {
+                set_pixel(
+                    pixels,
+                    width,
+                    (x.round() as i32 + ox as i32 - 1).max(0) as u32,
+                    (y.round() as i32 + oy as i32 - 1).max(0) as u32,
+                    color,
+                );
+            }
+        }
+    }
+}
+
+fn draw_circle(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    color: [u8; 4],
+) {
+    let min_x = (cx - radius).floor().max(0.0) as u32;
+    let max_x = (cx + radius).ceil().min(width as f32 - 1.0) as u32;
+    let min_y = (cy - radius).floor().max(0.0) as u32;
+    let max_y = (cy + radius).ceil().min(height as f32 - 1.0) as u32;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let distance = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            if distance <= radius {
+                set_pixel(pixels, width, x, y, color);
+            }
+        }
+    }
+}
+
 fn build_car_visual(
     source: &crate::source::CarVisualSource,
 ) -> Result<(CarVisual, Aabb, AssetStats)> {
     let material_indices = material_indices(&source.materials);
+    let textures = build_textures(&source.textures)?;
+    validate_materials(&source.materials, textures.len())?;
     let mut meshes = Vec::with_capacity(source.primitives.len());
     let mut mesh_buffers = Vec::with_capacity(source.primitives.len());
     let mut total = None;
@@ -191,7 +490,7 @@ fn build_car_visual(
     let visual = CarVisual {
         meshes,
         materials: source.materials.clone(),
-        textures: source.textures.clone(),
+        textures,
         mesh_buffers,
         body: source.body,
         wheels,
@@ -210,6 +509,8 @@ fn build_track_visual(
     source: &crate::source::TrackVisualSource,
 ) -> Result<(TrackVisual, Aabb, AssetStats)> {
     let material_indices = material_indices(&source.materials);
+    let textures = build_textures(&source.textures)?;
+    validate_materials(&source.materials, textures.len())?;
     let mut meshes = Vec::with_capacity(source.primitives.len());
     let mut mesh_buffers = Vec::with_capacity(source.primitives.len());
     let mut total = None;
@@ -229,7 +530,7 @@ fn build_track_visual(
     let visual = TrackVisual {
         meshes,
         materials: source.materials.clone(),
-        textures: source.textures.clone(),
+        textures,
         mesh_buffers,
         instances: Vec::new(),
     };
@@ -440,6 +741,37 @@ fn empty_bounds() -> Aabb {
         min: [0.0; 3],
         max: [0.0; 3],
     }
+}
+
+fn tree_hash(dir: &Path) -> Result<[u8; 32]> {
+    let mut files = Vec::new();
+    collect_source_files(dir, &mut files)?;
+    files.sort();
+    let mut hasher = Sha256::new();
+    for path in files {
+        let relative = path.strip_prefix(dir).unwrap_or(&path);
+        let relative = relative.to_string_lossy();
+        hasher.update(relative.as_bytes());
+        hasher.update([0]);
+        hasher.update(fs::read(&path)?);
+        hasher.update([0]);
+    }
+    let digest = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&digest);
+    Ok(hash)
+}
+
+fn collect_source_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_source_files(&path, files)?;
+        } else if path.extension().and_then(|value| value.to_str()) != Some("sima") {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 pub fn inspect(bytes: &[u8]) -> Result<()> {

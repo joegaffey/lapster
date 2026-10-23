@@ -102,7 +102,7 @@ test("track fixture follows the source contract", async () => {
   const visualIds = new Set(
     track.visual.primitives.map((primitive: { id: string }) => primitive.id),
   );
-  for (const id of ["ground", "wall_left", "wall_right", "start_line", "axis_x", "axis_y", "axis_neg_z"]) {
+  for (const id of ["ground", "wall_left", "wall_right", "start_line", "gauge_sign", "axis_x", "axis_y", "axis_neg_z"]) {
     assert.equal(visualIds.has(id), true);
   }
 
@@ -112,6 +112,14 @@ test("track fixture follows the source contract", async () => {
   for (const primitive of track.visual.primitives) {
     assert.equal(materialNames.has(primitive.material), true);
   }
+
+  assert.equal(track.visual.textures.length, 1);
+  assert.equal(track.visual.textures[0].generator, "gauge");
+  assert.equal(
+    track.visual.materials.find((material: { name: string }) => material.name === "sign")
+      .base_color_texture,
+    0,
+  );
 
   const spawn = track.metadata.spawns[0];
   assert.deepEqual(spawn.position, [0.0, 0.0, 0.0]);

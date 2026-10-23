@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
-use sim_types::{AssetManifest, MeshBuffers, TrackCollision, TrackMetadata, TrackVisual};
+use sim_types::{
+    AssetManifest, MeshBuffers, TextureRef, TrackCollision, TrackMetadata, TrackVisual,
+};
 
 use crate::camera::Camera;
 
@@ -11,6 +15,27 @@ pub struct MeshVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub color: [f32; 3],
+    pub uv: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct OutlineVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+#[derive(Debug, Clone)]
+pub struct OutlineMesh {
+    pub vertices: Vec<OutlineVertex>,
+    pub indices: Vec<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SceneTexture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
 }
 
 #[repr(C)]
@@ -25,6 +50,8 @@ pub struct MeshData {
     pub vertices: Vec<MeshVertex>,
     pub indices: Vec<u32>,
     pub model: Mat4,
+    pub texture: Option<usize>,
+    pub outline: Option<OutlineMesh>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +79,7 @@ pub struct CarRig {
 
 pub struct Scene {
     pub meshes: Vec<MeshData>,
+    pub textures: Vec<SceneTexture>,
     pub lines: Vec<LineVertex>,
     pub camera: Camera,
     pub debug_info: String,
@@ -84,12 +112,17 @@ impl Scene {
             ));
         }
 
+        let textures = visual
+            .textures
+            .iter()
+            .map(scene_texture)
+            .collect::<Result<Vec<_>, _>>()?;
         let mut meshes = Vec::with_capacity(visual.meshes.len());
         let mut stats = SceneStats {
             vertices: 0,
             triangles: 0,
             draw_calls: 0,
-            textures: visual.textures.len() as u32,
+            textures: textures.len() as u32,
             collision_triangles: (collision.indices.len() / 3) as u32,
         };
 
@@ -97,7 +130,20 @@ impl Scene {
             if buffers.positions.is_empty() || buffers.indices.is_empty() {
                 continue;
             }
+            let material = visual.materials.get(mesh_ref.material as usize);
             let color = material_color(visual, mesh_ref.material as usize);
+            let texture = material
+                .and_then(|material| material.base_color_texture)
+                .map(|index| index as usize);
+            if let Some(index) = texture {
+                if index >= textures.len() {
+                    return Err(format!(
+                        "mesh {} references missing texture {}",
+                        mesh_ref.name, index
+                    ));
+                }
+            }
+            let outline = material.map(|material| material.outline).unwrap_or(false);
             let vertices = build_vertices(buffers, color);
             for index in &buffers.indices {
                 if *index as usize >= vertices.len() {
@@ -117,6 +163,12 @@ impl Scene {
                 vertices,
                 indices: buffers.indices.clone(),
                 model: Mat4::IDENTITY,
+                texture,
+                outline: if outline {
+                    build_outline(buffers)
+                } else {
+                    None
+                },
             });
         }
 
@@ -134,6 +186,8 @@ impl Scene {
                 "triangles": stats.triangles,
                 "drawCalls": stats.draw_calls,
                 "textures": stats.textures,
+                "texturedMeshes": meshes.iter().filter(|mesh| mesh.texture.is_some()).count(),
+                "outlinedMeshes": meshes.iter().filter(|mesh| mesh.outline.is_some()).count(),
                 "collisionTriangles": stats.collision_triangles,
             },
             "bounds": { "min": manifest.bounds.min, "max": manifest.bounds.max },
@@ -166,6 +220,7 @@ impl Scene {
 
         Ok(Scene {
             meshes,
+            textures,
             lines,
             camera,
             debug_info,
@@ -188,9 +243,84 @@ pub(crate) fn build_vertices(buffers: &MeshBuffers, color: [f32; 3]) -> Vec<Mesh
                 .get(index)
                 .copied()
                 .unwrap_or([0.0, 1.0, 0.0]),
-            color,
+            color: buffers.colors.get(index).copied().unwrap_or(color),
+            uv: buffers.uvs.get(index).copied().unwrap_or([0.0, 0.0]),
         })
         .collect()
+}
+
+pub(crate) fn scene_texture(texture: &TextureRef) -> Result<SceneTexture, String> {
+    let expected = (texture.width as usize)
+        .checked_mul(texture.height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| format!("texture {} dimensions overflow", texture.name))?;
+    if texture.width == 0 || texture.height == 0 {
+        return Err(format!("texture {} has zero dimensions", texture.name));
+    }
+    if texture.rgba8.len() != expected {
+        return Err(format!(
+            "texture {} has {} bytes; expected {expected}",
+            texture.name,
+            texture.rgba8.len()
+        ));
+    }
+    Ok(SceneTexture {
+        width: texture.width,
+        height: texture.height,
+        rgba8: texture.rgba8.clone(),
+    })
+}
+
+pub(crate) fn build_outline(buffers: &MeshBuffers) -> Option<OutlineMesh> {
+    if buffers.positions.is_empty() || buffers.indices.is_empty() {
+        return None;
+    }
+    let mut welded = Vec::with_capacity(buffers.positions.len());
+    let mut sums = Vec::<[f32; 3]>::with_capacity(buffers.positions.len());
+    let mut map = HashMap::with_capacity(buffers.positions.len());
+    let mut remap = Vec::with_capacity(buffers.positions.len());
+
+    for (index, position) in buffers.positions.iter().enumerate() {
+        let key = (
+            (position[0] * 10_000.0).round() as i64,
+            (position[1] * 10_000.0).round() as i64,
+            (position[2] * 10_000.0).round() as i64,
+        );
+        let welded_index = *map.entry(key).or_insert_with(|| {
+            welded.push(OutlineVertex {
+                position: *position,
+                normal: [0.0, 1.0, 0.0],
+            });
+            sums.push([0.0; 3]);
+            welded.len() - 1
+        });
+        let normal = buffers
+            .normals
+            .get(index)
+            .copied()
+            .unwrap_or([0.0, 1.0, 0.0]);
+        sums[welded_index][0] += normal[0];
+        sums[welded_index][1] += normal[1];
+        sums[welded_index][2] += normal[2];
+        remap.push(welded_index as u32);
+    }
+
+    for (vertex, sum) in welded.iter_mut().zip(sums.iter()) {
+        let length = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
+        if length > 1e-6 {
+            vertex.normal = [sum[0] / length, sum[1] / length, sum[2] / length];
+        }
+    }
+
+    let indices = buffers
+        .indices
+        .iter()
+        .map(|index| remap.get(*index as usize).copied().unwrap_or(0))
+        .collect();
+    Some(OutlineMesh {
+        vertices: welded,
+        indices,
+    })
 }
 
 pub(crate) fn material_color(visual: &TrackVisual, index: usize) -> [f32; 3] {
@@ -373,4 +503,44 @@ pub(crate) fn push_line(
         position: to,
         color,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outline_welds_duplicate_positions() {
+        let buffers = MeshBuffers {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 6],
+            uvs: vec![[0.0, 0.0]; 6],
+            colors: Vec::new(),
+            indices: vec![0, 1, 2, 3, 4, 5],
+        };
+        let outline = build_outline(&buffers).expect("outline");
+        assert_eq!(outline.vertices.len(), 3);
+        assert_eq!(outline.indices, vec![0, 1, 2, 0, 1, 2]);
+        assert_eq!(outline.vertices[0].normal, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn rejects_texture_with_wrong_byte_count() {
+        let texture = TextureRef {
+            name: String::from("bad"),
+            mime: String::from("image/x-rgba8"),
+            hash: [0; 32],
+            width: 2,
+            height: 2,
+            rgba8: vec![0; 15],
+        };
+        assert!(scene_texture(&texture).is_err());
+    }
 }

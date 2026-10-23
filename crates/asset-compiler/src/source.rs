@@ -1,8 +1,7 @@
 use anyhow::{bail, Result};
 use serde::Deserialize;
 use sim_types::{
-    CarPhysics, InstanceRef, MaterialRef, MeshRef, NodeTransform, TextureRef, TrackMetadata,
-    WheelVisual,
+    CarPhysics, InstanceRef, MaterialRef, MeshRef, NodeTransform, TrackMetadata, WheelVisual,
 };
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +94,15 @@ impl CollisionPrimitive {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TextureSource {
+    pub name: String,
+    pub mime: String,
+    pub generator: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CarVisualSource {
     pub body: NodeTransform,
     pub wheels: Vec<WheelVisual>,
@@ -103,7 +111,7 @@ pub struct CarVisualSource {
     pub _meshes: Vec<MeshRef>,
     pub materials: Vec<MaterialRef>,
     #[serde(default)]
-    pub textures: Vec<TextureRef>,
+    pub textures: Vec<TextureSource>,
     pub primitives: Vec<Primitive>,
 }
 
@@ -122,7 +130,7 @@ pub struct CarSource {
 pub struct TrackVisualSource {
     pub materials: Vec<MaterialRef>,
     #[serde(default)]
-    pub textures: Vec<TextureRef>,
+    pub textures: Vec<TextureSource>,
     pub primitives: Vec<Primitive>,
     #[serde(default, rename = "meshes")]
     pub _meshes: Vec<MeshRef>,

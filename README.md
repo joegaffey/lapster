@@ -10,10 +10,13 @@ It is not a finished game or a complete Assetto Corsa replacement.
 
 Live demo: **https://joegaffey.com/lapster/**
 
-- **Drive** — drivable synthetic car on the synthetic track: throttle, brake, auto reverse,
-  steering, gears, chase camera, wheel loads, and 500 Hz physics.
-- **Garage** — car on track with wheel steering/spin controls and debug bounds.
-- **Track viewer** — track render, spawn point, bounds, axes, and collision-surface overlay.
+- **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, auto reverse, steering,
+  gears, chase camera, wheel loads, and 500 Hz physics.
+- **Garage** — RX-7 on the skidpad with wheel steering/spin controls and debug bounds.
+- **Track viewer** — skidpad render, spawn point, bounds, axes, and collision-surface overlay.
+
+The demos load these assets by default; no query parameters are required. Custom packs can
+still be selected with `?car=` and `?track=`.
 
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 GitHub Pages cannot send the COOP/COEP headers required for `SharedArrayBuffer`; the current
@@ -22,7 +25,8 @@ set those headers.
 
 ## Current features
 
-- Synthetic car and track fixtures with deterministic baking and validation.
+- Synthetic fixtures plus default GLB car and AC track assets with deterministic baking and
+  validation.
 - Versioned asset packs: JSON manifest, aligned rkyv chunks, SHA-256 chunk verification.
 - 500 Hz fixed-step vehicle physics:
   - raycast suspension,
@@ -104,11 +108,19 @@ The visual direction is a forward-rendered technical/papercraft toon style with 
 geometry, vertex colors, object-space outlines, and textures only where they are the
 practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-style.md).
 
+## Credits
+
+- **Mazda RX-7** by IvOfficial, CC BY 3.0, via
+  [Poly Pizza](https://poly.pizza/m/SnIoWlh7S2). The import removes the source logo mesh;
+  Mazda and RX-7 are trademarks of their respective owners.
+- **Skidpad 0.5** is a temporary demo track. The source archive contained no license
+  metadata; replace it or confirm redistribution rights before a public/commercial release.
+
 ## Status and roadmap
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
-in [`PLAN.md`](PLAN.md). Next up: real car import (glTF/`.ini`), real track import, texture
-pipeline, worker/SAB physics, audio, and force feedback.
+in [`PLAN.md`](PLAN.md). Next up: AC `.ini` physics mapping, track texture decoding,
+collision/wall policy, worker/SAB physics, audio, and force feedback.
 
 ## License
 

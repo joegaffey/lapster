@@ -18,6 +18,7 @@ pub fn build_box(size: [f32; 3], position: [f32; 3]) -> MeshBuffers {
         positions: Vec::with_capacity(24),
         normals: Vec::with_capacity(24),
         uvs: Vec::with_capacity(24),
+        colors: Vec::new(),
         indices: Vec::with_capacity(36),
     };
 
@@ -93,6 +94,7 @@ pub fn build_plane(size: [f32; 2], position: [f32; 3]) -> MeshBuffers {
         positions: Vec::with_capacity(4),
         normals: Vec::with_capacity(4),
         uvs: Vec::with_capacity(4),
+        colors: Vec::new(),
         indices: vec![0, 1, 2, 0, 2, 3],
     };
 
@@ -134,6 +136,7 @@ pub fn build_cylinder(
         positions: Vec::with_capacity(segments * 4 + 2),
         normals: Vec::with_capacity(segments * 4 + 2),
         uvs: Vec::with_capacity(segments * 4 + 2),
+        colors: Vec::new(),
         indices: Vec::with_capacity(segments * 12),
     };
 

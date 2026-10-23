@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-23
 Repository root: the directory containing this file
-Current phase: **CP0-CP4 complete; next is CP5 (real car model and physics)**
+Current phase: **CP5/CP6 in progress — GLB car and AC track imports are the demo defaults**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -81,6 +81,11 @@ Toolchain setup scripts:
 | CP2 — track render slice | Done | `sim-render`, `web/track-viewer`, screenshot test, cache reload test |
 | CP3 — car render slice | Done | `web/garage`, body/wheels/steering wheel, wheel controls, screenshot test |
 | CP4 — drivable slice | Done | `sim-core`, 500 Hz physics, collider, suspension, Pacejka tires, engine/brakes, `web/drive`, soak test |
+| CP4.5 — toon style slice | Done | Toon ramp/rim shader, welded inverted-hull outlines, UV/base-color texture path, generated gauge sign, WebGPU + WebGL2 verified |
+| CP5a — GLB car import | Working | `asset-compiler bake-glb`, node transform flattening, wheel extraction, palette-to-vertex-colour bake, generic physics, garage/drive query URLs |
+| CP6a — AC track import | Working | `asset-compiler bake-ac-track`, KN5 node/material parser, `surfaces.ini`, `AC_START_*` spawn, drivable collision subset, track/garage/drive query URLs |
+| Collider BVH | Done | Median-split BVH over collision triangles; shared ray and sphere queries; Skidpad p99 4.5 ms → 0.2 ms |
+| Default demo assets | Done | RX-7 and Skidpad 0.5 checked in; no query parameters required; custom `?car=`/`?track=` still supported |
 | Renderer upgrade | Done | wgpu 30.0.1, WebGPU (`BrowserWebGpu`), WebGL2 fallback, sRGB output fix, wasm-opt/LTO pipeline |
 | GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
 | GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/` |
@@ -104,48 +109,85 @@ Toolchain setup scripts:
   - backend: `BrowserWebGpu` in Chromium,
   - format: `Bgra8Unorm`,
   - manual sRGB encoding in the shader; sky/ground match the pre-upgrade look.
-- Wasm: **2.8 MB raw / 1.09 MB gzip**.
+- Forward toon renderer:
+  - quantized diffuse ramp and rim light,
+  - object-space inverted-hull outlines with welded/averaged normals,
+  - optional UV/base-color textures with a 1x1 white fallback,
+  - generated 64x64 gauge texture on the synthetic track sign,
+  - asset schema version 2.
+- GLB car import:
+  - `cargo run -p asset-compiler -- bake-glb <car.glb>`
+  - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.
+  - Supports custom `?car=`/`?track=` paths in the garage and drive viewers.
+  - First local fixture: Mazda RX-7, 18,322 triangles after removing logo geometry.
+- AC track import:
+  - `cargo run -p asset-compiler -- bake-ac-track <track-dir>`
+  - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
+    drivable collision subset.
+  - First local fixture: Skidpad 0.5, 76,545 visual triangles, 8,214 collision triangles,
+    30 draw calls.
+  - The outer ANELLO ring is visual-only, textures are not imported, and collision is
+    currently limited to the central pad/ASP surfaces.
+- Wasm: **2.81 MiB raw / 1.05 MiB gzip**.
 - Local warm startup measured at roughly **300–480 ms** in headless Chromium.
 
 ## Verified checks
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 21 tests
+- `cargo test --workspace` — 24 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 7 Playwright tests
+- `npm run test:viewer` — 8 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
+- WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
+- Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
+  WebGL2 without page/console errors.
+- Manual AC track check: Skidpad 0.5 imported, rendered in the track/garage viewers, and
+  driven with the Mazda RX-7 on WebGPU without page/console errors.
 
 ## Known issues / carry-forward
 
 - **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
 - Physics currently runs on the **main thread**, not the worker/SAB topology in `SPEC.md`.
-- Collider is a linear triangle scan; real tracks need a BVH or Rapier/Jolt collision backend.
+- Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
-- Renderer has **no textures/UV sampling**, no culling, LOD, instancing, or texture compression yet.
-- Asset cache is keyed by URL plus a manual `?v=cp4.2` query, not by content hash.
+- Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
+- GLB importer currently keeps full mesh density, uses generic physics defaults, ignores glTF
+  extensions beyond baseColor, and has no decimation or steering/interior extraction.
+- Imported body paint is currently forced to a demo red; source material colours are baked
+  for other parts.
+- AC track importer has no texture decoding, uses approximated material colours, skips
+  trees/fences, has no wall collision, and only includes the central pad/ASP surfaces in
+  collision.
+- The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is
+  checked in as a temporary demo fixture; confirm redistribution rights or replace it before
+  a public/commercial release.
+- Asset cache is keyed by URL plus a manual `?v=cp4.5` query, not by content hash.
 - Real car/track import (`.kn5`, `.ini`, glTF) is not implemented.
 - No audio, HID, or FFB integration yet.
 - `web/pkg`, generated page JS, `web/.cache`, `web/test-results`, and `web/node_modules` are generated/ignored.
 - Temporary caches and local server processes are not part of the repository and do not survive a machine/session restart.
 - Playwright screenshot baselines are Linux/Chromium-specific and are skipped in CI.
+- Headless Playwright captures the WebGPU canvas as white in this environment; renderer
+  stats and debug counters are asserted, and the flat-screen look was checked manually.
 - GitHub Pages cannot send COOP/COEP, so the current main-thread demo works there but the
   planned SharedArrayBuffer worker mode will need a different host or custom headers.
 - The live Pages URL is https://joegaffey.com/lapster/ (the github.io URL redirects there).
 
 ## Next steps
 
-1. **CP5 — real car**: glTF car importer, `.ini` physics mapping, validation, run on the
-   synthetic track, with the toon/papercraft style from `docs/art-style.md`.
-   - Forward toon shading, flat normals, vertex colors, inverted-hull outlines.
-   - Textures only for gauges, signs, decals, and small sprites.
+1. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
+   wheel geometry cleanup, and an actual `.ini`/physics source instead of generic defaults.
+   - Add a simple steering-wheel/interior placeholder.
+   - Add real image decoding/KTX2 only where textures are the right choice.
    - WebXR remains a later phase.
-2. **CP6 — real track**: `.kn5`/glTF import, surfaces/collision, spawn/camera metadata, performance measurement.
+2. **CP6 — real track**: finish the AC path with texture decoding (DDS/KTX2 where useful),
+   wall/fence collision policy, outer-ring collision or streaming, and performance measurement.
 3. Move physics to a dedicated worker with the SAB snapshot/input/FFB contract.
 4. Replace per-frame JSON telemetry with typed arrays/SAB.
 5. Add content-hash cache invalidation.
-6. Add Rapier or Jolt only as a collision/query backend if the custom collider becomes a bottleneck.
+6. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
 7. Add audio and FFB/`webhid-wheel`.
 8. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
 

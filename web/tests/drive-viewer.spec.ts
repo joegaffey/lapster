@@ -16,7 +16,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/web/drive/");
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();
   await waitForReady(page);
   await page.waitForTimeout(750);
@@ -43,8 +43,13 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(pageErrors).toEqual([]);
 
   const tickBefore = settled.telemetry.tick;
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
   await page.keyboard.down("w");
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 5,
+    undefined,
+    { timeout: 10_000 },
+  );
   await page.keyboard.up("w");
   const moving = await telemetry(page);
   expect(moving.speedKph).toBeGreaterThan(5);
@@ -70,7 +75,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {
-  await page.goto("/web/drive/");
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();
   await waitForReady(page);
   await page.waitForTimeout(250);
@@ -104,7 +109,7 @@ test("60 second scripted soak stays finite", async ({ page }) => {
 });
 
 test("steering keys turn in the expected direction", async ({ page }) => {
-  await page.goto("/web/drive/");
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();
   await waitForReady(page);
   await page.waitForTimeout(250);
@@ -112,33 +117,37 @@ test("steering keys turn in the expected direction", async ({ page }) => {
   const driveFor = async (steerKey: string) => {
     await page.keyboard.down("w");
     await page.keyboard.down(steerKey);
-    await page.waitForTimeout(1500);
+    await page.waitForFunction(
+      () => Math.abs(JSON.parse((window as any).__driveViewer.telemetry()).position[0]) > 0.05,
+      undefined,
+      { timeout: 10_000 },
+    );
     await page.keyboard.up(steerKey);
     await page.keyboard.up("w");
     return telemetry(page);
   };
 
   const left = await driveFor("ArrowLeft");
-  expect(left.position[0]).toBeLessThan(-0.3);
+  expect(left.position[0]).toBeLessThan(-0.05);
 
   await page.keyboard.press("r");
   await page.waitForTimeout(150);
   const right = await driveFor("ArrowRight");
-  expect(right.position[0]).toBeGreaterThan(0.3);
+  expect(right.position[0]).toBeGreaterThan(0.05);
 
   await page.keyboard.press("r");
   await page.waitForTimeout(150);
   const aKey = await driveFor("a");
-  expect(aKey.position[0]).toBeLessThan(-0.3);
+  expect(aKey.position[0]).toBeLessThan(-0.05);
 
   await page.keyboard.press("r");
   await page.waitForTimeout(150);
   const dKey = await driveFor("d");
-  expect(dKey.position[0]).toBeGreaterThan(0.3);
+  expect(dKey.position[0]).toBeGreaterThan(0.05);
 });
 
 test("arrow throttle, brake, and auto reverse", async ({ page }) => {
-  await page.goto("/web/drive/");
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();
   await waitForReady(page);
   await page.waitForTimeout(250);

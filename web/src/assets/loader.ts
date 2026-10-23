@@ -9,6 +9,7 @@ import type {
 export const PACK_MAGIC = "LSIM";
 export const PACK_FORMAT_VERSION = 1;
 export const PACK_HEADER_SIZE = 64;
+export const ASSET_SCHEMA_VERSION = 3;
 
 const REQUIRED_ENTRYPOINTS: Record<string, ChunkKind[]> = {
   Car: ["Physics", "Visual"],
@@ -144,7 +145,7 @@ function validateManifest(manifest: AssetManifest, packLen: number): void {
   if (!Array.isArray(manifest.magic) || !equalBytes(manifest.magic, [76, 83, 73, 77])) {
     throw new PackLoadError("manifest magic does not match LSIM");
   }
-  if (manifest.schema_version !== 1) {
+  if (manifest.schema_version !== ASSET_SCHEMA_VERSION) {
     throw new PackLoadError(`unsupported manifest version ${manifest.schema_version}`);
   }
   if (manifest.kind !== "Car" && manifest.kind !== "Track") {
@@ -216,7 +217,7 @@ function validateChunk(chunk: ChunkRef, index: number, packLen: number): void {
   if (!Array.isArray(chunk.hash) || chunk.hash.length !== 32) {
     throw new PackLoadError(`chunk ${index} hash must contain 32 bytes`);
   }
-  if (chunk.schema_version !== 1) {
+  if (chunk.schema_version !== ASSET_SCHEMA_VERSION) {
     throw new PackLoadError(`chunk ${index} has unsupported version ${chunk.schema_version}`);
   }
   if (chunk.compression !== "None") {

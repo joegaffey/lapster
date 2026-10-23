@@ -10,7 +10,12 @@ declare global {
   }
 }
 
-const PACK_VERSION = "cp4.2";
+const PACK_VERSION = "cp6";
+const params = new URLSearchParams(window.location.search);
+const TRACK_URL =
+  params.get("track") ?? `../../fixtures/tracks/skidpad05/pack.sima?v=${PACK_VERSION}`;
+const CAR_URL =
+  params.get("car") ?? `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${PACK_VERSION}`;
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const asset = document.querySelector<HTMLElement>("#asset")!;
@@ -97,8 +102,8 @@ async function boot() {
 
   status.textContent = "loading packs";
   const [trackPack, carPack] = await Promise.all([
-    loadPack(`../../fixtures/tracks/minimal/pack.sima?v=${PACK_VERSION}`),
-    loadPack(`../../fixtures/cars/minimal/pack.sima?v=${PACK_VERSION}`),
+    loadPack(TRACK_URL),
+    loadPack(CAR_URL),
   ]);
 
   resizeCanvas();
