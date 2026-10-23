@@ -10,11 +10,24 @@ export async function setupPwa(): Promise<boolean> {
     return false;
   }
 
+  let alreadyAttempted = false;
   try {
-    await navigator.serviceWorker.register(SW_URL, {
-      scope: SW_SCOPE,
-      updateViaCache: "none",
-    });
+    alreadyAttempted = sessionStorage.getItem(RELOAD_KEY) === "1";
+  } catch {
+    alreadyAttempted = false;
+  }
+  if (alreadyAttempted && !window.crossOriginIsolated) {
+    return false;
+  }
+
+  try {
+    await Promise.race([
+      navigator.serviceWorker.register(SW_URL, {
+        scope: SW_SCOPE,
+        updateViaCache: "none",
+      }),
+      timeout(2500),
+    ]);
     await Promise.race([navigator.serviceWorker.ready, timeout(2500)]);
 
     if (window.crossOriginIsolated) {
@@ -36,13 +49,7 @@ export async function setupPwa(): Promise<boolean> {
       return false;
     }
 
-    let attempted = false;
-    try {
-      attempted = sessionStorage.getItem(RELOAD_KEY) === "1";
-    } catch {
-      attempted = false;
-    }
-    if (attempted) {
+    if (alreadyAttempted) {
       return false;
     }
 

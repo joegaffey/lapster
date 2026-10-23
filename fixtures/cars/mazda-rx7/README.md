@@ -28,11 +28,11 @@ cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb
 ```
 
 The import applies node transforms, rotates the car to `-Z` forward, extracts four wheels,
-removes logo geometry, bakes the palette texture into vertex colours, and uses generic
-rear-wheel-drive physics.
+removes logo geometry, splits glass into a 32% alpha mesh, bakes the palette texture into
+vertex colours, and uses generic rear-wheel-drive physics.
 
 ## Geometry
 
-- 35,132 vertices, 18,322 triangles, 5 draw calls.
+- 35,132 vertices, 18,322 triangles, 6 draw calls.
 - Body: 4,898 triangles; wheels: 4 × 3,294; exhaust: 248.
 - No steering wheel or interior.

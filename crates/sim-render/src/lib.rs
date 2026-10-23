@@ -201,6 +201,25 @@ fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
+const COCKPIT_GLASS_ALPHA: f32 = 0.32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CameraMode {
+    Chase,
+    Bonnet,
+    Cockpit,
+}
+
+impl CameraMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            CameraMode::Chase => "chase",
+            CameraMode::Bonnet => "bonnet",
+            CameraMode::Cockpit => "cockpit",
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub struct DriveViewer {
     renderer: renderer::Renderer,
@@ -213,6 +232,7 @@ pub struct DriveViewer {
     step_times: Vec<f32>,
     track_id: String,
     car_id: String,
+    camera_mode: CameraMode,
 }
 
 #[wasm_bindgen]
@@ -288,6 +308,7 @@ impl DriveViewer {
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
             car_id: car_manifest.id,
+            camera_mode: CameraMode::Chase,
         };
         drive.write_initial_pose()?;
         Ok(drive)
@@ -422,6 +443,7 @@ impl DriveViewer {
             "steeringRackTorque": state.steering_rack_torque,
             "rendererBackend": self.renderer.backend(),
             "rendererFormat": self.renderer.surface_format(),
+            "cameraMode": self.camera_mode.as_str(),
             "contacts": state.wheels.iter().filter(|wheel| wheel.contact).count(),
             "stepP50Ms": p50,
             "stepP99Ms": p99,
@@ -432,6 +454,34 @@ impl DriveViewer {
 
     pub fn info(&self) -> String {
         self.info.clone()
+    }
+
+    pub fn set_camera_mode(&mut self, mode: &str) {
+        self.camera_mode = if mode.eq_ignore_ascii_case("bonnet") {
+            CameraMode::Bonnet
+        } else if mode.eq_ignore_ascii_case("cockpit") {
+            CameraMode::Cockpit
+        } else {
+            CameraMode::Chase
+        };
+        if let Some(index) = self.rig.glass_mesh_index {
+            let alpha = if self.camera_mode == CameraMode::Cockpit {
+                COCKPIT_GLASS_ALPHA
+            } else {
+                1.0
+            };
+            self.renderer.set_mesh_alpha(index, alpha);
+        }
+        self.update_camera();
+    }
+
+    pub fn set_body_visible(&mut self, visible: bool) {
+        self.renderer
+            .set_mesh_visible(self.rig.body_mesh_index, visible);
+    }
+
+    pub fn camera_mode(&self) -> String {
+        self.camera_mode.as_str().to_string()
     }
 
     fn write_initial_pose(&mut self) -> Result<(), JsValue> {
@@ -446,6 +496,10 @@ impl DriveViewer {
         let car_world = Mat4::from_rotation_translation(rotation, position);
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
+        if let Some(index) = self.rig.glass_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.body_local);
+        }
         for (index, wheel) in self.rig.wheels.iter().enumerate() {
             let wheel_state = state.wheels.get(index).copied().unwrap_or_default();
             let spin = Mat4::from_rotation_x(wheel_state.spin_angle);
@@ -466,6 +520,27 @@ impl DriveViewer {
 
     fn update_camera(&mut self) {
         let (position, rotation) = self.visual_pose();
+        if self.camera_mode == CameraMode::Bonnet {
+            let eye = position + rotation * Vec3::new(-0.35, 1.25, -0.1);
+            let target = position + rotation * Vec3::new(-0.35, 1.05, -20.0);
+            self.renderer.set_camera(Camera {
+                eye: eye.to_array(),
+                target: target.to_array(),
+                fov_y: 1.0,
+            });
+            return;
+        }
+        if self.camera_mode == CameraMode::Cockpit {
+            let eye = position + rotation * Vec3::new(-0.35, 1.10, 0.25);
+            let target = position + rotation * Vec3::new(-0.35, 1.00, -20.0);
+            self.renderer.set_camera(Camera {
+                eye: eye.to_array(),
+                target: target.to_array(),
+                fov_y: 1.0,
+            });
+            return;
+        }
+
         let aspect = self.renderer.aspect();
         let landscape = ((aspect - 0.75) / (2.0 - 0.75)).clamp(0.0, 1.0);
         let back = 7.2 + (4.8 - 7.2) * landscape;

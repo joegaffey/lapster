@@ -52,6 +52,7 @@ pub struct MeshData {
     pub model: Mat4,
     pub texture: Option<usize>,
     pub outline: Option<OutlineMesh>,
+    pub alpha: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +73,7 @@ pub struct RigWheel {
 pub struct CarRig {
     pub body_mesh_index: usize,
     pub body_local: Mat4,
+    pub glass_mesh_index: Option<usize>,
     pub wheels: Vec<RigWheel>,
     pub steering_mesh_index: Option<usize>,
     pub steering_local: Mat4,
@@ -169,6 +171,9 @@ impl Scene {
                 } else {
                     None
                 },
+                alpha: material
+                    .map(|material| material.base_color[3])
+                    .unwrap_or(1.0),
             });
         }
 

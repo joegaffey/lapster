@@ -75,10 +75,37 @@ impl Scene {
             CarMeshStyle {
                 texture: car_texture(car_visual, body_mesh, car_texture_base)?,
                 outline: car_outline(car_visual, body_mesh),
+                alpha: car_material_alpha(car_visual, body_mesh.material as usize),
             },
         )?;
         let body_bounds = world_bounds(body_buffers, body_model);
         add_box_lines(&mut scene.lines, &body_bounds, [0.25, 0.75, 1.0]);
+
+        let glass_mesh_index = if let Some(index) = mesh_index_by_name(car_visual, "body_glass") {
+            if let (Some(mesh), Some(buffers)) = (
+                car_visual.meshes.get(index),
+                car_visual.mesh_buffers.get(index),
+            ) {
+                let color = car_material_color(car_visual, mesh.material as usize);
+                Some(push_car_mesh(
+                    &mut scene,
+                    "car_glass",
+                    mesh,
+                    buffers,
+                    color,
+                    body_model,
+                    CarMeshStyle {
+                        texture: car_texture(car_visual, mesh, car_texture_base)?,
+                        outline: false,
+                        alpha: 1.0,
+                    },
+                )?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         let mut wheels = Vec::with_capacity(car_visual.wheels.len());
         let mut rig_wheels = Vec::with_capacity(car_visual.wheels.len());
@@ -104,6 +131,7 @@ impl Scene {
                 CarMeshStyle {
                     texture: car_texture(car_visual, mesh, car_texture_base)?,
                     outline: car_outline(car_visual, mesh),
+                    alpha: car_material_alpha(car_visual, mesh.material as usize),
                 },
             )?;
             add_wheel_marker(
@@ -150,6 +178,7 @@ impl Scene {
                     CarMeshStyle {
                         texture: car_texture(car_visual, mesh, car_texture_base)?,
                         outline: car_outline(car_visual, mesh),
+                        alpha: car_material_alpha(car_visual, mesh.material as usize),
                     },
                 )?);
                 add_wheel_marker(&mut scene.lines, model, [0.2, 1.0, 0.7]);
@@ -175,6 +204,7 @@ impl Scene {
         scene.car_rig = Some(CarRig {
             body_mesh_index,
             body_local,
+            glass_mesh_index,
             wheels: rig_wheels,
             steering_mesh_index,
             steering_local,
@@ -251,6 +281,7 @@ impl Scene {
 struct CarMeshStyle {
     texture: Option<usize>,
     outline: bool,
+    alpha: f32,
 }
 
 fn push_car_mesh(
@@ -287,6 +318,7 @@ fn push_car_mesh(
         } else {
             None
         },
+        alpha: style.alpha,
     });
     Ok(scene.meshes.len() - 1)
 }
@@ -317,6 +349,14 @@ fn car_outline(car_visual: &CarVisual, mesh: &MeshRef) -> bool {
         .get(mesh.material as usize)
         .map(|material| material.outline)
         .unwrap_or(false)
+}
+
+fn car_material_alpha(car_visual: &CarVisual, index: usize) -> f32 {
+    car_visual
+        .materials
+        .get(index)
+        .map(|material| material.base_color[3])
+        .unwrap_or(1.0)
 }
 
 fn car_material_color(car_visual: &CarVisual, index: usize) -> [f32; 3] {

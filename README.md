@@ -11,7 +11,7 @@ It is not a finished game or a complete Assetto Corsa replacement.
 Live demo: **https://joegaffey.com/lapster/**
 
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse, steering,
-  gears, chase camera, wheel loads, and 500 Hz physics.
+  gears, chase/cockpit cameras, wheel loads, and 500 Hz physics.
 - **Garage** — RX-7 on the skidpad with wheel steering/spin controls and debug bounds.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation.
@@ -52,7 +52,14 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 | `A` / `D` or `←` / `→` | Steer |
 | `0` | Manual reverse at rest |
 | `1`–`6` | Gears |
+| `C` | Cycle chase / bonnet / cockpit camera |
 | `R` | Reset |
+
+The RX-7 glass is imported as a separate mesh. External/garage views keep the original
+opaque glass; cockpit mode renders it at 32% alpha. The body is visible by default, wheels
+always stay visible, and `Body: Visible/Hidden` toggles only the body. Bonnet eye height is
+1.25 m; cockpit eye is 1.10 m, pushed 0.25 m rearward. A real cockpit still requires
+an interior model.
 
 ## Build and run
 

@@ -29,6 +29,7 @@ struct CameraUniform {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ModelUniform {
     model: [[f32; 4]; 4],
+    alpha: [f32; 4],
 }
 
 struct GpuOutline {
@@ -52,6 +53,8 @@ struct GpuMesh {
     model_bind_group: wgpu::BindGroup,
     texture_bind_group: wgpu::BindGroup,
     outline: Option<GpuOutline>,
+    visible: bool,
+    alpha: f32,
 }
 
 pub struct Renderer {
@@ -61,6 +64,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     depth_view: wgpu::TextureView,
     mesh_pipeline: wgpu::RenderPipeline,
+    transparent_pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
@@ -325,6 +329,47 @@ impl Renderer {
             cache: None,
         });
 
+        let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("transparent mesh pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_mesh"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<MeshVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &MESH_ATTRIBUTES,
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_mesh"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("line pipeline"),
             layout: Some(&line_pipeline_layout),
@@ -417,6 +462,7 @@ impl Renderer {
             config,
             depth_view,
             mesh_pipeline,
+            transparent_pipeline,
             outline_pipeline,
             line_pipeline,
             camera_buffer,
@@ -495,6 +541,9 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_pipeline(&self.outline_pipeline);
             for mesh in &self.meshes {
+                if !mesh.visible {
+                    continue;
+                }
                 let Some(outline) = &mesh.outline else {
                     continue;
                 };
@@ -505,7 +554,22 @@ impl Renderer {
             }
 
             pass.set_pipeline(&self.mesh_pipeline);
-            for mesh in &self.meshes {
+            for mesh in self.meshes.iter().filter(|mesh| mesh.alpha >= 0.999) {
+                if !mesh.visible {
+                    continue;
+                }
+                pass.set_bind_group(1, &mesh.model_bind_group, &[]);
+                pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+
+            pass.set_pipeline(&self.transparent_pipeline);
+            for mesh in self.meshes.iter().filter(|mesh| mesh.alpha < 0.999) {
+                if !mesh.visible {
+                    continue;
+                }
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
                 pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -547,9 +611,28 @@ impl Renderer {
         if let Some(mesh) = self.meshes.get(index) {
             let uniform = ModelUniform {
                 model: model.to_cols_array_2d(),
+                alpha: [mesh.alpha, 0.0, 0.0, 0.0],
             };
             self.queue
                 .write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&uniform));
+        }
+    }
+
+    pub fn set_mesh_visible(&mut self, index: usize, visible: bool) {
+        if let Some(mesh) = self.meshes.get_mut(index) {
+            mesh.visible = visible;
+        }
+    }
+
+    pub fn set_mesh_alpha(&mut self, index: usize, alpha: f32) {
+        if let Some(mesh) = self.meshes.get_mut(index) {
+            mesh.alpha = alpha;
+            let offset = std::mem::offset_of!(ModelUniform, alpha) as u64;
+            self.queue.write_buffer(
+                &mesh.model_buffer,
+                offset,
+                bytemuck::bytes_of(&[alpha, 0.0, 0.0, 0.0]),
+            );
         }
     }
 
@@ -599,6 +682,7 @@ fn create_mesh(
     });
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
+        alpha: [mesh.alpha, 0.0, 0.0, 0.0],
     };
     let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{} model", mesh.name)),
@@ -666,6 +750,8 @@ fn create_mesh(
         model_bind_group,
         texture_bind_group,
         outline,
+        visible: true,
+        alpha: mesh.alpha,
     }
 }
 

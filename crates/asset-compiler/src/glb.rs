@@ -36,6 +36,7 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
 
     let yaw = Mat4::from_rotation_y(std::f32::consts::PI);
     let mut body = empty_mesh();
+    let mut glass = empty_mesh();
     let mut wheels = Vec::new();
     let mut warnings = Vec::new();
     let mut removed_logos = 0;
@@ -74,7 +75,12 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
                 removed_logos += 1;
             } else {
                 for primitive in mesh.primitives() {
-                    append_primitive(&mut body, &primitive, &buffers, &images, car, None)?;
+                    let material = primitive.material();
+                    if material.name() == Some("Glass") {
+                        append_primitive(&mut glass, &primitive, &buffers, &images, car, None)?;
+                    } else {
+                        append_primitive(&mut body, &primitive, &buffers, &images, car, None)?;
+                    }
                 }
             }
         }
@@ -162,6 +168,11 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
         world_bounds = Some(merge_bounds(world_bounds, &translated));
     }
 
+    if !glass.positions.is_empty() && !glass.indices.is_empty() {
+        meshes.push(mesh_ref("body_glass", &glass, 2));
+        mesh_buffers.push(glass);
+    }
+
     let wheels: [WheelVisual; 4] = wheel_visuals
         .try_into()
         .map_err(|_| anyhow::anyhow!("GLB did not produce four wheel visuals"))?;
@@ -181,6 +192,14 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
             roughness: 0.8,
             base_color_texture: None,
             outline: true,
+        },
+        MaterialRef {
+            name: String::from("imported_glass"),
+            base_color: [0.035, 0.045, 0.055, 0.32],
+            metallic: 0.0,
+            roughness: 0.1,
+            base_color_texture: None,
+            outline: false,
         },
     ];
 
@@ -204,6 +223,7 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
     }
     warnings.push("baked source materials and palette texture into vertex colours".to_string());
     warnings.push("body paint defaulted to a demo red".to_string());
+    warnings.push("glass split into a semi-transparent mesh".to_string());
     warnings.push("no steering wheel or interior found".to_string());
 
     Ok(ImportedCar {

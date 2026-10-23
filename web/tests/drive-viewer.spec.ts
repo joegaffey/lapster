@@ -262,3 +262,17 @@ test("reverse requires a second brake press after stopping", async ({ page }) =>
   expect(braking.gear).toBe(-1);
   expect(braking.speedKph).toBeLessThan(reverse.speedKph);
 });
+
+test("wheels do not idle-spin when stopped", async ({ page }) => {
+  await page.goto("/web/drive/");
+  await page.bringToFront();
+  await waitForReady(page);
+  await page.evaluate(() => (window as any).__driveViewer.reset());
+  await page.waitForTimeout(1200);
+
+  const state = await telemetry(page);
+  expect(state.speedKph).toBeLessThan(0.2);
+  for (const wheel of state.wheels) {
+    expect(Math.abs(wheel.angularVelocity)).toBeLessThan(0.01);
+  }
+});

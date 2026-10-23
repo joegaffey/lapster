@@ -4,8 +4,13 @@ struct Camera {
     light_dir: vec4<f32>,
 };
 
+struct Model {
+    transform: mat4x4<f32>,
+    alpha: vec4<f32>,
+};
+
 @group(0) @binding(0) var<uniform> camera: Camera;
-@group(1) @binding(0) var<uniform> model: mat4x4<f32>;
+@group(1) @binding(0) var<uniform> model: Model;
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var base_sampler: sampler;
 
@@ -22,17 +27,19 @@ struct MeshOut {
     @location(1) color: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) world_position: vec3<f32>,
+    @location(4) alpha: f32,
 }
 
 @vertex
 fn vs_mesh(input: MeshIn) -> MeshOut {
     var output: MeshOut;
-    let world = model * vec4<f32>(input.position, 1.0);
+    let world = model.transform * vec4<f32>(input.position, 1.0);
     output.clip_position = camera.view_proj * world;
-    output.normal = normalize((model * vec4<f32>(input.normal, 0.0)).xyz);
+    output.normal = normalize((model.transform * vec4<f32>(input.normal, 0.0)).xyz);
     output.color = input.color;
     output.uv = input.uv;
     output.world_position = world.xyz;
+    output.alpha = model.alpha.x;
     return output;
 }
 
@@ -63,7 +70,8 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     let ndl = max(dot(normal, light), 0.0);
     let ramp = toon_ramp(ndl);
     let texel = textureSample(base_texture, base_sampler, input.uv);
-    if texel.a < 0.1 {
+    let alpha = input.alpha * texel.a;
+    if alpha < 0.01 {
         discard;
     }
     let base = input.color * texel.rgb;
@@ -71,7 +79,7 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 3.0);
     let rim_tint = vec3<f32>(0.55, 0.72, 0.95);
     let color = base * (0.30 + 0.70 * ramp) + rim_tint * rim * 0.16;
-    return vec4<f32>(linear_to_srgb(color), 1.0);
+    return vec4<f32>(linear_to_srgb(color), alpha);
 }
 
 struct OutlineIn {
@@ -85,8 +93,8 @@ struct OutlineOut {
 
 @vertex
 fn vs_outline(input: OutlineIn) -> OutlineOut {
-    let world = model * vec4<f32>(input.position, 1.0);
-    let world_normal = normalize((model * vec4<f32>(input.normal, 0.0)).xyz);
+    let world = model.transform * vec4<f32>(input.position, 1.0);
+    let world_normal = normalize((model.transform * vec4<f32>(input.normal, 0.0)).xyz);
     let distance = length(camera.camera_pos.xyz - world.xyz);
     let width = 0.022 * clamp(distance / 12.0, 0.65, 2.5);
     var output: OutlineOut;

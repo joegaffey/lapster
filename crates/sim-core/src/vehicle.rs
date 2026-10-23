@@ -325,6 +325,23 @@ impl Vehicle {
         }
 
         let speed = self.state.velocity.length();
+        let horizontal_speed =
+            Vec3::new(self.state.velocity.x, 0.0, self.state.velocity.z).length();
+        if controls.throttle < 0.01 && controls.brake < 0.01 && horizontal_speed < 0.25 {
+            let damping = (1.0 - 8.0 * dt).max(0.0);
+            self.state.velocity.x *= damping;
+            self.state.velocity.z *= damping;
+            if Vec3::new(self.state.velocity.x, 0.0, self.state.velocity.z).length() < 0.02 {
+                self.state.velocity.x = 0.0;
+                self.state.velocity.z = 0.0;
+            }
+            for wheel in &mut self.state.wheels {
+                wheel.angular_velocity *= damping;
+                if wheel.angular_velocity.abs() < 0.05 {
+                    wheel.angular_velocity = 0.0;
+                }
+            }
+        }
         if speed > 0.1 {
             let drag = 0.5
                 * AIR_DENSITY
@@ -353,6 +370,18 @@ impl Vehicle {
         self.state.position += self.state.velocity * dt;
         let delta_rotation = Quat::from_scaled_axis(self.state.angular_velocity * dt);
         self.state.rotation = (delta_rotation * self.state.rotation).normalize();
+
+        if controls.throttle < 0.01 && controls.brake < 0.01 {
+            let horizontal_speed =
+                Vec3::new(self.state.velocity.x, 0.0, self.state.velocity.z).length();
+            if horizontal_speed < 0.06 {
+                self.state.velocity.x = 0.0;
+                self.state.velocity.z = 0.0;
+                for wheel in &mut self.state.wheels {
+                    wheel.angular_velocity = 0.0;
+                }
+            }
+        }
 
         self.resolve_wall_collisions();
         self.state.steering_rack_torque = rack_torque;

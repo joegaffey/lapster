@@ -111,6 +111,13 @@ Toolchain setup scripts:
   non-selectable touch steering/throttle/brake controls.
 - Track viewer camera: drag to orbit, right/shift-drag to pan, wheel or pinch to zoom, with
   a reset button.
+- Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
+- Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
+  cockpit mode switches it to 32% alpha in a transparent forward pass; bonnet and external
+  views keep it opaque. Body visibility is independent, and wheels remain visible.
+- Drive camera: chase → bonnet → cockpit (`C` / button). Bonnet eye height is 1.25 m; cockpit
+  eye is 1.10 m and 0.25 m rearward. Body defaults visible; `Body: Visible/Hidden` toggles the
+  body only. A real cockpit still needs an interior model.
 - Renderer reports backend and surface format in telemetry:
   - backend: `BrowserWebGpu` in Chromium,
   - format: `Bgra8Unorm`,
@@ -149,7 +156,7 @@ Toolchain setup scripts:
 - `cargo test --workspace` — 24 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 12 Playwright tests
+- `npm run test:viewer` — 14 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and

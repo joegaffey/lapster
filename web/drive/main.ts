@@ -38,6 +38,8 @@ const stepP99Label = document.querySelector<HTMLElement>("#step-p99")!;
 const fpsLabel = document.querySelector<HTMLElement>("#fps")!;
 const wheelsLabel = document.querySelector<HTMLElement>("#wheels")!;
 const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
+const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
+const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 
 const keys = new Set<string>();
 const STOP_SPEED_MPS = 0.3;
@@ -46,6 +48,8 @@ let gear = 1;
 let lastSpeedMps = 0;
 let previousForward = false;
 let previousReverse = false;
+let cameraMode: "chase" | "bonnet" | "cockpit" = "chase";
+let bodyVisible = true;
 let lastFrame = performance.now() / 1000;
 let frames = 0;
 let accumulated = 0;
@@ -94,6 +98,36 @@ function updateHud(telemetry: any) {
     item.append(name, detail);
     wheelsLabel.append(item);
   }
+}
+
+function setBodyVisible(visible: boolean) {
+  bodyVisible = visible;
+  window.__driveViewer?.set_body_visible(visible);
+  bodyToggle.textContent = visible ? "Body: Visible" : "Body: Hidden";
+}
+
+function setCameraMode(mode: "chase" | "bonnet" | "cockpit") {
+  cameraMode = mode;
+  window.__driveViewer?.set_camera_mode(mode);
+  cameraButton.textContent =
+    mode === "cockpit"
+      ? "Camera: Cockpit"
+      : mode === "bonnet"
+        ? "Camera: Bonnet"
+        : "Camera: Chase";
+  if (mode === "chase") {
+    setBodyVisible(true);
+  }
+}
+
+function toggleCameraMode() {
+  setCameraMode(
+    cameraMode === "chase"
+      ? "bonnet"
+      : cameraMode === "bonnet"
+        ? "cockpit"
+        : "chase",
+  );
 }
 
 function reset() {
@@ -157,6 +191,9 @@ async function boot() {
     if (key === "r") {
       reset();
     }
+    if (key === "c") {
+      toggleCameraMode();
+    }
     if (key === "0") {
       if (Math.abs(lastSpeedMps) < STOP_SPEED_MPS) {
         gear = -1;
@@ -170,6 +207,9 @@ async function boot() {
   });
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", reset);
+  cameraButton.addEventListener("click", toggleCameraMode);
+  bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
+  setCameraMode("chase");
   setupTouchControls(keys);
 
   const observer = new ResizeObserver(() => {
