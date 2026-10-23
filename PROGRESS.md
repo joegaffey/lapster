@@ -50,7 +50,7 @@ Deployment:
 - Repository: https://github.com/joegaffey/lapster
 - CI: `.github/workflows/ci.yml`
 - Pages: `.github/workflows/pages.yml`
-- Live site: https://joegaffey.github.io/lapster/
+- Live site: https://joegaffey.com/lapster/
 
 ## Environment
 
@@ -132,7 +132,7 @@ Toolchain setup scripts:
 - Playwright screenshot baselines are Linux/Chromium-specific and are skipped in CI.
 - GitHub Pages cannot send COOP/COEP, so the current main-thread demo works there but the
   planned SharedArrayBuffer worker mode will need a different host or custom headers.
-- The live Pages URL is https://joegaffey.github.io/lapster/ (after the Pages workflow succeeds).
+- The live Pages URL is https://joegaffey.com/lapster/ (the github.io URL redirects there).
 
 ## Next steps
 

@@ -8,7 +8,7 @@ It is not a finished game or a complete Assetto Corsa replacement.
 
 ## Demos
 
-Live demo: **https://joegaffey.github.io/lapster/**
+Live demo: **https://joegaffey.com/lapster/**
 
 - **Drive** — drivable synthetic car on the synthetic track: throttle, brake, auto reverse,
   steering, gears, chase camera, wheel loads, and 500 Hz physics.
