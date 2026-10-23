@@ -136,7 +136,11 @@ Toolchain setup scripts:
 
 ## Next steps
 
-1. **CP5 — real car**: glTF car importer, `.ini` physics mapping, texture pipeline, validation, run on the synthetic track.
+1. **CP5 — real car**: glTF car importer, `.ini` physics mapping, validation, run on the
+   synthetic track, with the toon/papercraft style from `docs/art-style.md`.
+   - Forward toon shading, flat normals, vertex colors, inverted-hull outlines.
+   - Textures only for gauges, signs, decals, and small sprites.
+   - WebXR remains a later phase.
 2. **CP6 — real track**: `.kn5`/glTF import, surfaces/collision, spawn/camera metadata, performance measurement.
 3. Move physics to a dedicated worker with the SAB snapshot/input/FFB contract.
 4. Replace per-frame JSON telemetry with typed arrays/SAB.

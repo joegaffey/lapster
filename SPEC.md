@@ -118,6 +118,7 @@ web-sim-engine/
 │       └── audio/             # AudioWorklet module and wasm shim
 └── docs/
     ├── asset-format.md
+    ├── art-style.md
     ├── sab-layout.md
     └── device-matrix.md
 ```
@@ -353,7 +354,12 @@ vendor profiles.
 - Runs on the main thread for MVP. The web frontend owns the canvas and event loop; `winit`
   is not used on web.
 - Consume versioned asset packs and flat vertex/index buffers from the asset compiler.
-- PBR materials, instanced track-side objects, frustum culling, and LOD selection.
+- Forward-rendered toon/flat-shaded materials. PBR is not required. Vertex colors are the
+  default; textures are allowed where practical (dashboard gauges, signs, decals, sprites,
+  liveries) but not as full PBR sets. See `docs/art-style.md`.
+- Object-space inverted-hull outlines and procedural grid shaders. No screen-space edge
+  filters or post-processing that would break stereo depth.
+- Instanced track-side objects, frustum culling, and LOD selection.
 - Read two completed snapshots from the SAB and interpolate by timestamp. Never render a
   snapshot that failed its seqlock check.
 - Handle device/context loss: pause rendering, request a new device, and restore resources.

@@ -265,6 +265,8 @@ Most coordinate, collision, and physics-mapping bugs surface here.
 - Implement `.ini` parsing for the supported physics subset. Emit a validation report for
   ignored keys, out-of-range values, and derived defaults.
 - Implement clean-room `.kn5` (or glTF fallback) parsing for the car visual hierarchy.
+- Apply the toon/papercraft style from `docs/art-style.md`: flat normals, vertex colors,
+  outline hull, and the limited texture policy for gauges/signs/decals.
 - Convert textures to KTX2/Basis where needed.
 - Extract wheel nodes, steering wheel, materials, and LODs.
 - Run the real car on the synthetic track.

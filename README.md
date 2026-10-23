@@ -100,6 +100,10 @@ Vehicle dynamics are intentionally first-party. General-purpose physics engines 
 collision/query backends only; they are not used as the vehicle model. See `SPEC.md` for the
 physics backend policy.
 
+The visual direction is a forward-rendered technical/papercraft toon style with simple
+geometry, vertex colors, object-space outlines, and textures only where they are the
+practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-style.md).
+
 ## Status and roadmap
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
