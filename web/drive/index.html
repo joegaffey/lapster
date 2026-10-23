@@ -192,6 +192,8 @@
         align-items: flex-end;
       }
       .touch-button {
+        display: grid;
+        place-items: center;
         width: 76px;
         height: 76px;
         border: 1px solid #4a5565;
@@ -201,6 +203,7 @@
         padding: 0;
         font-size: 24px;
         line-height: 1;
+        -webkit-user-drag: none;
         touch-action: none;
         user-select: none;
         -webkit-user-select: none;
@@ -216,6 +219,12 @@
       .touch-throttle {
         width: 86px;
         height: 86px;
+      }
+      .touch-button svg {
+        width: 34px;
+        height: 34px;
+        fill: currentColor;
+        pointer-events: none;
       }
       @media (pointer: coarse), (max-width: 720px) {
         #touch-controls {
@@ -283,12 +292,20 @@
     </aside>
     <div id="touch-controls" aria-label="Touch controls">
       <div class="touch-cluster">
-        <button class="touch-button" data-key="a" type="button" aria-label="Steer left">◀</button>
-        <button class="touch-button" data-key="d" type="button" aria-label="Steer right">▶</button>
+        <button class="touch-button" data-key="a" type="button" draggable="false" aria-label="Steer left">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4 5 12l10 8z" /></svg>
+        </button>
+        <button class="touch-button" data-key="d" type="button" draggable="false" aria-label="Steer right">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 19 12 9 20z" /></svg>
+        </button>
       </div>
       <div class="touch-cluster touch-right">
-        <button class="touch-button touch-throttle" data-key="w" type="button" aria-label="Throttle">▲</button>
-        <button class="touch-button" data-key="s" type="button" aria-label="Brake or reverse">▼</button>
+        <button class="touch-button touch-throttle" data-key="w" type="button" draggable="false" aria-label="Throttle">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 21 20H3z" /></svg>
+        </button>
+        <button class="touch-button" data-key="s" type="button" draggable="false" aria-label="Brake or reverse">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20 3 4h18z" /></svg>
+        </button>
       </div>
     </div>
     <script type="module" src="./main.js"></script>

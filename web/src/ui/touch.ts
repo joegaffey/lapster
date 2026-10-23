@@ -4,6 +4,9 @@ export function setupTouchControls(keys: Set<string>) {
     return;
   }
 
+  root.addEventListener("selectstart", (event) => event.preventDefault());
+  root.addEventListener("dragstart", (event) => event.preventDefault());
+
   const counts = new Map<string, number>();
   const pointers = new Map<number, { key: string; button: HTMLButtonElement }>();
 
@@ -36,6 +39,9 @@ export function setupTouchControls(keys: Set<string>) {
 
   for (const button of root.querySelectorAll<HTMLButtonElement>("[data-key]")) {
     const key = button.dataset.key ?? "";
+    button.addEventListener("touchstart", (event) => event.preventDefault(), {
+      passive: false,
+    });
     button.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       try {
