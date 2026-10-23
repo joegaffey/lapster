@@ -478,6 +478,9 @@ impl DriveViewer {
     pub fn set_body_visible(&mut self, visible: bool) {
         self.renderer
             .set_mesh_visible(self.rig.body_mesh_index, visible);
+        if let Some(index) = self.rig.glass_mesh_index {
+            self.renderer.set_mesh_visible(index, visible);
+        }
     }
 
     pub fn camera_mode(&self) -> String {

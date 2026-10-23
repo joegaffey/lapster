@@ -57,8 +57,8 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
 opaque glass; cockpit mode renders it at 32% alpha. The body is visible by default, wheels
-always stay visible, and `Body: Visible/Hidden` toggles only the body. Bonnet eye height is
-1.25 m; cockpit eye is 1.10 m, pushed 0.25 m rearward. A real cockpit still requires
+always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. Bonnet eye
+height is 1.25 m; cockpit eye is 1.10 m, pushed 0.25 m rearward. A real cockpit still requires
 an interior model.
 
 ## Build and run
