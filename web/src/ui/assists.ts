@@ -4,6 +4,7 @@ interface AssistsViewer {
   set_stability_control(enabled: boolean): void;
   set_stability_strength(strength: number): void;
   set_steering_sensitivity(sensitivity: number): void;
+  set_debug_lines_visible(visible: boolean): void;
 }
 
 interface AssistSettings {
@@ -12,6 +13,7 @@ interface AssistSettings {
   esc: boolean;
   escStrength: number;
   steeringSensitivity: number;
+  debugLines: boolean;
 }
 
 const STORAGE_KEY = "lapster.assists.v1";
@@ -22,6 +24,7 @@ const DEFAULTS: AssistSettings = {
   esc: true,
   escStrength: 1,
   steeringSensitivity: 1,
+  debugLines: false,
 };
 
 function clamp(value: number, min: number, max: number, fallback: number): number {
@@ -35,6 +38,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     esc: value?.esc !== false,
     escStrength: clamp(value?.escStrength ?? 1, 0, 1, 1),
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
+    debugLines: value?.debugLines === true,
   };
 }
 
@@ -65,6 +69,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   const tcStrength = document.querySelector<HTMLInputElement>("#tc-strength");
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
+  const debugToggle = document.querySelector<HTMLButtonElement>("#debug-lines-toggle");
   const tcValue = document.querySelector<HTMLOutputElement>("#tc-strength-value");
   const escValue = document.querySelector<HTMLOutputElement>("#esc-strength-value");
   const steeringValue = document.querySelector<HTMLOutputElement>("#steering-sensitivity-value");
@@ -79,6 +84,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
     !tcStrength ||
     !escStrength ||
     !steering ||
+    !debugToggle ||
     !tcValue ||
     !escValue ||
     !steeringValue ||
@@ -95,6 +101,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
     viewer.set_stability_control(settings.esc);
     viewer.set_stability_strength(settings.escStrength);
     viewer.set_steering_sensitivity(settings.steeringSensitivity);
+    viewer.set_debug_lines_visible(settings.debugLines);
     save(settings);
   };
 
@@ -109,6 +116,8 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
     tcValue.textContent = `${Math.round(settings.tcStrength * 100)}%`;
     escValue.textContent = `${Math.round(settings.escStrength * 100)}%`;
     steeringValue.textContent = `${Math.round(settings.steeringSensitivity * 100)}%`;
+    debugToggle.textContent = settings.debugLines ? "Debug: On" : "Debug: Off";
+    debugToggle.setAttribute("aria-pressed", String(settings.debugLines));
   };
 
   apply();
@@ -140,6 +149,12 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   });
   steering.addEventListener("input", () => {
     settings.steeringSensitivity = Number(steering.value);
+    apply();
+    refresh();
+    status.textContent = "Saved";
+  });
+  debugToggle.addEventListener("click", () => {
+    settings.debugLines = !settings.debugLines;
     apply();
     refresh();
     status.textContent = "Saved";

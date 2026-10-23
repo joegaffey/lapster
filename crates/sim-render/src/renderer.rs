@@ -72,6 +72,7 @@ pub struct Renderer {
     meshes: Vec<GpuMesh>,
     line_buffer: Option<wgpu::Buffer>,
     line_count: u32,
+    lines_visible: bool,
     camera: Camera,
     backend: String,
     surface_format: String,
@@ -470,10 +471,19 @@ impl Renderer {
             meshes,
             line_buffer,
             line_count,
+            lines_visible: true,
             camera: scene.camera,
             backend,
             surface_format,
         })
+    }
+
+    pub fn set_lines_visible(&mut self, visible: bool) {
+        self.lines_visible = visible;
+    }
+
+    pub fn lines_visible(&self) -> bool {
+        self.lines_visible
     }
 
     pub fn resize(&mut self, width: f32, height: f32) {
@@ -577,11 +587,13 @@ impl Renderer {
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
 
-            if let Some(line_buffer) = &self.line_buffer {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, line_buffer.slice(..));
-                pass.draw(0..self.line_count, 0..1);
+            if self.lines_visible {
+                if let Some(line_buffer) = &self.line_buffer {
+                    pass.set_pipeline(&self.line_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, line_buffer.slice(..));
+                    pass.draw(0..self.line_count, 0..1);
+                }
             }
         }
 

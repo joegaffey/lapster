@@ -448,6 +448,7 @@ impl DriveViewer {
             "stabilityStrength": self.vehicle.stability_strength(),
             "steeringSensitivity": self.vehicle.steering_sensitivity(),
             "escActivity": self.vehicle.esc_activity(),
+            "debugLinesVisible": self.renderer.lines_visible(),
             "rendererBackend": self.renderer.backend(),
             "rendererFormat": self.renderer.surface_format(),
             "cameraMode": self.camera_mode.as_str(),
@@ -500,6 +501,10 @@ impl DriveViewer {
 
     pub fn set_steering_sensitivity(&mut self, sensitivity: f32) {
         self.vehicle.set_steering_sensitivity(sensitivity);
+    }
+
+    pub fn set_debug_lines_visible(&mut self, visible: bool) {
+        self.renderer.set_lines_visible(visible);
     }
 
     pub fn car_setup(&self) -> String {

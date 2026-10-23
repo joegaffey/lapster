@@ -106,10 +106,20 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   await expect(esc).toHaveText("ESC: On");
   await expect(tc).toHaveAttribute("aria-pressed", "true");
   await expect(esc).toHaveAttribute("aria-pressed", "true");
+  const debug = page.locator("#debug-lines-toggle");
+  await expect(debug).toHaveText("Debug: Off");
+  await expect(debug).toHaveAttribute("aria-pressed", "false");
+
+  await debug.click();
+  await expect(debug).toHaveText("Debug: On");
+  let telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.debugLinesVisible).toBe(true);
 
   await tc.click();
   await expect(tc).toHaveText("TC: Off");
-  let telemetry = await page.evaluate(() =>
+  telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.tractionControl).toBe(false);
@@ -149,6 +159,7 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   expect(telemetry.tractionStrength).toBe(1);
   expect(telemetry.stabilityStrength).toBe(1);
   expect(telemetry.steeringSensitivity).toBe(1);
+  expect(telemetry.debugLinesVisible).toBe(false);
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {

@@ -114,8 +114,9 @@ Toolchain setup scripts:
 - Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
   curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
   JSON (`lapster/setup@1`). Mass and geometry remain fixed.
-- Settings dialog: TC and ESC enables, independent strength controls, and steering
-  sensitivity. Settings persist globally; Reset and Camera remain top-level toolbar actions.
+- Settings dialog: TC and ESC enables, independent strength controls, steering sensitivity,
+  and a debug overlay toggle. Settings persist globally; Reset and Camera remain top-level
+  toolbar actions. Drive hides debug lines/bounds by default.
 - Responsive UI: collapsible HUD on all demos, collapsed by default. Every demo keeps Info
   and Exit in a detached toolbar; drive adds Reset, Camera, Body, TC, and ESC, and track adds
   Reset camera. Touch devices get non-selectable steering/throttle/brake controls.

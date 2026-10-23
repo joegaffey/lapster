@@ -65,7 +65,8 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 **Reset** and **Camera** remain top-level toolbar actions. **Tuning** opens the top-layer car
 tuning dialog; **Copy settings** produces a versioned JSON payload for sharing, and **Paste
 shared settings** imports one. **Settings** opens the assists menu for TC/ESC enables,
-independent strengths, and steering sensitivity; these settings persist globally.
+independent strengths, steering sensitivity, and the debug overlay; these settings persist
+globally. Debug lines/bounds are off by default in drive.
 
 The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 276 hp,
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
