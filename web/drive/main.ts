@@ -40,9 +40,12 @@ const wheelsLabel = document.querySelector<HTMLElement>("#wheels")!;
 const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
 
 const keys = new Set<string>();
+const STOP_SPEED_MPS = 0.3;
 let steer = 0;
 let gear = 1;
 let lastSpeedMps = 0;
+let previousForward = false;
+let previousReverse = false;
 let lastFrame = performance.now() / 1000;
 let frames = 0;
 let accumulated = 0;
@@ -100,6 +103,8 @@ function reset() {
   steer = 0;
   gear = 1;
   lastSpeedMps = 0;
+  previousForward = false;
+  previousReverse = false;
   keys.clear();
   lastFrame = performance.now() / 1000;
 }
@@ -153,7 +158,9 @@ async function boot() {
       reset();
     }
     if (key === "0") {
-      gear = -1;
+      if (Math.abs(lastSpeedMps) < STOP_SPEED_MPS) {
+        gear = -1;
+      }
     } else if (key >= "1" && key <= "6") {
       gear = Number(key);
     }
@@ -188,21 +195,32 @@ async function boot() {
 
     const forwardKey = keys.has("w") || keys.has("arrowup");
     const reverseKey = keys.has("s") || keys.has("arrowdown");
+    const forwardPressed = forwardKey && !previousForward;
+    const reversePressed = reverseKey && !previousReverse;
+    const stopped = Math.abs(lastSpeedMps) < STOP_SPEED_MPS;
+    previousForward = forwardKey;
+    previousReverse = reverseKey;
     let throttle = 0;
     let brake = 0;
 
     if (forwardKey && reverseKey) {
       brake = 1;
     } else if (forwardKey) {
-      if (gear < 0 && lastSpeedMps > 0.5) {
+      if (gear < 0) {
         brake = 1;
+        if (stopped && forwardPressed) {
+          gear = 1;
+        }
       } else {
         gear = 1;
         throttle = 1;
       }
     } else if (reverseKey) {
-      if (gear > 0 && lastSpeedMps > 0.5) {
+      if (gear > 0) {
         brake = 1;
+        if (stopped && reversePressed) {
+          gear = -1;
+        }
       } else {
         gear = -1;
         throttle = 1;

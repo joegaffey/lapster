@@ -180,9 +180,79 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   expect(reverse.position[2]).toBeGreaterThan(0.2);
 
   await page.keyboard.down("ArrowUp");
-  await page.waitForTimeout(2600);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph < 0.3,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("ArrowUp");
+  const stoppedFromReverse = await telemetry(page);
+  expect(stoppedFromReverse.gear).toBe(-1);
+
+  await page.waitForTimeout(100);
+  await page.keyboard.down("ArrowUp");
+  await page.waitForFunction(
+    (before) => {
+      const telemetry = JSON.parse((window as any).__driveViewer.telemetry());
+      return telemetry.gear === 1 && telemetry.position[2] < before - 0.1;
+    },
+    stoppedFromReverse.position[2],
+    { timeout: 10_000 },
+  );
   await page.keyboard.up("ArrowUp");
   const forwardAgain = await telemetry(page);
   expect(forwardAgain.gear).toBe(1);
-  expect(forwardAgain.position[2]).toBeLessThan(reverse.position[2]);
+  expect(forwardAgain.position[2]).toBeLessThan(stoppedFromReverse.position[2]);
+});
+
+test("reverse requires a second brake press after stopping", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await page.bringToFront();
+  await waitForReady(page);
+  await page.waitForTimeout(250);
+
+  await page.keyboard.down("ArrowUp");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 5,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("ArrowUp");
+
+  await page.keyboard.down("ArrowDown");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph < 0.3,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.waitForTimeout(300);
+  const held = await telemetry(page);
+  expect(held.gear).toBe(1);
+  expect(held.speedKph).toBeLessThan(0.3);
+
+  await page.keyboard.up("ArrowDown");
+  await page.waitForTimeout(100);
+  await page.keyboard.down("ArrowDown");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === -1,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.waitForTimeout(500);
+  await page.keyboard.up("ArrowDown");
+  const reverse = await telemetry(page);
+  expect(reverse.gear).toBe(-1);
+  expect(reverse.speedKph).toBeGreaterThan(1);
+
+  await page.keyboard.down("ArrowUp");
+  await page.waitForFunction(
+    (before) =>
+      JSON.parse((window as any).__driveViewer.telemetry()).speedKph < before - 0.2,
+    reverse.speedKph,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("ArrowUp");
+  const braking = await telemetry(page);
+  expect(braking.gear).toBe(-1);
+  expect(braking.speedKph).toBeLessThan(reverse.speedKph);
 });

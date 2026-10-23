@@ -102,9 +102,10 @@ Toolchain setup scripts:
   - interpolated visual pose.
 - Keyboard controls:
   - `W` / `↑` throttle,
-  - `S` / `↓` brake; holding at standstill engages auto reverse,
+  - `S` / `↓` brake; release and press again at rest to engage reverse,
   - `A` / `D` or `←` / `→` steer; left/right direction is verified,
-  - `0` manual reverse, `1`–`6` gears, `R` reset.
+  - `W` / `↑` brakes while reversing,
+  - `0` manual reverse at rest, `1`–`6` gears, `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
 - Responsive UI: collapsible HUD on all demos, collapsed by default on mobile; drive adds
   non-selectable touch steering/throttle/brake controls.
@@ -148,7 +149,7 @@ Toolchain setup scripts:
 - `cargo test --workspace` — 24 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 11 Playwright tests
+- `npm run test:viewer` — 12 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and

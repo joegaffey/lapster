@@ -10,7 +10,7 @@ It is not a finished game or a complete Assetto Corsa replacement.
 
 Live demo: **https://joegaffey.com/lapster/**
 
-- **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, auto reverse, steering,
+- **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse, steering,
   gears, chase camera, wheel loads, and 500 Hz physics.
 - **Garage** — RX-7 on the skidpad with wheel steering/spin controls and debug bounds.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
@@ -36,7 +36,7 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 - 500 Hz fixed-step vehicle physics:
   - raycast suspension,
   - Pacejka longitudinal/lateral tire forces with combined-slip limiting,
-  - engine, gearbox, brakes, and auto reverse,
+  - engine, gearbox, brakes, and edge-triggered reverse,
   - wall contacts and finite-state reset,
   - interpolated visual pose.
 - wgpu 30 renderer with WebGPU and WebGL2 support.
@@ -47,10 +47,10 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 
 | Input | Action |
 | --- | --- |
-| `W` / `↑` | Throttle |
-| `S` / `↓` | Brake; at standstill, auto reverse |
+| `W` / `↑` | Throttle; brakes while reversing |
+| `S` / `↓` | Brake; release and press again at rest to engage reverse |
 | `A` / `D` or `←` / `→` | Steer |
-| `0` | Manual reverse |
+| `0` | Manual reverse at rest |
 | `1`–`6` | Gears |
 | `R` | Reset |
 
