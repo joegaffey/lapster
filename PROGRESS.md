@@ -99,7 +99,8 @@ Toolchain setup scripts:
     bias to reduce power oversteer,
   - CG-based load transfer,
   - Pacejka longitudinal/lateral forces with tire relaxation,
-  - shared rear traction control and speed-sensitive steering for keyboard input,
+  - optional shared rear traction control and stability control, plus speed-sensitive
+    steering for keyboard input,
   - engine/gearbox/brake model,
   - wall contacts and finite-state reset,
   - interpolated visual pose.
@@ -111,8 +112,8 @@ Toolchain setup scripts:
   - `0` manual reverse at rest, `1`–`6` gears, `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
 - Responsive UI: collapsible HUD on all demos, collapsed by default. Every demo keeps Info
-  and Exit in a detached toolbar; drive adds Reset, Camera, and Body, and track adds Reset
-  camera. Touch devices get non-selectable steering/throttle/brake controls.
+  and Exit in a detached toolbar; drive adds Reset, Camera, Body, TC, and ESC, and track adds
+  Reset camera. Touch devices get non-selectable steering/throttle/brake controls.
 - Track viewer camera: drag to orbit, right/shift-drag to pan, wheel or pinch to zoom, with
   a reset button.
 - Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
@@ -157,14 +158,14 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 33 tests
+- `cargo test --workspace` — 35 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
-  control, powered-cornering balance, speed-sensitive steering, and braking to a stop while
-  steering.
+  control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,
+  and braking to a stop while steering.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 15 Playwright tests
+- `npm run test:viewer` — 16 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and

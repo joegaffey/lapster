@@ -441,6 +441,9 @@ impl DriveViewer {
             "position": [state.position.x, state.position.y, state.position.z],
             "velocity": [state.velocity.x, state.velocity.y, state.velocity.z],
             "steeringRackTorque": state.steering_rack_torque,
+            "tractionControl": self.vehicle.traction_control(),
+            "stabilityControl": self.vehicle.stability_control(),
+            "escActivity": self.vehicle.esc_activity(),
             "rendererBackend": self.renderer.backend(),
             "rendererFormat": self.renderer.surface_format(),
             "cameraMode": self.camera_mode.as_str(),
@@ -473,6 +476,14 @@ impl DriveViewer {
             self.renderer.set_mesh_alpha(index, alpha);
         }
         self.update_camera();
+    }
+
+    pub fn set_traction_control(&mut self, enabled: bool) {
+        self.vehicle.set_traction_control(enabled);
+    }
+
+    pub fn set_stability_control(&mut self, enabled: bool) {
+        self.vehicle.set_stability_control(enabled);
     }
 
     pub fn set_body_visible(&mut self, visible: bool) {

@@ -92,6 +92,41 @@ test("info starts hidden and can be opened", async ({ page }) => {
   await expect(page.locator("#speed")).toBeVisible();
 });
 
+test("traction and stability assists toggle", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await waitForReady(page);
+
+  const tc = page.locator("#tc-toggle");
+  const esc = page.locator("#esc-toggle");
+  await expect(tc).toHaveText("TC: On");
+  await expect(esc).toHaveText("ESC: On");
+  await expect(tc).toHaveAttribute("aria-pressed", "true");
+  await expect(esc).toHaveAttribute("aria-pressed", "true");
+
+  await tc.click();
+  await expect(tc).toHaveText("TC: Off");
+  await expect(tc).toHaveAttribute("aria-pressed", "false");
+  let telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.tractionControl).toBe(false);
+  expect(telemetry.stabilityControl).toBe(true);
+
+  await esc.click();
+  await expect(esc).toHaveText("ESC: Off");
+  await expect(esc).toHaveAttribute("aria-pressed", "false");
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.tractionControl).toBe(false);
+  expect(telemetry.stabilityControl).toBe(false);
+
+  await tc.click();
+  await esc.click();
+  await expect(tc).toHaveText("TC: On");
+  await expect(esc).toHaveText("ESC: On");
+});
+
 test("60 second scripted soak stays finite", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();

@@ -93,6 +93,9 @@ pub struct Vehicle {
     filtered_slip_ratio: [f32; 4],
     filtered_slip_angle: [f32; 4],
     traction_scale: f32,
+    traction_control: bool,
+    stability_control: bool,
+    esc_activity: f32,
     steer_angle: f32,
 }
 
@@ -150,8 +153,37 @@ impl Vehicle {
             filtered_slip_ratio: [0.0; 4],
             filtered_slip_angle: [0.0; 4],
             traction_scale: 1.0,
+            traction_control: true,
+            stability_control: true,
+            esc_activity: 0.0,
             steer_angle: 0.0,
         }
+    }
+
+    pub fn set_traction_control(&mut self, enabled: bool) {
+        self.traction_control = enabled;
+        if !enabled {
+            self.traction_scale = 1.0;
+        }
+    }
+
+    pub fn traction_control(&self) -> bool {
+        self.traction_control
+    }
+
+    pub fn set_stability_control(&mut self, enabled: bool) {
+        self.stability_control = enabled;
+        if !enabled {
+            self.esc_activity = 0.0;
+        }
+    }
+
+    pub fn stability_control(&self) -> bool {
+        self.stability_control
+    }
+
+    pub fn esc_activity(&self) -> f32 {
+        self.esc_activity
     }
 
     pub fn reset(&mut self) {
@@ -170,6 +202,7 @@ impl Vehicle {
         self.filtered_slip_ratio = [0.0; 4];
         self.filtered_slip_angle = [0.0; 4];
         self.traction_scale = 1.0;
+        self.esc_activity = 0.0;
         self.steer_angle = 0.0;
     }
 
@@ -220,28 +253,51 @@ impl Vehicle {
             + self.state.rotation * Vec3::from_array(self.physics.center_of_gravity);
         let previous_compression = self.previous_compression;
         let previous_contact = self.state.wheels.map(|wheel| wheel.contact);
-        let driven_slip = self
-            .physics
-            .wheels
-            .iter()
-            .enumerate()
-            .filter(|(_, wheel)| wheel.driven)
-            .map(|(index, _)| self.state.wheels[index].slip_ratio.abs())
-            .fold(0.0, f32::max);
-        let target_slip = self
-            .physics
-            .wheels
-            .iter()
-            .find(|wheel| wheel.driven)
-            .map(|wheel| (wheel.tire.peak_slip_ratio * 1.5).max(0.05))
-            .unwrap_or(1.0);
-        let excess = driven_slip - target_slip;
-        let desired_traction = if excess > 0.0 {
-            (1.0 - excess * 2.5).clamp(0.0, 1.0)
+        if self.traction_control {
+            let driven_slip = self
+                .physics
+                .wheels
+                .iter()
+                .enumerate()
+                .filter(|(_, wheel)| wheel.driven)
+                .map(|(index, _)| self.state.wheels[index].slip_ratio.abs())
+                .fold(0.0, f32::max);
+            let target_slip = self
+                .physics
+                .wheels
+                .iter()
+                .find(|wheel| wheel.driven)
+                .map(|wheel| (wheel.tire.peak_slip_ratio * 1.5).max(0.05))
+                .unwrap_or(1.0);
+            let excess = driven_slip - target_slip;
+            let desired_traction = if excess > 0.0 {
+                (1.0 - excess * 2.5).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            self.traction_scale += (desired_traction - self.traction_scale) * 0.2;
         } else {
-            1.0
-        };
-        self.traction_scale += (desired_traction - self.traction_scale) * 0.2;
+            self.traction_scale = 1.0;
+        }
+        let mut esc_activity = 0.0;
+        let mut esc_brake_wheel = None;
+        if self.stability_control {
+            let forward_speed = self.state.velocity.dot(car_forward);
+            let car_right = car_forward.cross(Vec3::Y).normalize_or_zero();
+            let lateral_speed = self.state.velocity.dot(car_right);
+            let body_slip = lateral_speed.atan2(forward_speed.abs().max(1.0));
+            let target_yaw =
+                forward_speed * self.steer_angle.tan() / self.physics.wheelbase.max(0.1);
+            let actual_yaw = self.state.angular_velocity.y;
+            let yaw_excess = actual_yaw.abs() - target_yaw.abs();
+            let slip_excess = body_slip.abs() - 0.12;
+            if forward_speed > 3.0 && (slip_excess > 0.0 || yaw_excess > 0.08) {
+                esc_activity = (slip_excess / 0.4).max(yaw_excess / 0.5).clamp(0.0, 1.0);
+                esc_brake_wheel = Some(if body_slip > 0.0 { 1 } else { 0 });
+            }
+        }
+        self.esc_activity = esc_activity;
+        let drive_torque = drive_torque * (1.0 - 0.5 * esc_activity);
         let mut total_force = Vec3::new(0.0, -self.physics.mass * GRAVITY, 0.0);
         let mut total_torque = Vec3::ZERO;
         let mut rack_torque = 0.0;
@@ -267,7 +323,14 @@ impl Vehicle {
             if wheel.driven {
                 drive = drive_torque / driven_count as f32;
             }
-            let brake = self.physics.brakes.max_torque[index] * controls.brake.clamp(0.0, 1.0);
+            let driver_brake =
+                self.physics.brakes.max_torque[index] * controls.brake.clamp(0.0, 1.0);
+            let esc_brake = if esc_brake_wheel == Some(index) {
+                self.physics.brakes.max_torque[index] * 0.8 * esc_activity
+            } else {
+                0.0
+            };
+            let brake = (driver_brake + esc_brake).min(self.physics.brakes.max_torque[index]);
 
             if let Some(hit) = hit {
                 let wheel_center = hit.point + hit.normal * radius;
@@ -971,15 +1034,83 @@ mod tests {
         let ratio = (vehicle.state.wheels[2].slip_ratio.abs()
             + vehicle.state.wheels[3].slip_ratio.abs())
             * 0.5;
-        println!(
-            "speed={:.2} yaw={:.3} steer={:.3} front={:.3} rear={:.3} ratio={:.3}",
-            vehicle.state.velocity.length(),
-            vehicle.state.angular_velocity.y,
-            vehicle.steer_angle,
-            front,
-            rear,
-            ratio
+        assert!(
+            rear < front,
+            "rear slip exceeded front: front={front:.3} rear={rear:.3}"
         );
+        assert!(
+            ratio < 0.3,
+            "rear wheels spun too much under power: {ratio:.3}"
+        );
+    }
+
+    fn powered_corner(traction: bool, stability: bool) -> (f32, f32, f32, f32) {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        vehicle.set_traction_control(traction);
+        vehicle.set_stability_control(stability);
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..800 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                steering: 0.5,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        let forward = vehicle.state.rotation * Vec3::NEG_Z;
+        let right = vehicle.state.rotation * Vec3::X;
+        let v_lat = vehicle.state.velocity.dot(right);
+        let v_long = vehicle.state.velocity.dot(forward);
+        let body_slip = v_lat.atan2(v_long.abs().max(1.0));
+        (
+            vehicle.state.angular_velocity.y,
+            vehicle.state.velocity.length(),
+            vehicle.esc_activity(),
+            body_slip.abs(),
+        )
+    }
+
+    #[test]
+    fn stability_control_reduces_powered_oversteer() {
+        let (off_yaw, off_speed, off_activity, off_slip) = powered_corner(false, false);
+        let (on_yaw, on_speed, on_activity, on_slip) = powered_corner(false, true);
+        assert!(off_activity == 0.0);
+        assert!(on_activity > 0.0);
+        assert!(
+            on_yaw.abs() < off_yaw.abs() * 0.9,
+            "ESC did not reduce yaw: off={off_yaw} on={on_yaw}"
+        );
+        assert!(
+            on_slip < off_slip * 0.9,
+            "ESC did not reduce body slip: off={off_slip} on={on_slip}"
+        );
+        assert!(off_speed.is_finite());
+        assert!(on_yaw.is_finite() && on_speed.is_finite());
+    }
+
+    #[test]
+    fn assists_can_be_toggled() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        assert!(vehicle.traction_control());
+        assert!(vehicle.stability_control());
+        vehicle.set_traction_control(false);
+        vehicle.set_stability_control(false);
+        assert!(!vehicle.traction_control());
+        assert!(!vehicle.stability_control());
+        assert_eq!(vehicle.esc_activity(), 0.0);
     }
 
     #[test]

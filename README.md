@@ -36,8 +36,8 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 - 500 Hz fixed-step vehicle physics:
   - raycast suspension with anti-roll bars, stiffer damping, and progressive bump stops,
   - Pacejka longitudinal/lateral tire forces with relaxed slip and combined-slip limiting,
-  - CG-based load transfer, engine, gearbox, brakes, shared rear traction control, and
-    speed-sensitive steering for keyboard input,
+  - CG-based load transfer, engine, gearbox, brakes, optional shared rear traction control
+    and stability control, and speed-sensitive steering for keyboard input,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
@@ -56,6 +56,9 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 | `1`–`6` | Gears |
 | `C` | Cycle chase / bonnet / cockpit camera |
 | `R` | Reset |
+
+The drive toolbar has independent **TC** and **ESC** toggles. Both default on for keyboard
+and touch driving.
 
 The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 276 hp,
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
