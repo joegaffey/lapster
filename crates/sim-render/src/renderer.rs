@@ -534,6 +534,10 @@ impl Renderer {
         &self.surface_format
     }
 
+    pub fn aspect(&self) -> f32 {
+        self.config.width as f32 / self.config.height.max(1) as f32
+    }
+
     pub fn set_camera(&mut self, camera: Camera) {
         self.camera = camera;
         self.write_camera();

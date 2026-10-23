@@ -466,8 +466,13 @@ impl DriveViewer {
 
     fn update_camera(&mut self) {
         let (position, rotation) = self.visual_pose();
-        let eye = position + rotation * Vec3::new(0.0, 2.2, 5.8);
-        let target = position + rotation * Vec3::new(0.0, 0.65, -3.0);
+        let aspect = self.renderer.aspect();
+        let landscape = ((aspect - 0.75) / (2.0 - 0.75)).clamp(0.0, 1.0);
+        let back = 7.2 + (4.8 - 7.2) * landscape;
+        let height = 2.7 + (2.0 - 2.7) * landscape;
+        let look_ahead = -5.0 + 2.5 * landscape;
+        let eye = position + rotation * Vec3::new(0.0, height, back);
+        let target = position + rotation * Vec3::new(0.0, 0.65, look_ahead);
         self.renderer.set_camera(Camera {
             eye: [eye.x, eye.y.max(0.8), eye.z],
             target: [target.x, target.y, target.z],
