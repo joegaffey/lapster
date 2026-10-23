@@ -120,78 +120,58 @@
       code {
         color: #cbd5e1;
       }
-      .hud-button {
-        border: 1px solid #3a4350;
-        border-radius: 3px;
-        background: #151a21;
-        color: #e6e8eb;
-        padding: 6px 10px;
-        font: inherit;
-        font-size: 12px;
-        cursor: pointer;
+      #viewer-controls {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+        max-width: min(620px, calc(100vw - 448px));
       }
-      .hud-button:hover {
-        background: #1c2430;
-      }
-      #hud > h1 {
-        padding-right: 160px;
-      }
-      .hud-toggle {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        z-index: 2;
+      #viewer-controls > * {
         border: 1px solid #3a4350;
         border-radius: 3px;
         background: #151a21;
         color: #cbd5e1;
-        padding: 4px 8px;
+        padding: 5px 8px;
         font: inherit;
         font-size: 11px;
-        cursor: pointer;
-      }
-      .hud-toggle:hover {
-        background: #1c2430;
-      }
-      .hud-menu {
-        position: absolute;
-        top: 8px;
-        right: 94px;
-        z-index: 2;
-        border: 1px solid #3a4350;
-        border-radius: 3px;
-        background: #151a21;
-        color: #cbd5e1;
-        padding: 4px 8px;
-        font: inherit;
-        font-size: 11px;
+        line-height: 1.35;
         text-decoration: none;
+        cursor: pointer;
+        white-space: nowrap;
       }
-      .hud-menu:hover {
+      #viewer-controls > *:hover {
         background: #1c2430;
       }
       #hud.hud-collapsed {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: auto;
-        max-height: none;
-        overflow: visible;
-        padding: 8px 10px;
-      }
-      #hud.hud-collapsed > :not(.hud-toggle):not(.hud-menu) {
         display: none;
       }
-      #hud.hud-collapsed .hud-toggle,
-      #hud.hud-collapsed .hud-menu {
-        position: static;
+      @media (max-width: 720px) {
+        #viewer-controls {
+          top: 12px;
+          left: 12px;
+          right: 12px;
+          justify-content: flex-start;
+          max-width: none;
+        }
+        #hud {
+          top: 84px;
+          max-height: calc(100vh - 116px);
+        }
       }
     </style>
   </head>
   <body>
     <canvas id="view"></canvas>
+    <nav id="viewer-controls" aria-label="Viewer controls">
+      <a class="hud-exit" href="../">Exit</a>
+      <button id="reset-camera" type="button">Reset camera</button>
+    </nav>
     <aside id="hud">
-      <a class="hud-menu" href="../">Menu</a>
       <h1>Track Viewer</h1>
       <p class="muted" id="asset">loading…</p>
       <p class="status" id="status">booting</p>
@@ -217,9 +197,6 @@
 
       <h2>Camera</h2>
       <p class="muted">Drag to orbit · right/shift-drag to pan · wheel or pinch to zoom</p>
-      <p style="margin-top: 8px">
-        <button id="reset-camera" class="hud-button" type="button">Reset camera</button>
-      </p>
 
       <h2>Spawn</h2>
       <p class="muted" id="spawn">—</p>

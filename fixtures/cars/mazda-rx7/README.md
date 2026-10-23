@@ -29,7 +29,19 @@ cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb
 
 The import applies node transforms, rotates the car to `-Z` forward, extracts four wheels,
 removes logo geometry, splits glass into a 32% alpha mesh, bakes the palette texture into
-vertex colours, and uses generic rear-wheel-drive physics.
+vertex colours, and applies an FD3S rear-wheel-drive physics baseline.
+
+## Physics baseline
+
+- 1,270 kg, 2.425 m wheelbase, 1.46 m track.
+- 314 Nm peak torque, 276 hp, 8,000 rpm redline.
+- Six-speed gearbox, 4.1 final drive.
+- Cd 0.29, 1.85 m² frontal area.
+- Rear tire grip bias and a softer rear anti-roll bar to reduce power oversteer.
+- Stiffer bump/rebound damping and low-speed roll/pitch damping to reduce rocking when
+  braking to a stop while steering.
+- Estimated CG, inertia, spring/damper, anti-roll, and tire-relaxation values; not an AC
+  `.ini` import.
 
 ## Geometry
 

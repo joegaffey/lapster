@@ -17,9 +17,9 @@ Live demo: **https://joegaffey.com/lapster/**
   and orbit/pan/zoom camera navigation.
 
 The demos load these assets by default; no query parameters are required. Custom packs can
-still be selected with `?car=` and `?track=`. The info HUD is collapsible everywhere and
-starts collapsed on mobile; the drive demo adds on-screen steering, throttle, and brake
-controls on touch devices. Builds are versioned and the demos check `web/version.json` on
+still be selected with `?car=` and `?track=`. The info HUD starts collapsed on every demo;
+drive actions live in a detached top toolbar, with `Exit` returning to the menu. The drive demo adds on-screen steering, throttle, and brake controls
+on touch devices. Builds are versioned and the demos check `web/version.json` on
 load, clearing stale pack caches and reloading when a newer deployment is available.
 
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
@@ -34,10 +34,12 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
   validation.
 - Versioned asset packs: JSON manifest, aligned rkyv chunks, SHA-256 chunk verification.
 - 500 Hz fixed-step vehicle physics:
-  - raycast suspension,
-  - Pacejka longitudinal/lateral tire forces with combined-slip limiting,
-  - engine, gearbox, brakes, and edge-triggered reverse,
-  - wall contacts and finite-state reset,
+  - raycast suspension with anti-roll bars, stiffer damping, and progressive bump stops,
+  - Pacejka longitudinal/lateral tire forces with relaxed slip and combined-slip limiting,
+  - CG-based load transfer, engine, gearbox, brakes, rear traction control, and
+    speed-sensitive steering for keyboard input,
+  - edge-triggered reverse,
+  - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
 - wgpu 30 renderer with WebGPU and WebGL2 support.
 - Browser viewers for track, car, and driving.
@@ -54,6 +56,10 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 | `1`–`6` | Gears |
 | `C` | Cycle chase / bonnet / cockpit camera |
 | `R` | Reset |
+
+The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 276 hp,
+8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
+estimates until a licensed AC `.ini` source is available.
 
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
 opaque glass; cockpit mode renders it at 32% alpha. The body is visible by default, wheels

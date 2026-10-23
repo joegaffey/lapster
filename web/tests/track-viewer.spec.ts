@@ -11,6 +11,7 @@ test("track viewer renders the baked minimal track", async ({ page }) => {
     { timeout: 30_000 },
   );
   await page.waitForTimeout(750);
+  await expect(page.locator("#hud")).toHaveClass(/hud-collapsed/);
 
   const state = await page.evaluate(() => ({
     ready: (window as any).__trackViewerReady,

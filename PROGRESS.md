@@ -95,8 +95,11 @@ Toolchain setup scripts:
 
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
 - 500 Hz fixed-step vehicle physics on the main thread with:
-  - triangle raycast suspension,
-  - Pacejka longitudinal/lateral forces,
+  - triangle raycast suspension with anti-roll bars, progressive bump stops, and a rear grip
+    bias to reduce power oversteer,
+  - CG-based load transfer,
+  - Pacejka longitudinal/lateral forces with tire relaxation,
+  - rear traction control and speed-sensitive steering for keyboard input,
   - engine/gearbox/brake model,
   - wall contacts and finite-state reset,
   - interpolated visual pose.
@@ -107,8 +110,9 @@ Toolchain setup scripts:
   - `W` / `↑` brakes while reversing,
   - `0` manual reverse at rest, `1`–`6` gears, `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
-- Responsive UI: collapsible HUD on all demos, collapsed by default on mobile; drive adds
-  non-selectable touch steering/throttle/brake controls.
+- Responsive UI: collapsible HUD on all demos, collapsed by default. Every demo keeps Info
+  and Exit in a detached toolbar; drive adds Reset, Camera, and Body, and track adds Reset
+  camera. Touch devices get non-selectable steering/throttle/brake controls.
 - Track viewer camera: drag to orbit, right/shift-drag to pan, wheel or pinch to zoom, with
   a reset button.
 - Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
@@ -146,17 +150,20 @@ Toolchain setup scripts:
 - PWA/COI: installable manifest/icons and a same-origin service worker that injects
   COOP/COEP on demo navigations. `crossOriginIsolated` and `SharedArrayBuffer` verified.
 - PWA navigation: installed app launches the `/web/` demo menu; every demo links back to it.
-- Wasm: **2.81 MiB raw / 1.05 MiB gzip**.
+- Wasm: **2.83 MiB raw / 1.06 MiB gzip**.
 - Local warm startup measured at roughly **300–480 ms** in headless Chromium.
 
 ## Verified checks
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 24 tests
+- `cargo test --workspace` — 32 tests
+- Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
+  change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
+  control, speed-sensitive steering, and braking to a stop while steering.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 14 Playwright tests
+- `npm run test:viewer` — 15 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
@@ -171,8 +178,9 @@ Toolchain setup scripts:
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
 - Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
-- GLB importer currently keeps full mesh density, uses generic physics defaults, ignores glTF
-  extensions beyond baseColor, and has no decimation or steering/interior extraction.
+- GLB importer keeps full mesh density, applies the RX-7 FD3S baseline to imported cars,
+  ignores glTF extensions beyond baseColor, and has no decimation or steering/interior
+  extraction. AC `.ini` physics import remains pending.
 - Imported body paint is currently forced to a demo red; source material colours are baked
   for other parts.
 - AC track importer has no texture decoding, uses approximated material colours, skips
@@ -198,7 +206,7 @@ Toolchain setup scripts:
 ## Next steps
 
 1. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
-   wheel geometry cleanup, and an actual `.ini`/physics source instead of generic defaults.
+   wheel geometry cleanup, and licensed AC `.ini` physics when a suitable pack is available.
    - Add a simple steering-wheel/interior placeholder.
    - Add real image decoding/KTX2 only where textures are the right choice.
    - WebXR remains a later phase.

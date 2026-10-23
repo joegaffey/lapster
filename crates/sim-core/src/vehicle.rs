@@ -7,6 +7,8 @@ pub const FIXED_DT: f32 = 1.0 / 500.0;
 const GRAVITY: f32 = 9.81;
 const AIR_DENSITY: f32 = 1.225;
 const WHEEL_MASS: f32 = 20.0;
+const BUMP_STOP_RATE_MULTIPLIER: f32 = 12.0;
+const STEERING_SPEED_FALLOFF: f32 = 0.09;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Controls {
@@ -88,6 +90,9 @@ pub struct Vehicle {
     rest_length: [f32; 4],
     wheel_inertia: [f32; 4],
     previous_compression: [f32; 4],
+    filtered_slip_ratio: [f32; 4],
+    filtered_slip_angle: [f32; 4],
+    traction_scale: [f32; 4],
     steer_angle: f32,
 }
 
@@ -142,6 +147,9 @@ impl Vehicle {
             rest_length,
             wheel_inertia,
             previous_compression: [0.0; 4],
+            filtered_slip_ratio: [0.0; 4],
+            filtered_slip_angle: [0.0; 4],
+            traction_scale: [1.0; 4],
             steer_angle: 0.0,
         }
     }
@@ -159,6 +167,9 @@ impl Vehicle {
             tick: 0,
         };
         self.previous_compression = [0.0; 4];
+        self.filtered_slip_ratio = [0.0; 4];
+        self.filtered_slip_angle = [0.0; 4];
+        self.traction_scale = [1.0; 4];
         self.steer_angle = 0.0;
     }
 
@@ -169,7 +180,11 @@ impl Vehicle {
             *wheel = WheelState::default();
         }
 
-        self.steer_angle = controls.steering.clamp(-1.0, 1.0) * self.physics.steering.max_angle;
+        let steer_speed = Vec3::new(self.state.velocity.x, 0.0, self.state.velocity.z).length();
+        let steer_limit = (self.physics.steering.max_angle
+            / (1.0 + steer_speed * STEERING_SPEED_FALLOFF))
+            .max(0.08);
+        self.steer_angle = controls.steering.clamp(-1.0, 1.0) * steer_limit;
         let gear = controls
             .gear
             .clamp(-1, self.physics.drivetrain.gear_ratios.len() as i32);
@@ -200,6 +215,11 @@ impl Vehicle {
         let car_transform =
             Mat4::from_rotation_translation(self.state.rotation, self.state.position);
         let car_forward = horizontal_forward(self.state.rotation);
+        let body_up = self.state.rotation * Vec3::Y;
+        let cg_world = self.state.position
+            + self.state.rotation * Vec3::from_array(self.physics.center_of_gravity);
+        let previous_compression = self.previous_compression;
+        let previous_contact = self.state.wheels.map(|wheel| wheel.contact);
         let mut total_force = Vec3::new(0.0, -self.physics.mass * GRAVITY, 0.0);
         let mut total_torque = Vec3::ZERO;
         let mut rack_torque = 0.0;
@@ -229,23 +249,34 @@ impl Vehicle {
 
             if let Some(hit) = hit {
                 let wheel_center = hit.point + hit.normal * radius;
-                let suspension_length = (attach_world - wheel_center).length();
-                let compression = (self.rest_length[index] - suspension_length)
-                    .clamp(0.0, wheel.suspension.travel);
+                let suspension_length = (attach_world - wheel_center).dot(body_up).max(0.0);
+                let raw_compression = self.rest_length[index] - suspension_length;
+                let compression = raw_compression.clamp(0.0, wheel.suspension.travel);
+                let bump_compression = (raw_compression - wheel.suspension.travel).max(0.0);
                 let compression_velocity =
-                    ((compression - self.previous_compression[index]) / dt).clamp(-8.0, 8.0);
+                    ((compression - previous_compression[index]) / dt).clamp(-8.0, 8.0);
                 let damper = if compression_velocity >= 0.0 {
                     wheel.suspension.damper_bump
                 } else {
                     wheel.suspension.damper_rebound
                 };
+                let other = if index % 2 == 0 { index + 1 } else { index - 1 };
+                let anti_roll_force = if previous_contact[other] {
+                    wheel.suspension.anti_roll * (compression - previous_compression[other])
+                } else {
+                    0.0
+                };
+                let bump_stop_force =
+                    bump_compression * wheel.suspension.spring_rate * BUMP_STOP_RATE_MULTIPLIER;
                 let max_load = self.physics.mass * GRAVITY * 3.0;
                 let normal_load = (wheel.suspension.spring_rate * compression
-                    + damper * compression_velocity)
+                    + damper * compression_velocity
+                    + anti_roll_force
+                    + bump_stop_force)
                     .clamp(0.0, max_load);
                 let suspension_force = hit.normal * normal_load;
                 total_force += suspension_force;
-                total_torque += (hit.point - self.state.position).cross(suspension_force);
+                total_torque += (hit.point - cg_world).cross(suspension_force);
 
                 let contact_velocity = self.state.velocity
                     + self
@@ -255,12 +286,36 @@ impl Vehicle {
                 let long_velocity = contact_velocity.dot(wheel_forward);
                 let lateral_velocity = contact_velocity.dot(wheel_right);
                 let denominator = long_velocity.abs().max(1.0);
-                let slip_ratio = ((self.state.wheels[index].angular_velocity * radius
+                let raw_slip_ratio = ((self.state.wheels[index].angular_velocity * radius
                     - long_velocity)
                     / denominator)
                     .clamp(-2.0, 2.0);
                 let slip_angle = (-lateral_velocity).atan2(denominator).clamp(-1.5, 1.5);
+                let relaxation_length = wheel.tire.relaxation_length.max(0.01);
+                let relaxation_speed = long_velocity.abs().max(2.0);
+                let relaxation_rate = (relaxation_speed / relaxation_length).min(1.0 / dt);
+                let relaxation_blend = 1.0 - (-relaxation_rate * dt).exp();
+                self.filtered_slip_ratio[index] +=
+                    (raw_slip_ratio - self.filtered_slip_ratio[index]) * relaxation_blend;
+                self.filtered_slip_angle[index] +=
+                    (slip_angle - self.filtered_slip_angle[index]) * relaxation_blend;
+                let slip_ratio = self.filtered_slip_ratio[index];
+                let slip_angle = self.filtered_slip_angle[index];
                 let mu = hit.friction * wheel.tire.friction_scale;
+                if wheel.driven {
+                    let target_slip = (wheel.tire.peak_slip_ratio * 1.5).max(0.05);
+                    let excess = raw_slip_ratio.abs() - target_slip;
+                    let desired_scale = if excess > 0.0 {
+                        (1.0 - excess * 6.0).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    self.traction_scale[index] +=
+                        (desired_scale - self.traction_scale[index]) * 0.2;
+                    drive *= self.traction_scale[index];
+                } else {
+                    self.traction_scale[index] = 1.0;
+                }
                 if drive != 0.0 {
                     let max_drive_torque = mu * normal_load * radius;
                     drive = drive.clamp(-max_drive_torque, max_drive_torque);
@@ -276,7 +331,7 @@ impl Vehicle {
                 };
                 let tire_force = wheel_forward * (fx * scale) + wheel_right * (fy * scale);
                 total_force += tire_force;
-                total_torque += (hit.point - self.state.position).cross(tire_force);
+                total_torque += (hit.point - cg_world).cross(tire_force);
                 rack_torque += fy * 0.01;
 
                 let tire_torque = fx * scale * radius;
@@ -309,6 +364,8 @@ impl Vehicle {
                 self.previous_compression[index] = compression;
             } else {
                 self.previous_compression[index] = 0.0;
+                self.filtered_slip_ratio[index] *= 1.0 - 10.0 * dt;
+                self.filtered_slip_angle[index] *= 1.0 - 10.0 * dt;
                 let brake_torque = brake * self.state.wheels[index].angular_velocity.signum();
                 let wheel_torque = drive - brake_torque;
                 self.state.wheels[index].angular_velocity = (self.state.wheels[index]
@@ -327,7 +384,7 @@ impl Vehicle {
         let speed = self.state.velocity.length();
         let horizontal_speed =
             Vec3::new(self.state.velocity.x, 0.0, self.state.velocity.z).length();
-        if controls.throttle < 0.01 && controls.brake < 0.01 && horizontal_speed < 0.25 {
+        if controls.throttle < 0.01 && horizontal_speed < 0.25 {
             let damping = (1.0 - 8.0 * dt).max(0.0);
             self.state.velocity.x *= damping;
             self.state.velocity.z *= damping;
@@ -341,6 +398,9 @@ impl Vehicle {
                     wheel.angular_velocity = 0.0;
                 }
             }
+            let body_damping = (1.0 - 4.0 * dt).max(0.0);
+            self.state.angular_velocity.x *= body_damping;
+            self.state.angular_velocity.z *= body_damping;
         }
         if speed > 0.1 {
             let drag = 0.5
@@ -371,7 +431,7 @@ impl Vehicle {
         let delta_rotation = Quat::from_scaled_axis(self.state.angular_velocity * dt);
         self.state.rotation = (delta_rotation * self.state.rotation).normalize();
 
-        if controls.throttle < 0.01 && controls.brake < 0.01 {
+        if controls.throttle < 0.01 {
             let horizontal_speed =
                 Vec3::new(self.state.velocity.x, 0.0, self.state.velocity.z).length();
             if horizontal_speed < 0.06 {
@@ -380,6 +440,9 @@ impl Vehicle {
                 for wheel in &mut self.state.wheels {
                     wheel.angular_velocity = 0.0;
                 }
+                let stop_damping = (1.0 - 8.0 * dt).max(0.0);
+                self.state.angular_velocity.x *= stop_damping;
+                self.state.angular_velocity.z *= stop_damping;
             }
         }
 
@@ -501,11 +564,11 @@ mod tests {
 
     fn physics() -> CarPhysics {
         let suspension = SuspensionSpec {
-            travel: 0.18,
-            spring_rate: 200000.0,
-            damper_bump: 12000.0,
-            damper_rebound: 15000.0,
-            anti_roll: 8000.0,
+            travel: 0.15,
+            spring_rate: 55_000.0,
+            damper_bump: 7_000.0,
+            damper_rebound: 9_000.0,
+            anti_roll: 18_000.0,
             ride_height: 0.34,
         };
         let tire = TireSpec {
@@ -521,16 +584,16 @@ mod tests {
                 d: 1.0,
                 e: 0.9,
             },
-            relaxation_length: 0.1,
+            relaxation_length: 0.3,
             peak_slip_ratio: 0.12,
             peak_slip_angle: 0.12,
             friction_scale: 1.0,
         };
         let wheels = [
-            ("FL", [-0.9, 0.34, -1.3], true, true, false),
-            ("FR", [0.9, 0.34, -1.3], true, false, false),
-            ("RL", [-0.9, 0.34, 1.3], false, true, true),
-            ("RR", [0.9, 0.34, 1.3], false, false, true),
+            ("FL", [-0.73, 0.34, -1.2125], true, true, false),
+            ("FR", [0.73, 0.34, -1.2125], true, false, false),
+            ("RL", [-0.73, 0.34, 1.2125], false, true, true),
+            ("RR", [0.73, 0.34, 1.2125], false, false, true),
         ]
         .map(|(name, position, front, left, driven)| WheelPhysics {
             name: String::from(name),
@@ -541,42 +604,60 @@ mod tests {
             width: 0.225,
             steerable: front,
             driven,
-            suspension,
-            tire,
+            suspension: SuspensionSpec {
+                anti_roll: if front { 18_000.0 } else { 8_000.0 },
+                ..suspension
+            },
+            tire: TireSpec {
+                friction_scale: if front { 1.0 } else { 1.05 },
+                ..tire
+            },
         });
         CarPhysics {
-            mass: 1200.0,
-            inertia: [450.0, 600.0, 350.0],
-            center_of_gravity: [0.0, 0.35, 0.0],
-            wheelbase: 2.6,
-            track_width: [1.8, 1.8],
+            mass: 1_270.0,
+            inertia: [650.0, 1_300.0, 450.0],
+            center_of_gravity: [0.0, 0.40, 0.0],
+            wheelbase: 2.425,
+            track_width: [1.46, 1.46],
             wheels,
             engine: EngineSpec {
                 idle_rpm: 900.0,
-                redline_rpm: 7000.0,
+                redline_rpm: 8_000.0,
                 torque_curve: vec![
                     TorquePoint {
-                        rpm: 1000.0,
+                        rpm: 1_000.0,
                         torque_nm: 180.0,
                     },
                     TorquePoint {
-                        rpm: 3500.0,
-                        torque_nm: 320.0,
+                        rpm: 2_000.0,
+                        torque_nm: 260.0,
                     },
                     TorquePoint {
-                        rpm: 6500.0,
-                        torque_nm: 260.0,
+                        rpm: 3_000.0,
+                        torque_nm: 300.0,
+                    },
+                    TorquePoint {
+                        rpm: 4_500.0,
+                        torque_nm: 314.0,
+                    },
+                    TorquePoint {
+                        rpm: 6_000.0,
+                        torque_nm: 300.0,
+                    },
+                    TorquePoint {
+                        rpm: 7_500.0,
+                        torque_nm: 250.0,
                     },
                 ],
             },
             drivetrain: DrivetrainSpec {
-                gear_ratios: vec![3.2, 2.1, 1.5, 1.2, 1.0, 0.8],
-                final_drive: 3.7,
+                gear_ratios: vec![3.483, 2.015, 1.391, 1.0, 0.719, 0.6],
+                final_drive: 4.1,
                 clutch_max_torque: 400.0,
                 drive_layout: DriveLayout::Rear,
             },
             brakes: BrakeSpec {
-                max_torque: [1800.0, 1800.0, 1200.0, 1200.0],
+                max_torque: [2_200.0, 2_200.0, 1_400.0, 1_400.0],
                 bias: 0.6,
             },
             steering: SteeringSpec {
@@ -586,8 +667,8 @@ mod tests {
                 kingpin_inclination: 0.12,
             },
             aero: AeroSpec {
-                drag_coefficient: 0.32,
-                frontal_area: 2.0,
+                drag_coefficient: 0.29,
+                frontal_area: 1.85,
                 downforce_coefficient: 0.0,
             },
         }
@@ -596,16 +677,16 @@ mod tests {
     fn collider() -> TrackCollider {
         let collision = TrackCollision {
             vertices: vec![
-                [-50.0, 0.0, -50.0],
-                [-50.0, 0.0, 50.0],
-                [50.0, 0.0, 50.0],
-                [50.0, 0.0, -50.0],
+                [-500.0, 0.0, -500.0],
+                [-500.0, 0.0, 500.0],
+                [500.0, 0.0, 500.0],
+                [500.0, 0.0, -500.0],
             ],
             indices: vec![0, 1, 2, 0, 2, 3],
             surface_ids: vec![0, 0],
             bounds: Aabb {
-                min: [-50.0, 0.0, -50.0],
-                max: [50.0, 0.0, 50.0],
+                min: [-500.0, 0.0, -500.0],
+                max: [500.0, 0.0, 500.0],
             },
         };
         let metadata = TrackMetadata {
@@ -703,6 +784,334 @@ mod tests {
             "speed {}",
             vehicle.state.velocity.length()
         );
+    }
+
+    #[test]
+    fn stability_maneuver_remains_finite_and_upright() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        let phases = [
+            (
+                900,
+                Controls {
+                    throttle: 1.0,
+                    gear: 1,
+                    ..Controls::default()
+                },
+            ),
+            (
+                700,
+                Controls {
+                    throttle: 1.0,
+                    gear: 2,
+                    ..Controls::default()
+                },
+            ),
+            (
+                1100,
+                Controls {
+                    throttle: 0.55,
+                    steering: 0.55,
+                    gear: 2,
+                    ..Controls::default()
+                },
+            ),
+            (
+                700,
+                Controls {
+                    brake: 0.85,
+                    steering: -0.35,
+                    gear: 2,
+                    ..Controls::default()
+                },
+            ),
+            (
+                1100,
+                Controls {
+                    steering: -0.2,
+                    gear: 2,
+                    ..Controls::default()
+                },
+            ),
+        ];
+        for (steps, controls) in phases {
+            for _ in 0..steps {
+                vehicle.step(controls);
+                assert!(vehicle.state.position.is_finite());
+                assert!(vehicle.state.velocity.is_finite());
+                assert!(vehicle.state.angular_velocity.is_finite());
+            }
+            let up = vehicle.state.rotation * Vec3::Y;
+            assert!(
+                up.y > 0.55,
+                "car tipped over: up={up:?} speed={}",
+                vehicle.state.velocity.length()
+            );
+        }
+        assert!(
+            vehicle
+                .state
+                .wheels
+                .iter()
+                .filter(|wheel| wheel.contact)
+                .count()
+                >= 3
+        );
+        assert!(vehicle.state.angular_velocity.length() < 3.0);
+        assert!(vehicle.state.velocity.length() < 40.0);
+    }
+
+    #[test]
+    fn braking_to_stop_while_steering_settles() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..900 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..1500 {
+            vehicle.step(Controls {
+                brake: 1.0,
+                steering: 0.6,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        assert!(vehicle.state.velocity.length() < 0.05);
+        for _ in 0..500 {
+            vehicle.step(Controls {
+                brake: 1.0,
+                steering: 0.6,
+                gear: 1,
+                ..Controls::default()
+            });
+            assert!(vehicle.state.angular_velocity.length() < 0.05);
+        }
+        let up = vehicle.state.rotation * Vec3::Y;
+        assert!(up.y > 0.99);
+        assert!(up.x.abs() < 0.02);
+        assert!(up.z.abs() < 0.02);
+    }
+
+    #[test]
+    fn steering_limit_reduces_with_speed() {
+        let physics = physics();
+        let mut slow = Vehicle::new(physics.clone(), collider(), &spawn());
+        slow.step(Controls {
+            steering: 1.0,
+            ..Controls::default()
+        });
+        assert!(slow.steer_angle > physics.steering.max_angle * 0.9);
+
+        let mut fast = Vehicle::new(physics.clone(), collider(), &spawn());
+        for _ in 0..1200 {
+            fast.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        fast.step(Controls {
+            steering: 1.0,
+            gear: 1,
+            ..Controls::default()
+        });
+        assert!(
+            fast.steer_angle < physics.steering.max_angle * 0.6,
+            "high-speed steering limit was not reduced: {}",
+            fast.steer_angle
+        );
+    }
+
+    #[test]
+    fn traction_control_limits_rear_wheelspin() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..800 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                steering: 0.2,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        let rear_slip_ratio = (vehicle.state.wheels[2].slip_ratio.abs()
+            + vehicle.state.wheels[3].slip_ratio.abs())
+            * 0.5;
+        assert!(
+            rear_slip_ratio < 0.4,
+            "rear wheels spun too much: {rear_slip_ratio:.3}"
+        );
+        assert!(vehicle.state.rotation.is_finite());
+    }
+
+    #[test]
+    fn cornering_transfers_load_to_outside_wheels() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..900 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..350 {
+            vehicle.step(Controls {
+                throttle: 0.45,
+                steering: 0.35,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        let left = vehicle.state.wheels[0].normal_load + vehicle.state.wheels[2].normal_load;
+        let right = vehicle.state.wheels[1].normal_load + vehicle.state.wheels[3].normal_load;
+        let up = vehicle.state.rotation * Vec3::Y;
+        assert!(up.y > 0.9);
+        assert!(
+            right > left + 50.0,
+            "expected outside load transfer: left={left:.1} right={right:.1}"
+        );
+    }
+
+    fn cornering_roll(anti_roll: f32) -> f32 {
+        let mut physics = physics();
+        for wheel in &mut physics.wheels {
+            wheel.suspension.anti_roll = anti_roll;
+        }
+        let mut vehicle = Vehicle::new(physics, collider(), &spawn());
+        for _ in 0..900 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..350 {
+            vehicle.step(Controls {
+                throttle: 0.45,
+                steering: 0.35,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        let up = vehicle.state.rotation * Vec3::Y;
+        up.x.abs()
+    }
+
+    #[test]
+    fn anti_roll_bar_reduces_body_roll() {
+        let without = cornering_roll(0.0);
+        let with = cornering_roll(18_000.0);
+        assert!(
+            with < without * 0.9,
+            "anti-roll did not reduce roll: without={without:.4} with={with:.4}"
+        );
+    }
+
+    #[test]
+    fn high_speed_lane_change_stays_stable() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        assert!(vehicle.state.velocity.length() > 20.0);
+        let phases = [
+            (
+                500,
+                Controls {
+                    throttle: 0.3,
+                    steering: 0.12,
+                    gear: 2,
+                    ..Controls::default()
+                },
+            ),
+            (
+                500,
+                Controls {
+                    throttle: 0.3,
+                    steering: -0.12,
+                    gear: 2,
+                    ..Controls::default()
+                },
+            ),
+            (
+                500,
+                Controls {
+                    brake: 0.5,
+                    gear: 2,
+                    ..Controls::default()
+                },
+            ),
+        ];
+        for (steps, controls) in phases {
+            for _ in 0..steps {
+                vehicle.step(controls);
+                assert!(vehicle.state.position.is_finite());
+                assert!(vehicle.state.velocity.is_finite());
+                assert!(vehicle.state.angular_velocity.is_finite());
+            }
+            let up = vehicle.state.rotation * Vec3::Y;
+            assert!(
+                up.y > 0.7,
+                "car lost stability: up={up:?} speed={} yaw={}",
+                vehicle.state.velocity.length(),
+                vehicle.state.angular_velocity.y
+            );
+        }
+        assert!(
+            vehicle
+                .state
+                .wheels
+                .iter()
+                .filter(|wheel| wheel.contact)
+                .count()
+                >= 3
+        );
+        assert!(vehicle.state.angular_velocity.length() < 3.0);
+    }
+
+    #[test]
+    fn hard_landing_stays_finite_and_settles() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        vehicle.state.position.y += 0.5;
+        let max_load = vehicle.physics.mass * GRAVITY * 3.0;
+        for _ in 0..2500 {
+            vehicle.step(Controls::default());
+            assert!(vehicle.state.position.is_finite());
+            assert!(vehicle.state.velocity.is_finite());
+            assert!(vehicle.state.angular_velocity.is_finite());
+            for wheel in &vehicle.state.wheels {
+                assert!(wheel.normal_load <= max_load + 1.0);
+                assert!(wheel.suspension_compression <= 0.15 + f32::EPSILON);
+            }
+        }
+        assert!(vehicle.state.position.y > -0.2 && vehicle.state.position.y < 0.2);
+        assert!(vehicle.state.wheels.iter().all(|wheel| wheel.contact));
     }
 
     #[test]

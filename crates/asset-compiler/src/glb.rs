@@ -418,6 +418,10 @@ fn physics_from_visual(wheels: &[WheelVisual; 4]) -> Result<CarPhysics> {
     let mut physics_wheels = Vec::with_capacity(4);
     for (index, wheel) in wheels.iter().enumerate() {
         let label = ["FL", "FR", "RL", "RR"][index];
+        let mut tire = default_tire();
+        if !wheel.is_front {
+            tire.friction_scale = 1.05;
+        }
         physics_wheels.push(WheelPhysics {
             name: label.to_string(),
             is_front: wheel.is_front,
@@ -428,21 +432,21 @@ fn physics_from_visual(wheels: &[WheelVisual; 4]) -> Result<CarPhysics> {
             steerable: wheel.is_front,
             driven: !wheel.is_front,
             suspension: SuspensionSpec {
-                travel: 0.18,
-                spring_rate: 200_000.0,
-                damper_bump: 12_000.0,
-                damper_rebound: 15_000.0,
-                anti_roll: 8_000.0,
+                travel: 0.15,
+                spring_rate: if wheel.is_front { 55_000.0 } else { 48_000.0 },
+                damper_bump: if wheel.is_front { 7_000.0 } else { 6_500.0 },
+                damper_rebound: if wheel.is_front { 9_000.0 } else { 8_000.0 },
+                anti_roll: if wheel.is_front { 18_000.0 } else { 8_000.0 },
                 ride_height: wheel.transform.translation[1],
             },
-            tire: default_tire(),
+            tire,
         });
     }
 
     Ok(CarPhysics {
-        mass: 1_250.0,
-        inertia: [500.0, 650.0, 350.0],
-        center_of_gravity: [0.0, 0.35, 0.0],
+        mass: 1_270.0,
+        inertia: [650.0, 1_300.0, 450.0],
+        center_of_gravity: [0.0, 0.40, 0.0],
         wheelbase,
         track_width,
         wheels: physics_wheels
@@ -450,38 +454,42 @@ fn physics_from_visual(wheels: &[WheelVisual; 4]) -> Result<CarPhysics> {
             .map_err(|_| anyhow::anyhow!("imported car did not produce four physics wheels"))?,
         engine: EngineSpec {
             idle_rpm: 900.0,
-            redline_rpm: 7_500.0,
+            redline_rpm: 8_000.0,
             torque_curve: vec![
                 TorquePoint {
                     rpm: 1_000.0,
-                    torque_nm: 190.0,
+                    torque_nm: 180.0,
                 },
                 TorquePoint {
                     rpm: 2_000.0,
-                    torque_nm: 270.0,
+                    torque_nm: 260.0,
                 },
                 TorquePoint {
-                    rpm: 3_500.0,
-                    torque_nm: 330.0,
+                    rpm: 3_000.0,
+                    torque_nm: 300.0,
                 },
                 TorquePoint {
-                    rpm: 5_000.0,
-                    torque_nm: 310.0,
+                    rpm: 4_500.0,
+                    torque_nm: 314.0,
                 },
                 TorquePoint {
-                    rpm: 6_500.0,
-                    torque_nm: 270.0,
+                    rpm: 6_000.0,
+                    torque_nm: 300.0,
+                },
+                TorquePoint {
+                    rpm: 7_500.0,
+                    torque_nm: 250.0,
                 },
             ],
         },
         drivetrain: sim_types::DrivetrainSpec {
-            gear_ratios: vec![3.2, 2.1, 1.5, 1.2, 1.0, 0.8],
-            final_drive: 3.7,
+            gear_ratios: vec![3.483, 2.015, 1.391, 1.0, 0.719, 0.6],
+            final_drive: 4.1,
             clutch_max_torque: 400.0,
             drive_layout: DriveLayout::Rear,
         },
         brakes: BrakeSpec {
-            max_torque: [1_800.0, 1_800.0, 1_200.0, 1_200.0],
+            max_torque: [2_200.0, 2_200.0, 1_400.0, 1_400.0],
             bias: 0.6,
         },
         steering: SteeringSpec {
@@ -491,8 +499,8 @@ fn physics_from_visual(wheels: &[WheelVisual; 4]) -> Result<CarPhysics> {
             kingpin_inclination: 0.12,
         },
         aero: AeroSpec {
-            drag_coefficient: 0.32,
-            frontal_area: 2.0,
+            drag_coefficient: 0.29,
+            frontal_area: 1.85,
             downforce_coefficient: 0.0,
         },
     })
@@ -512,7 +520,7 @@ fn default_tire() -> TireSpec {
             d: 1.0,
             e: 0.9,
         },
-        relaxation_length: 0.1,
+        relaxation_length: 0.3,
         peak_slip_ratio: 0.12,
         peak_slip_angle: 0.12,
         friction_scale: 1.0,

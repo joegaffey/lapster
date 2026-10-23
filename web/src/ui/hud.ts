@@ -1,5 +1,3 @@
-const MOBILE_QUERY = "(max-width: 720px), (pointer: coarse)";
-
 export function setupHud() {
   const hud = document.querySelector<HTMLElement>("#hud");
   if (!hud || hud.querySelector("#hud-toggle")) {
@@ -11,7 +9,8 @@ export function setupHud() {
   toggle.className = "hud-toggle";
   toggle.type = "button";
   toggle.setAttribute("aria-controls", "hud");
-  hud.prepend(toggle);
+  const host = document.querySelector<HTMLElement>("#viewer-controls") ?? hud;
+  host.prepend(toggle);
 
   const setCollapsed = (collapsed: boolean) => {
     hud.classList.toggle("hud-collapsed", collapsed);
@@ -19,7 +18,7 @@ export function setupHud() {
     toggle.setAttribute("aria-expanded", String(!collapsed));
   };
 
-  setCollapsed(window.matchMedia(MOBILE_QUERY).matches);
+  setCollapsed(true);
   toggle.addEventListener("click", () => {
     setCollapsed(!hud.classList.contains("hud-collapsed"));
   });

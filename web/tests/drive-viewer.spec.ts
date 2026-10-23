@@ -74,6 +74,24 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
+test("info starts hidden and can be opened", async ({ page }) => {
+  await page.goto("/web/drive/");
+  await waitForReady(page);
+
+  const hud = page.locator("#hud");
+  const toggle = page.locator("#hud-toggle");
+  await expect(hud).toHaveClass(/hud-collapsed/);
+  await expect(toggle).toHaveText("Info");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("#speed")).toBeHidden();
+
+  await toggle.click();
+  await expect(hud).not.toHaveClass(/hud-collapsed/);
+  await expect(toggle).toHaveText("Hide info");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#speed")).toBeVisible();
+});
+
 test("60 second scripted soak stays finite", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();
