@@ -16,7 +16,9 @@ Live demo: **https://joegaffey.com/lapster/**
 - **Track viewer** — skidpad render, spawn point, bounds, axes, and collision-surface overlay.
 
 The demos load these assets by default; no query parameters are required. Custom packs can
-still be selected with `?car=` and `?track=`.
+still be selected with `?car=` and `?track=`. The info HUD is collapsible everywhere and
+starts collapsed on mobile; the drive demo adds on-screen steering, throttle, brake, and
+reset controls on touch devices.
 
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 GitHub Pages cannot send the COOP/COEP headers required for `SharedArrayBuffer`; the current

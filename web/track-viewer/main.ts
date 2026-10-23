@@ -1,6 +1,7 @@
 import init, { TrackViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl } from "../src/assets/loader.ts";
+import { setupHud } from "../src/ui/hud.ts";
 
 declare global {
   interface Window {
@@ -21,6 +22,8 @@ const meshes = document.querySelector<HTMLElement>("#meshes")!;
 const fpsLabel = document.querySelector<HTMLElement>("#fps")!;
 const frameLabel = document.querySelector<HTMLElement>("#frame-ms")!;
 const drawsLabel = document.querySelector<HTMLElement>("#draws")!;
+
+setupHud();
 
 const params = new URLSearchParams(window.location.search);
 const TRACK_URL =

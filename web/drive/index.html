@@ -132,6 +132,103 @@
       button:hover {
         background: #1c2430;
       }
+      #hud > h1 {
+        padding-right: 82px;
+      }
+      .hud-toggle {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 2;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 4px 8px;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .hud-toggle:hover {
+        background: #1c2430;
+      }
+      #hud.hud-collapsed {
+        width: auto;
+        max-height: none;
+        overflow: visible;
+        padding: 8px 10px;
+      }
+      #hud.hud-collapsed > :not(.hud-toggle) {
+        display: none;
+      }
+      #hud.hud-collapsed .hud-toggle {
+        position: static;
+      }
+      #touch-controls {
+        display: none;
+        position: fixed;
+        inset: auto 0 0 0;
+        z-index: 5;
+        align-items: flex-end;
+        justify-content: space-between;
+        padding: 0 18px calc(18px + env(safe-area-inset-bottom));
+        pointer-events: none;
+      }
+      .touch-cluster {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        pointer-events: auto;
+      }
+      .touch-right {
+        flex-direction: column;
+        align-items: flex-end;
+      }
+      .touch-button {
+        width: 76px;
+        height: 76px;
+        border: 1px solid #4a5565;
+        border-radius: 50%;
+        background: rgba(15, 19, 25, 0.82);
+        color: #e6e8eb;
+        padding: 0;
+        font-size: 24px;
+        line-height: 1;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        backdrop-filter: blur(6px);
+      }
+      .touch-button.active {
+        border-color: #38bdf8;
+        background: #38bdf8;
+        color: #081018;
+      }
+      .touch-throttle {
+        width: 86px;
+        height: 86px;
+      }
+      .touch-reset {
+        position: absolute;
+        left: 50%;
+        bottom: calc(24px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        pointer-events: auto;
+      }
+      @media (pointer: coarse), (max-width: 720px) {
+        #touch-controls {
+          display: flex;
+        }
+        #hud {
+          top: 12px;
+          left: 12px;
+          width: min(360px, calc(100vw - 24px));
+          max-height: calc(100vh - 128px);
+        }
+      }
     </style>
   </head>
   <body>
@@ -185,6 +282,17 @@
         <button id="reset" data-testid="reset">Reset</button>
       </p>
     </aside>
+    <div id="touch-controls" aria-label="Touch controls">
+      <div class="touch-cluster">
+        <button class="touch-button" data-key="a" type="button" aria-label="Steer left">◀</button>
+        <button class="touch-button" data-key="d" type="button" aria-label="Steer right">▶</button>
+      </div>
+      <div class="touch-cluster touch-right">
+        <button class="touch-button touch-throttle" data-key="w" type="button" aria-label="Throttle">▲</button>
+        <button class="touch-button" data-key="s" type="button" aria-label="Brake or reverse">▼</button>
+      </div>
+      <button id="touch-reset" class="touch-reset" type="button" aria-label="Reset car">R</button>
+    </div>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

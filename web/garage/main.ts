@@ -1,6 +1,7 @@
 import init, { GarageViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl } from "../src/assets/loader.ts";
+import { setupHud } from "../src/ui/hud.ts";
 
 declare global {
   interface Window {
@@ -24,6 +25,8 @@ const spinInput = document.querySelector<HTMLInputElement>("#spin")!;
 const steerValue = document.querySelector<HTMLElement>("#steer-value")!;
 const spinValue = document.querySelector<HTMLElement>("#spin-value")!;
 const animateInput = document.querySelector<HTMLInputElement>("#animate")!;
+
+setupHud();
 
 const params = new URLSearchParams(window.location.search);
 const TRACK_URL =

@@ -138,7 +138,7 @@ Toolchain setup scripts:
 - `cargo test --workspace` — 24 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 8 Playwright tests
+- `npm run test:viewer` — 9 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and

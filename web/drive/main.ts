@@ -1,6 +1,8 @@
 import init, { DriveViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl } from "../src/assets/loader.ts";
+import { setupHud } from "../src/ui/hud.ts";
+import { setupTouchControls } from "../src/ui/touch.ts";
 
 declare global {
   interface Window {
@@ -11,6 +13,8 @@ declare global {
 }
 
 const PACK_VERSION = "cp6";
+setupHud();
+
 const params = new URLSearchParams(window.location.search);
 const TRACK_URL =
   params.get("track") ?? `../../fixtures/tracks/skidpad05/pack.sima?v=${PACK_VERSION}`;
@@ -151,6 +155,7 @@ async function boot() {
   });
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", reset);
+  setupTouchControls(keys, reset);
 
   const observer = new ResizeObserver(() => {
     if (resizeCanvas()) {

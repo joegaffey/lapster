@@ -105,6 +105,38 @@
       code {
         color: #cbd5e1;
       }
+      #hud > h1 {
+        padding-right: 82px;
+      }
+      .hud-toggle {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 2;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 4px 8px;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .hud-toggle:hover {
+        background: #1c2430;
+      }
+      #hud.hud-collapsed {
+        width: auto;
+        max-height: none;
+        overflow: visible;
+        padding: 8px 10px;
+      }
+      #hud.hud-collapsed > :not(.hud-toggle) {
+        display: none;
+      }
+      #hud.hud-collapsed .hud-toggle {
+        position: static;
+      }
     </style>
   </head>
   <body>
