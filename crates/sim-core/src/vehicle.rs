@@ -92,7 +92,7 @@ pub struct Vehicle {
     previous_compression: [f32; 4],
     filtered_slip_ratio: [f32; 4],
     filtered_slip_angle: [f32; 4],
-    traction_scale: [f32; 4],
+    traction_scale: f32,
     steer_angle: f32,
 }
 
@@ -149,7 +149,7 @@ impl Vehicle {
             previous_compression: [0.0; 4],
             filtered_slip_ratio: [0.0; 4],
             filtered_slip_angle: [0.0; 4],
-            traction_scale: [1.0; 4],
+            traction_scale: 1.0,
             steer_angle: 0.0,
         }
     }
@@ -169,7 +169,7 @@ impl Vehicle {
         self.previous_compression = [0.0; 4];
         self.filtered_slip_ratio = [0.0; 4];
         self.filtered_slip_angle = [0.0; 4];
-        self.traction_scale = [1.0; 4];
+        self.traction_scale = 1.0;
         self.steer_angle = 0.0;
     }
 
@@ -220,6 +220,28 @@ impl Vehicle {
             + self.state.rotation * Vec3::from_array(self.physics.center_of_gravity);
         let previous_compression = self.previous_compression;
         let previous_contact = self.state.wheels.map(|wheel| wheel.contact);
+        let driven_slip = self
+            .physics
+            .wheels
+            .iter()
+            .enumerate()
+            .filter(|(_, wheel)| wheel.driven)
+            .map(|(index, _)| self.state.wheels[index].slip_ratio.abs())
+            .fold(0.0, f32::max);
+        let target_slip = self
+            .physics
+            .wheels
+            .iter()
+            .find(|wheel| wheel.driven)
+            .map(|wheel| (wheel.tire.peak_slip_ratio * 1.5).max(0.05))
+            .unwrap_or(1.0);
+        let excess = driven_slip - target_slip;
+        let desired_traction = if excess > 0.0 {
+            (1.0 - excess * 2.5).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self.traction_scale += (desired_traction - self.traction_scale) * 0.2;
         let mut total_force = Vec3::new(0.0, -self.physics.mass * GRAVITY, 0.0);
         let mut total_torque = Vec3::ZERO;
         let mut rack_torque = 0.0;
@@ -303,18 +325,7 @@ impl Vehicle {
                 let slip_angle = self.filtered_slip_angle[index];
                 let mu = hit.friction * wheel.tire.friction_scale;
                 if wheel.driven {
-                    let target_slip = (wheel.tire.peak_slip_ratio * 1.5).max(0.05);
-                    let excess = raw_slip_ratio.abs() - target_slip;
-                    let desired_scale = if excess > 0.0 {
-                        (1.0 - excess * 6.0).clamp(0.0, 1.0)
-                    } else {
-                        1.0
-                    };
-                    self.traction_scale[index] +=
-                        (desired_scale - self.traction_scale[index]) * 0.2;
-                    drive *= self.traction_scale[index];
-                } else {
-                    self.traction_scale[index] = 1.0;
+                    drive *= self.traction_scale;
                 }
                 if drive != 0.0 {
                     let max_drive_torque = mu * normal_load * radius;
@@ -400,6 +411,7 @@ impl Vehicle {
             }
             let body_damping = (1.0 - 4.0 * dt).max(0.0);
             self.state.angular_velocity.x *= body_damping;
+            self.state.angular_velocity.y *= (1.0 - 2.0 * dt).max(0.0);
             self.state.angular_velocity.z *= body_damping;
         }
         if speed > 0.1 {
@@ -442,6 +454,7 @@ impl Vehicle {
                 }
                 let stop_damping = (1.0 - 8.0 * dt).max(0.0);
                 self.state.angular_velocity.x *= stop_damping;
+                self.state.angular_velocity.y = 0.0;
                 self.state.angular_velocity.z *= stop_damping;
             }
         }
@@ -886,7 +899,7 @@ mod tests {
                 gear: 1,
                 ..Controls::default()
             });
-            assert!(vehicle.state.angular_velocity.length() < 0.05);
+            assert!(vehicle.state.angular_velocity.length() < 0.01);
         }
         let up = vehicle.state.rotation * Vec3::Y;
         assert!(up.y > 0.99);
@@ -921,6 +934,51 @@ mod tests {
             fast.steer_angle < physics.steering.max_angle * 0.6,
             "high-speed steering limit was not reduced: {}",
             fast.steer_angle
+        );
+    }
+
+    #[test]
+    fn powered_cornering_keeps_rear_slip_below_front() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..800 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                steering: 0.5,
+                gear: 2,
+                ..Controls::default()
+            });
+        }
+        let front = (vehicle.state.wheels[0].slip_angle.abs()
+            + vehicle.state.wheels[1].slip_angle.abs())
+            * 0.5;
+        let rear = (vehicle.state.wheels[2].slip_angle.abs()
+            + vehicle.state.wheels[3].slip_angle.abs())
+            * 0.5;
+        let ratio = (vehicle.state.wheels[2].slip_ratio.abs()
+            + vehicle.state.wheels[3].slip_ratio.abs())
+            * 0.5;
+        println!(
+            "speed={:.2} yaw={:.3} steer={:.3} front={:.3} rear={:.3} ratio={:.3}",
+            vehicle.state.velocity.length(),
+            vehicle.state.angular_velocity.y,
+            vehicle.steer_angle,
+            front,
+            rear,
+            ratio
         );
     }
 

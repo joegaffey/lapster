@@ -38,7 +38,7 @@ vertex colours, and applies an FD3S rear-wheel-drive physics baseline.
 - Six-speed gearbox, 4.1 final drive.
 - Cd 0.29, 1.85 m² frontal area.
 - Rear tire grip bias and a softer rear anti-roll bar to reduce power oversteer.
-- Stiffer bump/rebound damping and low-speed roll/pitch damping to reduce rocking when
+- Stiffer bump/rebound damping and low-speed roll/pitch/yaw damping to reduce rocking when
   braking to a stop while steering.
 - Estimated CG, inertia, spring/damper, anti-roll, and tire-relaxation values; not an AC
   `.ini` import.

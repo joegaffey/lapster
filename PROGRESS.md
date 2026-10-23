@@ -99,7 +99,7 @@ Toolchain setup scripts:
     bias to reduce power oversteer,
   - CG-based load transfer,
   - Pacejka longitudinal/lateral forces with tire relaxation,
-  - rear traction control and speed-sensitive steering for keyboard input,
+  - shared rear traction control and speed-sensitive steering for keyboard input,
   - engine/gearbox/brake model,
   - wall contacts and finite-state reset,
   - interpolated visual pose.
@@ -157,10 +157,11 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 32 tests
+- `cargo test --workspace` — 33 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
-  control, speed-sensitive steering, and braking to a stop while steering.
+  control, powered-cornering balance, speed-sensitive steering, and braking to a stop while
+  steering.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
 - `npm run test:viewer` — 15 Playwright tests

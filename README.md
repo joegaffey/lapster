@@ -36,7 +36,7 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 - 500 Hz fixed-step vehicle physics:
   - raycast suspension with anti-roll bars, stiffer damping, and progressive bump stops,
   - Pacejka longitudinal/lateral tire forces with relaxed slip and combined-slip limiting,
-  - CG-based load transfer, engine, gearbox, brakes, rear traction control, and
+  - CG-based load transfer, engine, gearbox, brakes, shared rear traction control, and
     speed-sensitive steering for keyboard input,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
