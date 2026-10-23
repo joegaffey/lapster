@@ -20,8 +20,9 @@ Live demo: **https://joegaffey.com/lapster/**
 The demos load these assets by default; no query parameters are required. Custom packs can
 still be selected with `?car=` and `?track=`. The info HUD starts collapsed on every demo;
 drive actions live in a detached top toolbar, with `Exit` returning to the menu. The drive demo adds on-screen steering, throttle, and brake controls
-on touch devices. Builds are versioned and the demos check `web/version.json` on
-load, clearing stale pack caches and reloading when a newer deployment is available.
+on touch devices. Builds are versioned: the Pages build gives the Wasm package its own
+versioned directory, and demos/menu check `web/version.json` on load and resume, clearing
+stale caches and reloading when a newer deployment is available.
 
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 Lapster is installable as a PWA. The installed app launches a demo menu, and every demo has a

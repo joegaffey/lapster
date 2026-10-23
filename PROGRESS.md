@@ -151,10 +151,12 @@ Toolchain setup scripts:
     30 draw calls.
   - The outer ANELLO ring is visual-only, textures are not imported, and collision is
     currently limited to the central pad/ASP surfaces.
-- Build freshness: generated build version in default pack URLs, `version.json` check on
-  load, stale IndexedDB pack clearing, and versioned `main.js` URLs in Pages output.
+- Build freshness: generated build version in default pack URLs, `version.json` checks on
+  load/resume/focus, stale IndexedDB pack clearing, versioned `main.js` and `pkg/` URLs, and
+  no-store navigation/version responses from the service worker.
 - PWA/COI: installable manifest/icons and a same-origin service worker that injects
-  COOP/COEP on demo navigations. `crossOriginIsolated` and `SharedArrayBuffer` verified.
+  COOP/COEP and no-store caching on demo navigations. `crossOriginIsolated` and
+  `SharedArrayBuffer` verified. The installed menu checks `version.json` on open/resume.
 - PWA navigation: installed app launches the `/web/` demo menu; every demo links back to it.
 - Wasm: **2.83 MiB raw / 1.06 MiB gzip**.
 - Local warm startup measured at roughly **300–480 ms** in headless Chromium.
@@ -240,8 +242,9 @@ matrix then expands to the other supported wheelbases.
 - The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is
   checked in as a temporary demo fixture; confirm redistribution rights or replace it before
   a public/commercial release.
-- Asset cache is keyed by URL; default URLs now use the generated build version, while
-  explicit custom pack URLs still need a cache-busting query after changing the asset.
+- Asset cache is keyed by URL; default URLs use the generated build version, and the Pages
+  build versions the Wasm package directory. Explicit custom pack URLs still need a
+  cache-busting query after changing the asset.
 - `.ini` physics mapping and full texture decoding remain; GLB/AC importers are first-pass.
 - No audio or HID/FFB integration yet; wheel/FFB is planned as CP6.5.
 - `web/pkg`, generated page JS, `web/.cache`, `web/test-results`, and `web/node_modules` are generated/ignored.

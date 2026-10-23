@@ -21,10 +21,12 @@ mkdir -p "$DIST/web" "$DIST/fixtures"
 
 cp "$ROOT/index.html" "$DIST/index.html"
 cp -R "$ROOT/web/pkg" "$DIST/web/pkg"
+mkdir -p "$DIST/web/pkg/$VERSION"
+cp -R "$ROOT/web/pkg/." "$DIST/web/pkg/$VERSION/"
 cp "$ROOT/web/version.json" "$DIST/web/version.json"
 cp "$ROOT/web/sw.js" "$DIST/web/sw.js"
 cp "$ROOT/web/manifest.webmanifest" "$DIST/web/manifest.webmanifest"
-cp "$ROOT/web/index.html" "$DIST/web/index.html"
+sed "s#__VERSION__#${VERSION}#g" "$ROOT/web/index.html" > "$DIST/web/index.html"
 cp -R "$ROOT/web/icons" "$DIST/web/icons"
 
 for viewer in drive garage track-viewer debug-viewer; do
@@ -36,6 +38,15 @@ for viewer in drive garage track-viewer debug-viewer; do
   for file in main.js viewer.js; do
     if [[ -f "$ROOT/web/$viewer/$file" ]]; then
       cp "$ROOT/web/$viewer/$file" "$DIST/web/$viewer/$file"
+      python3 - "$DIST/web/$viewer/$file" "$VERSION" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+version = sys.argv[2]
+source = path.read_text()
+source = source.replace('"../pkg/', f'"../pkg/{version}/')
+path.write_text(source)
+PY
     fi
   done
 done

@@ -3,8 +3,13 @@ import { APP_VERSION } from "./version.generated.ts";
 
 const RELOAD_KEY = "lapster.update.reload";
 const VERSION_URL = new URL("../../web/version.json", window.location.href).toString();
+let checking = false;
 
-export function checkForUpdate() {
+function checkVersion() {
+  if (checking || document.hidden) {
+    return;
+  }
+  checking = true;
   fetch(`${VERSION_URL}?t=${Date.now()}`, { cache: "no-store" })
     .then((response) => (response.ok ? response.json() : null))
     .then((info: { version?: string } | null) => {
@@ -29,7 +34,22 @@ export function checkForUpdate() {
     })
     .catch(() => {
       // Offline or missing version metadata: keep the current build.
+    })
+    .finally(() => {
+      checking = false;
     });
+}
+
+export function checkForUpdate() {
+  checkVersion();
+  window.setInterval(checkVersion, 60_000);
+  window.addEventListener("focus", checkVersion);
+  window.addEventListener("pageshow", checkVersion);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      checkVersion();
+    }
+  });
 }
 
 export async function hardReload(version?: string) {
@@ -46,5 +66,6 @@ export async function hardReload(version?: string) {
   }
   const url = new URL(window.location.href);
   url.searchParams.set("v", version ?? String(Date.now()));
+  url.searchParams.set("t", String(Date.now()));
   window.location.replace(url.toString());
 }

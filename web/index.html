@@ -7,6 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#080a0d" />
+    <meta name="lapster-version" content="__VERSION__" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -126,12 +127,48 @@
       </footer>
     </main>
     <script>
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js", {
-          scope: "./",
-          updateViaCache: "none",
+      (() => {
+        const current = document.querySelector('meta[name="lapster-version"]')?.content;
+        const key = "lapster.menu.update";
+        const check = async () => {
+          if (!current || current === "__VERSION__") return;
+          try {
+            const response = await fetch(`./version.json?t=${Date.now()}`, { cache: "no-store" });
+            if (!response.ok) return;
+            const info = await response.json();
+            if (!info?.version || info.version === current) return;
+            try {
+              if (sessionStorage.getItem(key) === info.version) return;
+              sessionStorage.setItem(key, info.version);
+            } catch {
+              // Reload once even if storage is unavailable.
+            }
+            const url = new URL(window.location.href);
+            url.searchParams.set("v", info.version);
+            url.searchParams.set("t", Date.now());
+            window.location.replace(url.toString());
+          } catch {
+            // Offline or missing metadata: keep the current menu.
+          }
+        };
+        void check();
+        window.addEventListener("pageshow", () => void check());
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) void check();
         });
-      }
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker
+            .register("./sw.js", { scope: "./", updateViaCache: "none" })
+            .then((registration) => registration.update())
+            .catch(() => {});
+          window.addEventListener("focus", () => {
+            navigator.serviceWorker
+              .getRegistration()
+              .then((registration) => registration?.update())
+              .catch(() => {});
+          });
+        }
+      })();
     </script>
   </body>
 </html>

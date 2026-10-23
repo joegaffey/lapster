@@ -16,9 +16,12 @@ export async function setupPwa(): Promise<boolean> {
   } catch {
     alreadyAttempted = false;
   }
-  if (alreadyAttempted && !window.crossOriginIsolated) {
-    return false;
-  }
+  const updateRegistration = () => {
+    navigator.serviceWorker
+      .getRegistration()
+      .then((registration) => registration?.update())
+      .catch(() => {});
+  };
 
   try {
     await Promise.race([
@@ -29,6 +32,14 @@ export async function setupPwa(): Promise<boolean> {
       timeout(2500),
     ]);
     await Promise.race([navigator.serviceWorker.ready, timeout(2500)]);
+    updateRegistration();
+    window.addEventListener("focus", updateRegistration);
+    window.addEventListener("pageshow", updateRegistration);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        updateRegistration();
+      }
+    });
 
     if (window.crossOriginIsolated) {
       return false;
