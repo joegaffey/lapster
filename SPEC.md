@@ -288,10 +288,19 @@ SAB.
 **Responsibility:** Read wheel input and drive constant-force FFB through `webhid-wheel`.
 There is no Rust HID implementation.
 
+**Staged rollout:** CP6.5 initially runs the adapter on the main thread behind the same
+input/FFB interfaces so wheel feel can be validated before the worker migration. CP7 moves
+the adapter into the HID worker and adds the SAB input/FFB mailboxes. The worker layout below
+is the target architecture, not a prerequisite for the first hardware spike.
+
 **Key requirements:**
 
-- Import `webhid-wheel` in the HID worker. Do not duplicate HID descriptor parsing, USB-PID
-  encoding, or vendor report layouts.
+- Import `webhid-wheel` behind `web/src/input` and `web/src/ffb` adapters. Target the HID
+  worker in CP7; do not duplicate HID descriptor parsing, USB-PID encoding, or vendor report
+  layouts.
+- In the CP6.5 main-thread mode, feed normalized controls directly through the input
+  interface and coalesce FFB output locally. Add SAB mailboxes only with the CP7 worker
+  migration.
 - Main thread performs initial device authorization with `navigator.hid.requestDevice()`
   from a user gesture. The worker acquires the authorized device with
   `navigator.hid.getDevices()` and matches by vendor/product ID. If worker acquisition
@@ -329,17 +338,31 @@ There is no Rust HID implementation.
 - Provide an emergency stop control in the UI.
 - Log device, profile, and last error for diagnostics.
 
-**Device support matrix (MVP):**
+**Device support matrix:** target every wheelbase supported by `webhid-wheel`, with CAMMUS C5
+as the first acceptance device.
 
 | Device | Input | FFB | Status |
 | --- | --- | --- | --- |
-| CAMMUS C5 | steering/buttons/axes | constant force (USB-PID) | Verified, Windows 11 + Chrome |
+| CAMMUS C5 | steering/buttons/axes | constant force (USB-PID) | Primary hardware test |
 | CAMMUS C12 | steering/buttons/axes | constant force (USB-PID) | Profile present, verify |
 | FFBeast | steering | constant force (vendor) | Profile present, verify |
+| Thrustmaster T248 / T300RS | steering/buttons | none | Input-only fallback |
+| Logitech Driving Force GT | steering/buttons | none | Input-only fallback |
 | Generic USB-PID wheel | generic HID | constant force (auto-detect) | Best effort |
-| Logitech / Fanatec | generic/vendor | not supported in MVP | Future vendor profiles |
+| Logitech / Fanatec (other) | generic/vendor | not yet supported | Future vendor profiles |
 
-Chromium-only. Firefox and Safari fall back to Gamepad API or keyboard; no WebHID FFB.
+Chromium-only for WebHID. Firefox and Safari fall back to Gamepad API or keyboard; no WebHID
+FFB. Multi-device rigs (wheel + pedals + shifter) depend on the upstream `WebHIDRig` work.
+
+**Upstream `webhid-wheel` requirements:** these are tracked in the library repository and
+must not be reimplemented here.
+
+- Optional `WebHIDRig` for wheel + pedals + shifter with stable device identity and hot-plug.
+- A fast constant-force path that supports 100-250 Hz updates with coalescing/backpressure.
+- Worker-compatible device acquisition and reconnect.
+- CAMMUS C5 primary verification, then C12/FFBeast; input-only profiles for Thrustmaster and
+  Logitech; vendor FFB profiles remain future work.
+- Recorded report fixtures and a manual hardware checklist.
 
 **Licensing and clean-room note:** `webhid-wheel` is MIT-licensed and may be used directly
 with attribution. Do not copy code from GPL drivers such as `new-lg4ff` or

@@ -334,15 +334,58 @@ are stable. Do not combine car and track debugging.
 **Fail action:** If track scale/axes or collision are wrong, return to the asset compiler
 and fix normalization. Do not add runtime workarounds.
 
-### CP7: Integration and performance
+### CP6.5: Wheel input and FFB feel spike
 
-**Indicative timebox:** 4-6 days.
+**Indicative timebox:** 3-5 days.
 
-**Goal:** Full car + track + input + audio + FFB loop with production loading UX.
+**Goal:** Validate wheel input and constant-force FFB on CAMMUS C5 first, then support every
+wheelbase supported by `webhid-wheel`. This checkpoint runs on the main thread.
 
 **Tasks:**
 
-- Wire HID input, FFB, audio, rendering, and physics together.
+- Add an input abstraction for WebHID wheel, Gamepad API, keyboard, and touch. Normalize
+  steering, throttle, brake, clutch, buttons, and timestamps behind one interface.
+- Integrate the MIT-licensed `webhid-wheel` package (pinned revision, NOTICE updated).
+- Add a direct-wheel steering mode: wheel rotation maps through steering ratio and lock,
+  bypassing the keyboard speed-sensitive steering aid.
+- Replace the placeholder rack torque with front-axle self-aligning torque from tire lateral
+  force, pneumatic trail, caster, and column damping. Expose steering angle and normalized
+  FFB torque in telemetry.
+- Add a main-thread FFB adapter: coalesce to 100-250 Hz, clamp, apply strength/invert, and
+  send constant force. Stop on hide, pause, disconnect, and a 50 ms stale-torque watchdog.
+- Add a device/FFB panel in the detached toolbar: Connect, Disconnect, strength, invert,
+  deadzone, test force, and emergency stop.
+- Add assist toggles so TC and stability aids can be disabled for wheel use.
+- Add unit tests for input normalization and FFB safety, Rust tests for steering torque, and
+  a Playwright fallback/input test. Hardware FFB remains a manual checklist.
+
+**Exit criteria:**
+
+- CAMMUS C5 drives the car with direct steering and working constant FFB.
+- Watchdog, disconnect, page-hide, clamp, and emergency stop are verified.
+- Keyboard and touch input still work when no wheel is connected.
+- FFB write latency is measured; worker migration is deferred unless it affects frame pacing.
+- No vendor HID protocol is reimplemented in this repository.
+
+**Fail action:** If FFB causes frame stalls or unsafe force behavior, stop the spike and
+prioritize the HID worker migration before expanding the device matrix.
+
+### CP7: Worker integration, audio, and hardware matrix
+
+**Indicative timebox:** 4-6 days.
+
+**Goal:** Move the proven input/FFB path behind the HID worker, move physics to the worker,
+and complete the audio/device matrix integration.
+
+**Tasks:**
+
+- Add the SAB input and FFB mailboxes and move physics to the physics worker.
+- Move the tested `webhid-wheel` adapter into the HID worker with watchdog and stop behavior.
+- Integrate upstream `webhid-wheel` work: optional multi-device rig, fast constant-force
+  updates, worker-compatible device acquisition, and expanded wheel profiles.
+- Add audio driven from shared snapshots.
+- Expand the hardware matrix beyond CAMMUS C5: CAMMUS C12, FFBeast, generic USB-PID wheels,
+  and input-only Logitech/Fanatec until vendor FFB profiles exist.
 - Add a loading screen with progress, cancellation, retry, and typed error messages.
 - Add IndexedDB caching, cache invalidation, and offline behavior.
 - Add memory disposal and context-loss recovery.
@@ -353,9 +396,20 @@ and fix normalization. Do not add runtime workarounds.
 
 - Full session starts from a cold cache and a warm cache within budget.
 - No asset reloads during gameplay; no torn snapshots.
-- FFB watchdog and stop behavior work with the real car and track.
+- FFB watchdog and stop behavior work from the HID worker with the real car and track.
 - All budgets in SPEC section 8 are met or explicitly waived with data.
 - Chromium smoke test passes; fallback browsers render and accept keyboard/gamepad input.
+
+### Upstream `webhid-wheel` dependencies
+
+These are tracked in the library repository, not reimplemented in Lapster:
+
+- Optional `WebHIDRig` for wheel + pedals + shifter with stable device identity and hot-plug.
+- Fast constant-force path that avoids multiple reports per update and supports a configurable
+  100-250 Hz rate with backpressure.
+- Worker-compatible device acquisition and reconnect behavior.
+- CAMMUS C5 primary verification, then C12/FFBeast; input-only profiles for Logitech/Fanatec.
+- Recorded report fixtures and a manual hardware checklist for each supported device.
 
 ### CP8: Hardening and release
 

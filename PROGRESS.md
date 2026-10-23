@@ -172,6 +172,46 @@ Toolchain setup scripts:
 - Manual AC track check: Skidpad 0.5 imported, rendered in the track/garage viewers, and
   driven with the Mazda RX-7 on WebGPU without page/console errors.
 
+## Wheel and FFB workstream
+
+**Status:** planned, not implemented. No HID or FFB dependency is wired into the app yet.
+
+**Decisions:**
+
+- Target every wheelbase supported by [`webhid-wheel`](https://github.com/joegaffey/webhid-wheel),
+  not a CAMMUS-only path.
+- Test CAMMUS C5 first, then CAMMUS C12 and FFBeast; generic USB-PID wheels are best effort.
+- Logitech/Fanatec initially get input only; their vendor FFB protocols are not in scope until
+  the upstream library adds profiles.
+- CP6.5 runs the FFB adapter on the **main thread**. Move it to the HID worker later as an
+  optimization if measurements show frame-pacing or `sendReport` jitter problems.
+- Keep `webhid-wheel` behind an input/FFB adapter so the worker migration does not change the
+  physics or UI contracts.
+- Do not reimplement HID descriptors, USB-PID encoding, or vendor reports in this repository.
+
+**CP6.5 scope:**
+
+1. Input abstraction for WebHID, Gamepad API, keyboard, and touch, with device hot-plug and
+   calibration.
+2. Direct-wheel steering through the vehicle steering ratio and lock, bypassing the keyboard
+   speed-sensitive aid.
+3. Front-axle self-aligning torque feeding a normalized FFB request and telemetry.
+4. Main-thread constant-force output at 100-250 Hz with clamp, strength/invert, watchdog, and
+   stop on hide/pause/disconnect.
+5. Device/FFB controls in the detached toolbar and assist toggles for wheel use.
+6. Unit, Rust, and Playwright coverage; manual CAMMUS C5 hardware checklist.
+
+**Upstream `webhid-wheel` work tracked separately:**
+
+- Optional multi-device rig for wheel + pedals + shifter.
+- High-frequency constant-force path with coalescing and backpressure.
+- Worker-compatible acquisition and reconnect.
+- Expanded profiles and recorded report fixtures.
+- CAMMUS C5 primary verification, then C12/FFBeast.
+
+**Hardware acceptance:** CAMMUS C5 steering and FFB, with watchdog/stop behavior. The device
+matrix then expands to the other supported wheelbases.
+
 ## Known issues / carry-forward
 
 - **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
@@ -193,7 +233,7 @@ Toolchain setup scripts:
 - Asset cache is keyed by URL; default URLs now use the generated build version, while
   explicit custom pack URLs still need a cache-busting query after changing the asset.
 - `.ini` physics mapping and full texture decoding remain; GLB/AC importers are first-pass.
-- No audio, HID, or FFB integration yet.
+- No audio or HID/FFB integration yet; wheel/FFB is planned as CP6.5.
 - `web/pkg`, generated page JS, `web/.cache`, `web/test-results`, and `web/node_modules` are generated/ignored.
 - Temporary caches and local server processes are not part of the repository and do not survive a machine/session restart.
 - Playwright screenshot baselines are Linux/Chromium-specific and are skipped in CI.
@@ -206,19 +246,23 @@ Toolchain setup scripts:
 
 ## Next steps
 
-1. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
+1. **CP6.5 — wheel/FFB feel spike (next)**: add the input abstraction, direct-wheel steering,
+   self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
+2. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
+   compatibility, profiles, and hardware fixtures.
+3. **CP7 — worker integration and audio**: SAB mailboxes, HID worker migration, audio, full
+   hardware matrix, and performance traces.
+4. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
    wheel geometry cleanup, and licensed AC `.ini` physics when a suitable pack is available.
    - Add a simple steering-wheel/interior placeholder.
    - Add real image decoding/KTX2 only where textures are the right choice.
    - WebXR remains a later phase.
-2. **CP6 — real track**: finish the AC path with texture decoding (DDS/KTX2 where useful),
+5. **CP6 — real track**: finish the AC path with texture decoding (DDS/KTX2 where useful),
    wall/fence collision policy, outer-ring collision or streaming, and performance measurement.
-3. Move physics to a dedicated worker with the SAB snapshot/input/FFB contract.
-4. Replace per-frame JSON telemetry with typed arrays/SAB.
-5. Add content-hash cache invalidation.
-6. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
-7. Add audio and FFB/`webhid-wheel`.
-8. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
+6. Replace per-frame JSON telemetry with typed arrays/SAB.
+7. Add content-hash cache invalidation.
+8. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
+9. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
 
 ## Key files
 

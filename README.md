@@ -137,8 +137,10 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
 ## Status and roadmap
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
-in [`PLAN.md`](PLAN.md). Next up: AC `.ini` physics mapping, track texture decoding,
-collision/wall policy, worker/SAB physics, audio, and force feedback.
+in [`PLAN.md`](PLAN.md). Next up: wheel input and force feedback on CAMMUS C5 first, targeting
+all `webhid-wheel`-supported wheelbases, with Chromium WebHID and Gamepad fallback. The
+main-thread FFB spike comes before the worker/SAB migration; then AC `.ini` physics mapping,
+track texture decoding, collision/wall policy, audio, and performance hardening.
 
 ## License
 
