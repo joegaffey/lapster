@@ -2,6 +2,8 @@ import init, { GarageViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { APP_VERSION } from "../src/version.generated.ts";
+import { checkForUpdate } from "../src/update.ts";
 
 declare global {
   interface Window {
@@ -27,12 +29,15 @@ const spinValue = document.querySelector<HTMLElement>("#spin-value")!;
 const animateInput = document.querySelector<HTMLInputElement>("#animate")!;
 
 setupHud();
+checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
 const TRACK_URL =
-  params.get("track") ?? "../../fixtures/tracks/skidpad05/pack.sima?v=cp6";
+  params.get("track") ??
+  `../../fixtures/tracks/skidpad05/pack.sima?v=${encodeURIComponent(APP_VERSION)}`;
 const CAR_URL =
-  params.get("car") ?? "../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=cp6";
+  params.get("car") ??
+  `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${encodeURIComponent(APP_VERSION)}`;
 
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",

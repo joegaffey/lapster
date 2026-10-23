@@ -1,4 +1,4 @@
-export function setupTouchControls(keys: Set<string>, onReset: () => void) {
+export function setupTouchControls(keys: Set<string>) {
   const root = document.querySelector<HTMLElement>("#touch-controls");
   if (!root) {
     return;
@@ -53,9 +53,4 @@ export function setupTouchControls(keys: Set<string>, onReset: () => void) {
     button.addEventListener("lostpointercapture", (event) => release(event.pointerId));
     button.addEventListener("contextmenu", (event) => event.preventDefault());
   }
-
-  root.querySelector<HTMLButtonElement>("#touch-reset")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    onReset();
-  });
 }

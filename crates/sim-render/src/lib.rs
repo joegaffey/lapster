@@ -19,6 +19,8 @@ pub fn start() {
 pub struct TrackViewer {
     renderer: renderer::Renderer,
     debug_info: String,
+    initial_camera: Camera,
+    camera: Camera,
 }
 
 #[wasm_bindgen]
@@ -41,12 +43,15 @@ impl TrackViewer {
         let scene = Scene::build(&visual, &metadata, &collision, &manifest)
             .map_err(|error| JsValue::from_str(&error))?;
         let debug_info = scene.debug_info.clone();
+        let camera = scene.camera;
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
         let renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
         Ok(TrackViewer {
             renderer,
             debug_info,
+            initial_camera: camera,
+            camera,
         })
     }
 
@@ -60,6 +65,34 @@ impl TrackViewer {
 
     pub fn debug_info(&self) -> String {
         self.debug_info.clone()
+    }
+
+    pub fn camera_info(&self) -> String {
+        serde_json::json!({
+            "eye": self.camera.eye,
+            "target": self.camera.target,
+            "fovY": self.camera.fov_y,
+        })
+        .to_string()
+    }
+
+    pub fn set_camera(
+        &mut self,
+        eye_x: f32,
+        eye_y: f32,
+        eye_z: f32,
+        target_x: f32,
+        target_y: f32,
+        target_z: f32,
+    ) {
+        self.camera.eye = [eye_x, eye_y, eye_z];
+        self.camera.target = [target_x, target_y, target_z];
+        self.renderer.set_camera(self.camera);
+    }
+
+    pub fn reset_camera(&mut self) {
+        self.camera = self.initial_camera;
+        self.renderer.set_camera(self.camera);
     }
 }
 

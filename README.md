@@ -13,12 +13,14 @@ Live demo: **https://joegaffey.com/lapster/**
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, auto reverse, steering,
   gears, chase camera, wheel loads, and 500 Hz physics.
 - **Garage** — RX-7 on the skidpad with wheel steering/spin controls and debug bounds.
-- **Track viewer** — skidpad render, spawn point, bounds, axes, and collision-surface overlay.
+- **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
+  and orbit/pan/zoom camera navigation.
 
 The demos load these assets by default; no query parameters are required. Custom packs can
 still be selected with `?car=` and `?track=`. The info HUD is collapsible everywhere and
-starts collapsed on mobile; the drive demo adds on-screen steering, throttle, brake, and
-reset controls on touch devices.
+starts collapsed on mobile; the drive demo adds on-screen steering, throttle, and brake
+controls on touch devices. Builds are versioned and the demos check `web/version.json` on
+load, clearing stale pack caches and reloading when a newer deployment is available.
 
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 GitHub Pages cannot send the COOP/COEP headers required for `SharedArrayBuffer`; the current

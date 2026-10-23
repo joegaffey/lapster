@@ -8,6 +8,8 @@ web/.cache/
 web/test-results/
 web/playwright-report/
 web/pkg/
+web/src/version.generated.ts
+web/version.json
 web/track-viewer/main.js
 web/drive/main.js
 web/garage/main.js

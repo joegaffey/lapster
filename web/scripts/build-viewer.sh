@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
+VERSION="${LAPSTER_BUILD_VERSION:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)}"
+mkdir -p web/src
+printf 'export const APP_VERSION = "%s";\n' "$VERSION" > web/src/version.generated.ts
+printf '{"version":"%s"}\n' "$VERSION" > web/version.json
+
 export PATH="$HOME/.cargo/bin:$PATH"
 
 cargo build -p sim-render --release --target wasm32-unknown-unknown

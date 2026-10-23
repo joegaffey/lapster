@@ -2,6 +2,9 @@ import init, { TrackViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { setupTrackCamera } from "../src/ui/track-camera.ts";
+import { APP_VERSION } from "../src/version.generated.ts";
+import { checkForUpdate } from "../src/update.ts";
 
 declare global {
   interface Window {
@@ -24,11 +27,12 @@ const frameLabel = document.querySelector<HTMLElement>("#frame-ms")!;
 const drawsLabel = document.querySelector<HTMLElement>("#draws")!;
 
 setupHud();
+checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
 const TRACK_URL =
   params.get("track") ??
-  "../../fixtures/tracks/skidpad05/pack.sima?v=cp6";
+  `../../fixtures/tracks/skidpad05/pack.sima?v=${encodeURIComponent(APP_VERSION)}`;
 
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
@@ -134,6 +138,7 @@ async function boot() {
   status.textContent = "creating renderer";
   const viewer = await TrackViewer.create(canvas, pack.bytes);
   window.__trackViewer = viewer;
+  setupTrackCamera(canvas, viewer);
 
   const debug = JSON.parse(viewer.debug_info());
   renderStats(debug);

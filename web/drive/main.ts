@@ -2,6 +2,8 @@ import init, { DriveViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { APP_VERSION } from "../src/version.generated.ts";
+import { checkForUpdate } from "../src/update.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
 
 declare global {
@@ -12,8 +14,9 @@ declare global {
   }
 }
 
-const PACK_VERSION = "cp6";
+const PACK_VERSION = encodeURIComponent(APP_VERSION);
 setupHud();
+checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
 const TRACK_URL =
@@ -155,7 +158,7 @@ async function boot() {
   });
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", reset);
-  setupTouchControls(keys, reset);
+  setupTouchControls(keys);
 
   const observer = new ResizeObserver(() => {
     if (resizeCanvas()) {

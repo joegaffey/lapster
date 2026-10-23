@@ -105,6 +105,10 @@ Toolchain setup scripts:
   - `A` / `D` or `←` / `→` steer; left/right direction is verified,
   - `0` manual reverse, `1`–`6` gears, `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
+- Responsive UI: collapsible HUD on all demos, collapsed by default on mobile; drive adds
+  non-selectable touch steering/throttle/brake controls.
+- Track viewer camera: drag to orbit, right/shift-drag to pan, wheel or pinch to zoom, with
+  a reset button.
 - Renderer reports backend and surface format in telemetry:
   - backend: `BrowserWebGpu` in Chromium,
   - format: `Bgra8Unorm`,
@@ -114,7 +118,7 @@ Toolchain setup scripts:
   - object-space inverted-hull outlines with welded/averaged normals,
   - optional UV/base-color textures with a 1x1 white fallback,
   - generated 64x64 gauge texture on the synthetic track sign,
-  - asset schema version 2.
+  - asset schema version 3.
 - GLB car import:
   - `cargo run -p asset-compiler -- bake-glb <car.glb>`
   - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.
@@ -128,6 +132,8 @@ Toolchain setup scripts:
     30 draw calls.
   - The outer ANELLO ring is visual-only, textures are not imported, and collision is
     currently limited to the central pad/ASP surfaces.
+- Build freshness: generated build version in default pack URLs, `version.json` check on
+  load, stale IndexedDB pack clearing, and versioned `main.js` URLs in Pages output.
 - Wasm: **2.81 MiB raw / 1.05 MiB gzip**.
 - Local warm startup measured at roughly **300–480 ms** in headless Chromium.
 
@@ -138,7 +144,7 @@ Toolchain setup scripts:
 - `cargo test --workspace` — 24 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 9 Playwright tests
+- `npm run test:viewer` — 10 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
@@ -163,8 +169,9 @@ Toolchain setup scripts:
 - The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is
   checked in as a temporary demo fixture; confirm redistribution rights or replace it before
   a public/commercial release.
-- Asset cache is keyed by URL plus a manual `?v=cp4.5` query, not by content hash.
-- Real car/track import (`.kn5`, `.ini`, glTF) is not implemented.
+- Asset cache is keyed by URL; default URLs now use the generated build version, while
+  explicit custom pack URLs still need a cache-busting query after changing the asset.
+- `.ini` physics mapping and full texture decoding remain; GLB/AC importers are first-pass.
 - No audio, HID, or FFB integration yet.
 - `web/pkg`, generated page JS, `web/.cache`, `web/test-results`, and `web/node_modules` are generated/ignored.
 - Temporary caches and local server processes are not part of the repository and do not survive a machine/session restart.
