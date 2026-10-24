@@ -9,6 +9,7 @@ const AIR_DENSITY: f32 = 1.225;
 const WHEEL_MASS: f32 = 20.0;
 const BUMP_STOP_RATE_MULTIPLIER: f32 = 12.0;
 const STEERING_SPEED_FALLOFF: f32 = 0.09;
+const BODY_PROBE_HEIGHT: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Controls {
@@ -368,8 +369,7 @@ impl Vehicle {
             } else {
                 0.0
             };
-            let wheel_forward = Quat::from_rotation_y(steer_angle) * car_forward;
-            let wheel_right = wheel_forward.cross(Vec3::Y).normalize_or_zero();
+            let steer_forward = Quat::from_rotation_y(steer_angle) * car_forward;
             let attach_world = car_transform.transform_point3(self.wheel_attach_local[index]);
             let hit = self.collider.raycast(attach_world, Vec3::NEG_Y, 5.0);
 
@@ -391,6 +391,14 @@ impl Vehicle {
             let brake = (driver_brake + esc_brake).min(self.physics.brakes.max_torque[index]);
 
             if let Some(hit) = hit {
+                let projected = (steer_forward - hit.normal * steer_forward.dot(hit.normal))
+                    .normalize_or_zero();
+                let wheel_forward = if projected.length_squared() > 1e-6 {
+                    projected
+                } else {
+                    car_forward
+                };
+                let wheel_right = wheel_forward.cross(hit.normal).normalize_or_zero();
                 let wheel_center = hit.point + hit.normal * radius;
                 let suspension_length = (attach_world - wheel_center).dot(body_up).max(0.0);
                 let raw_compression = self.rest_length[index] - suspension_length;
@@ -581,6 +589,7 @@ impl Vehicle {
         }
 
         self.resolve_wall_collisions();
+        self.resolve_body_contacts();
         self.state.steering_rack_torque = rack_torque;
 
         if !self.state.position.is_finite()
@@ -592,6 +601,41 @@ impl Vehicle {
         }
 
         self.state.tick += 1;
+    }
+
+    fn resolve_body_contacts(&mut self) {
+        let offsets = [
+            Vec3::new(-0.8, 0.15, -1.4),
+            Vec3::new(0.8, 0.15, -1.4),
+            Vec3::new(-0.8, 0.15, 1.4),
+            Vec3::new(0.8, 0.15, 1.4),
+        ];
+        let mut lift = Vec3::ZERO;
+        for offset in offsets {
+            let point = self.state.position + self.state.rotation * offset;
+            let origin = point + Vec3::Y * BODY_PROBE_HEIGHT;
+            let Some(hit) = self
+                .collider
+                .raycast(origin, Vec3::NEG_Y, BODY_PROBE_HEIGHT + 5.0)
+            else {
+                continue;
+            };
+            let clearance = point.y - hit.point.y;
+            let penetration = 0.03 - clearance;
+            if penetration > 0.0 {
+                let correction = hit.normal * penetration;
+                if correction.length_squared() > lift.length_squared() {
+                    lift = correction;
+                }
+            }
+        }
+        if lift.length_squared() > 0.0 {
+            self.state.position += lift;
+            let into_surface = self.state.velocity.dot(lift.normalize_or_zero());
+            if into_surface < 0.0 {
+                self.state.velocity -= lift.normalize_or_zero() * into_surface;
+            }
+        }
     }
 
     fn resolve_wall_collisions(&mut self) {
@@ -856,6 +900,40 @@ mod tests {
         TrackCollider::from_collision(&collision, &metadata)
     }
 
+    fn slope_collider() -> TrackCollider {
+        let slope = 0.3;
+        let vertices = vec![
+            [-50.0, -50.0 * slope, -50.0],
+            [-50.0, -50.0 * slope, 50.0],
+            [50.0, 50.0 * slope, 50.0],
+            [50.0, 50.0 * slope, -50.0],
+        ];
+        let collision = TrackCollision {
+            vertices,
+            indices: vec![0, 1, 2, 0, 2, 3],
+            surface_ids: vec![0, 0],
+            bounds: Aabb {
+                min: [-50.0, -15.0, -50.0],
+                max: [50.0, 15.0, 50.0],
+            },
+        };
+        let metadata = TrackMetadata {
+            name: String::from("slope"),
+            length: 100.0,
+            spawns: Vec::new(),
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+            surfaces: vec![SurfaceSpec {
+                id: 0,
+                name: String::from("asphalt"),
+                friction: 1.0,
+                roughness: 0.0,
+            }],
+        };
+        TrackCollider::from_collision(&collision, &metadata)
+    }
+
     fn spawn() -> SpawnPoint {
         SpawnPoint {
             name: String::from("start"),
@@ -874,6 +952,52 @@ mod tests {
         assert!(vehicle.state.position.y > -0.2 && vehicle.state.position.y < 0.5);
         assert!(vehicle.state.wheels.iter().all(|wheel| wheel.contact));
         assert!(vehicle.state.velocity.length() < 0.2);
+    }
+
+    #[test]
+    fn settles_on_slope_without_nan() {
+        let mut vehicle = Vehicle::new(physics(), slope_collider(), &spawn());
+        for _ in 0..3000 {
+            vehicle.step(Controls::default());
+        }
+        assert!(vehicle.state.position.is_finite());
+        assert!(vehicle.state.velocity.is_finite());
+        let up = vehicle.state.rotation * Vec3::Y;
+        assert!(up.y > 0.8, "car tipped on slope: up={up:?}");
+        assert!(vehicle.state.wheels.iter().all(|wheel| wheel.contact));
+    }
+
+    #[test]
+    fn slope_maneuver_stays_upright() {
+        let mut vehicle = Vehicle::new(physics(), slope_collider(), &spawn());
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 0.45,
+                steering: 0.35,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        assert!(vehicle.state.position.is_finite());
+        assert!(vehicle.state.velocity.is_finite());
+        let up = vehicle.state.rotation * Vec3::Y;
+        assert!(up.y > 0.7, "car tipped on slope: up={up:?}");
+        assert!(
+            vehicle
+                .state
+                .wheels
+                .iter()
+                .filter(|wheel| wheel.contact)
+                .count()
+                >= 3
+        );
     }
 
     #[test]

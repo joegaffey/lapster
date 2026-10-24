@@ -9,9 +9,12 @@
 The raw `.kn5` files are not checked in. The baked pack contains:
 
 - 76,545 visual triangles, 30 draw calls.
-- 8,214 collision triangles from the central pad and ASP surfaces.
+- 43,885 collision triangles from the central pad, ASP surfaces, outer ANELLO ring, and
+  grass.
 - One spawn derived from `AC_START_0`.
 - Approximated material colours; KN5 textures are not imported.
-- No tree/fence meshes, no wall collision, and the outer ANELLO ring is visual-only.
+- No tree/fence meshes and no wall/fence collision; ground collision includes the outer ring
+  and grass.
+- Grass friction is capped at 0.35 to keep it significantly lower-grip than asphalt.
 
 The UI name is “Skidpad 0.5”.

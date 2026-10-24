@@ -63,6 +63,7 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     depth_view: wgpu::TextureView,
+    sky_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: wgpu::RenderPipeline,
     transparent_pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline,
@@ -150,6 +151,42 @@ impl Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("track shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("track.wgsl"))),
+        });
+
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky pipeline"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_sky"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_sky"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
         });
 
         let camera_uniform = camera_uniform(&scene.camera, config.width, config.height);
@@ -462,6 +499,7 @@ impl Renderer {
             queue,
             config,
             depth_view,
+            sky_pipeline,
             mesh_pipeline,
             transparent_pipeline,
             outline_pipeline,
@@ -527,9 +565,9 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.153,
-                            g: 0.173,
-                            b: 0.208,
+                            r: 0.62,
+                            g: 0.72,
+                            b: 0.80,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -547,6 +585,9 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.draw(0..3, 0..1);
 
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_pipeline(&self.outline_pipeline);

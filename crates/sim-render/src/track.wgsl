@@ -14,6 +14,35 @@ struct Model {
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var base_sampler: sampler;
 
+fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
+    let cutoff = vec3<f32>(0.0031308);
+    let lower = color * 12.92;
+    let higher = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(higher, lower, color <= cutoff);
+}
+
+struct SkyOut {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOut {
+    var output: SkyOut;
+    let corner = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
+    output.clip_position = vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0);
+    output.uv = corner;
+    return output;
+}
+
+@fragment
+fn fs_sky(input: SkyOut) -> @location(0) vec4<f32> {
+    let height = pow(clamp(input.uv.y, 0.0, 1.0), 0.8);
+    let horizon = vec3<f32>(0.62, 0.72, 0.80);
+    let zenith = vec3<f32>(0.12, 0.30, 0.55);
+    return vec4<f32>(linear_to_srgb(mix(horizon, zenith, height)), 1.0);
+}
+
 struct MeshIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -41,13 +70,6 @@ fn vs_mesh(input: MeshIn) -> MeshOut {
     output.world_position = world.xyz;
     output.alpha = model.alpha.x;
     return output;
-}
-
-fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
-    let cutoff = vec3<f32>(0.0031308);
-    let lower = color * 12.92;
-    let higher = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(higher, lower, color <= cutoff);
 }
 
 fn toon_ramp(ndl: f32) -> f32 {

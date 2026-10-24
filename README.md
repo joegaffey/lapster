@@ -37,13 +37,14 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 - Versioned asset packs: JSON manifest, aligned rkyv chunks, SHA-256 chunk verification.
 - 500 Hz fixed-step vehicle physics:
   - raycast suspension with anti-roll bars, stiffer damping, and progressive bump stops,
-  - Pacejka longitudinal/lateral tire forces with relaxed slip and combined-slip limiting,
+  - Pacejka longitudinal/lateral tire forces projected onto the contact plane, with relaxed
+    slip and combined-slip limiting,
   - CG-based load transfer, engine, gearbox, brakes, optional shared rear traction control
     and stability control, and speed-sensitive steering for keyboard input,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
-- wgpu 30 renderer with WebGPU and WebGL2 support.
+- wgpu 30 renderer with WebGPU/WebGL2 support and a soft sky gradient.
 - Browser viewers for track, car, and driving.
 - Runtime **Tuning** dialog for chassis, suspension, tires, engine, gearing, brakes, steering,
   and aero; settings persist per car and can be copied/pasted as `lapster/setup@1` JSON.

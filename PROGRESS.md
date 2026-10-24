@@ -99,6 +99,7 @@ Toolchain setup scripts:
     bias to reduce power oversteer,
   - CG-based load transfer,
   - Pacejka longitudinal/lateral forces with tire relaxation,
+  - tangent-plane tire forces and body contact probes for raised/sloped collision surfaces,
   - optional shared rear traction control and stability control, plus speed-sensitive
     steering for keyboard input,
   - engine/gearbox/brake model,
@@ -133,7 +134,7 @@ Toolchain setup scripts:
   - backend: `BrowserWebGpu` in Chromium,
   - format: `Bgra8Unorm`,
   - manual sRGB encoding in the shader; sky/ground match the pre-upgrade look.
-- Forward toon renderer:
+- Forward toon renderer with a pale-horizon/blue-zenith sky gradient:
   - quantized diffuse ramp and rim light,
   - object-space inverted-hull outlines with welded/averaged normals,
   - optional UV/base-color textures with a 1x1 white fallback,
@@ -148,10 +149,10 @@ Toolchain setup scripts:
   - `cargo run -p asset-compiler -- bake-ac-track <track-dir>`
   - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
     drivable collision subset.
-  - First local fixture: Skidpad 0.5, 76,545 visual triangles, 8,214 collision triangles,
+  - First local fixture: Skidpad 0.5, 76,545 visual triangles, 43,885 collision triangles,
     30 draw calls.
-  - The outer ANELLO ring is visual-only, textures are not imported, and collision is
-    currently limited to the central pad/ASP surfaces.
+  - Collision includes the central pad, ASP surfaces, outer ANELLO ring, and grass; grass
+    friction is capped at 0.35. Textures are not imported and walls/fences remain visual-only.
 - Build freshness: generated build version in default pack URLs, `version.json` checks on
   load/resume/focus, stale IndexedDB pack clearing, versioned `main.js` and `pkg/` URLs, and
   no-store navigation/version responses from the service worker.
@@ -166,12 +167,12 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 39 tests
+- `cargo test --workspace` — 43 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
   control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,
-  braking to a stop while steering, setup apply/reset/round-trip, and assist strength
-  controls.
+  braking to a stop while steering, setup apply/reset/round-trip, assist strength controls,
+  and slope settling/maneuvering.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
 - `npm run test:viewer` — 17 Playwright tests
@@ -236,8 +237,8 @@ matrix then expands to the other supported wheelbases.
 - Imported body paint is currently forced to a demo red; source material colours are baked
   for other parts.
 - AC track importer has no texture decoding, uses approximated material colours, skips
-  trees/fences, has no wall collision, and only includes the central pad/ASP surfaces in
-  collision.
+  trees/fences, has no wall collision, and includes the central pad, ASP surfaces, outer
+  ANELLO ring, and grass in collision.
 - Car setup must be re-checked against the AC `.ini` importer when that lands; the current
   editable set is based on the GLB-derived physics model.
 - The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is

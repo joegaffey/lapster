@@ -39,7 +39,7 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
     let mut warnings = vec![
         "KN5 textures are not imported; material colours are approximated".to_string(),
         "alpha-tested trees and fences are skipped".to_string(),
-        "outer ANELLO ring is visual-only; collision uses the central pad and ASP surfaces"
+        "collision includes the central pad, outer ring, and grass; walls/fences remain visual-only"
             .to_string(),
     ];
 
@@ -295,6 +295,12 @@ fn mesh_ref(name: &str, mesh: &MeshBuffers, material: u16) -> MeshRef {
 
 fn collision_surface_key(name: &str) -> Option<&'static str> {
     let upper = name.to_ascii_uppercase();
+    if upper.starts_with("1ANELLO") {
+        return Some("ANELLO");
+    }
+    if upper.contains("GRASS") {
+        return Some("GRASS");
+    }
     if let Some(key) = upper.strip_prefix("1ASP") {
         return match key {
             "HALT" => Some("ASPHALT"),
@@ -362,10 +368,13 @@ fn parse_surfaces(path: &Path) -> Result<(Vec<SurfaceSpec>, HashMap<String, u16>
         surfaces.push(SurfaceSpec {
             id,
             name: key.clone(),
-            friction: values
-                .get("FRICTION")
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1.0),
+            friction: surface_friction(
+                key,
+                values
+                    .get("FRICTION")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(1.0),
+            ),
             roughness: 0.02,
         });
     }
@@ -373,6 +382,14 @@ fn parse_surfaces(path: &Path) -> Result<(Vec<SurfaceSpec>, HashMap<String, u16>
         bail!("surfaces.ini has no SURFACE_* entries");
     }
     Ok((surfaces, ids))
+}
+
+fn surface_friction(key: &str, source: f32) -> f32 {
+    if key.eq_ignore_ascii_case("GRASS") {
+        source.min(0.35)
+    } else {
+        source
+    }
 }
 
 fn parse_length(value: &str) -> Option<f32> {
@@ -461,5 +478,27 @@ fn empty_bounds() -> Aabb {
     Aabb {
         min: [0.0; 3],
         max: [0.0; 3],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_skidpad_ground_surfaces() {
+        assert_eq!(collision_surface_key("1ANELLO4"), Some("ANELLO"));
+        assert_eq!(collision_surface_key("1GRASS1"), Some("GRASS"));
+        assert_eq!(collision_surface_key("0GRASSext"), Some("GRASS"));
+        assert_eq!(collision_surface_key("1ASPHALT"), Some("ASPHALT"));
+        assert_eq!(collision_surface_key("2ROAD"), Some("ASPHALT"));
+        assert_eq!(collision_surface_key("1WALL2_SUB0"), None);
+    }
+
+    #[test]
+    fn caps_grass_friction() {
+        assert_eq!(surface_friction("GRASS", 0.9), 0.35);
+        assert_eq!(surface_friction("grass", 0.2), 0.2);
+        assert_eq!(surface_friction("ASPHALT", 0.97), 0.97);
     }
 }
