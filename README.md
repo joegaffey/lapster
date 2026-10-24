@@ -39,8 +39,8 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
   - raycast suspension with anti-roll bars, stiffer damping, and progressive bump stops,
   - Pacejka longitudinal/lateral tire forces projected onto the contact plane, with relaxed
     slip and combined-slip limiting,
-  - CG-based load transfer, engine, gearbox, brakes, optional shared rear traction control
-    and stability control, and speed-sensitive steering for keyboard input,
+  - CG-based load transfer, engine, gearbox, brakes, optional ABS, shared rear traction
+    control, stability control, and speed-sensitive steering for keyboard input,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
@@ -66,7 +66,7 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 
 **Reset** and **Camera** remain top-level toolbar actions. **Tuning** opens the top-layer car
 tuning dialog; **Copy settings** produces a versioned JSON payload for sharing, and **Paste
-shared settings** imports one. **Settings** opens the assists menu for TC/ESC enables,
+shared settings** imports one. **Settings** opens the assists menu for TC/ESC/ABS enables,
 independent strengths, steering sensitivity, anti-aliasing, and the debug overlay; these
 settings persist globally. Debug lines/bounds are off by default in drive.
 

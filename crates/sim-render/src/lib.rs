@@ -444,6 +444,8 @@ impl DriveViewer {
             "steeringRackTorque": state.steering_rack_torque,
             "tractionControl": self.vehicle.traction_control(),
             "tractionStrength": self.vehicle.traction_strength(),
+            "absControl": self.vehicle.abs_control(),
+            "absActive": self.vehicle.abs_active(),
             "stabilityControl": self.vehicle.stability_control(),
             "stabilityStrength": self.vehicle.stability_strength(),
             "steeringSensitivity": self.vehicle.steering_sensitivity(),
@@ -494,6 +496,10 @@ impl DriveViewer {
 
     pub fn set_traction_strength(&mut self, strength: f32) {
         self.vehicle.set_traction_strength(strength);
+    }
+
+    pub fn set_abs_control(&mut self, enabled: bool) {
+        self.vehicle.set_abs_control(enabled);
     }
 
     pub fn set_stability_strength(&mut self, strength: f32) {

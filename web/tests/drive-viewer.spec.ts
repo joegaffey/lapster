@@ -101,10 +101,13 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   await expect(page.locator("#assists-dialog")).toHaveAttribute("open", "");
 
   const tc = page.locator("#tc-toggle");
+  const abs = page.locator("#abs-toggle");
   const esc = page.locator("#esc-toggle");
   await expect(tc).toHaveText("TC: On");
+  await expect(abs).toHaveText("ABS: On");
   await expect(esc).toHaveText("ESC: On");
   await expect(tc).toHaveAttribute("aria-pressed", "true");
+  await expect(abs).toHaveAttribute("aria-pressed", "true");
   await expect(esc).toHaveAttribute("aria-pressed", "true");
   const debug = page.locator("#debug-lines-toggle");
   await expect(debug).toHaveText("Debug: Off");
@@ -132,12 +135,20 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   expect(telemetry.tractionControl).toBe(false);
   expect(telemetry.stabilityControl).toBe(true);
 
+  await abs.click();
+  await expect(abs).toHaveText("ABS: Off");
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.absControl).toBe(false);
+
   await esc.click();
   await expect(esc).toHaveText("ESC: Off");
   telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.tractionControl).toBe(false);
+  expect(telemetry.absControl).toBe(false);
   expect(telemetry.stabilityControl).toBe(false);
 
   const setRange = async (id: string, value: string) => {
@@ -162,6 +173,7 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.tractionControl).toBe(true);
+  expect(telemetry.absControl).toBe(true);
   expect(telemetry.stabilityControl).toBe(true);
   expect(telemetry.tractionStrength).toBe(1);
   expect(telemetry.stabilityStrength).toBe(1);

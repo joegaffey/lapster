@@ -100,7 +100,7 @@ Toolchain setup scripts:
   - CG-based load transfer,
   - Pacejka longitudinal/lateral forces with tire relaxation,
   - tangent-plane tire forces and body contact probes for raised/sloped collision surfaces,
-  - optional shared rear traction control and stability control, plus speed-sensitive
+  - optional ABS, shared rear traction control and stability control, plus speed-sensitive
     steering for keyboard input,
   - engine/gearbox/brake model,
   - wall contacts and finite-state reset,
@@ -115,7 +115,7 @@ Toolchain setup scripts:
 - Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
   curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
   JSON (`lapster/setup@1`). Mass and geometry remain fixed.
-- Settings dialog: TC and ESC enables, independent strength controls, steering sensitivity,
+- Settings dialog: TC/ESC/ABS enables, independent strength controls, steering sensitivity,
   anti-aliasing, and a debug overlay toggle. Settings persist globally; Reset and Camera
   remain top-level toolbar actions. Drive hides debug lines/bounds by default.
 - Native MSAA through wgpu: auto 4× desktop / 2× mobile, with Off/2×/4× overrides. Unsupported
@@ -172,12 +172,12 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 45 tests
+- `cargo test --workspace` — 46 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
   control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,
   braking to a stop while steering, setup apply/reset/round-trip, assist strength controls,
-  and slope settling/maneuvering.
+  slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
 - `npm run test:viewer` — 17 Playwright tests

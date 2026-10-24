@@ -1,6 +1,7 @@
 interface AssistsViewer {
   set_traction_control(enabled: boolean): void;
   set_traction_strength(strength: number): void;
+  set_abs_control(enabled: boolean): void;
   set_stability_control(enabled: boolean): void;
   set_stability_strength(strength: number): void;
   set_steering_sensitivity(sensitivity: number): void;
@@ -14,6 +15,7 @@ type AntiAliasing = "auto" | "off" | "2x" | "4x";
 interface AssistSettings {
   tc: boolean;
   tcStrength: number;
+  abs: boolean;
   esc: boolean;
   escStrength: number;
   steeringSensitivity: number;
@@ -26,6 +28,7 @@ const STORAGE_KEY = "lapster.assists.v1";
 const DEFAULTS: AssistSettings = {
   tc: true,
   tcStrength: 1,
+  abs: true,
   esc: true,
   escStrength: 1,
   steeringSensitivity: 1,
@@ -41,6 +44,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
   return {
     tc: value?.tc !== false,
     tcStrength: clamp(value?.tcStrength ?? 1, 0, 1, 1),
+    abs: value?.abs !== false,
     esc: value?.esc !== false,
     escStrength: clamp(value?.escStrength ?? 1, 0, 1, 1),
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
@@ -86,6 +90,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   const closeButton = document.querySelector<HTMLButtonElement>("#assists-close");
   const resetButton = document.querySelector<HTMLButtonElement>("#assists-reset");
   const tcToggle = document.querySelector<HTMLButtonElement>("#tc-toggle");
+  const absToggle = document.querySelector<HTMLButtonElement>("#abs-toggle");
   const escToggle = document.querySelector<HTMLButtonElement>("#esc-toggle");
   const tcStrength = document.querySelector<HTMLInputElement>("#tc-strength");
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
@@ -103,6 +108,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
     !closeButton ||
     !resetButton ||
     !tcToggle ||
+    !absToggle ||
     !escToggle ||
     !tcStrength ||
     !escStrength ||
@@ -124,6 +130,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   const apply = () => {
     viewer.set_traction_control(settings.tc);
     viewer.set_traction_strength(settings.tcStrength);
+    viewer.set_abs_control(settings.abs);
     viewer.set_stability_control(settings.esc);
     viewer.set_stability_strength(settings.escStrength);
     viewer.set_steering_sensitivity(settings.steeringSensitivity);
@@ -135,6 +142,8 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   const refresh = () => {
     tcToggle.textContent = settings.tc ? "TC: On" : "TC: Off";
     tcToggle.setAttribute("aria-pressed", String(settings.tc));
+    absToggle.textContent = settings.abs ? "ABS: On" : "ABS: Off";
+    absToggle.setAttribute("aria-pressed", String(settings.abs));
     escToggle.textContent = settings.esc ? "ESC: On" : "ESC: Off";
     escToggle.setAttribute("aria-pressed", String(settings.esc));
     tcStrength.value = String(settings.tcStrength);
@@ -161,6 +170,12 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
 
   tcToggle.addEventListener("click", () => {
     settings.tc = !settings.tc;
+    apply();
+    refresh();
+    status.textContent = "Saved";
+  });
+  absToggle.addEventListener("click", () => {
+    settings.abs = !settings.abs;
     apply();
     refresh();
     status.textContent = "Saved";

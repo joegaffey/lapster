@@ -97,6 +97,8 @@ pub struct Vehicle {
     traction_scale: f32,
     traction_control: bool,
     traction_strength: f32,
+    abs_control: bool,
+    abs_scale: [f32; 4],
     stability_control: bool,
     stability_strength: f32,
     steering_sensitivity: f32,
@@ -152,6 +154,8 @@ impl Vehicle {
             traction_scale: 1.0,
             traction_control: true,
             traction_strength: 1.0,
+            abs_control: true,
+            abs_scale: [1.0; 4],
             stability_control: true,
             stability_strength: 1.0,
             steering_sensitivity: 1.0,
@@ -177,6 +181,21 @@ impl Vehicle {
 
     pub fn traction_strength(&self) -> f32 {
         self.traction_strength
+    }
+
+    pub fn set_abs_control(&mut self, enabled: bool) {
+        self.abs_control = enabled;
+        if !enabled {
+            self.abs_scale = [1.0; 4];
+        }
+    }
+
+    pub fn abs_control(&self) -> bool {
+        self.abs_control
+    }
+
+    pub fn abs_active(&self) -> bool {
+        self.abs_scale.iter().any(|scale| *scale < 0.99)
     }
 
     pub fn set_stability_control(&mut self, enabled: bool) {
@@ -226,6 +245,7 @@ impl Vehicle {
         self.filtered_slip_ratio = [0.0; 4];
         self.filtered_slip_angle = [0.0; 4];
         self.traction_scale = 1.0;
+        self.abs_scale = [1.0; 4];
         self.esc_activity = 0.0;
     }
 
@@ -258,6 +278,7 @@ impl Vehicle {
         self.filtered_slip_ratio = [0.0; 4];
         self.filtered_slip_angle = [0.0; 4];
         self.traction_scale = 1.0;
+        self.abs_scale = [1.0; 4];
         self.esc_activity = 0.0;
         self.steer_angle = 0.0;
     }
@@ -388,7 +409,7 @@ impl Vehicle {
             } else {
                 0.0
             };
-            let brake = (driver_brake + esc_brake).min(self.physics.brakes.max_torque[index]);
+            let mut brake = (driver_brake + esc_brake).min(self.physics.brakes.max_torque[index]);
 
             if let Some(hit) = hit {
                 let projected = (steer_forward - hit.normal * steer_forward.dot(hit.normal))
@@ -441,6 +462,20 @@ impl Vehicle {
                     - long_velocity)
                     / denominator)
                     .clamp(-2.0, 2.0);
+                let abs_target = (wheel.tire.peak_slip_ratio * 1.5).max(0.05);
+                let desired_abs =
+                    if self.abs_control && controls.brake > 0.01 && long_velocity.abs() > 1.0 {
+                        let excess = raw_slip_ratio.abs() - abs_target;
+                        if excess > 0.0 {
+                            (1.0 - excess * 5.0).clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        1.0
+                    };
+                self.abs_scale[index] += (desired_abs - self.abs_scale[index]) * 0.25;
+                brake *= self.abs_scale[index];
                 let slip_angle = (-lateral_velocity).atan2(denominator).clamp(-1.5, 1.5);
                 let relaxation_length = wheel.tire.relaxation_length.max(0.01);
                 let relaxation_speed = long_velocity.abs().max(2.0);
@@ -504,6 +539,7 @@ impl Vehicle {
                 self.previous_compression[index] = compression;
             } else {
                 self.previous_compression[index] = 0.0;
+                self.abs_scale[index] = 1.0;
                 self.filtered_slip_ratio[index] *= 1.0 - 10.0 * dt;
                 self.filtered_slip_angle[index] *= 1.0 - 10.0 * dt;
                 let brake_torque = brake * self.state.wheels[index].angular_velocity.signum();
@@ -1313,21 +1349,60 @@ mod tests {
         assert_eq!(vehicle.setup(), default);
     }
 
+    fn braking_lock(use_abs: bool) -> (usize, bool) {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        vehicle.set_abs_control(use_abs);
+        for _ in 0..1200 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        for _ in 0..120 {
+            vehicle.step(Controls {
+                brake: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        let locked = vehicle
+            .state
+            .wheels
+            .iter()
+            .filter(|wheel| wheel.angular_velocity.abs() < 0.1)
+            .count();
+        (locked, vehicle.abs_active())
+    }
+
+    #[test]
+    fn abs_prevents_wheel_lock() {
+        let (locked_with_abs, active_with_abs) = braking_lock(true);
+        let (locked_without_abs, active_without_abs) = braking_lock(false);
+        assert_eq!(locked_without_abs, 4);
+        assert!(locked_with_abs < 2);
+        assert!(active_with_abs);
+        assert!(!active_without_abs);
+    }
+
     #[test]
     fn assists_can_be_toggled_and_adjusted() {
         let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
         assert!(vehicle.traction_control());
         assert!(vehicle.stability_control());
+        assert!(vehicle.abs_control());
         assert_eq!(vehicle.traction_strength(), 1.0);
         assert_eq!(vehicle.stability_strength(), 1.0);
         assert_eq!(vehicle.steering_sensitivity(), 1.0);
         vehicle.set_traction_control(false);
         vehicle.set_stability_control(false);
+        vehicle.set_abs_control(false);
         vehicle.set_traction_strength(0.4);
         vehicle.set_stability_strength(0.6);
         vehicle.set_steering_sensitivity(1.5);
         assert!(!vehicle.traction_control());
         assert!(!vehicle.stability_control());
+        assert!(!vehicle.abs_control());
         assert_eq!(vehicle.traction_strength(), 0.4);
         assert_eq!(vehicle.stability_strength(), 0.6);
         assert_eq!(vehicle.steering_sensitivity(), 1.5);
