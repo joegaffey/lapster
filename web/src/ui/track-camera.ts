@@ -1,6 +1,6 @@
 type Vec3 = [number, number, number];
 
-interface CameraInfo {
+export interface CameraInfo {
   eye: number[];
   target: number[];
   fovY: number;
@@ -35,7 +35,14 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
 ];
 const toVec3 = (value: number[]): Vec3 => [value[0] ?? 0, value[1] ?? 0, value[2] ?? 0];
 
-export function setupTrackCamera(canvas: HTMLCanvasElement, viewer: CameraViewer) {
+export interface OrbitCameraController {
+  setHome(info: CameraInfo): void;
+}
+
+export function setupTrackCamera(
+  canvas: HTMLCanvasElement,
+  viewer: CameraViewer,
+): OrbitCameraController | undefined {
   let info: CameraInfo;
   try {
     info = JSON.parse(viewer.camera_info()) as CameraInfo;
@@ -43,16 +50,16 @@ export function setupTrackCamera(canvas: HTMLCanvasElement, viewer: CameraViewer
     return;
   }
 
-  const initialEye = toVec3(info.eye);
-  const initialTarget = toVec3(info.target);
+  let initialEye = toVec3(info.eye);
+  let initialTarget = toVec3(info.target);
   let eye = [...initialEye] as Vec3;
   let target = [...initialTarget] as Vec3;
   let mode: "orbit" | "pan" = "orbit";
   const pointers = new Map<number, { x: number; y: number }>();
   let pinch: { distance: number; centroid: [number, number] } | null = null;
 
-  const minTargetY = initialTarget[1];
-  const minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
+  let minTargetY = initialTarget[1];
+  let minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
 
   const apply = () => {
     target[1] = Math.max(target[1], minTargetY);
@@ -182,4 +189,17 @@ export function setupTrackCamera(canvas: HTMLCanvasElement, viewer: CameraViewer
     target = [...initialTarget] as Vec3;
     viewer.reset_camera();
   });
+
+  return {
+    setHome(next: CameraInfo) {
+      info = next;
+      initialEye = toVec3(next.eye);
+      initialTarget = toVec3(next.target);
+      eye = [...initialEye] as Vec3;
+      target = [...initialTarget] as Vec3;
+      minTargetY = initialTarget[1];
+      minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
+      apply();
+    },
+  };
 }

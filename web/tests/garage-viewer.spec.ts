@@ -35,13 +35,13 @@ test("garage viewer renders the car on the track", async ({ page }) => {
   for (const wheel of ["FL front", "FR front", "RL rear drive", "RR rear drive"]) {
     expect(state.wheels).toContain(wheel);
   }
-  expect(state.stats).toContain("vertices674");
-  expect(state.stats).toContain("triangles546");
+  expect(state.stats).toContain("vertices4492");
+  expect(state.stats).toContain("triangles4046");
   expect(state.stats).toContain("track tris86");
-  expect(state.stats).toContain("car tris460");
-  expect(state.stats).toContain("draw calls14");
+  expect(state.stats).toContain("car tris3960");
+  expect(state.stats).toContain("draw calls58");
   expect(state.debug.stats.texturedMeshes).toBe(1);
-  expect(state.debug.stats.outlinedMeshes).toBe(9);
+  expect(state.debug.stats.outlinedMeshes).toBe(53);
   expect(pageErrors).toEqual([]);
 
   if (!process.env.CI) {

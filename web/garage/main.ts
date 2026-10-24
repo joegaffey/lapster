@@ -29,6 +29,9 @@ const spinInput = document.querySelector<HTMLInputElement>("#spin")!;
 const steerValue = document.querySelector<HTMLElement>("#steer-value")!;
 const spinValue = document.querySelector<HTMLElement>("#spin-value")!;
 const animateInput = document.querySelector<HTMLInputElement>("#animate")!;
+const bayLabel = document.querySelector<HTMLElement>("#bay-label")!;
+const bayPrev = document.querySelector<HTMLButtonElement>("#bay-prev")!;
+const bayNext = document.querySelector<HTMLButtonElement>("#bay-next")!;
 
 setupHud();
 checkForUpdate();
@@ -151,11 +154,13 @@ async function boot() {
 
   const debug = JSON.parse(viewer.debug_info());
   renderDebug(debug);
-  setupTrackCamera(canvas, viewer);
+  const orbitCamera = setupTrackCamera(canvas, viewer);
+  let selectedBay = 0;
 
-  let steer = 0;
+  let steer = 0.3;
   let spin = 0;
   let animating = false;
+  steerInput.value = String(steer);
 
   const applyAngles = () => {
     steerValue.textContent = steer.toFixed(2);
@@ -173,6 +178,36 @@ async function boot() {
   });
   animateInput.addEventListener("change", () => {
     animating = animateInput.checked;
+  });
+
+  const selectBay = (index: number) => {
+    const current = JSON.parse(viewer.bay_info());
+    const count = Math.max(1, current.count);
+    const next = ((index % count) + count) % count;
+    const cameraInfo = JSON.parse(viewer.select_bay(next));
+    orbitCamera?.setHome(cameraInfo);
+    const info = JSON.parse(viewer.bay_info());
+    selectedBay = info.selected;
+    bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count})`;
+    applyAngles();
+  };
+
+  const requestedBay = Number(params.get("bay") ?? "1") - 1;
+  selectBay(Number.isFinite(requestedBay) ? requestedBay : 0);
+  bayPrev.addEventListener("click", () => selectBay(selectedBay - 1));
+  bayNext.addEventListener("click", () => selectBay(selectedBay + 1));
+  window.addEventListener("keydown", (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target && ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)) {
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      selectBay(selectedBay - 1);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      selectBay(selectedBay + 1);
+    }
   });
 
   const observer = new ResizeObserver(() => {

@@ -47,4 +47,26 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   );
   expect(reset.eye).toEqual(initial.eye);
   expect(reset.target).toEqual(initial.target);
+
+  const initialBay = await page.evaluate(() =>
+    JSON.parse((window as any).__garageViewer.bay_info()),
+  );
+  expect(initialBay.count).toBe(10);
+  expect(initialBay.selected).toBe(0);
+
+  await page.click("#bay-next");
+  const nextBay = await page.evaluate(() =>
+    JSON.parse((window as any).__garageViewer.bay_info()),
+  );
+  expect(nextBay.selected).toBe(1);
+  const nextCamera = await page.evaluate(() =>
+    JSON.parse((window as any).__garageViewer.camera_info()),
+  );
+  expect(nextCamera.target).not.toEqual(initial.target);
+
+  await page.keyboard.press("ArrowRight");
+  const keyboardBay = await page.evaluate(() =>
+    JSON.parse((window as any).__garageViewer.bay_info()),
+  );
+  expect(keyboardBay.selected).toBe(2);
 });

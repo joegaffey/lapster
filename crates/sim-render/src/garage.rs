@@ -7,11 +7,12 @@ use sim_types::{
 
 use crate::camera::Camera;
 use crate::scene::{
-    build_outline, build_vertices, push_line, scene_texture, CarRig, LineVertex, MeshData,
-    RigWheel, Scene, SceneWheel,
+    build_outline, build_vertices, push_line, scene_texture, CarRig, GarageBay, LineVertex,
+    MeshData, RigWheel, Scene, SceneWheel,
 };
 
 impl Scene {
+    #[allow(clippy::too_many_arguments)]
     pub fn build_garage(
         track_visual: &TrackVisual,
         track_metadata: &TrackMetadata,
@@ -20,6 +21,7 @@ impl Scene {
         car_physics: &CarPhysics,
         car_visual: &CarVisual,
         car_manifest: &AssetManifest,
+        car_count: usize,
     ) -> Result<Scene, String> {
         let mut scene = Scene::build(
             track_visual,
@@ -29,162 +31,73 @@ impl Scene {
         )?;
 
         let track_stats = scene.stats;
-        let spawn = track_metadata
-            .spawns
-            .first()
-            .ok_or_else(|| "track has no spawn point".to_string())?;
-        scene.camera = Camera {
-            eye: [
-                spawn.position[0] + 4.5,
-                spawn.position[1] + 3.2,
-                spawn.position[2] + 7.0,
-            ],
-            target: [
-                spawn.position[0],
-                spawn.position[1] + 0.5,
-                spawn.position[2],
-            ],
-            fov_y: 0.85,
-        };
         let car_transform = car_transform(track_metadata)?;
+        let (_, car_rotation, car_translation) = car_transform.to_scale_rotation_translation();
+        let car_forward = car_rotation * Vec3::NEG_Z;
+        let car_right = car_rotation * Vec3::X;
         let car_start = scene.meshes.len();
         let car_texture_base = scene.textures.len();
         for texture in &car_visual.textures {
             scene.textures.push(scene_texture(texture)?);
         }
 
-        let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
-        let body_mesh = car_visual
-            .meshes
-            .get(body_index)
-            .ok_or_else(|| "car has no body mesh".to_string())?;
-        let body_buffers = car_visual
-            .mesh_buffers
-            .get(body_index)
-            .ok_or_else(|| "car body mesh has no buffers".to_string())?;
-        let body_local = node_matrix(&car_visual.body);
-        let body_model = car_transform * body_local;
-        let body_color = car_material_color(car_visual, body_mesh.material as usize);
-        let body_mesh_index = push_car_mesh(
-            &mut scene,
-            "car_body",
-            body_mesh,
-            body_buffers,
-            body_color,
-            body_model,
-            CarMeshStyle {
-                texture: car_texture(car_visual, body_mesh, car_texture_base)?,
-                outline: car_outline(car_visual, body_mesh),
-                alpha: car_material_alpha(car_visual, body_mesh.material as usize),
-            },
-        )?;
-        let body_bounds = world_bounds(body_buffers, body_model);
-        add_box_lines(&mut scene.lines, &body_bounds, [0.25, 0.75, 1.0]);
-
-        let glass_mesh_index = if let Some(index) = mesh_index_by_name(car_visual, "body_glass") {
-            if let (Some(mesh), Some(buffers)) = (
-                car_visual.meshes.get(index),
-                car_visual.mesh_buffers.get(index),
-            ) {
-                let color = car_material_color(car_visual, mesh.material as usize);
-                Some(push_car_mesh(
-                    &mut scene,
-                    "car_glass",
-                    mesh,
-                    buffers,
-                    color,
-                    body_model,
-                    CarMeshStyle {
-                        texture: car_texture(car_visual, mesh, car_texture_base)?,
-                        outline: false,
-                        alpha: 1.0,
-                    },
-                )?)
+        let bay_count = car_count.clamp(1, 10);
+        let mut bays = Vec::with_capacity(bay_count);
+        let mut first_bounds = None;
+        for (index, color) in BAY_COLORS.iter().enumerate().take(bay_count) {
+            let (translation, rotation) = if bay_count == 1 {
+                (car_translation, car_rotation)
             } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let mut wheels = Vec::with_capacity(car_visual.wheels.len());
-        let mut rig_wheels = Vec::with_capacity(car_visual.wheels.len());
-        for wheel in &car_visual.wheels {
-            let mesh = car_visual
-                .meshes
-                .get(wheel.mesh as usize)
-                .ok_or_else(|| format!("wheel {} references a missing mesh", wheel.name))?;
-            let buffers = car_visual
-                .mesh_buffers
-                .get(wheel.mesh as usize)
-                .ok_or_else(|| format!("wheel {} has no mesh buffers", wheel.name))?;
-            let local_model = node_matrix(&wheel.transform);
-            let model = car_transform * local_model;
-            let color = car_material_color(car_visual, mesh.material as usize);
-            let mesh_index = push_car_mesh(
-                &mut scene,
-                &format!("wheel_{}", wheel.name),
-                mesh,
-                buffers,
-                color,
-                model,
-                CarMeshStyle {
-                    texture: car_texture(car_visual, mesh, car_texture_base)?,
-                    outline: car_outline(car_visual, mesh),
-                    alpha: car_material_alpha(car_visual, mesh.material as usize),
-                },
-            )?;
-            add_wheel_marker(
-                &mut scene.lines,
-                model,
-                if wheel.is_front {
-                    [0.2, 0.8, 1.0]
+                let row = index / 5;
+                let slot = index % 5;
+                let lateral = slot as f32 * BAY_SPACING;
+                let row_translation = car_translation
+                    + car_right * lateral
+                    + if row == 1 {
+                        car_forward * ROW_GAP
+                    } else {
+                        Vec3::ZERO
+                    };
+                let row_rotation = if row == 1 {
+                    Quat::from_rotation_y(std::f32::consts::PI) * car_rotation
                 } else {
-                    [1.0, 0.55, 0.2]
-                },
-            );
-            wheels.push(SceneWheel {
-                mesh_index,
-                base_model: model,
-                is_front: wheel.is_front,
-            });
-            rig_wheels.push(RigWheel {
-                mesh_index,
-                local_model,
-                is_front: wheel.is_front,
-            });
-        }
-
-        let mut steering_local = Mat4::IDENTITY;
-        let mut steering_mesh_index = None;
-        if let (Some(steering), Some(index)) = (
-            car_visual.steering_wheel,
-            mesh_index_by_name(car_visual, "steering_wheel"),
-        ) {
-            if let (Some(mesh), Some(buffers)) = (
-                car_visual.meshes.get(index),
-                car_visual.mesh_buffers.get(index),
-            ) {
-                let local = node_matrix(&steering);
-                let model = car_transform * local;
-                let color = car_material_color(car_visual, mesh.material as usize);
-                steering_mesh_index = Some(push_car_mesh(
-                    &mut scene,
-                    "steering_wheel",
-                    mesh,
-                    buffers,
-                    color,
-                    model,
-                    CarMeshStyle {
-                        texture: car_texture(car_visual, mesh, car_texture_base)?,
-                        outline: car_outline(car_visual, mesh),
-                        alpha: car_material_alpha(car_visual, mesh.material as usize),
-                    },
-                )?);
-                add_wheel_marker(&mut scene.lines, model, [0.2, 1.0, 0.7]);
-                steering_local = local;
+                    car_rotation
+                };
+                (row_translation, row_rotation)
+            };
+            let transform = Mat4::from_rotation_translation(rotation, translation);
+            let built = build_car(
+                &mut scene,
+                car_visual,
+                car_texture_base,
+                transform,
+                *color,
+                &format!("bay_{index}"),
+            )?;
+            let row_forward = rotation * Vec3::NEG_Z;
+            let row_right = rotation * Vec3::X;
+            let camera = Camera {
+                eye: (translation + row_forward * 7.0 + row_right * 2.2 + Vec3::Y * 2.4).to_array(),
+                target: (translation + Vec3::Y * 0.6).to_array(),
+                fov_y: 0.85,
+            };
+            if index == 0 {
+                scene.camera = camera;
+                scene.car_rig = Some(built.rig.clone());
+                scene.wheels = built.wheels.clone();
+                first_bounds = Some(built.bounds);
             }
+            bays.push(GarageBay {
+                wheels: built.wheels,
+                camera,
+                name: format!("Bay {}", index + 1),
+            });
         }
+        scene.garage_bays = bays;
+        let body_bounds = first_bounds.unwrap_or(Aabb {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        });
 
         let car_draw_calls = scene.meshes.len() - car_start;
         let car_vertices = scene.meshes[car_start..]
@@ -200,15 +113,6 @@ impl Scene {
         scene.stats.triangles += car_triangles;
         scene.stats.draw_calls += car_draw_calls as u32;
         scene.stats.textures += car_visual.textures.len() as u32;
-        scene.wheels = wheels;
-        scene.car_rig = Some(CarRig {
-            body_mesh_index,
-            body_local,
-            glass_mesh_index,
-            wheels: rig_wheels,
-            steering_mesh_index,
-            steering_local,
-        });
 
         scene.debug_info = json!({
             "asset": { "id": track_manifest.id, "kind": "Track" },
@@ -276,6 +180,199 @@ impl Scene {
 
         Ok(scene)
     }
+}
+
+fn recolor_paint(buffers: &mut MeshBuffers, color: [f32; 3]) {
+    if buffers.colors.is_empty() {
+        return;
+    }
+    for vertex_color in &mut buffers.colors {
+        if vertex_color[0] > 0.2
+            && vertex_color[0] > vertex_color[1] * 1.8
+            && vertex_color[0] > vertex_color[2] * 1.8
+        {
+            *vertex_color = color;
+        }
+    }
+}
+
+struct CarBuild {
+    rig: CarRig,
+    wheels: Vec<SceneWheel>,
+    bounds: Aabb,
+}
+
+const BAY_SPACING: f32 = 8.0;
+const ROW_GAP: f32 = 68.5;
+
+const BAY_COLORS: [[f32; 3]; 10] = [
+    [0.78, 0.08, 0.06],
+    [0.08, 0.22, 0.72],
+    [0.86, 0.62, 0.07],
+    [0.08, 0.42, 0.18],
+    [0.88, 0.34, 0.04],
+    [0.025, 0.025, 0.03],
+    [0.86, 0.86, 0.83],
+    [0.88, 0.18, 0.48],
+    [0.02, 0.07, 0.22],
+    [0.02, 0.56, 0.55],
+];
+
+fn build_car(
+    scene: &mut Scene,
+    car_visual: &CarVisual,
+    car_texture_base: usize,
+    transform: Mat4,
+    body_color: [f32; 3],
+    prefix: &str,
+) -> Result<CarBuild, String> {
+    let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
+    let body_mesh = car_visual
+        .meshes
+        .get(body_index)
+        .ok_or_else(|| "car has no body mesh".to_string())?;
+    let mut body_buffers = car_visual
+        .mesh_buffers
+        .get(body_index)
+        .ok_or_else(|| "car body mesh has no buffers".to_string())?
+        .clone();
+    recolor_paint(&mut body_buffers, body_color);
+    let body_local = node_matrix(&car_visual.body);
+    let body_model = transform * body_local;
+
+    let body_mesh_index = push_car_mesh(
+        scene,
+        format!("{}_body", prefix).as_str(),
+        body_mesh,
+        &body_buffers,
+        body_color,
+        body_model,
+        CarMeshStyle {
+            texture: car_texture(car_visual, body_mesh, car_texture_base)?,
+            outline: car_outline(car_visual, body_mesh),
+            alpha: car_material_alpha(car_visual, body_mesh.material as usize),
+        },
+    )?;
+    let body_bounds = world_bounds(&body_buffers, body_model);
+    add_box_lines(&mut scene.lines, &body_bounds, [0.25, 0.75, 1.0]);
+
+    let glass_mesh_index = if let Some(index) = mesh_index_by_name(car_visual, "body_glass") {
+        if let (Some(mesh), Some(buffers)) = (
+            car_visual.meshes.get(index),
+            car_visual.mesh_buffers.get(index),
+        ) {
+            let color = car_material_color(car_visual, mesh.material as usize);
+            Some(push_car_mesh(
+                scene,
+                format!("{}_glass", prefix).as_str(),
+                mesh,
+                buffers,
+                color,
+                body_model,
+                CarMeshStyle {
+                    texture: car_texture(car_visual, mesh, car_texture_base)?,
+                    outline: false,
+                    alpha: 1.0,
+                },
+            )?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut wheels = Vec::with_capacity(car_visual.wheels.len());
+    let mut rig_wheels = Vec::with_capacity(car_visual.wheels.len());
+    for wheel in &car_visual.wheels {
+        let mesh = car_visual
+            .meshes
+            .get(wheel.mesh as usize)
+            .ok_or_else(|| format!("wheel {} references a missing mesh", wheel.name))?;
+        let buffers = car_visual
+            .mesh_buffers
+            .get(wheel.mesh as usize)
+            .ok_or_else(|| format!("wheel {} has no mesh buffers", wheel.name))?;
+        let local_model = node_matrix(&wheel.transform);
+        let model = transform * local_model;
+        let color = car_material_color(car_visual, mesh.material as usize);
+        let mesh_index = push_car_mesh(
+            scene,
+            &format!("{}_wheel_{}", prefix, wheel.name),
+            mesh,
+            buffers,
+            color,
+            model,
+            CarMeshStyle {
+                texture: car_texture(car_visual, mesh, car_texture_base)?,
+                outline: car_outline(car_visual, mesh),
+                alpha: car_material_alpha(car_visual, mesh.material as usize),
+            },
+        )?;
+        add_wheel_marker(
+            &mut scene.lines,
+            model,
+            if wheel.is_front {
+                [0.2, 0.8, 1.0]
+            } else {
+                [1.0, 0.55, 0.2]
+            },
+        );
+        wheels.push(SceneWheel {
+            mesh_index,
+            base_model: model,
+            is_front: wheel.is_front,
+        });
+        rig_wheels.push(RigWheel {
+            mesh_index,
+            local_model,
+            is_front: wheel.is_front,
+        });
+    }
+
+    let mut steering_local = Mat4::IDENTITY;
+    let mut steering_mesh_index = None;
+    if let (Some(steering), Some(index)) = (
+        car_visual.steering_wheel,
+        mesh_index_by_name(car_visual, format!("{}_steering", prefix).as_str()),
+    ) {
+        if let (Some(mesh), Some(buffers)) = (
+            car_visual.meshes.get(index),
+            car_visual.mesh_buffers.get(index),
+        ) {
+            let local = node_matrix(&steering);
+            let model = transform * local;
+            let color = car_material_color(car_visual, mesh.material as usize);
+            steering_mesh_index = Some(push_car_mesh(
+                scene,
+                format!("{}_steering", prefix).as_str(),
+                mesh,
+                buffers,
+                color,
+                model,
+                CarMeshStyle {
+                    texture: car_texture(car_visual, mesh, car_texture_base)?,
+                    outline: car_outline(car_visual, mesh),
+                    alpha: car_material_alpha(car_visual, mesh.material as usize),
+                },
+            )?);
+            add_wheel_marker(&mut scene.lines, model, [0.2, 1.0, 0.7]);
+            steering_local = local;
+        }
+    }
+    let rig = CarRig {
+        body_mesh_index,
+        body_local,
+        glass_mesh_index,
+        wheels: rig_wheels,
+        steering_mesh_index,
+        steering_local,
+    };
+    Ok(CarBuild {
+        rig,
+        wheels,
+        bounds: body_bounds,
+    })
 }
 
 struct CarMeshStyle {

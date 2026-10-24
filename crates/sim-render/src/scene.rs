@@ -79,6 +79,13 @@ pub struct CarRig {
     pub steering_local: Mat4,
 }
 
+#[derive(Debug, Clone)]
+pub struct GarageBay {
+    pub wheels: Vec<SceneWheel>,
+    pub camera: Camera,
+    pub name: String,
+}
+
 pub struct Scene {
     pub meshes: Vec<MeshData>,
     pub textures: Vec<SceneTexture>,
@@ -86,6 +93,7 @@ pub struct Scene {
     pub camera: Camera,
     pub debug_info: String,
     pub wheels: Vec<SceneWheel>,
+    pub garage_bays: Vec<GarageBay>,
     pub stats: SceneStats,
     pub car_rig: Option<CarRig>,
 }
@@ -230,6 +238,7 @@ impl Scene {
             camera,
             debug_info,
             wheels: Vec::new(),
+            garage_bays: Vec::new(),
             stats,
             car_rig: None,
         })

@@ -6,7 +6,7 @@ mod scene;
 use wasm_bindgen::prelude::*;
 
 use crate::camera::Camera;
-use crate::scene::{CarRig, Scene, SceneWheel};
+use crate::scene::{CarRig, GarageBay, Scene};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{Controls, TrackCollider, Vehicle, FIXED_DT};
 use sim_types::CarTuning;
@@ -102,7 +102,8 @@ impl TrackViewer {
 pub struct GarageViewer {
     renderer: renderer::Renderer,
     debug_info: String,
-    wheels: Vec<SceneWheel>,
+    bays: Vec<GarageBay>,
+    selected_bay: usize,
     steer: f32,
     spin: f32,
     initial_camera: Camera,
@@ -149,11 +150,12 @@ impl GarageViewer {
             &car_physics,
             &car_visual,
             &car_manifest,
+            10,
         )
         .map_err(|error| JsValue::from_str(&error))?;
-        let wheels = std::mem::take(&mut scene.wheels);
+        let bays = std::mem::take(&mut scene.garage_bays);
         let debug_info = scene.debug_info.clone();
-        let camera = scene.camera;
+        let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
         let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
@@ -161,7 +163,8 @@ impl GarageViewer {
         Ok(GarageViewer {
             renderer,
             debug_info,
-            wheels,
+            bays,
+            selected_bay: 0,
             steer: 0.0,
             spin: 0.0,
             initial_camera: camera,
@@ -176,16 +179,46 @@ impl GarageViewer {
     pub fn set_wheel_angles(&mut self, steer: f32, spin: f32) {
         self.steer = steer;
         self.spin = spin;
-        for wheel in &self.wheels {
-            let spin_rotation = glam::Mat4::from_rotation_x(-spin);
+        self.apply_wheel_angles();
+    }
+
+    fn apply_wheel_angles(&mut self) {
+        let Some(bay) = self.bays.get(self.selected_bay) else {
+            return;
+        };
+        for wheel in &bay.wheels {
+            let spin_rotation = glam::Mat4::from_rotation_x(-self.spin);
             let rotation = if wheel.is_front {
-                glam::Mat4::from_rotation_y(steer) * spin_rotation
+                glam::Mat4::from_rotation_y(self.steer) * spin_rotation
             } else {
                 spin_rotation
             };
             self.renderer
                 .set_mesh_model(wheel.mesh_index, wheel.base_model * rotation);
         }
+    }
+
+    pub fn select_bay(&mut self, index: usize) -> String {
+        if self.bays.is_empty() {
+            return self.camera_info();
+        }
+        self.selected_bay = index % self.bays.len();
+        let bay = &self.bays[self.selected_bay];
+        self.camera = bay.camera;
+        self.initial_camera = bay.camera;
+        self.renderer.set_camera(self.camera);
+        self.apply_wheel_angles();
+        let _ = self.renderer.render();
+        self.camera_info()
+    }
+
+    pub fn bay_info(&self) -> String {
+        serde_json::json!({
+            "selected": self.selected_bay,
+            "count": self.bays.len(),
+            "name": self.bays.get(self.selected_bay).map(|bay| bay.name.clone()).unwrap_or_default(),
+        })
+        .to_string()
     }
 
     pub fn render(&mut self) -> Result<(), JsValue> {
@@ -311,6 +344,7 @@ impl DriveViewer {
             &car_physics,
             &car_visual,
             &car_manifest,
+            1,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let rig = scene

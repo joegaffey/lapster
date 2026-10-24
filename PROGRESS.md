@@ -126,7 +126,12 @@ Toolchain setup scripts:
   Reset camera. Touch devices get non-selectable steering/throttle/brake controls. Debug
   lines/bounds are off by default in drive, garage, and track viewer.
 - Track and garage cameras: drag to orbit, right/shift-drag to pan, wheel or pinch to zoom,
-  with a reset-camera button.
+  with a reset-camera button. Garage starts from a front three-quarter view with the wheels
+  turned slightly.
+- Garage showroom: two facing rows of five cars each (red/blue/yellow/green/orange opposite
+  black/white/pink/navy/cyan), aligned to the five canopy bays. Prev/Next toolbar buttons
+  and Left/Right arrow keys move between cars, with per-bay camera homes and wheel controls
+  following the selection.
 - Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
 - Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
   cockpit mode switches it to 32% alpha in a transparent forward pass; bonnet and external

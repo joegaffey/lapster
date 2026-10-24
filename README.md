@@ -13,8 +13,10 @@ Live demo: **https://joegaffey.com/lapster/**
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
   steering, gears, chase/cockpit cameras, wheel loads, 500 Hz physics, and a shareable
   tuning dialog.
-- **Garage** — RX-7 on the skidpad with wheel steering/spin controls, debug bounds, and an
-  orbit/pan/zoom camera.
+- **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
+  opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
+  three-quarter start view; Prev/Next buttons or arrow keys move between bays. Wheel
+  steering/spin controls and an orbit/pan/zoom camera follow the selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation.
 
