@@ -129,9 +129,10 @@ Toolchain setup scripts:
   with a reset-camera button. Garage starts from a front three-quarter view with the wheels
   turned slightly.
 - Garage showroom: two facing rows of five cars each (red/blue/yellow/green/orange opposite
-  black/white/pink/navy/cyan), aligned to the five canopy bays. Prev/Next toolbar buttons
-  and Left/Right arrow keys fly the camera between cars, with per-bay camera homes and wheel
-  controls following the selection. The selected car persists in `localStorage` and becomes the
+  black/white/pink/navy/cyan), aligned to the five canopy bays. Screen-side chevrons and
+  Left/Right arrow keys fly the camera between cars, with per-bay camera homes and wheel
+  controls following the selection. The chevrons fade out when idle and reappear on mouse
+  movement. The selected car persists in `localStorage` and becomes the
   driving car, including its showroom paint; the garage `Drive` button and the menu Drive
   demo both use it.
 - Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
@@ -188,7 +189,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 20 Playwright tests
+- `npm run test:viewer` — 21 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and

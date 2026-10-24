@@ -10,6 +10,7 @@ test("selected garage car becomes the driving car", async ({ page }) => {
     { timeout: 30_000 },
   );
 
+  await page.mouse.move(640, 360);
   await page.click("#bay-next");
   await page.click("#bay-next");
 

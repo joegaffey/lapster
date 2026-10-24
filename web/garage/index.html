@@ -163,6 +163,62 @@
       #viewer-controls > *:hover {
         background: #1c2430;
       }
+      #car-nav {
+        position: fixed;
+        inset: 0;
+        z-index: 8;
+        pointer-events: none;
+      }
+      #car-nav button {
+        position: absolute;
+        top: 50%;
+        display: grid;
+        place-items: center;
+        width: 52px;
+        height: 82px;
+        border: 1px solid #3a4350;
+        border-radius: 4px;
+        background: rgba(15, 20, 27, 0.72);
+        backdrop-filter: blur(8px);
+        color: #e6e8eb;
+        font: inherit;
+        font-size: 34px;
+        line-height: 1;
+        cursor: pointer;
+        pointer-events: auto;
+        touch-action: manipulation;
+        opacity: 1;
+        transform: translateY(-50%);
+        transition:
+          opacity 280ms ease,
+          transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+          background-color 150ms ease,
+          border-color 150ms ease;
+      }
+      #bay-prev {
+        left: max(16px, env(safe-area-inset-left));
+      }
+      #bay-next {
+        right: max(16px, env(safe-area-inset-right));
+      }
+      #car-nav button:hover {
+        background: rgba(28, 36, 48, 0.9);
+        border-color: #4b5766;
+      }
+      #car-nav button:focus-visible {
+        outline: 2px solid #38bdf8;
+        outline-offset: 2px;
+      }
+      #car-nav.car-nav-hidden #bay-prev {
+        opacity: 0;
+        transform: translate(-14px, -50%);
+        pointer-events: none;
+      }
+      #car-nav.car-nav-hidden #bay-next {
+        opacity: 0;
+        transform: translate(14px, -50%);
+        pointer-events: none;
+      }
       #hud.hud-collapsed {
         display: none;
       }
@@ -174,19 +230,43 @@
           justify-content: flex-start;
           max-width: none;
         }
+        #car-nav button {
+          width: 44px;
+          height: 66px;
+          font-size: 28px;
+        }
         #hud {
           top: 84px;
           max-height: calc(100vh - 116px);
+        }
+      }
+      @media (hover: none), (pointer: coarse) {
+        #car-nav.car-nav-hidden #bay-prev {
+          opacity: 1;
+          transform: translateY(-50%);
+          pointer-events: auto;
+        }
+        #car-nav.car-nav-hidden #bay-next {
+          opacity: 1;
+          transform: translateY(-50%);
+          pointer-events: auto;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #car-nav button {
+          transition: none;
         }
       }
     </style>
   </head>
   <body>
     <canvas id="view"></canvas>
+    <nav id="car-nav" aria-label="Car navigation">
+      <button id="bay-prev" type="button" aria-label="Previous car" title="Previous car">‹</button>
+      <button id="bay-next" type="button" aria-label="Next car" title="Next car">›</button>
+    </nav>
     <nav id="viewer-controls" aria-label="Viewer controls">
       <a class="hud-exit" href="../">Exit</a>
-      <button id="bay-prev" type="button">Prev bay</button>
-      <button id="bay-next" type="button">Next bay</button>
       <a id="drive-car" href="../drive/">Drive</a>
       <button id="reset-camera" type="button">Reset camera</button>
     </nav>

@@ -48,6 +48,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   expect(reset.eye).toEqual(initial.eye);
   expect(reset.target).toEqual(initial.target);
 
+  await page.mouse.move(640, 360);
   const initialBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
@@ -85,6 +86,7 @@ test("garage camera flies between bays", async ({ page }) => {
   const initial = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.camera_info()),
   );
+  await page.mouse.move(640, 360);
   await page.click("#bay-next");
   await page.waitForTimeout(150);
   const midFlight = await page.evaluate(() =>
@@ -98,4 +100,32 @@ test("garage camera flies between bays", async ({ page }) => {
   expect(midFlight.target).not.toEqual(initial.target);
   expect(midFlight.target).not.toEqual(final.target);
   expect(final.target).not.toEqual(initial.target);
+});
+
+test("garage car arrows use the screen sides and hide when idle", async ({ page }) => {
+  await page.goto(
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+  );
+  await page.waitForFunction(
+    () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
+    undefined,
+    { timeout: 30_000 },
+  );
+
+  const nav = page.locator("#car-nav");
+  await expect(nav).not.toHaveClass(/car-nav-hidden/);
+  await expect(page.locator("#bay-prev")).toHaveAttribute("aria-label", "Previous car");
+  await expect(page.locator("#bay-next")).toHaveAttribute("aria-label", "Next car");
+
+  const viewport = page.viewportSize()!;
+  const previous = await page.locator("#bay-prev").boundingBox();
+  const next = await page.locator("#bay-next").boundingBox();
+  expect(previous!.x).toBeLessThan(80);
+  expect(next!.x + next!.width).toBeGreaterThan(viewport.width - 80);
+
+  await page.waitForTimeout(2500);
+  await expect(nav).toHaveClass(/car-nav-hidden/);
+
+  await page.mouse.move(640, 360);
+  await expect(nav).not.toHaveClass(/car-nav-hidden/);
 });

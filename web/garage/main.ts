@@ -34,6 +34,39 @@ const bayLabel = document.querySelector<HTMLElement>("#bay-label")!;
 const bayPrev = document.querySelector<HTMLButtonElement>("#bay-prev")!;
 const bayNext = document.querySelector<HTMLButtonElement>("#bay-next")!;
 const driveCar = document.querySelector<HTMLAnchorElement>("#drive-car")!;
+const carNav = document.querySelector<HTMLElement>("#car-nav")!;
+const CAR_NAV_HIDE_DELAY_MS = 2200;
+let carNavHideTimer = 0;
+
+const scheduleCarNavHide = () => {
+  window.clearTimeout(carNavHideTimer);
+  carNavHideTimer = window.setTimeout(() => {
+    if (carNav.querySelector("button:focus-visible")) {
+      scheduleCarNavHide();
+      return;
+    }
+    carNav.classList.add("car-nav-hidden");
+  }, CAR_NAV_HIDE_DELAY_MS);
+};
+
+const showCarNav = () => {
+  carNav.classList.remove("car-nav-hidden");
+  scheduleCarNavHide();
+};
+
+window.addEventListener("pointermove", showCarNav, { passive: true });
+window.addEventListener("pointerdown", showCarNav, { passive: true });
+window.addEventListener("keydown", showCarNav);
+carNav.addEventListener("focusin", showCarNav);
+carNav.addEventListener("focusout", scheduleCarNavHide);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    window.clearTimeout(carNavHideTimer);
+    carNav.classList.add("car-nav-hidden");
+    return;
+  }
+  showCarNav();
+});
 
 setupHud();
 checkForUpdate();
@@ -202,8 +235,14 @@ async function boot() {
   };
 
   selectBay(getSelectedBay(), false);
-  bayPrev.addEventListener("click", () => selectBay(selectedBay - 1));
-  bayNext.addEventListener("click", () => selectBay(selectedBay + 1));
+  bayPrev.addEventListener("click", () => {
+    selectBay(selectedBay - 1);
+    showCarNav();
+  });
+  bayNext.addEventListener("click", () => {
+    selectBay(selectedBay + 1);
+    showCarNav();
+  });
   window.addEventListener("keydown", (event) => {
     const target = event.target as HTMLElement | null;
     if (target && ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)) {
@@ -262,6 +301,7 @@ async function boot() {
   status.textContent = "ready";
   status.className = "status ready";
   window.__garageViewerReady = true;
+  showCarNav();
   requestAnimationFrame(frame);
 }
 
