@@ -13,14 +13,16 @@ Live demo: **https://joegaffey.com/lapster/**
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
   steering, gears, chase/cockpit cameras, wheel loads, 500 Hz physics, and a shareable
   tuning dialog.
-- **Garage** — RX-7 on the skidpad with wheel steering/spin controls and debug bounds.
+- **Garage** — RX-7 on the skidpad with wheel steering/spin controls, debug bounds, and an
+  orbit/pan/zoom camera.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation.
 
 The demos load these assets by default; no query parameters are required. Custom packs can
 still be selected with `?car=` and `?track=`. The info HUD starts collapsed on every demo;
 drive actions live in a detached top toolbar, with `Exit` returning to the menu. The drive demo adds on-screen steering, throttle, and brake controls
-on touch devices. Builds are versioned: the Pages build gives the Wasm package its own
+on touch devices. Debug lines/bounds are off by default in all viewers; drive can re-enable
+the debug overlay from Settings. Builds are versioned: the Pages build gives the Wasm package its own
 versioned directory, and demos/menu check `web/version.json` on load and resume, clearing
 stale caches and reloading when a newer deployment is available.
 

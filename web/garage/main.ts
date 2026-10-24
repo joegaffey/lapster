@@ -5,6 +5,7 @@ import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
+import { setupTrackCamera } from "../src/ui/track-camera.ts";
 
 declare global {
   interface Window {
@@ -150,6 +151,7 @@ async function boot() {
 
   const debug = JSON.parse(viewer.debug_info());
   renderDebug(debug);
+  setupTrackCamera(canvas, viewer);
 
   let steer = 0;
   let spin = 0;

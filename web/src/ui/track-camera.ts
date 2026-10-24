@@ -51,7 +51,12 @@ export function setupTrackCamera(canvas: HTMLCanvasElement, viewer: CameraViewer
   const pointers = new Map<number, { x: number; y: number }>();
   let pinch: { distance: number; centroid: [number, number] } | null = null;
 
+  const minTargetY = initialTarget[1];
+  const minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
+
   const apply = () => {
+    target[1] = Math.max(target[1], minTargetY);
+    eye[1] = Math.max(eye[1], minEyeY);
     viewer.set_camera(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
   };
 

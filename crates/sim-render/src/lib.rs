@@ -47,7 +47,8 @@ impl TrackViewer {
         let camera = scene.camera;
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        let renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        renderer.set_lines_visible(false);
         Ok(TrackViewer {
             renderer,
             debug_info,
@@ -104,6 +105,8 @@ pub struct GarageViewer {
     wheels: Vec<SceneWheel>,
     steer: f32,
     spin: f32,
+    initial_camera: Camera,
+    camera: Camera,
 }
 
 #[wasm_bindgen]
@@ -150,15 +153,19 @@ impl GarageViewer {
         .map_err(|error| JsValue::from_str(&error))?;
         let wheels = std::mem::take(&mut scene.wheels);
         let debug_info = scene.debug_info.clone();
+        let camera = scene.camera;
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        let renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        renderer.set_lines_visible(false);
         Ok(GarageViewer {
             renderer,
             debug_info,
             wheels,
             steer: 0.0,
             spin: 0.0,
+            initial_camera: camera,
+            camera,
         })
     }
 
@@ -187,6 +194,34 @@ impl GarageViewer {
 
     pub fn debug_info(&self) -> String {
         self.debug_info.clone()
+    }
+
+    pub fn camera_info(&self) -> String {
+        serde_json::json!({
+            "eye": self.camera.eye,
+            "target": self.camera.target,
+            "fovY": self.camera.fov_y,
+        })
+        .to_string()
+    }
+
+    pub fn set_camera(
+        &mut self,
+        eye_x: f32,
+        eye_y: f32,
+        eye_z: f32,
+        target_x: f32,
+        target_y: f32,
+        target_z: f32,
+    ) {
+        self.camera.eye = [eye_x, eye_y, eye_z];
+        self.camera.target = [target_x, target_y, target_z];
+        self.renderer.set_camera(self.camera);
+    }
+
+    pub fn reset_camera(&mut self) {
+        self.camera = self.initial_camera;
+        self.renderer.set_camera(self.camera);
     }
 
     pub fn steer_angle(&self) -> f32 {
@@ -284,11 +319,24 @@ impl DriveViewer {
             .ok_or_else(|| JsValue::from_str("garage scene has no car rig"))?;
         let info = scene.debug_info.clone();
         let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
-        let spawn = track_metadata
+        let mut spawn = track_metadata
             .spawns
             .first()
             .cloned()
             .ok_or_else(|| JsValue::from_str("track has no spawn point"))?;
+        let spawn_rotation = Quat::from_xyzw(
+            spawn.rotation_xyzw[0],
+            spawn.rotation_xyzw[1],
+            spawn.rotation_xyzw[2],
+            spawn.rotation_xyzw[3],
+        );
+        let spawn_rotation = if spawn_rotation.length_squared() > 1e-8 {
+            spawn_rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        spawn.rotation_xyzw =
+            (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
         let mut vehicle = Vehicle::new(car_physics, collider, &spawn);
         for _ in 0..500 {
             vehicle.step(Controls::default());

@@ -177,6 +177,7 @@
     <canvas id="view"></canvas>
     <nav id="viewer-controls" aria-label="Viewer controls">
       <a class="hud-exit" href="../">Exit</a>
+      <button id="reset-camera" type="button">Reset camera</button>
     </nav>
     <aside id="hud">
       <h1>Garage Viewer</h1>
@@ -185,6 +186,9 @@
 
       <h2>Car</h2>
       <dl id="car-stats" data-testid="car-stats"></dl>
+
+      <h2>Camera</h2>
+      <p class="muted">Drag to orbit · right/shift-drag to pan · wheel or pinch to zoom</p>
 
       <h2>Wheel Debug</h2>
       <div class="controls">

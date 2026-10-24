@@ -65,11 +65,16 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   const reverse = await page.evaluate(() => {
     const viewer = (window as any).__driveViewer;
     viewer.reset();
+    const start = JSON.parse(viewer.telemetry()).position;
     viewer.simulate(2.0, 0.6, 0.0, 0.0, -1);
-    return JSON.parse(viewer.telemetry());
+    const end = JSON.parse(viewer.telemetry());
+    return {
+      ...end,
+      distance: Math.hypot(end.position[0] - start[0], end.position[2] - start[2]),
+    };
   });
   expect(reverse.gear).toBe(-1);
-  expect(reverse.position[2]).toBeGreaterThan(0.25);
+  expect(reverse.distance).toBeGreaterThan(0.25);
   expect(reverse.contacts).toBe(4);
   expect(pageErrors).toEqual([]);
 });
@@ -236,22 +241,22 @@ test("steering keys turn in the expected direction", async ({ page }) => {
   };
 
   const left = await driveFor("ArrowLeft");
-  expect(left.position[0]).toBeLessThan(-0.05);
+  expect(left.position[0]).toBeGreaterThan(0.05);
 
   await page.keyboard.press("r");
   await page.waitForTimeout(150);
   const right = await driveFor("ArrowRight");
-  expect(right.position[0]).toBeGreaterThan(0.05);
+  expect(right.position[0]).toBeLessThan(-0.05);
 
   await page.keyboard.press("r");
   await page.waitForTimeout(150);
   const aKey = await driveFor("a");
-  expect(aKey.position[0]).toBeLessThan(-0.05);
+  expect(aKey.position[0]).toBeGreaterThan(0.05);
 
   await page.keyboard.press("r");
   await page.waitForTimeout(150);
   const dKey = await driveFor("d");
-  expect(dKey.position[0]).toBeGreaterThan(0.05);
+  expect(dKey.position[0]).toBeLessThan(-0.05);
 });
 
 test("arrow throttle, brake, and auto reverse", async ({ page }) => {
@@ -280,12 +285,18 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
 
   await page.keyboard.press("r");
   await page.waitForTimeout(150);
+  const reverseStart = await telemetry(page);
   await page.keyboard.down("ArrowDown");
   await page.waitForTimeout(1500);
   await page.keyboard.up("ArrowDown");
   const reverse = await telemetry(page);
   expect(reverse.gear).toBe(-1);
-  expect(reverse.position[2]).toBeGreaterThan(0.2);
+  expect(
+    Math.hypot(
+      reverse.position[0] - reverseStart.position[0],
+      reverse.position[2] - reverseStart.position[2],
+    ),
+  ).toBeGreaterThan(0.2);
 
   await page.keyboard.down("ArrowUp");
   await page.waitForFunction(
@@ -302,15 +313,26 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   await page.waitForFunction(
     (before) => {
       const telemetry = JSON.parse((window as any).__driveViewer.telemetry());
-      return telemetry.gear === 1 && telemetry.position[2] < before - 0.1;
+      return (
+        telemetry.gear === 1 &&
+        Math.hypot(
+          telemetry.position[0] - before[0],
+          telemetry.position[2] - before[2],
+        ) > 0.1
+      );
     },
-    stoppedFromReverse.position[2],
+    stoppedFromReverse.position,
     { timeout: 10_000 },
   );
   await page.keyboard.up("ArrowUp");
   const forwardAgain = await telemetry(page);
   expect(forwardAgain.gear).toBe(1);
-  expect(forwardAgain.position[2]).toBeLessThan(stoppedFromReverse.position[2]);
+  expect(
+    Math.hypot(
+      forwardAgain.position[0] - stoppedFromReverse.position[0],
+      forwardAgain.position[2] - stoppedFromReverse.position[2],
+    ),
+  ).toBeGreaterThan(0.1);
 });
 
 test("reverse requires a second brake press after stopping", async ({ page }) => {

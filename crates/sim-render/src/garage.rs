@@ -393,6 +393,7 @@ fn car_transform(metadata: &TrackMetadata) -> Result<Mat4, String> {
     } else {
         Quat::IDENTITY
     };
+    let rotation = Quat::from_rotation_y(std::f32::consts::PI) * rotation;
     Ok(Mat4::from_rotation_translation(
         rotation,
         Vec3::from_array(spawn.position),
