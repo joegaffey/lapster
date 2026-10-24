@@ -16,5 +16,7 @@ The raw `.kn5` files are not checked in. The baked pack contains:
 - No tree/fence meshes and no wall/fence collision; ground collision includes the outer ring
   and grass.
 - Grass friction is capped at 0.35 to keep it significantly lower-grip than asphalt.
+- The concrete apron is offset 1.5 cm below the tarmac and thin road overlays 5 mm above it
+  to avoid coplanar z-fighting.
 
 The UI name is “Skidpad 0.5”.

@@ -170,7 +170,7 @@ impl GarageViewer {
         self.steer = steer;
         self.spin = spin;
         for wheel in &self.wheels {
-            let spin_rotation = glam::Mat4::from_rotation_x(spin);
+            let spin_rotation = glam::Mat4::from_rotation_x(-spin);
             let rotation = if wheel.is_front {
                 glam::Mat4::from_rotation_y(steer) * spin_rotation
             } else {
@@ -449,6 +449,7 @@ impl DriveViewer {
             "steeringSensitivity": self.vehicle.steering_sensitivity(),
             "escActivity": self.vehicle.esc_activity(),
             "debugLinesVisible": self.renderer.lines_visible(),
+            "msaaSamples": self.renderer.msaa_samples(),
             "rendererBackend": self.renderer.backend(),
             "rendererFormat": self.renderer.surface_format(),
             "cameraMode": self.camera_mode.as_str(),
@@ -507,6 +508,16 @@ impl DriveViewer {
         self.renderer.set_lines_visible(visible);
     }
 
+    pub fn set_msaa_samples(&mut self, requested: u32) -> Result<u32, JsValue> {
+        let actual = self.renderer.set_msaa_samples(requested);
+        self.renderer.render()?;
+        Ok(actual)
+    }
+
+    pub fn msaa_samples(&self) -> u32 {
+        self.renderer.msaa_samples()
+    }
+
     pub fn car_setup(&self) -> String {
         serde_json::to_string(&self.vehicle.setup()).unwrap_or_else(|_| String::from("{}"))
     }
@@ -560,7 +571,7 @@ impl DriveViewer {
         }
         for (index, wheel) in self.rig.wheels.iter().enumerate() {
             let wheel_state = state.wheels.get(index).copied().unwrap_or_default();
-            let spin = Mat4::from_rotation_x(wheel_state.spin_angle);
+            let spin = Mat4::from_rotation_x(-wheel_state.spin_angle);
             let rotation = if wheel.is_front {
                 Mat4::from_rotation_y(wheel_state.steer_angle) * spin
             } else {

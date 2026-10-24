@@ -5,7 +5,11 @@ interface AssistsViewer {
   set_stability_strength(strength: number): void;
   set_steering_sensitivity(sensitivity: number): void;
   set_debug_lines_visible(visible: boolean): void;
+  set_msaa_samples(requested: number): number;
+  msaa_samples(): number;
 }
+
+type AntiAliasing = "auto" | "off" | "2x" | "4x";
 
 interface AssistSettings {
   tc: boolean;
@@ -14,6 +18,7 @@ interface AssistSettings {
   escStrength: number;
   steeringSensitivity: number;
   debugLines: boolean;
+  antiAliasing: AntiAliasing;
 }
 
 const STORAGE_KEY = "lapster.assists.v1";
@@ -25,6 +30,7 @@ const DEFAULTS: AssistSettings = {
   escStrength: 1,
   steeringSensitivity: 1,
   debugLines: false,
+  antiAliasing: "auto",
 };
 
 function clamp(value: number, min: number, max: number, fallback: number): number {
@@ -39,7 +45,22 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     escStrength: clamp(value?.escStrength ?? 1, 0, 1, 1),
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
     debugLines: value?.debugLines === true,
+    antiAliasing:
+      value?.antiAliasing === "off" ||
+      value?.antiAliasing === "2x" ||
+      value?.antiAliasing === "4x"
+        ? value.antiAliasing
+        : "auto",
   };
+}
+
+const MOBILE_QUERY = "(pointer: coarse), (max-width: 720px)";
+
+function requestedSamples(settings: AssistSettings): number {
+  if (settings.antiAliasing === "off") return 1;
+  if (settings.antiAliasing === "2x") return 2;
+  if (settings.antiAliasing === "4x") return 4;
+  return window.matchMedia(MOBILE_QUERY).matches ? 2 : 4;
 }
 
 function load(): AssistSettings {
@@ -70,6 +91,8 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
   const debugToggle = document.querySelector<HTMLButtonElement>("#debug-lines-toggle");
+  const msaa = document.querySelector<HTMLSelectElement>("#msaa-mode");
+  const msaaApplied = document.querySelector<HTMLOutputElement>("#msaa-applied");
   const tcValue = document.querySelector<HTMLOutputElement>("#tc-strength-value");
   const escValue = document.querySelector<HTMLOutputElement>("#esc-strength-value");
   const steeringValue = document.querySelector<HTMLOutputElement>("#steering-sensitivity-value");
@@ -85,6 +108,8 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
     !escStrength ||
     !steering ||
     !debugToggle ||
+    !msaa ||
+    !msaaApplied ||
     !tcValue ||
     !escValue ||
     !steeringValue ||
@@ -94,6 +119,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   }
 
   let settings = load();
+  let actualMsaa = 1;
 
   const apply = () => {
     viewer.set_traction_control(settings.tc);
@@ -102,6 +128,7 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
     viewer.set_stability_strength(settings.escStrength);
     viewer.set_steering_sensitivity(settings.steeringSensitivity);
     viewer.set_debug_lines_visible(settings.debugLines);
+    actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     save(settings);
   };
 
@@ -118,6 +145,15 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
     steeringValue.textContent = `${Math.round(settings.steeringSensitivity * 100)}%`;
     debugToggle.textContent = settings.debugLines ? "Debug: On" : "Debug: Off";
     debugToggle.setAttribute("aria-pressed", String(settings.debugLines));
+    msaa.value = settings.antiAliasing;
+    const requested = requestedSamples(settings);
+    const fallback = requested !== 1 && actualMsaa < requested;
+    msaaApplied.textContent =
+      settings.antiAliasing === "auto"
+        ? `Auto — ${actualMsaa}×${fallback ? " (fallback)" : ""}`
+        : actualMsaa === 1 && requested !== 1
+          ? `${requested}× unavailable — 1×`
+          : `${actualMsaa}×`;
   };
 
   apply();
@@ -155,6 +191,12 @@ export function setupAssistsDialog(viewer: AssistsViewer): void {
   });
   debugToggle.addEventListener("click", () => {
     settings.debugLines = !settings.debugLines;
+    apply();
+    refresh();
+    status.textContent = "Saved";
+  });
+  msaa.addEventListener("change", () => {
+    settings.antiAliasing = msaa.value as AntiAliasing;
     apply();
     refresh();
     status.textContent = "Saved";

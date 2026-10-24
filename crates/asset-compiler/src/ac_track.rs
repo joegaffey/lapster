@@ -110,14 +110,21 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
                 continue;
             }
             let buffers = transform_mesh(mesh, world);
-            let mesh_bounds = bounds(&buffers);
+            let mut visual_buffers = buffers.clone();
+            let visual_offset = visual_y_offset(&node.name);
+            if visual_offset != 0.0 {
+                for position in &mut visual_buffers.positions {
+                    position[1] += visual_offset;
+                }
+            }
+            let mesh_bounds = bounds(&visual_buffers);
             visual_bounds = Some(merge_bounds(visual_bounds, &mesh_bounds));
             visual.meshes.push(mesh_ref(
                 &format!("{}/{}", file_stem(path), node.name),
-                &buffers,
+                &visual_buffers,
                 material_offset + mesh.material as u16,
             ));
-            visual.mesh_buffers.push(buffers.clone());
+            visual.mesh_buffers.push(visual_buffers);
 
             if let Some(key) = collision_surface_key(&node.name) {
                 let surface = surface_ids.get(key).copied().unwrap_or(0);
@@ -345,10 +352,21 @@ fn material_color(name: &str) -> [f32; 3] {
     }
 }
 
+fn visual_y_offset(name: &str) -> f32 {
+    let upper = name.to_ascii_uppercase();
+    if upper == "1ASPHALT" {
+        -0.015
+    } else if upper.starts_with("1ROAD") || upper == "TRANSITION" {
+        0.005
+    } else {
+        0.0
+    }
+}
+
 fn material_outline(name: &str) -> bool {
     matches!(
         name,
-        "wall" | "BarrierMat" | "linea" | "signs" | "numeri" | "numeri2" | "tenda"
+        "wall" | "BarrierMat" | "linea" | "signs" | "numeri" | "numeri2"
     )
 }
 
@@ -493,6 +511,13 @@ mod tests {
         assert_eq!(collision_surface_key("1ASPHALT"), Some("ASPHALT"));
         assert_eq!(collision_surface_key("2ROAD"), Some("ASPHALT"));
         assert_eq!(collision_surface_key("1WALL2_SUB0"), None);
+    }
+
+    #[test]
+    fn layers_are_offset_to_avoid_coplanar_z_fighting() {
+        assert!(visual_y_offset("1ASPHALT") < 0.0);
+        assert!(visual_y_offset("1ROADbrakingzone") > 0.0);
+        assert_eq!(visual_y_offset("2ROAD"), 0.0);
     }
 
     #[test]

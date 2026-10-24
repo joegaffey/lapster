@@ -116,8 +116,11 @@ Toolchain setup scripts:
   curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
   JSON (`lapster/setup@1`). Mass and geometry remain fixed.
 - Settings dialog: TC and ESC enables, independent strength controls, steering sensitivity,
-  and a debug overlay toggle. Settings persist globally; Reset and Camera remain top-level
-  toolbar actions. Drive hides debug lines/bounds by default.
+  anti-aliasing, and a debug overlay toggle. Settings persist globally; Reset and Camera
+  remain top-level toolbar actions. Drive hides debug lines/bounds by default.
+- Native MSAA through wgpu: auto 4× desktop / 2× mobile, with Off/2×/4× overrides. Unsupported
+  counts fall back to the highest supported count not above the request (usually 1× for 2× on
+  WebGPU).
 - Responsive UI: collapsible HUD on all demos, collapsed by default. Every demo keeps Info
   and Exit in a detached toolbar; drive adds Reset, Camera, Body, TC, and ESC, and track adds
   Reset camera. Touch devices get non-selectable steering/throttle/brake controls.
@@ -153,6 +156,8 @@ Toolchain setup scripts:
     30 draw calls.
   - Collision includes the central pad, ASP surfaces, outer ANELLO ring, and grass; grass
     friction is capped at 0.35. Textures are not imported and walls/fences remain visual-only.
+  - Visual coplanar layers are offset: the concrete apron sits 1.5 cm below the tarmac, and
+    thin road overlays sit 5 mm above it.
 - Build freshness: generated build version in default pack URLs, `version.json` checks on
   load/resume/focus, stale IndexedDB pack clearing, versioned `main.js` and `pkg/` URLs, and
   no-store navigation/version responses from the service worker.
@@ -167,7 +172,7 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 43 tests
+- `cargo test --workspace` — 45 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
   control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,

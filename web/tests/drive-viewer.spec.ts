@@ -109,6 +109,13 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   const debug = page.locator("#debug-lines-toggle");
   await expect(debug).toHaveText("Debug: Off");
   await expect(debug).toHaveAttribute("aria-pressed", "false");
+  const msaa = page.locator("#msaa-mode");
+  await msaa.selectOption("off");
+  let msaaTelemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(msaaTelemetry.msaaSamples).toBe(1);
+  await expect(page.locator("#msaa-applied")).toHaveText("1×");
 
   await debug.click();
   await expect(debug).toHaveText("Debug: On");
@@ -160,6 +167,7 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   expect(telemetry.stabilityStrength).toBe(1);
   expect(telemetry.steeringSensitivity).toBe(1);
   expect(telemetry.debugLinesVisible).toBe(false);
+  await expect(page.locator("#msaa-mode")).toHaveValue("auto");
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {

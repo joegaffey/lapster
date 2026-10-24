@@ -63,6 +63,13 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     depth_view: wgpu::TextureView,
+    msaa_color_view: Option<wgpu::TextureView>,
+    sample_count: u32,
+    supported_samples: Vec<u32>,
+    shader: wgpu::ShaderModule,
+    mesh_pipeline_layout: wgpu::PipelineLayout,
+    outline_pipeline_layout: wgpu::PipelineLayout,
+    line_pipeline_layout: wgpu::PipelineLayout,
     sky_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: wgpu::RenderPipeline,
     transparent_pipeline: wgpu::RenderPipeline,
@@ -144,49 +151,16 @@ impl Renderer {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
+        let supported_samples = supported_samples(&adapter, format);
+        let sample_count = select_sample_count(&supported_samples, 4);
         surface.configure(&device, &config);
 
-        let depth_view = create_depth_view(&device, &config);
+        let depth_view = create_depth_view(&device, &config, sample_count);
+        let msaa_color_view = create_msaa_color_view(&device, &config, sample_count);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("track shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("track.wgsl"))),
-        });
-
-        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sky pipeline"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_sky"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_sky"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
         });
 
         let camera_uniform = camera_uniform(&scene.camera, config.width, config.height);
@@ -257,7 +231,7 @@ impl Renderer {
                 ],
             });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let mesh_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("track pipeline layout"),
             bind_group_layouts: &[
                 Some(&camera_bind_group_layout),
@@ -281,171 +255,15 @@ impl Renderer {
             immediate_size: 0,
         });
 
-        let mesh_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_mesh"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<MeshVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &MESH_ATTRIBUTES,
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_mesh"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("outline pipeline"),
-            layout: Some(&outline_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_outline"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<OutlineVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &OUTLINE_ATTRIBUTES,
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Front),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 1,
-                    slope_scale: 1.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_outline"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("transparent mesh pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_mesh"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<MeshVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &MESH_ATTRIBUTES,
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_mesh"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("line pipeline"),
-            layout: Some(&line_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<LineVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &LINE_ATTRIBUTES,
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipelines = create_pipelines(
+            &device,
+            &shader,
+            &mesh_pipeline_layout,
+            &outline_pipeline_layout,
+            &line_pipeline_layout,
+            format,
+            sample_count,
+        );
 
         let white_view = create_white_texture(&device, &queue);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -499,11 +317,18 @@ impl Renderer {
             queue,
             config,
             depth_view,
-            sky_pipeline,
-            mesh_pipeline,
-            transparent_pipeline,
-            outline_pipeline,
-            line_pipeline,
+            msaa_color_view,
+            sample_count,
+            supported_samples,
+            shader,
+            mesh_pipeline_layout,
+            outline_pipeline_layout,
+            line_pipeline_layout,
+            sky_pipeline: pipelines.sky,
+            mesh_pipeline: pipelines.mesh,
+            transparent_pipeline: pipelines.transparent,
+            outline_pipeline: pipelines.outline,
+            line_pipeline: pipelines.line,
             camera_buffer,
             camera_bind_group,
             meshes,
@@ -524,11 +349,42 @@ impl Renderer {
         self.lines_visible
     }
 
+    pub fn set_msaa_samples(&mut self, requested: u32) -> u32 {
+        let actual = select_sample_count(&self.supported_samples, requested);
+        if actual == self.sample_count {
+            return actual;
+        }
+        self.sample_count = actual;
+        self.msaa_color_view = create_msaa_color_view(&self.device, &self.config, actual);
+        self.depth_view = create_depth_view(&self.device, &self.config, actual);
+        let pipelines = create_pipelines(
+            &self.device,
+            &self.shader,
+            &self.mesh_pipeline_layout,
+            &self.outline_pipeline_layout,
+            &self.line_pipeline_layout,
+            self.config.format,
+            actual,
+        );
+        self.sky_pipeline = pipelines.sky;
+        self.mesh_pipeline = pipelines.mesh;
+        self.transparent_pipeline = pipelines.transparent;
+        self.outline_pipeline = pipelines.outline;
+        self.line_pipeline = pipelines.line;
+        actual
+    }
+
+    pub fn msaa_samples(&self) -> u32 {
+        self.sample_count
+    }
+
     pub fn resize(&mut self, width: f32, height: f32) {
         self.config.width = width.max(1.0) as u32;
         self.config.height = height.max(1.0) as u32;
         self.surface.configure(&self.device, &self.config);
-        self.depth_view = create_depth_view(&self.device, &self.config);
+        self.msaa_color_view =
+            create_msaa_color_view(&self.device, &self.config, self.sample_count);
+        self.depth_view = create_depth_view(&self.device, &self.config, self.sample_count);
         self.write_camera();
     }
 
@@ -550,6 +406,10 @@ impl Renderer {
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let (color_view, resolve_target) = match &self.msaa_color_view {
+            Some(msaa) => (msaa, Some(&view)),
+            None => (&view, None),
+        };
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -560,9 +420,9 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("track pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: color_view,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.62,
@@ -899,9 +759,59 @@ fn camera_uniform(camera: &Camera, width: u32, height: u32) -> CameraUniform {
     }
 }
 
+fn supported_samples(adapter: &wgpu::Adapter, format: wgpu::TextureFormat) -> Vec<u32> {
+    let color_flags = adapter.get_texture_format_features(format).flags;
+    let depth_flags = adapter.get_texture_format_features(DEPTH_FORMAT).flags;
+    [1, 2, 4]
+        .into_iter()
+        .filter(|count| {
+            *count == 1
+                || (color_flags.sample_count_supported(*count)
+                    && color_flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
+                    && depth_flags.sample_count_supported(*count))
+        })
+        .collect()
+}
+
+fn select_sample_count(supported: &[u32], requested: u32) -> u32 {
+    supported
+        .iter()
+        .copied()
+        .filter(|count| *count <= requested)
+        .max()
+        .or_else(|| supported.first().copied())
+        .unwrap_or(1)
+}
+
+fn create_msaa_color_view(
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+    sample_count: u32,
+) -> Option<wgpu::TextureView> {
+    if sample_count <= 1 {
+        return None;
+    }
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("msaa color texture"),
+        size: wgpu::Extent3d {
+            width: config.width.max(1),
+            height: config.height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format: config.format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    Some(texture.create_view(&wgpu::TextureViewDescriptor::default()))
+}
+
 fn create_depth_view(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
+    sample_count: u32,
 ) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth texture"),
@@ -911,11 +821,269 @@ fn create_depth_view(
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
-        sample_count: 1,
+        sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
     texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+struct Pipelines {
+    sky: wgpu::RenderPipeline,
+    mesh: wgpu::RenderPipeline,
+    outline: wgpu::RenderPipeline,
+    transparent: wgpu::RenderPipeline,
+    line: wgpu::RenderPipeline,
+}
+
+fn create_pipelines(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    mesh_layout: &wgpu::PipelineLayout,
+    outline_layout: &wgpu::PipelineLayout,
+    line_layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> Pipelines {
+    let sky = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sky pipeline"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_sky"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_sky"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let mesh = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("mesh pipeline"),
+        layout: Some(mesh_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_mesh"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<MeshVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &MESH_ATTRIBUTES,
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_mesh"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let outline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("outline pipeline"),
+        layout: Some(outline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_outline"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<OutlineVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &OUTLINE_ATTRIBUTES,
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Front),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 1,
+                slope_scale: 1.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_outline"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let transparent = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("transparent mesh pipeline"),
+        layout: Some(mesh_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_mesh"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<MeshVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &MESH_ATTRIBUTES,
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_mesh"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let line = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("line pipeline"),
+        layout: Some(line_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_line"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<LineVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &LINE_ATTRIBUTES,
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_line"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    Pipelines {
+        sky,
+        mesh,
+        outline,
+        transparent,
+        line,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_sample_count;
+
+    #[test]
+    fn sample_count_prefers_requested_with_fallback() {
+        assert_eq!(select_sample_count(&[1, 2, 4], 4), 4);
+        assert_eq!(select_sample_count(&[1, 2, 4], 2), 2);
+        assert_eq!(select_sample_count(&[1, 2, 4], 1), 1);
+        assert_eq!(select_sample_count(&[1, 4], 2), 1);
+        assert_eq!(select_sample_count(&[1, 2], 4), 2);
+        assert_eq!(select_sample_count(&[1], 4), 1);
+    }
 }

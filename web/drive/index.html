@@ -275,6 +275,17 @@
         color: #8f9bab;
         text-align: right;
       }
+      .assist-slider select {
+        grid-column: 1 / -1;
+        width: 100%;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #e6e8eb;
+        padding: 5px 6px;
+        font: inherit;
+        font-size: 11px;
+      }
       .setup-header {
         position: sticky;
         top: 0;
@@ -511,6 +522,16 @@
           <span>Steering sensitivity</span>
           <output id="steering-sensitivity-value">100%</output>
           <input id="steering-sensitivity" type="range" min="0.25" max="2" step="0.05" value="1" />
+        </label>
+        <label class="assist-slider">
+          <span>Anti-aliasing</span>
+          <output id="msaa-applied">—</output>
+          <select id="msaa-mode">
+            <option value="auto">Auto (4× desktop / 2× mobile)</option>
+            <option value="off">Off</option>
+            <option value="2x">2× MSAA</option>
+            <option value="4x">4× MSAA</option>
+          </select>
         </label>
         <div class="assist-row">
           <span>Debug overlay</span>
