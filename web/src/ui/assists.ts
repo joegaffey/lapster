@@ -19,6 +19,9 @@ interface SettingsViewer {
 type AntiAliasing = "auto" | "off" | "2x" | "4x";
 type EnvironmentShadows = "auto" | "high" | "baked" | "off";
 type CarShadow = "auto" | "dynamic" | "silhouette" | "off";
+type RenderScale = 1 | 0.85 | 0.75 | 0.67 | 0.5;
+
+const RENDER_SCALES: RenderScale[] = [1, 0.85, 0.75, 0.67, 0.5];
 
 interface AssistSettings {
   tc: boolean;
@@ -33,14 +36,16 @@ interface AssistSettings {
   timeOfDay: number;
   antiAliasing: AntiAliasing;
   fpsCounter: boolean;
+  renderScale: RenderScale;
 }
 
 interface SettingsOptions {
   gameplay?: boolean;
+  onRenderScale?: (scale: number) => void;
 }
 
 const DEV_BUILD = BUILD_CHANNEL === "dev";
-const STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v2" : "lapster.settings.v2";
+const STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v3" : "lapster.settings.v2";
 const LEGACY_STORAGE_KEY = DEV_BUILD ? "" : "lapster.assists.v1";
 const SETTINGS_STYLE_ID = "lapster-settings-style";
 
@@ -57,6 +62,7 @@ const BASE_DEFAULTS: AssistSettings = {
   timeOfDay: 15,
   antiAliasing: "auto",
   fpsCounter: false,
+  renderScale: 1,
 };
 
 const DEFAULTS: AssistSettings = DEV_BUILD
@@ -219,6 +225,17 @@ function settingsDialogHtml(): string {
         </select>
       </label>
       <label class="assist-slider">
+        <span>Render scale</span>
+        <output id="render-scale-value">100%</output>
+        <select id="render-scale">
+          <option value="1">100%</option>
+          <option value="0.85">85%</option>
+          <option value="0.75">75%</option>
+          <option value="0.67">67%</option>
+          <option value="0.5">50%</option>
+        </select>
+      </label>
+      <label class="assist-slider">
         <span>Environment shadows</span>
         <select id="environment-shadows">
           <option value="auto">Auto</option>
@@ -329,6 +346,9 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
         ? value.antiAliasing
         : "auto",
     fpsCounter: value?.fpsCounter === true,
+    renderScale: RENDER_SCALES.includes(value?.renderScale as RenderScale)
+      ? (value!.renderScale as RenderScale)
+      : 1,
   };
 }
 
@@ -423,6 +443,8 @@ export function setupAssistsDialog(
   const timeApply = document.querySelector<HTMLButtonElement>("#time-of-day-apply");
   const msaa = document.querySelector<HTMLSelectElement>("#msaa-mode");
   const msaaApplied = document.querySelector<HTMLOutputElement>("#msaa-applied");
+  const renderScaleSelect = document.querySelector<HTMLSelectElement>("#render-scale");
+  const renderScaleValue = document.querySelector<HTMLOutputElement>("#render-scale-value");
   const tcValue = document.querySelector<HTMLOutputElement>("#tc-strength-value");
   const escValue = document.querySelector<HTMLOutputElement>("#esc-strength-value");
   const steeringValue = document.querySelector<HTMLOutputElement>("#steering-sensitivity-value");
@@ -441,6 +463,8 @@ export function setupAssistsDialog(
     !timeApply ||
     !msaa ||
     !msaaApplied ||
+    !renderScaleSelect ||
+    !renderScaleValue ||
     !status
   ) {
     return;
@@ -488,6 +512,7 @@ export function setupAssistsDialog(
     viewer.set_debug_lines_visible(settings.debugLines);
     setFpsCounterVisible(settings.fpsCounter);
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
+    options.onRenderScale?.(settings.renderScale);
     save(settings);
   };
 
@@ -515,6 +540,8 @@ export function setupAssistsDialog(
     timeRange.value = String(settings.timeOfDay);
     timeValue.textContent = formatTime(settings.timeOfDay);
     msaa.value = settings.antiAliasing;
+    renderScaleSelect!.value = String(settings.renderScale);
+    renderScaleValue!.textContent = `${Math.round(settings.renderScale * 100)}%`;
     const requested = requestedSamples(settings);
     const fallback = requested !== 1 && actualMsaa < requested;
     msaaApplied.textContent =
@@ -635,6 +662,12 @@ export function setupAssistsDialog(
     settings.antiAliasing = msaa.value as AntiAliasing;
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     save(settings);
+    refresh();
+    status.textContent = "Saved";
+  });
+  renderScaleSelect.addEventListener("change", () => {
+    settings.renderScale = Number(renderScaleSelect.value) as RenderScale;
+    apply();
     refresh();
     status.textContent = "Saved";
   });

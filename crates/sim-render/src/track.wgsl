@@ -9,6 +9,7 @@ struct Camera {
     baked_view_proj: mat4x4<f32>,
     baked_shadow_params: vec4<f32>,
     shadow_modes: vec4<f32>,
+    car_shadow_params: vec4<f32>,
 };
 
 struct Model {
@@ -164,7 +165,19 @@ fn car_shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
             depth,
         );
     }
-    return mix(1.0, lit / 32.0, camera.shadow_params.z);
+    var fade = 1.0;
+    if camera.car_shadow_params.w > camera.car_shadow_params.z {
+        let distance_from_car = distance(
+            world_position.xz,
+            camera.car_shadow_params.xy,
+        );
+        fade = 1.0 - smoothstep(
+            camera.car_shadow_params.z,
+            camera.car_shadow_params.w,
+            distance_from_car,
+        );
+    }
+    return mix(1.0, lit / 32.0, camera.shadow_params.z * fade);
 }
 
 fn shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {

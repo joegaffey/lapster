@@ -50,6 +50,7 @@ struct CameraUniform {
     baked_view_proj: [[f32; 4]; 4],
     baked_shadow_params: [f32; 4],
     shadow_modes: [f32; 4],
+    car_shadow_params: [f32; 4],
 }
 
 #[repr(C)]
@@ -132,6 +133,7 @@ pub struct Renderer {
     baked_region: [f32; 4],
     baked_resolution: u32,
     baked_valid: bool,
+    car_shadow_params: [f32; 4],
     decal_visible: bool,
     last_bake_ms: f64,
     shadow_view: wgpu::TextureView,
@@ -286,6 +288,7 @@ impl Renderer {
                 0.0,
             ],
             [1.0, 0.0, 0.0, 0.0],
+            [0.0; 4],
         );
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera uniform"),
@@ -576,6 +579,7 @@ impl Renderer {
             ],
             baked_resolution,
             baked_valid: false,
+            car_shadow_params: [0.0, 0.0, 0.0, 1.0],
             decal_visible: false,
             last_bake_ms: 0.0,
             shadow_view,
@@ -857,6 +861,17 @@ impl Renderer {
         self.shadow_focus = focus;
         self.env_shadow_extent = extent.max(1.0);
         self.shadow_extent = self.active_high_extent();
+        if self.car_dynamic_separate() {
+            let direction = car_shadow_direction(self.sun_direction);
+            let length = car_shadow_length(self.sun_elevation);
+            let origin = Vec3::from_array(focus) - direction * (length * 0.5);
+            self.car_shadow_params = [
+                origin.x,
+                origin.z,
+                (length * 0.55).max(4.0),
+                (length * 1.05).max(6.0),
+            ];
+        }
         let next = shadow_view_proj(
             self.active_shadow_map_size(),
             Vec3::from_array(focus),
@@ -1099,6 +1114,7 @@ impl Renderer {
             bake_view_proj,
             self.baked_shadow_params,
             self.shadow_modes(),
+            [0.0; 4],
         );
         self.queue.write_buffer(
             &self.bake_camera_buffer,
@@ -1277,6 +1293,7 @@ impl Renderer {
             self.baked_view_proj,
             self.baked_shadow_params,
             self.shadow_modes(),
+            self.car_shadow_params,
         );
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -1495,6 +1512,7 @@ fn camera_uniform(
     baked_view_proj: Mat4,
     baked_shadow_params: [f32; 4],
     shadow_modes: [f32; 4],
+    car_shadow_params: [f32; 4],
 ) -> CameraUniform {
     let aspect = width as f32 / height as f32;
     let view_proj = camera.view_proj(aspect).to_cols_array_2d();
@@ -1522,6 +1540,7 @@ fn camera_uniform(
         baked_view_proj: baked_view_proj.to_cols_array_2d(),
         baked_shadow_params,
         shadow_modes,
+        car_shadow_params,
     }
 }
 

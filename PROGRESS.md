@@ -116,8 +116,9 @@ Toolchain setup scripts:
   curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
   JSON (`lapster/setup@1`). Mass and geometry remain fixed.
 - Settings dialog: split Gameplay/Graphics tabs in all viewers. Gameplay covers TC/ESC/ABS,
-  strengths, and steering sensitivity. Graphics covers anti-aliasing, environment shadows,
-  car shadows, time of day, a debug overlay toggle, and an off-by-default FPS counter.
+  strengths, and steering sensitivity. Graphics covers render scale, anti-aliasing,
+  environment shadows, car shadows, time of day, a debug overlay toggle, and an
+  off-by-default FPS counter.
   Settings persist globally; Reset and Camera remain top-level toolbar actions. Drive hides
   debug lines/bounds by default.
 - Native MSAA through wgpu: auto 4× desktop / 2× mobile, with Off/2×/4× overrides. Unsupported

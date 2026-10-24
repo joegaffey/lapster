@@ -30,6 +30,7 @@ const CAR_URL =
   params.get("car") ?? `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${PACK_VERSION}`;
 const carBay = selectedBay();
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
+let renderScale = 1;
 const status = document.querySelector<HTMLElement>("#status")!;
 const asset = document.querySelector<HTMLElement>("#asset")!;
 const speedLabel = document.querySelector<HTMLElement>("#speed")!;
@@ -68,7 +69,7 @@ async function loadPack(url: string) {
 }
 
 function resizeCanvas() {
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const ratio = Math.min(window.devicePixelRatio || 1, 2) * renderScale;
   const width = Math.max(1, Math.floor(canvas.clientWidth * ratio));
   const height = Math.max(1, Math.floor(canvas.clientHeight * ratio));
   if (canvas.width !== width || canvas.height !== height) {
@@ -218,7 +219,14 @@ async function boot() {
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
   setCameraMode("chase");
   setupCarSetupDialog(viewer, info.car.id, info.asset.id);
-  setupAssistsDialog(viewer);
+  setupAssistsDialog(viewer, {
+    onRenderScale: (scale) => {
+      renderScale = scale;
+      if (resizeCanvas()) {
+        viewer.resize(canvas.width, canvas.height);
+      }
+    },
+  });
   setupTouchControls(keys);
 
   const observer = new ResizeObserver(() => {

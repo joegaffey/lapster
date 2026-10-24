@@ -135,6 +135,9 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   const timeValue = page.locator("#time-of-day-value");
   const timeApply = page.locator("#time-of-day-apply");
   const msaa = page.locator("#msaa-mode");
+  const renderScale = page.locator("#render-scale");
+  const renderScaleValue = page.locator("#render-scale-value");
+  const view = page.locator("#view");
 
   await expect(environment).toHaveValue("auto");
   await expect(carShadow).toHaveValue("auto");
@@ -142,6 +145,15 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(debug).toHaveText("Debug: Off");
   await expect(fpsToggle).toHaveText("FPS: Off");
   await expect(fpsCounter).toBeHidden();
+  await expect(renderScale).toHaveValue("1");
+  await expect(renderScaleValue).toHaveText("100%");
+  const fullWidth = await view.evaluate((element) => (element as HTMLCanvasElement).width);
+
+  await renderScale.selectOption("0.5");
+  await expect(renderScaleValue).toHaveText("50%");
+  await expect
+    .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
+    .toBe(Math.max(1, Math.floor(fullWidth * 0.5)));
 
   await environment.selectOption("high");
   await carShadow.selectOption("dynamic");
@@ -281,6 +293,11 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(timeValue).toHaveText("15:00");
   await expect(fpsToggle).toHaveText("FPS: Off");
   await expect(fpsCounter).toBeHidden();
+  await expect(renderScale).toHaveValue("1");
+  await expect(renderScaleValue).toHaveText("100%");
+  await expect
+    .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
+    .toBe(fullWidth);
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {

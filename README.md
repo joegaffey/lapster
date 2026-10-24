@@ -66,8 +66,8 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 - Runtime **Tuning** dialog for chassis, suspension, tires, engine, gearing, brakes, steering,
   and aero; settings persist per car and can be copied/pasted as `lapster/setup@1` JSON.
 - **Settings** dialog split into **Gameplay** and **Graphics** tabs, available in every
-  viewer. Graphics covers anti-aliasing, environment and car shadows, time of day, the
-  debug overlay, and an optional top-left FPS counter.
+  viewer. Graphics covers render scale, anti-aliasing, environment and car shadows, time
+  of day, the debug overlay, and an optional top-left FPS counter.
 - Rust, Node, and Playwright test suites.
 
 ## Controls

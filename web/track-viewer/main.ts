@@ -19,6 +19,7 @@ declare global {
 
 const MAX_CAMERA_HEIGHT = 60;
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
+let renderScale = 1;
 const status = document.querySelector<HTMLElement>("#status")!;
 const asset = document.querySelector<HTMLElement>("#asset")!;
 const stats = document.querySelector<HTMLElement>("#stats")!;
@@ -55,7 +56,7 @@ async function loadPack() {
 }
 
 function resizeCanvas() {
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const ratio = Math.min(window.devicePixelRatio || 1, 2) * renderScale;
   const width = Math.max(1, Math.floor(canvas.clientWidth * ratio));
   const height = Math.max(1, Math.floor(canvas.clientHeight * ratio));
   if (canvas.width !== width || canvas.height !== height) {
@@ -146,7 +147,15 @@ async function boot() {
   status.textContent = "creating renderer";
   const viewer = await TrackViewer.create(canvas, pack.bytes);
   window.__trackViewer = viewer;
-  setupAssistsDialog(viewer, { gameplay: false });
+  setupAssistsDialog(viewer, {
+    gameplay: false,
+    onRenderScale: (scale) => {
+      renderScale = scale;
+      if (resizeCanvas()) {
+        viewer.resize(canvas.width, canvas.height);
+      }
+    },
+  });
   setupTrackCamera(canvas, viewer, { maxHeight: MAX_CAMERA_HEIGHT });
 
   const debug = JSON.parse(viewer.debug_info());
