@@ -34,9 +34,18 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[0] * b[1] - a[1] * b[0],
 ];
 const toVec3 = (value: number[]): Vec3 => [value[0] ?? 0, value[1] ?? 0, value[2] ?? 0];
+const lerp = (a: Vec3, b: Vec3, t: number): Vec3 => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
+const easeInOutCubic = (t: number) =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const prefersReducedMotion = () =>
+  window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 
 export interface OrbitCameraController {
-  setHome(info: CameraInfo): void;
+  setHome(info: CameraInfo, animate?: boolean): void;
 }
 
 export function setupTrackCamera(
@@ -60,6 +69,14 @@ export function setupTrackCamera(
 
   let minTargetY = initialTarget[1];
   let minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
+  let flightFrame = 0;
+
+  const cancelFlight = () => {
+    if (flightFrame !== 0) {
+      cancelAnimationFrame(flightFrame);
+      flightFrame = 0;
+    }
+  };
 
   const apply = () => {
     target[1] = Math.max(target[1], minTargetY);
@@ -118,6 +135,7 @@ export function setupTrackCamera(
 
   canvas.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    cancelFlight();
     try {
       canvas.setPointerCapture(event.pointerId);
     } catch {
@@ -178,6 +196,7 @@ export function setupTrackCamera(
     "wheel",
     (event) => {
       event.preventDefault();
+      cancelFlight();
       zoomBy(Math.exp(event.deltaY * 0.001));
       apply();
     },
@@ -185,21 +204,57 @@ export function setupTrackCamera(
   );
 
   document.querySelector<HTMLButtonElement>("#reset-camera")?.addEventListener("click", () => {
+    cancelFlight();
     eye = [...initialEye] as Vec3;
     target = [...initialTarget] as Vec3;
     viewer.reset_camera();
   });
 
   return {
-    setHome(next: CameraInfo) {
+    setHome(next: CameraInfo, animate = false) {
       info = next;
-      initialEye = toVec3(next.eye);
-      initialTarget = toVec3(next.target);
-      eye = [...initialEye] as Vec3;
-      target = [...initialTarget] as Vec3;
+      const nextEye = toVec3(next.eye);
+      const nextTarget = toVec3(next.target);
+      initialEye = nextEye;
+      initialTarget = nextTarget;
       minTargetY = initialTarget[1];
       minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
-      apply();
+      cancelFlight();
+
+      if (!animate || prefersReducedMotion()) {
+        eye = [...nextEye] as Vec3;
+        target = [...nextTarget] as Vec3;
+        apply();
+        return;
+      }
+
+      const fromEye = [...eye] as Vec3;
+      const fromTarget = [...target] as Vec3;
+      const distance = Math.max(
+        length(sub(nextEye, fromEye)),
+        length(sub(nextTarget, fromTarget)),
+      );
+      const duration = clamp(420 + distance * 10, 480, 1200);
+      const lift = Math.min(4, 0.4 + distance * 0.07);
+      const start = performance.now();
+
+      const step = (now: number) => {
+        const progress = clamp((now - start) / duration, 0, 1);
+        const eased = easeInOutCubic(progress);
+        eye = lerp(fromEye, nextEye, eased);
+        eye[1] += Math.sin(Math.PI * progress) * lift;
+        target = lerp(fromTarget, nextTarget, eased);
+        apply();
+        if (progress < 1) {
+          flightFrame = requestAnimationFrame(step);
+        } else {
+          flightFrame = 0;
+          eye = [...nextEye] as Vec3;
+          target = [...nextTarget] as Vec3;
+          apply();
+        }
+      };
+      flightFrame = requestAnimationFrame(step);
     },
   };
 }

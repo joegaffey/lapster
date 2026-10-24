@@ -182,12 +182,12 @@ async function boot() {
     animating = animateInput.checked;
   });
 
-  const selectBay = (index: number) => {
+  const selectBay = (index: number, animate = true) => {
     const current = JSON.parse(viewer.bay_info());
     const count = Math.max(1, current.count);
     const next = ((index % count) + count) % count;
     const cameraInfo = JSON.parse(viewer.select_bay(next));
-    orbitCamera?.setHome(cameraInfo);
+    orbitCamera?.setHome(cameraInfo, animate);
     const info = JSON.parse(viewer.bay_info());
     selectedBay = info.selected;
     saveSelectedBay(selectedBay);
@@ -201,7 +201,7 @@ async function boot() {
     applyAngles();
   };
 
-  selectBay(getSelectedBay());
+  selectBay(getSelectedBay(), false);
   bayPrev.addEventListener("click", () => selectBay(selectedBay - 1));
   bayNext.addEventListener("click", () => selectBay(selectedBay + 1));
   window.addEventListener("keydown", (event) => {

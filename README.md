@@ -15,8 +15,8 @@ Live demo: **https://joegaffey.com/lapster/**
   tuning dialog.
 - **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
   opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
-  three-quarter start view; Prev/Next buttons or arrow keys move between bays. Wheel
-  steering/spin controls and an orbit/pan/zoom camera follow the selection. The selected
+  three-quarter start view; Prev/Next buttons or arrow keys fly smoothly between bays.
+  Wheel steering/spin controls and an orbit/pan/zoom camera follow the selection. The selected
   car is remembered and drives with its showroom paint; the garage `Drive` button opens it
   directly, and the menu's Drive demo uses the same selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,

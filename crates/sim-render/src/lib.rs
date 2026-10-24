@@ -70,12 +70,7 @@ impl TrackViewer {
     }
 
     pub fn camera_info(&self) -> String {
-        serde_json::json!({
-            "eye": self.camera.eye,
-            "target": self.camera.target,
-            "fovY": self.camera.fov_y,
-        })
-        .to_string()
+        camera_json(&self.camera)
     }
 
     pub fn set_camera(
@@ -204,13 +199,10 @@ impl GarageViewer {
             return self.camera_info();
         }
         self.selected_bay = index % self.bays.len();
-        let bay = &self.bays[self.selected_bay];
-        self.camera = bay.camera;
-        self.initial_camera = bay.camera;
-        self.renderer.set_camera(self.camera);
+        let camera = self.bays[self.selected_bay].camera;
+        self.initial_camera = camera;
         self.apply_wheel_angles();
-        let _ = self.renderer.render();
-        self.camera_info()
+        camera_json(&camera)
     }
 
     pub fn bay_info(&self) -> String {
@@ -234,12 +226,7 @@ impl GarageViewer {
     }
 
     pub fn camera_info(&self) -> String {
-        serde_json::json!({
-            "eye": self.camera.eye,
-            "target": self.camera.target,
-            "fovY": self.camera.fov_y,
-        })
-        .to_string()
+        camera_json(&self.camera)
     }
 
     pub fn set_camera(
@@ -272,6 +259,15 @@ impl GarageViewer {
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
+}
+
+fn camera_json(camera: &Camera) -> String {
+    serde_json::json!({
+        "eye": camera.eye,
+        "target": camera.target,
+        "fovY": camera.fov_y,
+    })
+    .to_string()
 }
 
 const COCKPIT_GLASS_ALPHA: f32 = 0.32;
