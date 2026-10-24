@@ -160,10 +160,12 @@ Toolchain setup scripts:
   4-tap PCF; **Baked** startup-baked static light-space shadow map (4096² desktop,
   2048² mobile/WebGL2) using the same 4-tap PCF without a per-frame depth pass; **Off**.
   Independent car shadow setting selects dynamic, generated silhouette decal, or off.
-  Car silhouette follows car yaw and stretches from the footprint at low sun angles.
+  Dynamic car shadows use a dedicated 4096² desktop / 2048² mobile car-only map with
+  32-tap PCF and a tight car-plus-shadow focus. Car silhouette follows car yaw and stretches
+  from the footprint at low sun angles.
   Time of day uses a slider plus Apply, tints the sky, updates sun direction, and rebakes
   Baked maps. Settings are global across all viewers. Dev Pages builds default to Baked
-  environment shadows and the Silhouette car shadow; stable builds keep Auto.
+  environment shadows and the Dynamic car shadow; stable builds keep Auto.
 - GLB car import:
   - `cargo run -p asset-compiler -- bake-glb <car.glb>`
   - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.
@@ -193,7 +195,7 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 50 tests
+- `cargo test --workspace` — 52 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
   control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,

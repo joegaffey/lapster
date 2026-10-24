@@ -11,7 +11,7 @@ It is not a finished game or a complete Assetto Corsa replacement.
 Live demo: **https://joegaffey.com/lapster/**
 
 Development preview: **https://joegaffey.com/lapster-dev/** — Baked environment and
-Silhouette car shadows by default.
+Dynamic car shadows by default.
 
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
   steering, gears, chase/cockpit cameras, wheel loads, 500 Hz physics, and a shareable

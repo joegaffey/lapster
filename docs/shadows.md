@@ -13,7 +13,7 @@
 
 Shadow settings are global and persisted in `lapster.settings.v2`. The dev Pages build
 uses `lapster.settings.dev.v2` and defaults to Baked environment shadows plus the
-Silhouette car shadow; stable builds keep Auto.
+Dynamic car shadow; stable builds keep Auto.
 
 ### Environment shadows
 
@@ -89,14 +89,18 @@ the Baked map is not rebuilt continuously.
 ## Dynamic car shadow
 
 - High + Dynamic: the car is included in the High environment map; no extra pass.
-- Baked/Off + Dynamic: the same map is focused tightly around the car (about 15 m)
-  and contains car casters only.
-- 4-tap PCF is used only for the car map; High environment keeps its current 4-tap PCF.
-- The dynamic map is refreshed only when the car transform, focus, or sun changes.
+- Baked/Off + Dynamic: a dedicated car-only map is centered on the car and contains
+  car casters only.
+- Car map resolution: 4096 on desktop, 2048 on mobile.
+- The map focuses between the car and the end of its shadow, with an 8-14 m extent
+  derived from sun elevation so long evening shadows stay inside the map.
+- Car shadows use 32-tap PCF for a softer edge; the High environment keeps 4-tap PCF.
+- The car map is refreshed only when the car transform, focus, or sun changes.
 
 ## Renderer resources
 
-- Dynamic map: existing depth map with comparison sampler.
+- Environment map: existing depth map with comparison sampler.
+- Car map: dedicated higher-resolution depth texture with its own bind group.
 - Baked map: static high-resolution depth texture using the existing comparison sampler.
 - Car decals: shared silhouette texture plus a decal pipeline.
 - Static and dynamic caster flags distinguish track from car meshes.
@@ -106,7 +110,8 @@ the Baked map is not rebuilt continuously.
 ## Telemetry
 
 Expose requested/applied environment and car modes, time of day, sun elevation,
-baked map resolution, bake time, and shadow memory estimate.
+environment and car map resolutions, baked map resolution, bake time, and shadow
+memory estimate.
 
 ## Acceptance
 

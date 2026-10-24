@@ -782,6 +782,7 @@ impl DriveViewer {
             "carBay": self.car_bay,
             "carColor": garage::BAY_COLOR_NAMES[self.car_bay],
             "shadowMapSize": self.renderer.shadow_map_size(),
+            "carShadowMapSize": self.renderer.car_shadow_map_size(),
             "shadowFocus": self.renderer.shadow_focus(),
             "shadowsEnabled": self.renderer.shadows_enabled(),
             "environmentShadowMode": environment_shadow_mode_name(self.renderer.environment_shadow_mode()),
@@ -974,7 +975,14 @@ impl DriveViewer {
         let state = &self.vehicle.state;
         let (position, rotation) = self.visual_pose();
         let car_world = Mat4::from_rotation_translation(rotation, position);
-        let focus = position + rotation * Vec3::NEG_Z * 8.0 + Vec3::Y * 0.5;
+        let focus = if self.renderer.car_shadow_separate() {
+            Vec3::from_array(
+                self.renderer
+                    .car_shadow_focus((position + Vec3::Y * 0.5).to_array()),
+            )
+        } else {
+            position + rotation * Vec3::NEG_Z * 8.0 + Vec3::Y * 0.5
+        };
         self.renderer
             .set_shadow_focus(focus.to_array(), DRIVE_SHADOW_EXTENT);
         self.renderer

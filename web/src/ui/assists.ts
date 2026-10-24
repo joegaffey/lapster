@@ -63,7 +63,7 @@ const DEFAULTS: AssistSettings = DEV_BUILD
   ? {
       ...BASE_DEFAULTS,
       environmentShadows: "baked",
-      carShadow: "silhouette",
+      carShadow: "dynamic",
     }
   : BASE_DEFAULTS;
 

@@ -11,7 +11,9 @@ use crate::scene::{LineVertex, MeshData, MeshVertex, OutlineVertex, Scene, Scene
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_STRENGTH: f32 = 0.82;
 const SHADOW_DEPTH_BIAS: f32 = 0.0008;
-const CAR_SHADOW_EXTENT: f32 = 15.0;
+const CAR_SHADOW_EXTENT: f32 = 8.0;
+const CAR_SHADOW_MAX_EXTENT: f32 = 14.0;
+const CAR_SHADOW_HEIGHT: f32 = 1.6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvironmentShadowMode {
@@ -132,9 +134,12 @@ pub struct Renderer {
     decal_visible: bool,
     last_bake_ms: f64,
     shadow_view: wgpu::TextureView,
+    car_shadow_view: wgpu::TextureView,
     shadow_bind_group_layout: wgpu::BindGroupLayout,
     shadow_bind_group: wgpu::BindGroup,
+    car_shadow_bind_group: wgpu::BindGroup,
     shadow_map_size: u32,
+    car_shadow_map_size: u32,
     shadow_extent: f32,
     shadow_focus: [f32; 3],
     shadow_view_proj: Mat4,
@@ -188,7 +193,7 @@ impl Renderer {
         } else {
             wgpu::Limits::default()
         };
-        if backend != "Gl" && adapter_limits.max_texture_dimension_2d >= 4096 {
+        if adapter_limits.max_texture_dimension_2d >= 4096 {
             limits.max_texture_dimension_2d = limits.max_texture_dimension_2d.max(4096);
         }
         let (device, queue) = adapter
@@ -228,6 +233,7 @@ impl Renderer {
         let msaa_color_view = create_msaa_color_view(&device, &config, sample_count);
 
         let shadow_map_size = preferred_shadow_map_size(&backend);
+        let car_shadow_map_size = preferred_car_shadow_map_size(&backend, &adapter_limits);
         let shadow_extent = 60.0;
         let shadow_focus = scene.camera.target;
         let shadow_view_proj = shadow_view_proj(
@@ -237,6 +243,7 @@ impl Renderer {
             sun_direction,
         );
         let shadow_view = create_shadow_map(&device, shadow_map_size);
+        let car_shadow_view = create_shadow_map(&device, car_shadow_map_size);
         let baked_resolution = preferred_baked_resolution(&backend, adapter_limits);
         let baked_view = create_baked_placeholder(&device);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -391,24 +398,22 @@ impl Renderer {
                     },
                 ],
             });
-        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow bind group"),
-            layout: &shadow_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&shadow_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&baked_view),
-                },
-            ],
-        });
+        let shadow_bind_group = create_shadow_bind_group(
+            &device,
+            &shadow_bind_group_layout,
+            &shadow_view,
+            &shadow_sampler,
+            &baked_view,
+            "shadow bind group",
+        );
+        let car_shadow_bind_group = create_shadow_bind_group(
+            &device,
+            &shadow_bind_group_layout,
+            &car_shadow_view,
+            &shadow_sampler,
+            &baked_view,
+            "car shadow bind group",
+        );
 
         let mesh_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("track pipeline layout"),
@@ -573,9 +578,12 @@ impl Renderer {
             decal_visible: false,
             last_bake_ms: 0.0,
             shadow_view,
+            car_shadow_view,
             shadow_bind_group_layout: shadow_bind_group_layout.clone(),
             shadow_bind_group,
+            car_shadow_bind_group,
             shadow_map_size,
+            car_shadow_map_size,
             shadow_extent,
             shadow_focus,
             shadow_view_proj,
@@ -678,7 +686,11 @@ impl Renderer {
                 label: Some("shadow pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view,
+                    view: if self.car_dynamic_separate() {
+                        &self.car_shadow_view
+                    } else {
+                        &self.shadow_view
+                    },
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -752,7 +764,15 @@ impl Renderer {
                 pass.draw_indexed(0..outline.index_count, 0, 0..1);
             }
 
-            pass.set_bind_group(3, &self.shadow_bind_group, &[]);
+            pass.set_bind_group(
+                3,
+                if self.car_dynamic_separate() {
+                    &self.car_shadow_bind_group
+                } else {
+                    &self.shadow_bind_group
+                },
+                &[],
+            );
             pass.set_pipeline(&self.mesh_pipeline);
             for mesh in self
                 .meshes
@@ -837,7 +857,7 @@ impl Renderer {
         self.env_shadow_extent = extent.max(1.0);
         self.shadow_extent = self.active_high_extent();
         let next = shadow_view_proj(
-            self.shadow_map_size,
+            self.active_shadow_map_size(),
             Vec3::from_array(focus),
             self.shadow_extent,
             self.sun_direction,
@@ -850,7 +870,7 @@ impl Renderer {
     }
 
     pub fn shadow_map_size(&self) -> u32 {
-        self.shadow_map_size
+        self.active_shadow_map_size()
     }
 
     pub fn shadow_focus(&self) -> [f32; 3] {
@@ -903,6 +923,28 @@ impl Renderer {
             && self.environment_mode != EnvironmentShadowMode::High
     }
 
+    pub fn car_shadow_separate(&self) -> bool {
+        self.car_dynamic_separate()
+    }
+
+    pub fn car_shadow_focus(&self, base: [f32; 3]) -> [f32; 3] {
+        let direction = car_shadow_direction(self.sun_direction);
+        let offset = car_shadow_length(self.sun_elevation) * 0.5;
+        (Vec3::from_array(base) + direction * offset).to_array()
+    }
+
+    fn active_shadow_map_size(&self) -> u32 {
+        if self.car_dynamic_separate() {
+            self.car_shadow_map_size
+        } else {
+            self.shadow_map_size
+        }
+    }
+
+    pub fn car_shadow_map_size(&self) -> u32 {
+        self.car_shadow_map_size
+    }
+
     fn high_shadow_active(&self) -> bool {
         self.environment_mode == EnvironmentShadowMode::High || self.car_dynamic_separate()
     }
@@ -911,7 +953,7 @@ impl Renderer {
         if self.environment_mode == EnvironmentShadowMode::High {
             self.env_shadow_extent
         } else if self.car_dynamic_separate() {
-            CAR_SHADOW_EXTENT
+            car_shadow_extent_for_elevation(self.sun_elevation)
         } else {
             self.env_shadow_extent
         }
@@ -936,7 +978,7 @@ impl Renderer {
         self.environment_mode = mode;
         self.shadow_extent = self.active_high_extent();
         self.shadow_view_proj = shadow_view_proj(
-            self.shadow_map_size,
+            self.active_shadow_map_size(),
             Vec3::from_array(self.shadow_focus),
             self.shadow_extent,
             self.sun_direction,
@@ -963,7 +1005,7 @@ impl Renderer {
         self.decal_visible = self.effective_car_mode() == CarShadowMode::Silhouette;
         self.shadow_extent = self.active_high_extent();
         self.shadow_view_proj = shadow_view_proj(
-            self.shadow_map_size,
+            self.active_shadow_map_size(),
             Vec3::from_array(self.shadow_focus),
             self.shadow_extent,
             self.sun_direction,
@@ -998,7 +1040,7 @@ impl Renderer {
         self.sky_zenith = zenith;
         self.shadow_extent = self.active_high_extent();
         self.shadow_view_proj = shadow_view_proj(
-            self.shadow_map_size,
+            self.active_shadow_map_size(),
             Vec3::from_array(self.shadow_focus),
             self.shadow_extent,
             self.sun_direction,
@@ -1106,24 +1148,22 @@ impl Renderer {
     }
 
     fn rebuild_shadow_bind_group(&mut self) {
-        self.shadow_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow bind group"),
-            layout: &self.shadow_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.shadow_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.baked_view),
-                },
-            ],
-        });
+        self.shadow_bind_group = create_shadow_bind_group(
+            &self.device,
+            &self.shadow_bind_group_layout,
+            &self.shadow_view,
+            &self.shadow_sampler,
+            &self.baked_view,
+            "shadow bind group",
+        );
+        self.car_shadow_bind_group = create_shadow_bind_group(
+            &self.device,
+            &self.shadow_bind_group_layout,
+            &self.car_shadow_view,
+            &self.shadow_sampler,
+            &self.baked_view,
+            "car shadow bind group",
+        );
     }
 
     pub fn set_mesh_model(&mut self, index: usize, model: Mat4) {
@@ -1200,7 +1240,7 @@ impl Renderer {
             self.config.width,
             self.config.height,
             self.shadow_view_proj,
-            self.shadow_map_size,
+            self.active_shadow_map_size(),
             self.shadow_extent,
             self.environment_mode != EnvironmentShadowMode::Off || self.car_dynamic_separate(),
             self.sun_direction,
@@ -1560,6 +1600,34 @@ fn shadow_view_proj(map_size: u32, focus: Vec3, extent: f32, light: Vec3) -> Mat
     projection * view
 }
 
+fn create_shadow_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    shadow_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    baked_view: &wgpu::TextureView,
+    label: &str,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(shadow_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(baked_view),
+            },
+        ],
+    })
+}
+
 fn preferred_shadow_map_size(backend: &str) -> u32 {
     if backend == "Gl" || small_viewport() {
         1024
@@ -1624,6 +1692,25 @@ fn performance_now() -> f64 {
     {
         0.0
     }
+}
+
+fn car_shadow_extent_for_elevation(elevation: f32) -> f32 {
+    let elevation = elevation.max(0.05);
+    let length = CAR_SHADOW_HEIGHT / elevation.tan();
+    (length * 0.5 + 4.0).clamp(CAR_SHADOW_EXTENT, CAR_SHADOW_MAX_EXTENT)
+}
+
+fn car_shadow_direction(light: Vec3) -> Vec3 {
+    Vec3::new(light.x, 0.0, light.z).normalize_or(Vec3::X)
+}
+
+fn car_shadow_length(elevation: f32) -> f32 {
+    CAR_SHADOW_HEIGHT / elevation.max(0.05).tan()
+}
+
+fn preferred_car_shadow_map_size(_backend: &str, adapter_limits: &wgpu::Limits) -> u32 {
+    let preferred = if small_viewport() { 2048 } else { 4096 };
+    preferred.min(adapter_limits.max_texture_dimension_2d)
 }
 
 fn preferred_baked_resolution(backend: &str, adapter_limits: wgpu::Limits) -> u32 {
@@ -2073,7 +2160,8 @@ fn create_pipelines(
 #[cfg(test)]
 mod tests {
     use super::{
-        preferred_shadow_map_size, select_sample_count, shadow_decal_model, shadow_view_proj,
+        car_shadow_extent_for_elevation, preferred_car_shadow_map_size, preferred_shadow_map_size,
+        select_sample_count, shadow_decal_model, shadow_view_proj,
     };
     use glam::{Vec3, Vec4};
 
@@ -2135,5 +2223,24 @@ mod tests {
     fn shadow_map_size_is_lower_on_webgl() {
         assert_eq!(preferred_shadow_map_size("Gl"), 1024);
         assert_eq!(preferred_shadow_map_size("BrowserWebGpu"), 2048);
+    }
+
+    #[test]
+    fn car_shadow_map_is_higher_resolution() {
+        let limits = wgpu::Limits::default();
+        assert_eq!(preferred_car_shadow_map_size("Gl", &limits), 4096);
+        assert_eq!(
+            preferred_car_shadow_map_size("BrowserWebGpu", &limits),
+            4096
+        );
+    }
+
+    #[test]
+    fn car_shadow_extent_grows_at_low_sun() {
+        let noon = car_shadow_extent_for_elevation(super::sun_for_time(15.0).1);
+        let evening = car_shadow_extent_for_elevation(super::sun_for_time(20.0).1);
+        assert!(evening > noon);
+        assert!(evening <= super::CAR_SHADOW_MAX_EXTENT);
+        assert!(noon >= super::CAR_SHADOW_EXTENT);
     }
 }
