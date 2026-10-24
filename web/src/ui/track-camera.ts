@@ -48,9 +48,15 @@ export interface OrbitCameraController {
   setHome(info: CameraInfo, animate?: boolean): void;
 }
 
+export interface TrackCameraOptions {
+  allowPan?: boolean;
+  maxHeight?: number;
+}
+
 export function setupTrackCamera(
   canvas: HTMLCanvasElement,
   viewer: CameraViewer,
+  options: TrackCameraOptions = {},
 ): OrbitCameraController | undefined {
   let info: CameraInfo;
   try {
@@ -67,8 +73,16 @@ export function setupTrackCamera(
   const pointers = new Map<number, { x: number; y: number }>();
   let pinch: { distance: number; centroid: [number, number] } | null = null;
 
+  const allowPan = options.allowPan ?? true;
+  const configuredMaxHeight = options.maxHeight;
   let minTargetY = initialTarget[1];
   let minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
+  let maxTargetY =
+    configuredMaxHeight === undefined
+      ? Infinity
+      : Math.max(configuredMaxHeight, initialTarget[1]);
+  let maxEyeY =
+    configuredMaxHeight === undefined ? Infinity : Math.max(configuredMaxHeight, initialEye[1]);
   let flightFrame = 0;
 
   const cancelFlight = () => {
@@ -79,8 +93,8 @@ export function setupTrackCamera(
   };
 
   const apply = () => {
-    target[1] = Math.max(target[1], minTargetY);
-    eye[1] = Math.max(eye[1], minEyeY);
+    target[1] = clamp(target[1], minTargetY, maxTargetY);
+    eye[1] = clamp(eye[1], minEyeY, maxEyeY);
     viewer.set_camera(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
   };
 
@@ -142,7 +156,7 @@ export function setupTrackCamera(
       // Synthetic or already-released pointers cannot be captured.
     }
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    mode = event.button === 2 || event.shiftKey ? "pan" : "orbit";
+    mode = allowPan && (event.button === 2 || event.shiftKey) ? "pan" : "orbit";
     if (pointers.size === 2) {
       pinch = pinchState();
     }
@@ -160,7 +174,9 @@ export function setupTrackCamera(
     if (pointers.size >= 2) {
       const state = pinchState();
       if (state && pinch) {
-        pan(state.centroid[0] - pinch.centroid[0], state.centroid[1] - pinch.centroid[1]);
+        if (allowPan) {
+          pan(state.centroid[0] - pinch.centroid[0], state.centroid[1] - pinch.centroid[1]);
+        }
         if (state.distance > 0 && pinch.distance > 0) {
           zoomBy(pinch.distance / state.distance);
         }
@@ -219,6 +235,14 @@ export function setupTrackCamera(
       initialTarget = nextTarget;
       minTargetY = initialTarget[1];
       minEyeY = Math.max(initialTarget[1] + 0.2, 0.05);
+      maxTargetY =
+        configuredMaxHeight === undefined
+          ? Infinity
+          : Math.max(configuredMaxHeight, initialTarget[1]);
+      maxEyeY =
+        configuredMaxHeight === undefined
+          ? Infinity
+          : Math.max(configuredMaxHeight, initialEye[1]);
       cancelFlight();
 
       if (!animate || prefersReducedMotion()) {

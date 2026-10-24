@@ -15,6 +15,7 @@ declare global {
   }
 }
 
+const MAX_CAMERA_HEIGHT = 60;
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const asset = document.querySelector<HTMLElement>("#asset")!;
@@ -143,7 +144,7 @@ async function boot() {
   status.textContent = "creating renderer";
   const viewer = await TrackViewer.create(canvas, pack.bytes);
   window.__trackViewer = viewer;
-  setupTrackCamera(canvas, viewer);
+  setupTrackCamera(canvas, viewer, { maxHeight: MAX_CAMERA_HEIGHT });
 
   const debug = JSON.parse(viewer.debug_info());
   renderStats(debug);

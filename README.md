@@ -17,11 +17,12 @@ Live demo: **https://joegaffey.com/lapster/**
   opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
   three-quarter start view; screen-side chevrons or arrow keys fly smoothly between bays.
   The chevrons start hidden, fade in on mouse movement or touch, and fade out when idle.
-  Wheel steering/spin controls and an orbit/pan/zoom camera follow the selection. The selected
+  Wheel steering/spin controls and an orbit/zoom camera follow the selection. The selected
   car is remembered and drives with its showroom paint; the garage `Drive` button opens it
   directly, and the menu's Drive demo uses the same selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
-  and orbit/pan/zoom camera navigation.
+  and orbit/pan/zoom camera navigation. Camera height is capped at 60 m to avoid high-angle
+  model artifacts.
 
 The demos load these assets by default; no query parameters are required. Custom packs can
 still be selected with `?car=` and `?track=`. The info HUD starts collapsed in markup on

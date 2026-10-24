@@ -36,3 +36,25 @@ test("track viewer camera orbit, zoom, and reset", async ({ page }) => {
   expect(reset.eye).toEqual(initial.eye);
   expect(reset.target).toEqual(initial.target);
 });
+
+test("track viewer camera height is capped", async ({ page }) => {
+  await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
+  await page.waitForFunction(
+    () => (window as any).__trackViewerReady === true || (window as any).__trackViewerError,
+    undefined,
+    { timeout: 30_000 },
+  );
+
+  await page.mouse.move(700, 400);
+  for (let i = 0; i < 8; i += 1) {
+    await page.mouse.wheel(0, 1000);
+  }
+  await page.mouse.down();
+  await page.mouse.move(700, 700, { steps: 10 });
+  await page.mouse.up();
+
+  const high = await page.evaluate(() =>
+    JSON.parse((window as any).__trackViewer.camera_info()),
+  );
+  expect(high.eye[1]).toBeLessThanOrEqual(60.0001);
+});

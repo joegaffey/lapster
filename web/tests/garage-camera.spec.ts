@@ -156,3 +156,30 @@ test.describe("mobile car navigation", () => {
     await expect(nav).toHaveClass(/car-nav-hidden/);
   });
 });
+
+test("garage camera orbits but does not pan", async ({ page }) => {
+  await page.goto(
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+  );
+  await page.waitForFunction(
+    () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
+    undefined,
+    { timeout: 30_000 },
+  );
+
+  const initial = await page.evaluate(() =>
+    JSON.parse((window as any).__garageViewer.camera_info()),
+  );
+  await page.mouse.move(700, 400);
+  await page.keyboard.down("Shift");
+  await page.mouse.down();
+  await page.mouse.move(760, 430, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  const orbited = await page.evaluate(() =>
+    JSON.parse((window as any).__garageViewer.camera_info()),
+  );
+
+  expect(orbited.eye).not.toEqual(initial.eye);
+  expect(orbited.target).toEqual(initial.target);
+});

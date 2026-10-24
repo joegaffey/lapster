@@ -187,7 +187,7 @@ async function boot() {
 
   const debug = JSON.parse(viewer.debug_info());
   renderDebug(debug);
-  const orbitCamera = setupTrackCamera(canvas, viewer);
+  const orbitCamera = setupTrackCamera(canvas, viewer, { allowPan: false });
   let selectedBay = 0;
 
   let steer = 0.3;
