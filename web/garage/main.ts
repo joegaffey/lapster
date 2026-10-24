@@ -63,9 +63,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     window.clearTimeout(carNavHideTimer);
     carNav.classList.add("car-nav-hidden");
-    return;
   }
-  showCarNav();
 });
 
 setupHud();
@@ -301,7 +299,6 @@ async function boot() {
   status.textContent = "ready";
   status.className = "status ready";
   window.__garageViewerReady = true;
-  showCarNav();
   requestAnimationFrame(frame);
 }
 

@@ -240,18 +240,6 @@
           max-height: calc(100vh - 116px);
         }
       }
-      @media (hover: none), (pointer: coarse) {
-        #car-nav.car-nav-hidden #bay-prev {
-          opacity: 1;
-          transform: translateY(-50%);
-          pointer-events: auto;
-        }
-        #car-nav.car-nav-hidden #bay-next {
-          opacity: 1;
-          transform: translateY(-50%);
-          pointer-events: auto;
-        }
-      }
       @media (prefers-reduced-motion: reduce) {
         #car-nav button {
           transition: none;
@@ -261,7 +249,7 @@
   </head>
   <body>
     <canvas id="view"></canvas>
-    <nav id="car-nav" aria-label="Car navigation">
+    <nav id="car-nav" class="car-nav-hidden" aria-label="Car navigation">
       <button id="bay-prev" type="button" aria-label="Previous car" title="Previous car">‹</button>
       <button id="bay-next" type="button" aria-label="Next car" title="Next car">›</button>
     </nav>

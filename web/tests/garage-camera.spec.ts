@@ -102,7 +102,7 @@ test("garage camera flies between bays", async ({ page }) => {
   expect(final.target).not.toEqual(initial.target);
 });
 
-test("garage car arrows use the screen sides and hide when idle", async ({ page }) => {
+test("garage car arrows use the screen sides and toggle on mouse movement", async ({ page }) => {
   await page.goto(
     "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
   );
@@ -113,9 +113,12 @@ test("garage car arrows use the screen sides and hide when idle", async ({ page 
   );
 
   const nav = page.locator("#car-nav");
-  await expect(nav).not.toHaveClass(/car-nav-hidden/);
+  await expect(nav).toHaveClass(/car-nav-hidden/);
   await expect(page.locator("#bay-prev")).toHaveAttribute("aria-label", "Previous car");
   await expect(page.locator("#bay-next")).toHaveAttribute("aria-label", "Next car");
+
+  await page.mouse.move(640, 360);
+  await expect(nav).not.toHaveClass(/car-nav-hidden/);
 
   const viewport = page.viewportSize()!;
   const previous = await page.locator("#bay-prev").boundingBox();
@@ -126,6 +129,30 @@ test("garage car arrows use the screen sides and hide when idle", async ({ page 
   await page.waitForTimeout(2500);
   await expect(nav).toHaveClass(/car-nav-hidden/);
 
-  await page.mouse.move(640, 360);
+  await page.mouse.move(650, 360);
   await expect(nav).not.toHaveClass(/car-nav-hidden/);
+});
+
+test.describe("mobile car navigation", () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+
+  test("garage car arrows start hidden and reveal on touch", async ({ page }) => {
+    await page.goto(
+      "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+    );
+    await page.waitForFunction(
+      () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
+      undefined,
+      { timeout: 30_000 },
+    );
+
+    const nav = page.locator("#car-nav");
+    await expect(nav).toHaveClass(/car-nav-hidden/);
+
+    await page.touchscreen.tap(195, 420);
+    await expect(nav).not.toHaveClass(/car-nav-hidden/);
+
+    await page.waitForTimeout(2500);
+    await expect(nav).toHaveClass(/car-nav-hidden/);
+  });
 });
