@@ -22,6 +22,7 @@ impl Scene {
         car_visual: &CarVisual,
         car_manifest: &AssetManifest,
         car_count: usize,
+        color_offset: usize,
     ) -> Result<Scene, String> {
         let mut scene = Scene::build(
             track_visual,
@@ -44,7 +45,9 @@ impl Scene {
         let bay_count = car_count.clamp(1, 10);
         let mut bays = Vec::with_capacity(bay_count);
         let mut first_bounds = None;
-        for (index, color) in BAY_COLORS.iter().enumerate().take(bay_count) {
+        for index in 0..bay_count {
+            let color_index = (color_offset + index) % BAY_COLORS.len();
+            let color = BAY_COLORS[color_index];
             let (translation, rotation) = if bay_count == 1 {
                 (car_translation, car_rotation)
             } else {
@@ -71,13 +74,15 @@ impl Scene {
                 car_visual,
                 car_texture_base,
                 transform,
-                *color,
+                color,
                 &format!("bay_{index}"),
             )?;
             let row_forward = rotation * Vec3::NEG_Z;
             let row_right = rotation * Vec3::X;
             let camera = Camera {
-                eye: (translation + row_forward * 7.0 + row_right * 2.2 + Vec3::Y * 2.4).to_array(),
+                eye: (translation + row_forward * 4.860569 - row_right * 3.148117
+                    + Vec3::Y * 1.029985)
+                    .to_array(),
                 target: (translation + Vec3::Y * 0.6).to_array(),
                 fov_y: 0.85,
             };
@@ -91,6 +96,8 @@ impl Scene {
                 wheels: built.wheels,
                 camera,
                 name: format!("Bay {}", index + 1),
+                color,
+                color_name: BAY_COLOR_NAMES[color_index],
             });
         }
         scene.garage_bays = bays;
@@ -204,6 +211,10 @@ struct CarBuild {
 
 const BAY_SPACING: f32 = 8.0;
 const ROW_GAP: f32 = 68.5;
+
+pub(crate) const BAY_COLOR_NAMES: [&str; 10] = [
+    "Red", "Blue", "Yellow", "Green", "Orange", "Black", "White", "Pink", "Navy", "Cyan",
+];
 
 const BAY_COLORS: [[f32; 3]; 10] = [
     [0.78, 0.08, 0.06],

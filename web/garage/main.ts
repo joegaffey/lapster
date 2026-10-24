@@ -5,6 +5,7 @@ import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
+import { saveSelectedBay, selectedBay as getSelectedBay } from "../src/ui/car-selection.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 
 declare global {
@@ -32,6 +33,7 @@ const animateInput = document.querySelector<HTMLInputElement>("#animate")!;
 const bayLabel = document.querySelector<HTMLElement>("#bay-label")!;
 const bayPrev = document.querySelector<HTMLButtonElement>("#bay-prev")!;
 const bayNext = document.querySelector<HTMLButtonElement>("#bay-next")!;
+const driveCar = document.querySelector<HTMLAnchorElement>("#drive-car")!;
 
 setupHud();
 checkForUpdate();
@@ -188,12 +190,18 @@ async function boot() {
     orbitCamera?.setHome(cameraInfo);
     const info = JSON.parse(viewer.bay_info());
     selectedBay = info.selected;
-    bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count})`;
+    saveSelectedBay(selectedBay);
+    bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count}) · ${info.colorName}`;
+    driveCar.title = `Drive the ${info.colorName} car`;
+    const driveUrl = new URL("../drive/", window.location.href);
+    const driveParams = new URLSearchParams(params);
+    driveParams.set("bay", String(selectedBay + 1));
+    driveUrl.search = driveParams.toString();
+    driveCar.href = driveUrl.href;
     applyAngles();
   };
 
-  const requestedBay = Number(params.get("bay") ?? "1") - 1;
-  selectBay(Number.isFinite(requestedBay) ? requestedBay : 0);
+  selectBay(getSelectedBay());
   bayPrev.addEventListener("click", () => selectBay(selectedBay - 1));
   bayNext.addEventListener("click", () => selectBay(selectedBay + 1));
   window.addEventListener("keydown", (event) => {

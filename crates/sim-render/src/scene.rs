@@ -84,6 +84,8 @@ pub struct GarageBay {
     pub wheels: Vec<SceneWheel>,
     pub camera: Camera,
     pub name: String,
+    pub color: [f32; 3],
+    pub color_name: &'static str,
 }
 
 pub struct Scene {

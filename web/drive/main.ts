@@ -8,6 +8,7 @@ import { setupPwa } from "../src/pwa.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
 import { setupCarSetupDialog } from "../src/ui/car-setup.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { saveSelectedBay, selectedBay } from "../src/ui/car-selection.ts";
 
 declare global {
   interface Window {
@@ -26,6 +27,7 @@ const TRACK_URL =
   params.get("track") ?? `../../fixtures/tracks/skidpad05/pack.sima?v=${PACK_VERSION}`;
 const CAR_URL =
   params.get("car") ?? `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${PACK_VERSION}`;
+const carBay = selectedBay();
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const asset = document.querySelector<HTMLElement>("#asset")!;
@@ -161,11 +163,13 @@ async function boot() {
 
   resizeCanvas();
   status.textContent = "creating physics";
-  const viewer = await DriveViewer.create(canvas, trackPack.bytes, carPack.bytes);
+  const viewer = await DriveViewer.create(canvas, trackPack.bytes, carPack.bytes, carBay);
   window.__driveViewer = viewer;
+  saveSelectedBay(carBay);
 
   const info = JSON.parse(viewer.info());
-  asset.textContent = `${info.asset.id} + ${info.car.id}`;
+  const initial = JSON.parse(viewer.telemetry());
+  asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
 
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();

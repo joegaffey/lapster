@@ -151,6 +151,7 @@ impl GarageViewer {
             &car_visual,
             &car_manifest,
             10,
+            0,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let bays = std::mem::take(&mut scene.garage_bays);
@@ -213,10 +214,13 @@ impl GarageViewer {
     }
 
     pub fn bay_info(&self) -> String {
+        let bay = self.bays.get(self.selected_bay);
         serde_json::json!({
             "selected": self.selected_bay,
             "count": self.bays.len(),
-            "name": self.bays.get(self.selected_bay).map(|bay| bay.name.clone()).unwrap_or_default(),
+            "name": bay.map(|bay| bay.name.clone()).unwrap_or_default(),
+            "color": bay.map(|bay| bay.color),
+            "colorName": bay.map(|bay| bay.color_name).unwrap_or_default(),
         })
         .to_string()
     }
@@ -301,6 +305,7 @@ pub struct DriveViewer {
     step_times: Vec<f32>,
     track_id: String,
     car_id: String,
+    car_bay: usize,
     camera_mode: CameraMode,
 }
 
@@ -310,6 +315,7 @@ impl DriveViewer {
         canvas: web_sys::HtmlCanvasElement,
         track_pack_bytes: js_sys::Uint8Array,
         car_pack_bytes: js_sys::Uint8Array,
+        car_bay: Option<usize>,
     ) -> Result<DriveViewer, JsValue> {
         let track_bytes = track_pack_bytes.to_vec();
         let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
@@ -336,6 +342,7 @@ impl DriveViewer {
         let car_manifest = car_pack.manifest().clone();
         drop(car_pack);
 
+        let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
@@ -345,6 +352,7 @@ impl DriveViewer {
             &car_visual,
             &car_manifest,
             1,
+            car_bay,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let rig = scene
@@ -391,6 +399,7 @@ impl DriveViewer {
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
             car_id: car_manifest.id,
+            car_bay,
             camera_mode: CameraMode::Chase,
         };
         drive.write_initial_pose()?;
@@ -516,6 +525,8 @@ impl DriveViewer {
         serde_json::json!({
             "track": self.track_id,
             "car": self.car_id,
+            "carBay": self.car_bay,
+            "carColor": garage::BAY_COLOR_NAMES[self.car_bay],
             "tick": state.tick,
             "speedKph": speed * 3.6,
             "speedMps": speed,
