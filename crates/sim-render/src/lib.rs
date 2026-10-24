@@ -280,18 +280,16 @@ impl GarageViewer {
             let Some(index) = bay.decal_mesh_index else {
                 continue;
             };
-            let center = shadow_decal_center(
-                Vec3::from_array(bay.decal_center),
-                light,
-                (bay.decal_ground_y - bay.decal_center[1]).abs() + 0.7,
-            );
-            self.renderer.set_decal_transform(
+            let height = (bay.decal_ground_y - bay.decal_center[1]).abs() + 0.7;
+            self.renderer.set_shadow_decal(
                 index,
-                center.to_array(),
+                bay.decal_center,
                 [0.0, 1.0, 0.0],
                 bay.decal_yaw,
                 bay.decal_width,
                 bay.decal_length,
+                light.to_array(),
+                height,
             );
         }
     }
@@ -461,12 +459,6 @@ fn collision_region(collision: &sim_types::TrackCollision) -> ([f32; 3], f32) {
     let span = max - min;
     let half = (span.x.max(span.z) * 0.5 + 20.0).clamp(60.0, 220.0);
     ([center.x, center.y, center.z], half)
-}
-
-fn shadow_decal_center(base: Vec3, light: Vec3, height: f32) -> Vec3 {
-    let horizontal = Vec3::new(light.x, 0.0, light.z);
-    let factor = height / (-light.y).max(0.1);
-    base + horizontal * factor + Vec3::Y * 0.015
 }
 
 pub(crate) fn shadow_decal_yaw(forward: Vec3) -> f32 {
@@ -1029,16 +1021,17 @@ impl DriveViewer {
                 Vec3::Y
             };
             let light = Vec3::from_array(self.renderer.sun_direction());
-            let center = shadow_decal_center(base, light, 0.7);
             let forward = rotation * Vec3::NEG_Z;
             let yaw = shadow_decal_yaw(forward);
-            self.renderer.set_decal_transform(
+            self.renderer.set_shadow_decal(
                 index,
-                center.to_array(),
+                base.to_array(),
                 normal.to_array(),
                 yaw,
                 self.rig.decal_width,
                 self.rig.decal_length,
+                light.to_array(),
+                0.7,
             );
         }
     }

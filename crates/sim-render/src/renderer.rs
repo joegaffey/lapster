@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use wasm_bindgen::JsValue;
 use wgpu::util::DeviceExt;
 
@@ -1144,21 +1144,26 @@ impl Renderer {
         }
     }
 
-    pub fn set_decal_transform(
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_shadow_decal(
         &mut self,
         index: usize,
-        center: [f32; 3],
+        base: [f32; 3],
         normal: [f32; 3],
         yaw: f32,
         width: f32,
         length: f32,
+        light: [f32; 3],
+        height: f32,
     ) {
-        let normal = Vec3::from_array(normal).normalize_or(Vec3::Y);
-        let rotation = Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(yaw);
-        let model = Mat4::from_scale_rotation_translation(
-            Vec3::new(width.max(0.1), 1.0, length.max(0.1)),
-            rotation,
-            Vec3::from_array(center),
+        let model = shadow_decal_model(
+            Vec3::from_array(base),
+            Vec3::from_array(normal),
+            yaw,
+            width,
+            length,
+            Vec3::from_array(light),
+            height,
         );
         self.set_mesh_model(index, model);
     }
@@ -1477,6 +1482,56 @@ fn sky_colors(elevation: f32) -> ([f32; 4], [f32; 4]) {
         [horizon.x, horizon.y, horizon.z, 1.0],
         [zenith.x, zenith.y, zenith.z, 1.0],
     )
+}
+
+fn shadow_decal_model(
+    base: Vec3,
+    normal: Vec3,
+    yaw: f32,
+    width: f32,
+    length: f32,
+    light: Vec3,
+    height: f32,
+) -> Mat4 {
+    let normal = normal.normalize_or(Vec3::Y);
+    let light = light.normalize_or(Vec3::NEG_Y);
+    let width = width.max(0.1);
+    let length = length.max(0.1);
+    let rotation = Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(yaw);
+    let horizontal = Vec3::new(light.x, 0.0, light.z);
+    let direction = horizontal.normalize_or(Vec3::X);
+    let extension = height * horizontal.length() / (-light.y).max(0.1);
+    let right = rotation * Vec3::X;
+    let forward = rotation * Vec3::NEG_Z;
+    let half_extent =
+        0.5 * (width * direction.dot(right).abs() + length * direction.dot(forward).abs());
+    let stretch = (1.0 + extension / (2.0 * half_extent.max(0.1))).clamp(1.0, 4.0);
+    let anchor = base + normal * 0.015 + direction * half_extent * (stretch - 1.0);
+    let amount = stretch - 1.0;
+    let stretch_matrix = Mat4::from_cols(
+        Vec4::new(
+            1.0 + amount * direction.x * direction.x,
+            amount * direction.y * direction.x,
+            amount * direction.z * direction.x,
+            0.0,
+        ),
+        Vec4::new(
+            amount * direction.x * direction.y,
+            1.0 + amount * direction.y * direction.y,
+            amount * direction.z * direction.y,
+            0.0,
+        ),
+        Vec4::new(
+            amount * direction.x * direction.z,
+            amount * direction.y * direction.z,
+            1.0 + amount * direction.z * direction.z,
+            0.0,
+        ),
+        Vec4::W,
+    );
+    let local =
+        Mat4::from_scale_rotation_translation(Vec3::new(width, 1.0, length), rotation, Vec3::ZERO);
+    Mat4::from_translation(anchor) * stretch_matrix * local
 }
 
 fn shadow_view_proj(map_size: u32, focus: Vec3, extent: f32, light: Vec3) -> Mat4 {
@@ -2017,7 +2072,9 @@ fn create_pipelines(
 
 #[cfg(test)]
 mod tests {
-    use super::{preferred_shadow_map_size, select_sample_count, shadow_view_proj};
+    use super::{
+        preferred_shadow_map_size, select_sample_count, shadow_decal_model, shadow_view_proj,
+    };
     use glam::{Vec3, Vec4};
 
     #[test]
@@ -2040,6 +2097,38 @@ mod tests {
         assert!(ndc.x.abs() < 0.002, "x={}", ndc.x);
         assert!(ndc.y.abs() < 0.002, "y={}", ndc.y);
         assert!((0.0..=1.0).contains(&ndc.z), "z={}", ndc.z);
+    }
+
+    #[test]
+    fn shadow_decal_stretches_from_car_edge() {
+        let car = (Vec3::ZERO, Vec3::Y, 0.0, 2.0, 4.0);
+        let evening = shadow_decal_model(
+            car.0,
+            car.1,
+            car.2,
+            car.3,
+            car.4,
+            Vec3::new(1.0, -0.2, 0.0).normalize(),
+            0.7,
+        );
+        let near = evening.transform_point3(Vec3::new(-0.5, 0.0, -0.5));
+        let far = evening.transform_point3(Vec3::new(0.5, 0.0, -0.5));
+        assert!((near.x + 1.0).abs() < 1e-5, "near edge moved: {near:?}");
+        assert!(far.x > 3.0, "shadow did not stretch: {far:?}");
+
+        let noon = shadow_decal_model(
+            car.0,
+            car.1,
+            car.2,
+            car.3,
+            car.4,
+            Vec3::new(0.2, -1.0, 0.0).normalize(),
+            0.7,
+        );
+        let near = noon.transform_point3(Vec3::new(-0.5, 0.0, -0.5));
+        let far = noon.transform_point3(Vec3::new(0.5, 0.0, -0.5));
+        assert!((near.x + 1.0).abs() < 1e-5);
+        assert!((far.x - 1.0).abs() < 0.2, "noon shadow too long: {far:?}");
     }
 
     #[test]

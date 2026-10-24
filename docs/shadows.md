@@ -79,12 +79,12 @@ the Baked map is not rebuilt continuously.
 - Transform:
   - position at the average contact plane, or wheel-bottom plane in Garage;
   - rotate with car yaw;
-  - offset along the light's horizontal direction by
-    `body_height * horizontal_light / vertical_light`;
-  - optional stretch at low sun angles;
+  - anchor the up-light edge at the car footprint;
+  - stretch away from the sun along the light's horizontal direction as the sun lowers,
+    using `body_height * horizontal_light / vertical_light`;
   - offset 1-2 cm above the ground.
-- The offset is recomputed when the car moves or time of day is applied, so the decal
-  moves around the car with the sun direction.
+- The stretch is recomputed when the car moves or time of day is applied. The shadow stays
+  attached to the car instead of translating away from it.
 
 ## Dynamic car shadow
 
@@ -114,8 +114,8 @@ baked map resolution, bake time, and shadow memory estimate.
 - Baked + Silhouette performs no per-frame environment shadow pass and uses 4-tap
   PCF against the static map plus one decal draw per car.
 - Baked + Dynamic samples the car-only map only near the car.
-- Car silhouette follows car heading and sun direction and disappears when car shadow
-  is Off.
+- Car silhouette follows car heading, stays attached to the footprint, stretches at low
+  sun angles, and disappears when car shadow is Off.
 - Time-of-day Apply updates sky tint, sun direction, and shadows; Baked mode rebakes.
 - Settings tabs work with keyboard and mouse, persist, and apply in all viewers.
 - WebGL2 smoke test passes; 4096 falls back to 2048 where unsupported.
