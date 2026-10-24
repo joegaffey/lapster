@@ -55,10 +55,16 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
   - interpolated visual pose.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
+- Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
+  shadows (4096² desktop / 2048² mobile and WebGL2), or **Off**. Car shadows are independent:
+  dynamic, a generated silhouette decal, or off. Time of day uses a slider plus Apply and
+  tints the sky; Baked maps rebake when lighting is applied.
 - Browser viewers for track, car, and driving.
 - Runtime **Tuning** dialog for chassis, suspension, tires, engine, gearing, brakes, steering,
   and aero; settings persist per car and can be copied/pasted as `lapster/setup@1` JSON.
-- **Settings** dialog for TC/ESC enables, independent strengths, and steering sensitivity.
+- **Settings** dialog split into **Gameplay** and **Graphics** tabs, available in every
+  viewer. Graphics covers anti-aliasing, environment and car shadows, time of day, and the
+  debug overlay.
 - Rust, Node, and Playwright test suites.
 
 ## Controls

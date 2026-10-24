@@ -2,6 +2,13 @@ struct Camera {
     view_proj: mat4x4<f32>,
     camera_pos: vec4<f32>,
     light_dir: vec4<f32>,
+    light_view_proj: mat4x4<f32>,
+    shadow_params: vec4<f32>,
+    sky_horizon: vec4<f32>,
+    sky_zenith: vec4<f32>,
+    baked_view_proj: mat4x4<f32>,
+    baked_shadow_params: vec4<f32>,
+    shadow_modes: vec4<f32>,
 };
 
 struct Model {
@@ -13,6 +20,9 @@ struct Model {
 @group(1) @binding(0) var<uniform> model: Model;
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var base_sampler: sampler;
+@group(3) @binding(0) var shadow_map: texture_depth_2d;
+@group(3) @binding(1) var shadow_sampler: sampler_comparison;
+@group(3) @binding(2) var baked_shadow_map: texture_depth_2d;
 
 fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
     let cutoff = vec3<f32>(0.0031308);
@@ -38,8 +48,8 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOut {
 @fragment
 fn fs_sky(input: SkyOut) -> @location(0) vec4<f32> {
     let height = pow(clamp(input.uv.y, 0.0, 1.0), 0.8);
-    let horizon = vec3<f32>(0.62, 0.72, 0.80);
-    let zenith = vec3<f32>(0.12, 0.30, 0.55);
+    let horizon = camera.sky_horizon.xyz;
+    let zenith = camera.sky_zenith.xyz;
     return vec4<f32>(linear_to_srgb(mix(horizon, zenith, height)), 1.0);
 }
 
@@ -72,6 +82,12 @@ fn vs_mesh(input: MeshIn) -> MeshOut {
     return output;
 }
 
+@vertex
+fn vs_shadow(input: MeshIn) -> @builtin(position) vec4<f32> {
+    let world = model.transform * vec4<f32>(input.position, 1.0);
+    return camera.light_view_proj * world;
+}
+
 fn toon_ramp(ndl: f32) -> f32 {
     if ndl > 0.72 {
         return 1.0;
@@ -83,6 +99,50 @@ fn toon_ramp(ndl: f32) -> f32 {
         return 0.56;
     }
     return 0.40;
+}
+
+fn sample_baked_shadow(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if camera.shadow_params.z <= 0.0 {
+        return 1.0;
+    }
+    let world_texel = camera.baked_shadow_params.y;
+    let offset_position = world_position + normal * clamp(world_texel * 1.5, 0.03, 0.20);
+    let clip = camera.baked_view_proj * vec4<f32>(offset_position, 1.0);
+    let ndc = clip.xyz / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 {
+        return 1.0;
+    }
+    let depth = ndc.z - camera.baked_shadow_params.z;
+    let offset = camera.baked_shadow_params.x * 0.75;
+    var lit = 0.0;
+    lit += textureSampleCompareLevel(baked_shadow_map, shadow_sampler, uv + vec2<f32>(-offset, -offset), depth);
+    lit += textureSampleCompareLevel(baked_shadow_map, shadow_sampler, uv + vec2<f32>(offset, -offset), depth);
+    lit += textureSampleCompareLevel(baked_shadow_map, shadow_sampler, uv + vec2<f32>(-offset, offset), depth);
+    lit += textureSampleCompareLevel(baked_shadow_map, shadow_sampler, uv + vec2<f32>(offset, offset), depth);
+    return mix(1.0, lit / 4.0, camera.shadow_params.z);
+}
+
+fn shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if camera.shadow_params.z <= 0.0 {
+        return 1.0;
+    }
+    let world_texel = camera.shadow_params.y;
+    let offset_position = world_position + normal * clamp(world_texel * 1.5, 0.03, 0.20);
+    let clip = camera.light_view_proj * vec4<f32>(offset_position, 1.0);
+    let ndc = clip.xyz / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 {
+        return 1.0;
+    }
+    let depth = ndc.z - camera.shadow_params.w;
+    let offset = camera.shadow_params.x * 0.75;
+    var lit = 0.0;
+    lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2<f32>(-offset, -offset), depth);
+    lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2<f32>(offset, -offset), depth);
+    lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2<f32>(-offset, offset), depth);
+    lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2<f32>(offset, offset), depth);
+    return mix(1.0, lit / 4.0, camera.shadow_params.z);
 }
 
 @fragment
@@ -97,11 +157,32 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         discard;
     }
     let base = input.color * texel.rgb;
+    var environment_shadow = 1.0;
+    if camera.shadow_modes.x > 0.5 {
+        environment_shadow = shadow_visibility(input.world_position, normal);
+    } else if camera.shadow_modes.y > 0.5 {
+        environment_shadow = sample_baked_shadow(input.world_position, normal);
+    }
+    var car_shadow = 1.0;
+    if camera.shadow_modes.z > 0.5 {
+        car_shadow = shadow_visibility(input.world_position, normal);
+    }
+    let shadow = environment_shadow * car_shadow;
     let view_dir = normalize(camera.camera_pos.xyz - input.world_position);
     let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 3.0);
     let rim_tint = vec3<f32>(0.55, 0.72, 0.95);
-    let color = base * (0.30 + 0.70 * ramp) + rim_tint * rim * 0.16;
+    let color = base * (0.30 + 0.70 * ramp * shadow) + rim_tint * rim * 0.16;
     return vec4<f32>(linear_to_srgb(color), alpha);
+}
+
+@fragment
+fn fs_decal(input: MeshOut) -> @location(0) vec4<f32> {
+    let texel = textureSample(base_texture, base_sampler, input.uv);
+    let alpha = input.alpha * texel.a;
+    if alpha < 0.01 {
+        discard;
+    }
+    return vec4<f32>(0.0, 0.0, 0.0, alpha);
 }
 
 struct OutlineIn {

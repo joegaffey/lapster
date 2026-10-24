@@ -6,6 +6,7 @@ import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
+import { setupAssistsDialog } from "../src/ui/assists.ts";
 
 declare global {
   interface Window {
@@ -144,6 +145,7 @@ async function boot() {
   status.textContent = "creating renderer";
   const viewer = await TrackViewer.create(canvas, pack.bytes);
   window.__trackViewer = viewer;
+  setupAssistsDialog(viewer, { gameplay: false });
   setupTrackCamera(canvas, viewer, { maxHeight: MAX_CAMERA_HEIGHT });
 
   const debug = JSON.parse(viewer.debug_info());

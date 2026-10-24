@@ -7,6 +7,7 @@ import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { saveSelectedBay, selectedBay as getSelectedBay } from "../src/ui/car-selection.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
+import { setupAssistsDialog } from "../src/ui/assists.ts";
 
 declare global {
   interface Window {
@@ -184,6 +185,7 @@ async function boot() {
   status.textContent = "creating renderer";
   const viewer = await GarageViewer.create(canvas, trackPack.bytes, carPack.bytes);
   window.__garageViewer = viewer;
+  setupAssistsDialog(viewer, { gameplay: false });
 
   const debug = JSON.parse(viewer.debug_info());
   renderDebug(debug);

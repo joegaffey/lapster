@@ -57,6 +57,10 @@ test("mobile starts collapsed and exposes touch controls", async ({ page }) => {
   );
   expect(telemetry.speedKph).toBeGreaterThan(1);
   expect(telemetry.contacts).toBe(4);
+  expect(telemetry.shadowMapSize).toBe(1024);
+  expect(telemetry.environmentShadowMode).toBe("baked");
+  expect(telemetry.carShadowMode).toBe("silhouette");
+  expect(telemetry.bakedShadowResolution).toBe(2048);
   expect(pageErrors).toEqual([]);
 });
 
@@ -69,4 +73,51 @@ test.describe("pre-boot info panel", () => {
       await expect(page.locator("#hud")).toBeHidden();
     }
   });
+});
+
+
+test("garage and track expose graphics-only shadow settings", async ({ page }) => {
+  const waitFor = (expression: string) =>
+    page.waitForFunction(expression, undefined, { timeout: 30_000 });
+
+  await page.goto(
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+  );
+  await waitFor(() => (window as any).__garageViewerReady === true || (window as any).__garageViewerError);
+  await page.locator("#assists-open").click();
+  await expect(page.locator("#tab-gameplay")).toHaveCount(0);
+  await expect(page.locator("#tab-graphics")).toHaveAttribute("aria-selected", "true");
+  const environment = page.locator("#environment-shadows");
+  const carShadow = page.locator("#car-shadow");
+  await environment.selectOption("baked");
+  await carShadow.selectOption("silhouette");
+  let state = await page.evaluate(() => ({
+    environment: (window as any).__garageViewer.environment_shadow_mode(),
+    car: (window as any).__garageViewer.car_shadow_mode(),
+    resolution: (window as any).__garageViewer.baked_resolution(),
+  }));
+  expect(state.environment).toBe("baked");
+  expect(state.car).toBe("silhouette");
+  expect(state.resolution).toBe(2048);
+  await page.locator("#time-of-day").evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "18";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator("#time-of-day-apply").click();
+  expect(await page.evaluate(() => (window as any).__garageViewer.time_of_day())).toBeCloseTo(18);
+  await page.locator("#assists-close").click();
+
+  await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
+  await waitFor(() => (window as any).__trackViewerReady === true || (window as any).__trackViewerError);
+  await page.locator("#assists-open").click();
+  await expect(page.locator("#tab-gameplay")).toHaveCount(0);
+  await expect(page.locator("#settings-graphics")).toBeVisible();
+  await page.locator("#environment-shadows").selectOption("baked");
+  state = await page.evaluate(() => ({
+    environment: (window as any).__trackViewer.environment_shadow_mode(),
+    resolution: (window as any).__trackViewer.baked_resolution(),
+  }));
+  expect(state.environment).toBe("baked");
+  expect(state.resolution).toBe(2048);
 });

@@ -8,8 +8,9 @@ use sim_types::{
 use crate::camera::Camera;
 use crate::scene::{
     build_outline, build_vertices, push_line, scene_texture, CarRig, GarageBay, LineVertex,
-    MeshData, RigWheel, Scene, SceneWheel,
+    MeshData, MeshVertex, RigWheel, Scene, SceneTexture, SceneWheel,
 };
+use crate::shadow_decal_yaw;
 
 impl Scene {
     #[allow(clippy::too_many_arguments)]
@@ -41,6 +42,12 @@ impl Scene {
         for texture in &car_visual.textures {
             scene.textures.push(scene_texture(texture)?);
         }
+        let silhouette = build_car_silhouette(car_visual)?;
+        let decal_texture = silhouette.as_ref().map(|silhouette| {
+            let index = scene.textures.len();
+            scene.textures.push(silhouette.texture.clone());
+            index
+        });
 
         let bay_count = car_count.clamp(1, 10);
         let mut bays = Vec::with_capacity(bay_count);
@@ -86,18 +93,38 @@ impl Scene {
                 target: (translation + Vec3::Y * 0.6).to_array(),
                 fov_y: 0.85,
             };
+            let decal_mesh_index = match (&silhouette, decal_texture) {
+                (Some(silhouette), Some(texture)) => Some(add_car_decal(
+                    &mut scene,
+                    texture,
+                    silhouette.width,
+                    silhouette.length,
+                )?),
+                _ => None,
+            };
             if index == 0 {
                 scene.camera = camera;
-                scene.car_rig = Some(built.rig.clone());
+                let mut rig = built.rig.clone();
+                rig.decal_mesh_index = decal_mesh_index;
+                rig.decal_width = silhouette.as_ref().map(|s| s.width).unwrap_or(1.0);
+                rig.decal_length = silhouette.as_ref().map(|s| s.length).unwrap_or(1.0);
+                scene.car_rig = Some(rig);
                 scene.wheels = built.wheels.clone();
                 first_bounds = Some(built.bounds);
             }
+            let decal_yaw = shadow_decal_yaw(row_forward);
             bays.push(GarageBay {
                 wheels: built.wheels,
                 camera,
                 name: format!("Bay {}", index + 1),
                 color,
                 color_name: BAY_COLOR_NAMES[color_index],
+                decal_mesh_index,
+                decal_center: [translation.x, built.ground_y, translation.z],
+                decal_yaw,
+                decal_width: silhouette.as_ref().map(|s| s.width).unwrap_or(1.0),
+                decal_length: silhouette.as_ref().map(|s| s.length).unwrap_or(1.0),
+                decal_ground_y: built.ground_y,
             });
         }
         scene.garage_bays = bays;
@@ -119,7 +146,8 @@ impl Scene {
         scene.stats.vertices += car_vertices;
         scene.stats.triangles += car_triangles;
         scene.stats.draw_calls += car_draw_calls as u32;
-        scene.stats.textures += car_visual.textures.len() as u32;
+        scene.stats.textures +=
+            car_visual.textures.len() as u32 + u32::from(decal_texture.is_some());
 
         scene.debug_info = json!({
             "asset": { "id": track_manifest.id, "kind": "Track" },
@@ -189,6 +217,183 @@ impl Scene {
     }
 }
 
+struct CarSilhouette {
+    texture: SceneTexture,
+    width: f32,
+    length: f32,
+}
+
+fn build_car_silhouette(car_visual: &CarVisual) -> Result<Option<CarSilhouette>, String> {
+    let Some(body_index) = mesh_index_by_name(car_visual, "body") else {
+        return Ok(None);
+    };
+    let Some(buffers) = car_visual.mesh_buffers.get(body_index) else {
+        return Ok(None);
+    };
+    if buffers.positions.is_empty() || buffers.indices.is_empty() {
+        return Ok(None);
+    }
+    let body_local = node_matrix(&car_visual.body);
+    let positions = buffers
+        .positions
+        .iter()
+        .map(|position| body_local.transform_point3(Vec3::from_array(*position)))
+        .collect::<Vec<_>>();
+    let mut min_x = f32::INFINITY;
+    let mut min_z = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
+    for point in &positions {
+        min_x = min_x.min(point.x);
+        min_z = min_z.min(point.z);
+        max_x = max_x.max(point.x);
+        max_z = max_z.max(point.z);
+    }
+    if !min_x.is_finite() || !min_z.is_finite() {
+        return Ok(None);
+    }
+    let margin = 0.08;
+    min_x -= margin;
+    min_z -= margin;
+    max_x += margin;
+    max_z += margin;
+    let width = (max_x - min_x).max(0.1);
+    let length = (max_z - min_z).max(0.1);
+    let texture_width = 256usize;
+    let texture_height = 512usize;
+    let mut alpha = vec![0u8; texture_width * texture_height];
+
+    for triangle in buffers.indices.as_chunks::<3>().0 {
+        let a = positions.get(triangle[0] as usize);
+        let b = positions.get(triangle[1] as usize);
+        let c = positions.get(triangle[2] as usize);
+        let (Some(a), Some(b), Some(c)) = (a, b, c) else {
+            continue;
+        };
+        let ax = (a.x - min_x) / width * (texture_width - 1) as f32;
+        let ay = (a.z - min_z) / length * (texture_height - 1) as f32;
+        let bx = (b.x - min_x) / width * (texture_width - 1) as f32;
+        let by = (b.z - min_z) / length * (texture_height - 1) as f32;
+        let cx = (c.x - min_x) / width * (texture_width - 1) as f32;
+        let cy = (c.z - min_z) / length * (texture_height - 1) as f32;
+        let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        if area.abs() < 1e-6 {
+            continue;
+        }
+        let left = ax.min(bx).min(cx).floor().max(0.0) as usize;
+        let right = ax.max(bx).max(cx).ceil().min((texture_width - 1) as f32) as usize;
+        let top = ay.min(by).min(cy).floor().max(0.0) as usize;
+        let bottom = ay.max(by).max(cy).ceil().min((texture_height - 1) as f32) as usize;
+        for py in top..=bottom {
+            for px in left..=right {
+                let x = px as f32 + 0.5;
+                let y = py as f32 + 0.5;
+                let w0 = ((bx - x) * (cy - y) - (by - y) * (cx - x)) / area;
+                let w1 = ((cx - x) * (ay - y) - (cy - y) * (ax - x)) / area;
+                let w2 = 1.0 - w0 - w1;
+                if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                    alpha[py * texture_width + px] = 255;
+                }
+            }
+        }
+    }
+
+    blur_alpha(&mut alpha, texture_width, texture_height);
+
+    let mut rgba8 = Vec::with_capacity(texture_width * texture_height * 4);
+    for value in alpha {
+        rgba8.extend_from_slice(&[255, 255, 255, value]);
+    }
+    Ok(Some(CarSilhouette {
+        texture: SceneTexture {
+            width: texture_width as u32,
+            height: texture_height as u32,
+            rgba8,
+        },
+        width,
+        length,
+    }))
+}
+
+fn blur_alpha(alpha: &mut [u8], width: usize, height: usize) {
+    const RADIUS: i32 = 6;
+    const SIGMA: f32 = 2.8;
+    let mut kernel = Vec::with_capacity((RADIUS * 2 + 1) as usize);
+    let mut total = 0.0f32;
+    for offset in -RADIUS..=RADIUS {
+        let weight = (-(offset * offset) as f32 / (2.0 * SIGMA * SIGMA)).exp();
+        kernel.push(weight);
+        total += weight;
+    }
+    for weight in &mut kernel {
+        *weight /= total;
+    }
+
+    let mut horizontal = vec![0u8; alpha.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let mut sum = 0.0f32;
+            for (index, weight) in kernel.iter().enumerate() {
+                let sx = (x as i32 + index as i32 - RADIUS).clamp(0, width as i32 - 1) as usize;
+                sum += alpha[y * width + sx] as f32 * weight;
+            }
+            horizontal[y * width + x] = sum.round() as u8;
+        }
+    }
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut sum = 0.0f32;
+            for (index, weight) in kernel.iter().enumerate() {
+                let sy = (y as i32 + index as i32 - RADIUS).clamp(0, height as i32 - 1) as usize;
+                sum += horizontal[sy * width + x] as f32 * weight;
+            }
+            alpha[y * width + x] = sum.round() as u8;
+        }
+    }
+}
+
+fn add_car_decal(
+    scene: &mut Scene,
+    texture: usize,
+    width: f32,
+    length: f32,
+) -> Result<usize, String> {
+    if width <= 0.0 || length <= 0.0 {
+        return Err("car decal has no footprint".to_string());
+    }
+    let positions = [
+        [-0.5, 0.0, -0.5],
+        [0.5, 0.0, -0.5],
+        [0.5, 0.0, 0.5],
+        [-0.5, 0.0, 0.5],
+    ];
+    let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let mut vertices = Vec::with_capacity(4);
+    for (position, uv) in positions.iter().zip(uvs.iter()) {
+        vertices.push(MeshVertex {
+            position: *position,
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0, 1.0, 1.0],
+            uv: *uv,
+        });
+    }
+    let _ = (width, length);
+    scene.meshes.push(MeshData {
+        name: "car_shadow_decal".to_string(),
+        vertices,
+        indices: vec![0, 1, 2, 0, 2, 3],
+        model: Mat4::IDENTITY,
+        texture: Some(texture),
+        outline: None,
+        alpha: 0.20,
+        casts_static_shadow: false,
+        casts_dynamic_shadow: false,
+        is_decal: true,
+    });
+    Ok(scene.meshes.len() - 1)
+}
+
 fn recolor_paint(buffers: &mut MeshBuffers, color: [f32; 3]) {
     if buffers.colors.is_empty() {
         return;
@@ -207,6 +412,7 @@ struct CarBuild {
     rig: CarRig,
     wheels: Vec<SceneWheel>,
     bounds: Aabb,
+    ground_y: f32,
 }
 
 const BAY_SPACING: f32 = 8.0;
@@ -378,11 +584,23 @@ fn build_car(
         wheels: rig_wheels,
         steering_mesh_index,
         steering_local,
+        decal_mesh_index: None,
+        decal_width: 1.0,
+        decal_length: 1.0,
     };
+    let mut ground_y = f32::INFINITY;
+    for wheel in &car_visual.wheels {
+        let center = transform.transform_point3(Vec3::from_array(wheel.transform.translation));
+        ground_y = ground_y.min(center.y - wheel.radius);
+    }
+    if !ground_y.is_finite() {
+        ground_y = body_bounds.min[1];
+    }
     Ok(CarBuild {
         rig,
         wheels,
         bounds: body_bounds,
+        ground_y,
     })
 }
 
@@ -427,6 +645,9 @@ fn push_car_mesh(
             None
         },
         alpha: style.alpha,
+        casts_static_shadow: false,
+        casts_dynamic_shadow: true,
+        is_decal: false,
     });
     Ok(scene.meshes.len() - 1)
 }
