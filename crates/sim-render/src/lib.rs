@@ -47,7 +47,12 @@ impl TrackViewer {
         let debug_info = scene.debug_info.clone();
         let camera = scene.camera;
         let shadow_focus = camera.target;
-        let (region_center, region_half) = collision_region(&collision);
+        let (collision_center, region_half) = collision_region(&collision);
+        let region_center = metadata
+            .spawns
+            .first()
+            .map(|spawn| spawn.position)
+            .unwrap_or(collision_center);
         let collider = TrackCollider::from_collision(&collision, &metadata);
         let ground_y = collider
             .raycast(
@@ -625,7 +630,8 @@ impl DriveViewer {
         for _ in 0..500 {
             vehicle.step(Controls::default());
         }
-        let (region_center, region_half) = collision_region(&track_collision);
+        let (_, region_half) = collision_region(&track_collision);
+        let region_center = vehicle.state.position.to_array();
         let ground_y = vehicle
             .state
             .wheels

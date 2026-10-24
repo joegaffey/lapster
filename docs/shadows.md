@@ -57,8 +57,11 @@ the Baked map is not rebuilt continuously.
 
 - Startup build: static casters only; the moving car is excluded.
 - Region:
-  - Drive/Track Viewer: around the track collision bounds plus margin.
+  - Drive: around the settled vehicle spawn.
+  - Track Viewer: around the track spawn.
   - Garage: the showroom.
+  - The region spans the track extent capped at 220 m per side, so very large tracks
+    keep useful local resolution instead of baking the entire level.
 - Resolution: 4096 on desktop WebGPU when supported, otherwise 2048; 2048 on mobile
   and WebGL2.
 - Format: static Depth32Float light-space shadow map.
