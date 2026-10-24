@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -1214,6 +1215,33 @@ impl Renderer {
                 mesh.visible = visible;
                 self.shadow_dirty = true;
             }
+        }
+    }
+
+    pub fn set_static_shadow_range(&mut self, range: Range<usize>, enabled: bool) {
+        let mut changed = false;
+        for mesh in self.meshes.iter_mut().take(range.end).skip(range.start) {
+            if mesh.shadow_static_base != enabled
+                || mesh.casts_static_shadow != (enabled && mesh.alpha >= 0.999)
+                || mesh.shadow_dynamic_base
+                || mesh.casts_dynamic_shadow
+            {
+                changed = true;
+            }
+            mesh.shadow_static_base = enabled;
+            mesh.casts_static_shadow = enabled && mesh.alpha >= 0.999;
+            mesh.shadow_dynamic_base = false;
+            mesh.casts_dynamic_shadow = false;
+        }
+        if !changed {
+            return;
+        }
+        self.shadow_dirty = true;
+        self.baked_valid = false;
+        if self.environment_mode == EnvironmentShadowMode::Baked {
+            self.bake_environment();
+        } else {
+            self.write_camera();
         }
     }
 

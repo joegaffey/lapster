@@ -174,6 +174,7 @@ pub struct GarageViewer {
     spin: f32,
     initial_camera: Camera,
     camera: Camera,
+    car_shadow_range: Option<std::ops::Range<usize>>,
 }
 
 #[wasm_bindgen]
@@ -218,9 +219,11 @@ impl GarageViewer {
             &car_manifest,
             10,
             0,
+            true,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let bays = std::mem::take(&mut scene.garage_bays);
+        let car_shadow_range = scene.car_mesh_range.clone();
         let debug_info = scene.debug_info.clone();
         let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
         let shadow_focus = camera.target;
@@ -266,10 +269,8 @@ impl GarageViewer {
             spin: 0.0,
             initial_camera: camera,
             camera,
+            car_shadow_range,
         };
-        viewer
-            .renderer
-            .set_car_shadow_mode(CarShadowMode::Silhouette, false);
         viewer.update_decals();
         Ok(viewer)
     }
@@ -367,8 +368,12 @@ impl GarageViewer {
     }
 
     pub fn set_car_shadow_mode(&mut self, mode: &str) {
-        self.renderer
-            .set_car_shadow_mode(car_shadow_mode(mode), false);
+        let mode = car_shadow_mode(mode);
+        self.renderer.set_car_shadow_mode(mode, false);
+        if let Some(range) = self.car_shadow_range.clone() {
+            self.renderer
+                .set_static_shadow_range(range, mode != CarShadowMode::Off);
+        }
         self.update_decals();
     }
 
@@ -592,6 +597,7 @@ impl DriveViewer {
             &car_manifest,
             1,
             car_bay,
+            false,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let rig = scene

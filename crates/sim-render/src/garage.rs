@@ -24,6 +24,7 @@ impl Scene {
         car_manifest: &AssetManifest,
         car_count: usize,
         color_offset: usize,
+        static_car_shadows: bool,
     ) -> Result<Scene, String> {
         let mut scene = Scene::build(
             track_visual,
@@ -42,7 +43,11 @@ impl Scene {
         for texture in &car_visual.textures {
             scene.textures.push(scene_texture(texture)?);
         }
-        let silhouette = build_car_silhouette(car_visual)?;
+        let silhouette = if static_car_shadows {
+            None
+        } else {
+            build_car_silhouette(car_visual)?
+        };
         let decal_texture = silhouette.as_ref().map(|silhouette| {
             let index = scene.textures.len();
             scene.textures.push(silhouette.texture.clone());
@@ -76,6 +81,7 @@ impl Scene {
                 (row_translation, row_rotation)
             };
             let transform = Mat4::from_rotation_translation(rotation, translation);
+            let car_mesh_start = scene.meshes.len();
             let built = build_car(
                 &mut scene,
                 car_visual,
@@ -84,6 +90,12 @@ impl Scene {
                 color,
                 &format!("bay_{index}"),
             )?;
+            if static_car_shadows {
+                for mesh in &mut scene.meshes[car_mesh_start..] {
+                    mesh.casts_static_shadow = true;
+                    mesh.casts_dynamic_shadow = false;
+                }
+            }
             let row_forward = rotation * Vec3::NEG_Z;
             let row_right = rotation * Vec3::X;
             let camera = Camera {
@@ -128,6 +140,9 @@ impl Scene {
             });
         }
         scene.garage_bays = bays;
+        if static_car_shadows {
+            scene.car_mesh_range = Some(car_start..scene.meshes.len());
+        }
         let body_bounds = first_bounds.unwrap_or(Aabb {
             min: [0.0; 3],
             max: [0.0; 3],

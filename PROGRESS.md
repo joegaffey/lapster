@@ -162,7 +162,8 @@ Toolchain setup scripts:
   Independent car shadow setting selects dynamic, generated silhouette decal, or off.
   Dynamic car shadows use a dedicated 4096² desktop / 2048² mobile car-only map with
   32-tap PCF and a tight car-plus-shadow focus. Car silhouette follows car yaw and stretches
-  from the footprint at low sun angles.
+  from the footprint at low sun angles. Garage cars are static and cast from the environment
+  shadow map.
   Time of day uses a slider plus Apply, tints the sky, updates sun direction, and rebakes
   Baked maps. Settings are global across all viewers. Dev Pages builds default to Baked
   environment shadows and the Dynamic car shadow; stable builds keep Auto.

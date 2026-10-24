@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
@@ -108,6 +109,7 @@ pub struct Scene {
     pub debug_info: String,
     pub wheels: Vec<SceneWheel>,
     pub garage_bays: Vec<GarageBay>,
+    pub car_mesh_range: Option<Range<usize>>,
     pub stats: SceneStats,
     pub car_rig: Option<CarRig>,
 }
@@ -256,6 +258,7 @@ impl Scene {
             debug_info,
             wheels: Vec::new(),
             garage_bays: Vec::new(),
+            car_mesh_range: None,
             stats,
             car_rig: None,
         })

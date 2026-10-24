@@ -30,8 +30,9 @@ Dynamic car shadow; stable builds keep Auto.
 - **Silhouette** - baked car silhouette decal; no per-frame car shadow map.
 - **Off** - no car shadow.
 
-Garage cars are static, so Dynamic falls back to Silhouette there. Track Viewer has no
-car, so the car setting is ignored.
+Garage cars are static, so Dynamic and Silhouette both use the environment shadow map,
+which includes the car meshes; Off removes them from that map. Track Viewer has no car,
+so the car setting is ignored.
 
 ## Settings dialog
 
