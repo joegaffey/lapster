@@ -121,9 +121,10 @@ Toolchain setup scripts:
 - Native MSAA through wgpu: auto 4× desktop / 2× mobile, with Off/2×/4× overrides. Unsupported
   counts fall back to the highest supported count not above the request (usually 1× for 2× on
   WebGPU).
-- Responsive UI: collapsible HUD on all demos, collapsed by default. Every demo keeps Info
-  and Exit in a detached toolbar; drive adds Reset, Camera, Body, TC, and ESC, and track adds
-  Reset camera. Touch devices get non-selectable steering/throttle/brake controls. Debug
+- Responsive UI: collapsible HUD on all demos, pre-collapsed in markup so it cannot flash
+  before boot. Every demo keeps Info and Exit in a detached toolbar; drive adds Reset, Camera,
+  Body, TC, and ESC, and track adds Reset camera. Touch devices get non-selectable
+  steering/throttle/brake controls. Debug
   lines/bounds are off by default in drive, garage, and track viewer.
 - Track and garage cameras: drag to orbit, right/shift-drag to pan, wheel or pinch to zoom,
   with a reset-camera button. Garage starts from a front three-quarter view with the wheels
@@ -189,7 +190,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 15 tests
-- `npm run test:viewer` — 22 Playwright tests
+- `npm run test:viewer` — 23 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
