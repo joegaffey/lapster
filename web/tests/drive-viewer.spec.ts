@@ -127,6 +127,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   const abs = page.locator("#abs-toggle");
   const esc = page.locator("#esc-toggle");
   const debug = page.locator("#debug-lines-toggle");
+  const fpsToggle = page.locator("#fps-counter-toggle");
+  const fpsCounter = page.locator("#fps-counter");
   const environment = page.locator("#environment-shadows");
   const carShadow = page.locator("#car-shadow");
   const timeRange = page.locator("#time-of-day");
@@ -138,6 +140,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(carShadow).toHaveValue("auto");
   await expect(timeValue).toHaveText("15:00");
   await expect(debug).toHaveText("Debug: Off");
+  await expect(fpsToggle).toHaveText("FPS: Off");
+  await expect(fpsCounter).toBeHidden();
 
   await environment.selectOption("high");
   await carShadow.selectOption("dynamic");
@@ -171,8 +175,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.environmentShadowMode).toBe("off");
   expect(telemetry.carShadowMode).toBe("off");
 
-  await environment.selectOption("high");
-  await carShadow.selectOption("dynamic");
+  await environment.selectOption("baked");
+  await carShadow.selectOption("silhouette");
   await expect(tc).toHaveText("TC: On");
   await expect(abs).toHaveText("ABS: On");
   await expect(esc).toHaveText("ESC: On");
@@ -185,6 +189,7 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(msaaTelemetry.msaaSamples).toBe(1);
+  expect(await page.evaluate(() => (window as any).__driveViewerError)).toBeUndefined();
   await expect(page.locator("#msaa-applied")).toHaveText("1×");
 
   await debug.click();
@@ -193,6 +198,12 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.debugLinesVisible).toBe(true);
+
+  await fpsToggle.click();
+  await expect(fpsToggle).toHaveText("FPS: On");
+  await expect(fpsToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(fpsCounter).toBeVisible();
+  await expect(fpsCounter).toHaveText(/\d+ fps/, { timeout: 5_000 });
 
   await page.locator("#tab-gameplay").click();
   await tc.click();
@@ -268,6 +279,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(environment).toHaveValue("auto");
   await expect(carShadow).toHaveValue("auto");
   await expect(timeValue).toHaveText("15:00");
+  await expect(fpsToggle).toHaveText("FPS: Off");
+  await expect(fpsCounter).toBeHidden();
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {

@@ -117,8 +117,9 @@ Toolchain setup scripts:
   JSON (`lapster/setup@1`). Mass and geometry remain fixed.
 - Settings dialog: split Gameplay/Graphics tabs in all viewers. Gameplay covers TC/ESC/ABS,
   strengths, and steering sensitivity. Graphics covers anti-aliasing, environment shadows,
-  car shadows, time of day, and a debug overlay toggle. Settings persist globally; Reset and
-  Camera remain top-level toolbar actions. Drive hides debug lines/bounds by default.
+  car shadows, time of day, a debug overlay toggle, and an off-by-default FPS counter.
+  Settings persist globally; Reset and Camera remain top-level toolbar actions. Drive hides
+  debug lines/bounds by default.
 - Native MSAA through wgpu: auto 4× desktop / 2× mobile, with Off/2×/4× overrides. Unsupported
   counts fall back to the highest supported count not above the request (usually 1× for 2× on
   WebGPU).
@@ -161,7 +162,8 @@ Toolchain setup scripts:
   Independent car shadow setting selects dynamic, generated silhouette decal, or off.
   Car silhouette shifts with car yaw and sun direction.
   Time of day uses a slider plus Apply, tints the sky, updates sun direction, and rebakes
-  Baked maps. Settings are global across all viewers.
+  Baked maps. Settings are global across all viewers. Dev Pages builds default to Baked
+  environment shadows and the Silhouette car shadow; stable builds keep Auto.
 - GLB car import:
   - `cargo run -p asset-compiler -- bake-glb <car.glb>`
   - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.

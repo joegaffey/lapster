@@ -7,6 +7,7 @@ import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { recordFrame } from "../src/ui/fps.ts";
 
 declare global {
   interface Window {
@@ -170,6 +171,7 @@ async function boot() {
     frames += 1;
     accumulated += delta;
     frameTime += delta;
+    recordFrame(delta);
     if (accumulated >= 500) {
       fpsLabel.textContent = ((frames * 1000) / accumulated).toFixed(1);
       frameLabel.textContent = `${(frameTime / frames).toFixed(2)} ms`;

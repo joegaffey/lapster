@@ -11,7 +11,9 @@
 
 ## Settings
 
-Shadow settings are global and persisted in `lapster.settings.v2`.
+Shadow settings are global and persisted in `lapster.settings.v2`. The dev Pages build
+uses `lapster.settings.dev.v2` and defaults to Baked environment shadows plus the
+Silhouette car shadow; stable builds keep Auto.
 
 ### Environment shadows
 
@@ -38,7 +40,7 @@ The Settings dialog is available in all three viewers.
 - **Gameplay** tab (Drive only): TC, TC strength, ABS, ESC, ESC strength, steering
   sensitivity.
 - **Graphics** tab: anti-aliasing, environment shadows, car shadow, time of day,
-  debug overlay.
+  debug overlay, and the FPS counter.
 
 Time of day uses a slider plus an Apply button. It only takes effect when applied, so
 the Baked map is not rebuilt continuously.

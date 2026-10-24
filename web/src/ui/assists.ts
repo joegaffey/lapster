@@ -1,3 +1,6 @@
+import { BUILD_CHANNEL } from "../version.generated.ts";
+import { setFpsCounterVisible } from "./fps.ts";
+
 interface SettingsViewer {
   set_traction_control?(enabled: boolean): void;
   set_traction_strength?(strength: number): void;
@@ -29,17 +32,19 @@ interface AssistSettings {
   carShadow: CarShadow;
   timeOfDay: number;
   antiAliasing: AntiAliasing;
+  fpsCounter: boolean;
 }
 
 interface SettingsOptions {
   gameplay?: boolean;
 }
 
-const STORAGE_KEY = "lapster.settings.v2";
-const LEGACY_STORAGE_KEY = "lapster.assists.v1";
+const DEV_BUILD = BUILD_CHANNEL === "dev";
+const STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v2" : "lapster.settings.v2";
+const LEGACY_STORAGE_KEY = DEV_BUILD ? "" : "lapster.assists.v1";
 const SETTINGS_STYLE_ID = "lapster-settings-style";
 
-const DEFAULTS: AssistSettings = {
+const BASE_DEFAULTS: AssistSettings = {
   tc: true,
   tcStrength: 1,
   abs: true,
@@ -51,7 +56,16 @@ const DEFAULTS: AssistSettings = {
   carShadow: "auto",
   timeOfDay: 15,
   antiAliasing: "auto",
+  fpsCounter: false,
 };
+
+const DEFAULTS: AssistSettings = DEV_BUILD
+  ? {
+      ...BASE_DEFAULTS,
+      environmentShadows: "baked",
+      carShadow: "silhouette",
+    }
+  : BASE_DEFAULTS;
 
 const SETTINGS_STYLE = `
 #assists-dialog {
@@ -236,6 +250,10 @@ function settingsDialogHtml(): string {
         <span>Debug overlay</span>
         <button id="debug-lines-toggle" aria-pressed="false" type="button">Debug: Off</button>
       </div>
+      <div class="assist-row">
+        <span>FPS counter</span>
+        <button id="fps-counter-toggle" aria-pressed="false" type="button">FPS: Off</button>
+      </div>
     </div>
   </section>
   <footer class="setup-footer">
@@ -310,6 +328,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
       value?.antiAliasing === "4x"
         ? value.antiAliasing
         : "auto",
+    fpsCounter: value?.fpsCounter === true,
   };
 }
 
@@ -319,7 +338,7 @@ function load(): AssistSettings {
     if (stored) {
       return sanitize(JSON.parse(stored));
     }
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    const legacy = LEGACY_STORAGE_KEY ? localStorage.getItem(LEGACY_STORAGE_KEY) : null;
     if (legacy) {
       const old = JSON.parse(legacy) as {
         shadows?: boolean;
@@ -396,6 +415,7 @@ export function setupAssistsDialog(
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
   const debugToggle = document.querySelector<HTMLButtonElement>("#debug-lines-toggle");
+  const fpsToggle = document.querySelector<HTMLButtonElement>("#fps-counter-toggle");
   const environmentSelect = document.querySelector<HTMLSelectElement>("#environment-shadows");
   const carSelect = document.querySelector<HTMLSelectElement>("#car-shadow");
   const timeRange = document.querySelector<HTMLInputElement>("#time-of-day");
@@ -413,6 +433,7 @@ export function setupAssistsDialog(
     !closeButton ||
     !resetButton ||
     !debugToggle ||
+    !fpsToggle ||
     !environmentSelect ||
     !carSelect ||
     !timeRange ||
@@ -465,6 +486,7 @@ export function setupAssistsDialog(
     applyAssists();
     applyModes();
     viewer.set_debug_lines_visible(settings.debugLines);
+    setFpsCounterVisible(settings.fpsCounter);
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     save(settings);
   };
@@ -486,6 +508,8 @@ export function setupAssistsDialog(
     }
     debugToggle.textContent = settings.debugLines ? "Debug: On" : "Debug: Off";
     debugToggle.setAttribute("aria-pressed", String(settings.debugLines));
+    fpsToggle!.textContent = settings.fpsCounter ? "FPS: On" : "FPS: Off";
+    fpsToggle!.setAttribute("aria-pressed", String(settings.fpsCounter));
     environmentSelect.value = settings.environmentShadows;
     carSelect.value = settings.carShadow;
     timeRange.value = String(settings.timeOfDay);
@@ -596,6 +620,13 @@ export function setupAssistsDialog(
   debugToggle.addEventListener("click", () => {
     settings.debugLines = !settings.debugLines;
     viewer.set_debug_lines_visible(settings.debugLines);
+    save(settings);
+    refresh();
+    status.textContent = "Saved";
+  });
+  fpsToggle.addEventListener("click", () => {
+    settings.fpsCounter = !settings.fpsCounter;
+    setFpsCounterVisible(settings.fpsCounter);
     save(settings);
     refresh();
     status.textContent = "Saved";

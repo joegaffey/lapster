@@ -8,6 +8,7 @@ import { setupPwa } from "../src/pwa.ts";
 import { saveSelectedBay, selectedBay as getSelectedBay } from "../src/ui/car-selection.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { recordFrame } from "../src/ui/fps.ts";
 
 declare global {
   interface Window {
@@ -275,6 +276,7 @@ async function boot() {
     frames += 1;
     accumulated += delta;
     frameTime += delta;
+    recordFrame(delta);
 
     if (animating) {
       spin = (spin + (delta / 1000) * 4.0) % (Math.PI * 2);

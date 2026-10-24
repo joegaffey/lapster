@@ -100,6 +100,7 @@ pub struct Renderer {
     mesh_pipeline_layout: wgpu::PipelineLayout,
     outline_pipeline_layout: wgpu::PipelineLayout,
     line_pipeline_layout: wgpu::PipelineLayout,
+    decal_pipeline_layout: wgpu::PipelineLayout,
     sky_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: wgpu::RenderPipeline,
     transparent_pipeline: wgpu::RenderPipeline,
@@ -530,6 +531,7 @@ impl Renderer {
             mesh_pipeline_layout,
             outline_pipeline_layout,
             line_pipeline_layout,
+            decal_pipeline_layout: decal_pipeline_layout.clone(),
             sky_pipeline: pipelines.sky,
             mesh_pipeline: pipelines.mesh,
             transparent_pipeline: pipelines.transparent,
@@ -619,6 +621,13 @@ impl Renderer {
         self.transparent_pipeline = pipelines.transparent;
         self.outline_pipeline = pipelines.outline;
         self.line_pipeline = pipelines.line;
+        self.decal_pipeline = create_decal_pipeline(
+            &self.device,
+            &self.shader,
+            &self.decal_pipeline_layout,
+            self.config.format,
+            actual,
+        );
         actual
     }
 

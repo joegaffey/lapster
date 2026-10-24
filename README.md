@@ -10,6 +10,9 @@ It is not a finished game or a complete Assetto Corsa replacement.
 
 Live demo: **https://joegaffey.com/lapster/**
 
+Development preview: **https://joegaffey.com/lapster-dev/** — Baked environment and
+Silhouette car shadows by default.
+
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
   steering, gears, chase/cockpit cameras, wheel loads, 500 Hz physics, and a shareable
   tuning dialog.
@@ -63,8 +66,8 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
 - Runtime **Tuning** dialog for chassis, suspension, tires, engine, gearing, brakes, steering,
   and aero; settings persist per car and can be copied/pasted as `lapster/setup@1` JSON.
 - **Settings** dialog split into **Gameplay** and **Graphics** tabs, available in every
-  viewer. Graphics covers anti-aliasing, environment and car shadows, time of day, and the
-  debug overlay.
+  viewer. Graphics covers anti-aliasing, environment and car shadows, time of day, the
+  debug overlay, and an optional top-left FPS counter.
 - Rust, Node, and Playwright test suites.
 
 ## Controls

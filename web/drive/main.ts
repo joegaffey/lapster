@@ -8,6 +8,7 @@ import { setupPwa } from "../src/pwa.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
 import { setupCarSetupDialog } from "../src/ui/car-setup.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { recordFrame } from "../src/ui/fps.ts";
 import { saveSelectedBay, selectedBay } from "../src/ui/car-selection.ts";
 
 declare global {
@@ -283,6 +284,7 @@ async function boot() {
 
       frames += 1;
       accumulated += delta;
+      recordFrame(delta * 1000);
       if (accumulated >= 0.5) {
         fpsLabel.textContent = (frames / accumulated).toFixed(1);
         frames = 0;
