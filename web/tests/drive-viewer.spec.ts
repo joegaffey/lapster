@@ -40,7 +40,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   }
   expect(settled.telemetry.position[1]).toBeGreaterThan(-0.2);
   expect(settled.telemetry.position[1]).toBeLessThan(0.2);
-  expect([1024, 2048]).toContain(settled.telemetry.shadowMapSize);
+  expect([1024, 2048, 4096]).toContain(settled.telemetry.shadowMapSize);
   expect(settled.telemetry.shadowFocus).toHaveLength(3);
   expect(pageErrors).toEqual([]);
 
@@ -104,6 +104,7 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await waitForReady(page);
   await page.evaluate(() => {
+    localStorage.removeItem("lapster.settings.v3");
     localStorage.removeItem("lapster.settings.v2");
     localStorage.removeItem("lapster.assists.v1");
   });
@@ -139,8 +140,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   const renderScaleValue = page.locator("#render-scale-value");
   const view = page.locator("#view");
 
-  await expect(environment).toHaveValue("auto");
-  await expect(carShadow).toHaveValue("auto");
+  await expect(environment).toHaveValue("baked");
+  await expect(carShadow).toHaveValue("dynamic");
   await expect(timeValue).toHaveText("15:00");
   await expect(debug).toHaveText("Debug: Off");
   await expect(fpsToggle).toHaveText("FPS: Off");
@@ -284,12 +285,12 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.stabilityStrength).toBe(1);
   expect(telemetry.steeringSensitivity).toBe(1);
   expect(telemetry.debugLinesVisible).toBe(false);
-  expect(telemetry.environmentShadowMode).toBe("high");
+  expect(telemetry.environmentShadowMode).toBe("baked");
   expect(telemetry.carShadowMode).toBe("dynamic");
   expect(telemetry.timeOfDay).toBeCloseTo(15);
   await expect(msaa).toHaveValue("auto");
-  await expect(environment).toHaveValue("auto");
-  await expect(carShadow).toHaveValue("auto");
+  await expect(environment).toHaveValue("baked");
+  await expect(carShadow).toHaveValue("dynamic");
   await expect(timeValue).toHaveText("15:00");
   await expect(fpsToggle).toHaveText("FPS: Off");
   await expect(fpsCounter).toBeHidden();
@@ -298,6 +299,37 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect
     .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
     .toBe(fullWidth);
+});
+
+test("migrates automatic shadow settings to baked and dynamic", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await waitForReady(page);
+  await page.evaluate(() => {
+    localStorage.removeItem("lapster.settings.v3");
+    localStorage.setItem(
+      "lapster.settings.v2",
+      JSON.stringify({
+        tc: false,
+        environmentShadows: "auto",
+        carShadow: "auto",
+        timeOfDay: 18,
+        antiAliasing: "off",
+      }),
+    );
+  });
+  await page.reload();
+  await waitForReady(page);
+
+  const migrated = await page.evaluate(() => ({
+    telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
+    stored: JSON.parse(localStorage.getItem("lapster.settings.v3") ?? "null"),
+  }));
+  expect(migrated.telemetry.environmentShadowMode).toBe("baked");
+  expect(migrated.telemetry.carShadowMode).toBe("dynamic");
+  expect(migrated.telemetry.tractionControl).toBe(false);
+  expect(migrated.telemetry.timeOfDay).toBeCloseTo(18);
+  expect(migrated.stored.environmentShadows).toBe("baked");
+  expect(migrated.stored.carShadow).toBe("dynamic");
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {
@@ -404,7 +436,20 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   await page.waitForTimeout(150);
   const reverseStart = await telemetry(page);
   await page.keyboard.down("ArrowDown");
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(
+    (start) => {
+      const telemetry = JSON.parse((window as any).__driveViewer.telemetry());
+      return (
+        telemetry.gear === -1 &&
+        Math.hypot(
+          telemetry.position[0] - start[0],
+          telemetry.position[2] - start[2],
+        ) > 0.2
+      );
+    },
+    reverseStart.position,
+    { timeout: 10_000 },
+  );
   await page.keyboard.up("ArrowDown");
   const reverse = await telemetry(page);
   expect(reverse.gear).toBe(-1);
@@ -425,7 +470,11 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   const stoppedFromReverse = await telemetry(page);
   expect(stoppedFromReverse.gear).toBe(-1);
 
-  await page.waitForTimeout(100);
+  await page.waitForFunction(
+    (tick) => JSON.parse((window as any).__driveViewer.telemetry()).tick > tick + 5,
+    stoppedFromReverse.tick,
+    { timeout: 10_000 },
+  );
   await page.keyboard.down("ArrowUp");
   await page.waitForFunction(
     (before) => {
@@ -487,15 +536,17 @@ test("reverse requires a second brake press after stopping", async ({ page }) =>
   await page.locator("#view").click({ position: { x: 640, y: 360 } });
   await page.keyboard.down("ArrowDown");
   await page.waitForFunction(
-    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === -1,
+    () => {
+      const telemetry = JSON.parse((window as any).__driveViewer.telemetry());
+      return telemetry.gear === -1 && telemetry.speedKph > 2;
+    },
     undefined,
     { timeout: 10_000 },
   );
-  await page.waitForTimeout(500);
   await page.keyboard.up("ArrowDown");
   const reverse = await telemetry(page);
   expect(reverse.gear).toBe(-1);
-  expect(reverse.speedKph).toBeGreaterThan(1);
+  expect(reverse.speedKph).toBeGreaterThan(2);
 
   await page.keyboard.down("ArrowUp");
   await page.waitForFunction(

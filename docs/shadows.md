@@ -11,9 +11,11 @@
 
 ## Settings
 
-Shadow settings are global and persisted in `lapster.settings.v2`. The dev Pages build
-uses `lapster.settings.dev.v3` and defaults to Baked environment shadows plus the
-Dynamic car shadow; stable builds keep Auto.
+Shadow settings are global and persisted in `lapster.settings.v3`; the dev Pages build
+uses `lapster.settings.dev.v3`. Both builds default to Baked environment shadows plus the
+Dynamic car shadow. Existing v2 settings are migrated once: an Auto environment becomes
+Baked, and an Auto car shadow becomes Dynamic when the environment was Auto. Explicit
+shadow modes are preserved.
 
 ### Environment shadows
 

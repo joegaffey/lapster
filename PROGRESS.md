@@ -166,8 +166,9 @@ Toolchain setup scripts:
   from the footprint at low sun angles. Garage cars are static and cast from the environment
   shadow map.
   Time of day uses a slider plus Apply, tints the sky, updates sun direction, and rebakes
-  Baked maps. Settings are global across all viewers. Dev Pages builds default to Baked
-  environment shadows and the Dynamic car shadow; stable builds keep Auto.
+  Baked maps. Settings are global across all viewers. All builds default to Baked
+  environment shadows and the Dynamic car shadow. Existing v2 Auto shadow settings migrate
+  once to Baked and Dynamic; explicit modes are preserved.
 - GLB car import:
   - `cargo run -p asset-compiler -- bake-glb <car.glb>`
   - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.

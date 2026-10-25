@@ -57,9 +57,10 @@ test("mobile starts collapsed and exposes touch controls", async ({ page }) => {
   );
   expect(telemetry.speedKph).toBeGreaterThan(1);
   expect(telemetry.contacts).toBe(4);
-  expect(telemetry.shadowMapSize).toBe(1024);
+  expect(telemetry.shadowMapSize).toBe(2048);
   expect(telemetry.environmentShadowMode).toBe("baked");
-  expect(telemetry.carShadowMode).toBe("silhouette");
+  expect(telemetry.carShadowMode).toBe("dynamic");
+  expect(telemetry.carShadowMapSize).toBe(2048);
   expect(telemetry.bakedShadowResolution).toBe(2048);
   expect(pageErrors).toEqual([]);
 });
