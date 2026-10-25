@@ -231,8 +231,8 @@ function settingsDialogHtml(): string {
       <label class="assist-slider">
         <span>Environment shadows</span>
         <select id="environment-shadows">
-          <option value="high">High — dynamic</option>
-          <option value="baked">Baked — static</option>
+          <option value="baked">Static</option>
+          <option value="high">Dynamic</option>
           <option value="off">Off</option>
         </select>
       </label>

@@ -68,11 +68,14 @@ test("mobile starts collapsed and exposes touch controls", async ({ page }) => {
 test.describe("pre-boot info panel", () => {
   test.use({ javaScriptEnabled: false });
 
-  test("info starts hidden on every demo before scripts run", async ({ page }) => {
+  test("info starts hidden and loading shows before scripts run", async ({ page }) => {
     for (const path of ["/web/garage/", "/web/drive/", "/web/track-viewer/"]) {
       await page.goto(path);
       await expect(page.locator("#hud")).toBeHidden();
+      await expect(page.locator("#viewer-loading")).toBeVisible();
     }
+    await page.goto("/web/debug-viewer/");
+    await expect(page.locator("#viewer-loading")).toHaveCount(0);
   });
 });
 

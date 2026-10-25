@@ -9,6 +9,7 @@ import { saveSelectedBay, selectedBay as getSelectedBay } from "../src/ui/car-se
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
 import { recordFrame } from "../src/ui/fps.ts";
+import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 
 declare global {
   interface Window {
@@ -313,9 +314,11 @@ async function boot() {
   status.className = "status ready";
   window.__garageViewerReady = true;
   requestAnimationFrame(frame);
+  requestAnimationFrame(hideLoading);
 }
 
 function fail(error: unknown) {
+  showLoadingFailure(error);
   const message = error instanceof Error ? error.message : String(error);
   window.__garageViewerError = message;
   status.textContent = message;

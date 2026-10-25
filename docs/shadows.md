@@ -18,9 +18,9 @@ coerced to Baked and Dynamic, while explicit modes are preserved.
 
 ### Environment shadows
 
-- **High** - current dynamic focused light-space map with 4-tap PCF.
-- **Baked** - a high-resolution static light-space shadow map baked once at startup;
-  sampled with 4-tap PCF and no per-frame shadow pass.
+- **Static** - high-resolution light-space shadow map baked once at startup; sampled
+  with 4-tap PCF and no per-frame shadow pass.
+- **Dynamic** - current focused light-space map with 4-tap PCF, refreshed per frame.
 - **Off** - no environment shadows.
 
 ### Car shadow

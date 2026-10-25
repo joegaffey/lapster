@@ -14,6 +14,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
 
   await page.goto("/web/drive/");
   await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
   await page.waitForTimeout(500);
   const drive = await page.evaluate(() => ({
     error: (window as any).__driveViewerError,
@@ -30,6 +31,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
     undefined,
     { timeout: 30_000 },
   );
+  await expect(page.locator("#viewer-loading")).toBeHidden();
   const garage = await page.evaluate(() => ({
     error: (window as any).__garageViewerError,
     asset: document.querySelector("#asset")?.textContent,
@@ -45,6 +47,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
     undefined,
     { timeout: 30_000 },
   );
+  await expect(page.locator("#viewer-loading")).toBeHidden();
   const track = await page.evaluate(() => ({
     error: (window as any).__trackViewerError,
     asset: document.querySelector("#asset")?.textContent,
