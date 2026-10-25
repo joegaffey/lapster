@@ -245,9 +245,57 @@
           transition: none;
         }
       }
+      #viewer-loading {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 24px;
+        background: #080a0d;
+        color: #cbd5e1;
+        font-size: 13px;
+        letter-spacing: 0.04em;
+        text-align: center;
+      }
+      #viewer-loading[hidden] {
+        display: none;
+      }
+      #viewer-loading[data-state="error"] {
+        color: #f87171;
+      }
+      .loading-spinner {
+        width: 18px;
+        height: 18px;
+        flex: none;
+        border: 2px solid #2a303a;
+        border-top-color: #38bdf8;
+        border-radius: 50%;
+        animation: loading-spin 800ms linear infinite;
+      }
+      #viewer-loading[data-state="error"] .loading-spinner {
+        display: none;
+      }
+      @keyframes loading-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .loading-spinner {
+          animation-duration: 1600ms;
+        }
+      }
     </style>
   </head>
   <body>
+    <div id="viewer-loading" role="status" aria-live="polite">
+      <span class="loading-spinner" aria-hidden="true"></span>
+      <span data-loading-label>Loading…</span>
+    </div>
+
     <canvas id="view"></canvas>
     <nav id="car-nav" class="car-nav-hidden" aria-label="Car navigation">
       <button id="bay-prev" type="button" aria-label="Previous car" title="Previous car">‹</button>

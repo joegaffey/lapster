@@ -142,6 +142,10 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
 
   await expect(environment).toHaveValue("baked");
   await expect(carShadow).toHaveValue("dynamic");
+  await expect(environment.locator('option[value="auto"]')).toHaveCount(0);
+  await expect(carShadow.locator('option[value="auto"]')).toHaveCount(0);
+  await expect(environment.locator('option[value="baked"]')).toHaveText("Static");
+  await expect(environment.locator('option[value="high"]')).toHaveText("Dynamic");
   await expect(timeValue).toHaveText("15:00");
   await expect(debug).toHaveText("Debug: Off");
   await expect(fpsToggle).toHaveText("FPS: Off");
@@ -170,7 +174,7 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.environmentShadowMode).toBe("high");
   expect(telemetry.carShadowMode).toBe("dynamic");
 
-  await carShadow.selectOption("auto");
+  await carShadow.selectOption("silhouette");
   await environment.selectOption("baked");
   telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
@@ -291,6 +295,10 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(msaa).toHaveValue("auto");
   await expect(environment).toHaveValue("baked");
   await expect(carShadow).toHaveValue("dynamic");
+  await expect(environment.locator('option[value="auto"]')).toHaveCount(0);
+  await expect(carShadow.locator('option[value="auto"]')).toHaveCount(0);
+  await expect(environment.locator('option[value="baked"]')).toHaveText("Static");
+  await expect(environment.locator('option[value="high"]')).toHaveText("Dynamic");
   await expect(timeValue).toHaveText("15:00");
   await expect(fpsToggle).toHaveText("FPS: Off");
   await expect(fpsCounter).toBeHidden();

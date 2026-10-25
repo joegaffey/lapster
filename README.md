@@ -29,7 +29,8 @@ Both builds default to Baked environment shadows and the Dynamic car shadow.
   model artifacts.
 
 The demos load these assets by default; no query parameters are required. Custom packs can
-still be selected with `?car=` and `?track=`. The info HUD starts collapsed in markup on
+still be selected with `?car=` and `?track=`. Every 3D viewer shows a full-screen loading
+indicator until its first rendered frame; the info HUD starts collapsed in markup on
 every demo, so it cannot flash before boot; drive actions live in a detached top toolbar,
 with `Exit` returning to the menu. The drive demo adds on-screen steering, throttle, and
 brake controls on touch devices. Debug lines/bounds are off by default in all viewers; drive

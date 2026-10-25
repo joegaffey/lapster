@@ -12,22 +12,19 @@
 ## Settings
 
 Shadow settings are global and persisted in `lapster.settings.v3`; the dev Pages build
-uses `lapster.settings.dev.v3`. Both builds default to Baked environment shadows plus the
-Dynamic car shadow. Existing v2 settings are migrated once: an Auto environment becomes
-Baked, and an Auto car shadow becomes Dynamic when the environment was Auto. Explicit
-shadow modes are preserved.
+uses `lapster.settings.dev.v3`. Both desktop and mobile default to Baked environment
+shadows plus the Dynamic car shadow. There is no Auto mode; legacy stored Auto values are
+coerced to Baked and Dynamic, while explicit modes are preserved.
 
 ### Environment shadows
 
-- **Auto** - High on desktop WebGPU, Baked on mobile and WebGL2.
-- **High** - current dynamic focused light-space map with 4-tap PCF.
-- **Baked** - a high-resolution static light-space shadow map baked once at startup;
-  sampled with 4-tap PCF and no per-frame shadow pass.
+- **Static** - high-resolution light-space shadow map baked once at startup; sampled
+  with 4-tap PCF and no per-frame shadow pass.
+- **Dynamic** - current focused light-space map with 4-tap PCF, refreshed per frame.
 - **Off** - no environment shadows.
 
 ### Car shadow
 
-- **Auto** - Dynamic with environment High, Silhouette otherwise.
 - **Dynamic** - car cast into the dynamic shadow map where available.
 - **Silhouette** - baked car silhouette decal; no per-frame car shadow map.
 - **Off** - no car shadow.

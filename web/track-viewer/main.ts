@@ -8,6 +8,7 @@ import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
 import { recordFrame } from "../src/ui/fps.ts";
+import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 
 declare global {
   interface Window {
@@ -200,9 +201,11 @@ async function boot() {
   status.className = "status ready";
   window.__trackViewerReady = true;
   requestAnimationFrame(frame);
+  requestAnimationFrame(hideLoading);
 }
 
 function fail(error: unknown) {
+  showLoadingFailure(error);
   const message = error instanceof Error ? error.message : String(error);
   window.__trackViewerError = message;
   status.textContent = message;

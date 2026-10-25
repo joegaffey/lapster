@@ -17,8 +17,8 @@ interface SettingsViewer {
 }
 
 type AntiAliasing = "auto" | "off" | "2x" | "4x";
-type EnvironmentShadows = "auto" | "high" | "baked" | "off";
-type CarShadow = "auto" | "dynamic" | "silhouette" | "off";
+type EnvironmentShadows = "high" | "baked" | "off";
+type CarShadow = "dynamic" | "silhouette" | "off";
 type RenderScale = 1 | 0.85 | 0.75 | 0.67 | 0.5;
 
 const RENDER_SCALES: RenderScale[] = [1, 0.85, 0.75, 0.67, 0.5];
@@ -50,7 +50,7 @@ const PREVIOUS_STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v2" : "lapster.se
 const LEGACY_STORAGE_KEY = DEV_BUILD ? "" : "lapster.assists.v1";
 const SETTINGS_STYLE_ID = "lapster-settings-style";
 
-const BASE_DEFAULTS: AssistSettings = {
+const DEFAULTS: AssistSettings = {
   tc: true,
   tcStrength: 1,
   abs: true,
@@ -58,18 +58,12 @@ const BASE_DEFAULTS: AssistSettings = {
   escStrength: 1,
   steeringSensitivity: 1,
   debugLines: false,
-  environmentShadows: "auto",
-  carShadow: "auto",
+  environmentShadows: "baked",
+  carShadow: "dynamic",
   timeOfDay: 15,
   antiAliasing: "auto",
   fpsCounter: false,
   renderScale: 1,
-};
-
-const DEFAULTS: AssistSettings = {
-  ...BASE_DEFAULTS,
-  environmentShadows: "baked",
-  carShadow: "dynamic",
 };
 
 const SETTINGS_STYLE = `
@@ -237,16 +231,14 @@ function settingsDialogHtml(): string {
       <label class="assist-slider">
         <span>Environment shadows</span>
         <select id="environment-shadows">
-          <option value="auto">Auto</option>
-          <option value="high">High — dynamic</option>
-          <option value="baked">Baked — static</option>
+          <option value="baked">Static</option>
+          <option value="high">Dynamic</option>
           <option value="off">Off</option>
         </select>
       </label>
       <label class="assist-slider">
         <span>Car shadow</span>
         <select id="car-shadow">
-          <option value="auto">Auto</option>
           <option value="dynamic">Dynamic</option>
           <option value="silhouette">Silhouette</option>
           <option value="off">Off</option>
@@ -320,13 +312,13 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     value?.environmentShadows === "baked" ||
     value?.environmentShadows === "off"
       ? value.environmentShadows
-      : "auto";
+      : "baked";
   const carShadow =
     value?.carShadow === "dynamic" ||
     value?.carShadow === "silhouette" ||
     value?.carShadow === "off"
       ? value.carShadow
-      : "auto";
+      : "dynamic";
   return {
     tc: value?.tc !== false,
     tcStrength: clamp(value?.tcStrength ?? 1, 0, 1, 1),
@@ -361,17 +353,7 @@ function load(): AssistSettings {
     if (previous) {
       const old = JSON.parse(previous) as Partial<AssistSettings> | null;
       if (old && typeof old === "object") {
-        const migrateAutomaticShadows =
-          old.environmentShadows === undefined || old.environmentShadows === "auto";
-        return sanitize({
-          ...old,
-          environmentShadows: migrateAutomaticShadows ? "baked" : old.environmentShadows,
-          carShadow:
-            migrateAutomaticShadows &&
-            (old.carShadow === undefined || old.carShadow === "auto")
-              ? "dynamic"
-              : old.carShadow,
-        });
+        return sanitize(old);
       }
     }
     const legacy = LEGACY_STORAGE_KEY ? localStorage.getItem(LEGACY_STORAGE_KEY) : null;
@@ -382,8 +364,8 @@ function load(): AssistSettings {
       };
       return sanitize({
         ...(old as Partial<AssistSettings>),
-        environmentShadows: old.shadows === false ? "off" : "auto",
-        carShadow: "auto",
+        environmentShadows: old.shadows === false ? "off" : "baked",
+        carShadow: old.shadows === false ? "off" : "dynamic",
       });
     }
     return { ...DEFAULTS };
@@ -401,24 +383,6 @@ function save(settings: AssistSettings): void {
 }
 
 const MOBILE_QUERY = "(pointer: coarse), (max-width: 720px)";
-
-function webGpuAvailable(): boolean {
-  return typeof navigator !== "undefined" && "gpu" in navigator;
-}
-
-function resolveEnvironmentShadows(mode: EnvironmentShadows): "high" | "baked" | "off" {
-  if (mode !== "auto") {
-    return mode;
-  }
-  return webGpuAvailable() && !window.matchMedia(MOBILE_QUERY).matches ? "high" : "baked";
-}
-
-function resolveCarShadow(mode: CarShadow, environment: "high" | "baked" | "off"): "dynamic" | "silhouette" | "off" {
-  if (mode !== "auto") {
-    return mode;
-  }
-  return environment === "high" ? "dynamic" : "silhouette";
-}
 
 function requestedSamples(settings: AssistSettings): number {
   if (settings.antiAliasing === "off") return 1;
@@ -515,11 +479,9 @@ export function setupAssistsDialog(
   };
 
   const applyModes = () => {
-    appliedEnvironment = resolveEnvironmentShadows(settings.environmentShadows);
+    appliedEnvironment = settings.environmentShadows;
     viewer.set_environment_shadow_mode(appliedEnvironment);
-    viewer.set_car_shadow_mode(
-      resolveCarShadow(settings.carShadow, appliedEnvironment),
-    );
+    viewer.set_car_shadow_mode(settings.carShadow);
   };
 
   const apply = () => {
