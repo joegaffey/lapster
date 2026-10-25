@@ -538,7 +538,7 @@ test("reverse requires a second brake press after stopping", async ({ page }) =>
   await page.waitForFunction(
     () => {
       const telemetry = JSON.parse((window as any).__driveViewer.telemetry());
-      return telemetry.gear === -1 && telemetry.speedKph > 1;
+      return telemetry.gear === -1 && telemetry.speedKph > 2;
     },
     undefined,
     { timeout: 10_000 },
@@ -546,7 +546,7 @@ test("reverse requires a second brake press after stopping", async ({ page }) =>
   await page.keyboard.up("ArrowDown");
   const reverse = await telemetry(page);
   expect(reverse.gear).toBe(-1);
-  expect(reverse.speedKph).toBeGreaterThan(1);
+  expect(reverse.speedKph).toBeGreaterThan(2);
 
   await page.keyboard.down("ArrowUp");
   await page.waitForFunction(
