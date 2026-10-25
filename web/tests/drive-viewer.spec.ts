@@ -40,6 +40,8 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   }
   expect(settled.telemetry.position[1]).toBeGreaterThan(-0.2);
   expect(settled.telemetry.position[1]).toBeLessThan(0.2);
+  expect([1024, 2048]).toContain(settled.telemetry.shadowMapSize);
+  expect(settled.telemetry.shadowFocus).toHaveLength(3);
   expect(pageErrors).toEqual([]);
 
   const tickBefore = settled.telemetry.tick;
@@ -55,6 +57,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(moving.speedKph).toBeGreaterThan(5);
   expect(moving.tick).toBeGreaterThan(tickBefore);
   expect(moving.contacts).toBe(4);
+  expect(moving.shadowFocus).not.toEqual(settled.telemetry.shadowFocus);
 
   await page.keyboard.press("r");
   await page.waitForTimeout(750);
@@ -97,41 +100,124 @@ test("info starts hidden and can be opened", async ({ page }) => {
   await expect(page.locator("#speed")).toBeVisible();
 });
 
-test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page }) => {
+test("settings tabs tune assists, graphics, and time of day", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await waitForReady(page);
-  await page.evaluate(() => localStorage.removeItem("lapster.assists.v1"));
+  await page.evaluate(() => {
+    localStorage.removeItem("lapster.settings.v2");
+    localStorage.removeItem("lapster.assists.v1");
+  });
+  await page.reload();
+  await waitForReady(page);
 
   await page.locator("#assists-open").click();
   await expect(page.locator("#assists-dialog")).toHaveAttribute("open", "");
 
+  const gameplayTab = page.locator("#tab-gameplay");
+  const graphicsTab = page.locator("#tab-graphics");
+  await expect(gameplayTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#settings-gameplay")).toBeVisible();
+  await expect(page.locator("#settings-graphics")).toBeHidden();
+  await graphicsTab.click();
+  await expect(graphicsTab).toHaveAttribute("aria-selected", "true");
+  await expect(gameplayTab).toHaveAttribute("aria-selected", "false");
+  await expect(page.locator("#settings-graphics")).toBeVisible();
+
   const tc = page.locator("#tc-toggle");
   const abs = page.locator("#abs-toggle");
   const esc = page.locator("#esc-toggle");
+  const debug = page.locator("#debug-lines-toggle");
+  const fpsToggle = page.locator("#fps-counter-toggle");
+  const fpsCounter = page.locator("#fps-counter");
+  const environment = page.locator("#environment-shadows");
+  const carShadow = page.locator("#car-shadow");
+  const timeRange = page.locator("#time-of-day");
+  const timeValue = page.locator("#time-of-day-value");
+  const timeApply = page.locator("#time-of-day-apply");
+  const msaa = page.locator("#msaa-mode");
+  const renderScale = page.locator("#render-scale");
+  const renderScaleValue = page.locator("#render-scale-value");
+  const view = page.locator("#view");
+
+  await expect(environment).toHaveValue("auto");
+  await expect(carShadow).toHaveValue("auto");
+  await expect(timeValue).toHaveText("15:00");
+  await expect(debug).toHaveText("Debug: Off");
+  await expect(fpsToggle).toHaveText("FPS: Off");
+  await expect(fpsCounter).toBeHidden();
+  await expect(renderScale).toHaveValue("1");
+  await expect(renderScaleValue).toHaveText("100%");
+  const fullWidth = await view.evaluate((element) => (element as HTMLCanvasElement).width);
+
+  await fpsToggle.click();
+  await expect(fpsToggle).toHaveText("FPS: On");
+  await expect(fpsToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(fpsCounter).toBeVisible();
+  await expect(fpsCounter).toHaveText(/\d+ fps/, { timeout: 10_000 });
+
+  await renderScale.selectOption("0.5");
+  await expect(renderScaleValue).toHaveText("50%");
+  await expect
+    .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
+    .toBe(Math.max(1, Math.floor(fullWidth * 0.5)));
+
+  await environment.selectOption("high");
+  await carShadow.selectOption("dynamic");
+  let telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.environmentShadowMode).toBe("high");
+  expect(telemetry.carShadowMode).toBe("dynamic");
+
+  await carShadow.selectOption("auto");
+  await environment.selectOption("baked");
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.environmentShadowMode).toBe("baked");
+  expect(telemetry.carShadowMode).toBe("silhouette");
+  expect(telemetry.bakedShadowResolution).toBe(4096);
+
+  await carShadow.selectOption("dynamic");
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.environmentShadowMode).toBe("baked");
+  expect(telemetry.carShadowMode).toBe("dynamic");
+
+  await environment.selectOption("off");
+  await carShadow.selectOption("off");
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.environmentShadowMode).toBe("off");
+  expect(telemetry.carShadowMode).toBe("off");
+
+  await environment.selectOption("baked");
+  await carShadow.selectOption("silhouette");
   await expect(tc).toHaveText("TC: On");
   await expect(abs).toHaveText("ABS: On");
   await expect(esc).toHaveText("ESC: On");
   await expect(tc).toHaveAttribute("aria-pressed", "true");
   await expect(abs).toHaveAttribute("aria-pressed", "true");
   await expect(esc).toHaveAttribute("aria-pressed", "true");
-  const debug = page.locator("#debug-lines-toggle");
-  await expect(debug).toHaveText("Debug: Off");
-  await expect(debug).toHaveAttribute("aria-pressed", "false");
-  const msaa = page.locator("#msaa-mode");
+
   await msaa.selectOption("off");
   let msaaTelemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(msaaTelemetry.msaaSamples).toBe(1);
+  expect(await page.evaluate(() => (window as any).__driveViewerError)).toBeUndefined();
   await expect(page.locator("#msaa-applied")).toHaveText("1×");
 
   await debug.click();
   await expect(debug).toHaveText("Debug: On");
-  let telemetry = await page.evaluate(() =>
+  telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.debugLinesVisible).toBe(true);
 
+  await page.locator("#tab-gameplay").click();
   await tc.click();
   await expect(tc).toHaveText("TC: Off");
   telemetry = await page.evaluate(() =>
@@ -173,6 +259,20 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   expect(telemetry.stabilityStrength).toBeCloseTo(0.6);
   expect(telemetry.steeringSensitivity).toBeCloseTo(1.25);
 
+  await page.locator("#tab-graphics").click();
+  await timeRange.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "18";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(timeValue).toHaveText("18:00");
+  await timeApply.click();
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.timeOfDay).toBeCloseTo(18);
+  expect(telemetry.sunElevation).toBeLessThan(0.75);
+
   await page.locator("#assists-reset").click();
   telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
@@ -184,7 +284,20 @@ test("settings dialog toggles and tunes TC, ESC, and steering", async ({ page })
   expect(telemetry.stabilityStrength).toBe(1);
   expect(telemetry.steeringSensitivity).toBe(1);
   expect(telemetry.debugLinesVisible).toBe(false);
-  await expect(page.locator("#msaa-mode")).toHaveValue("auto");
+  expect(telemetry.environmentShadowMode).toBe("high");
+  expect(telemetry.carShadowMode).toBe("dynamic");
+  expect(telemetry.timeOfDay).toBeCloseTo(15);
+  await expect(msaa).toHaveValue("auto");
+  await expect(environment).toHaveValue("auto");
+  await expect(carShadow).toHaveValue("auto");
+  await expect(timeValue).toHaveText("15:00");
+  await expect(fpsToggle).toHaveText("FPS: Off");
+  await expect(fpsCounter).toBeHidden();
+  await expect(renderScale).toHaveValue("1");
+  await expect(renderScaleValue).toHaveText("100%");
+  await expect
+    .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
+    .toBe(fullWidth);
 });
 
 test("60 second scripted soak stays finite", async ({ page }) => {
@@ -266,7 +379,11 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   await page.waitForTimeout(250);
 
   await page.keyboard.down("ArrowUp");
-  await page.waitForTimeout(1200);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 5,
+    undefined,
+    { timeout: 10_000 },
+  );
   await page.keyboard.up("ArrowUp");
   const forward = await telemetry(page);
   expect(forward.speedKph).toBeGreaterThan(5);

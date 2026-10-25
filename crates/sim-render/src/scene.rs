@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
@@ -53,6 +54,9 @@ pub struct MeshData {
     pub texture: Option<usize>,
     pub outline: Option<OutlineMesh>,
     pub alpha: f32,
+    pub casts_static_shadow: bool,
+    pub casts_dynamic_shadow: bool,
+    pub is_decal: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +81,9 @@ pub struct CarRig {
     pub wheels: Vec<RigWheel>,
     pub steering_mesh_index: Option<usize>,
     pub steering_local: Mat4,
+    pub decal_mesh_index: Option<usize>,
+    pub decal_width: f32,
+    pub decal_length: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +93,12 @@ pub struct GarageBay {
     pub name: String,
     pub color: [f32; 3],
     pub color_name: &'static str,
+    pub decal_mesh_index: Option<usize>,
+    pub decal_center: [f32; 3],
+    pub decal_yaw: f32,
+    pub decal_width: f32,
+    pub decal_length: f32,
+    pub decal_ground_y: f32,
 }
 
 pub struct Scene {
@@ -96,6 +109,7 @@ pub struct Scene {
     pub debug_info: String,
     pub wheels: Vec<SceneWheel>,
     pub garage_bays: Vec<GarageBay>,
+    pub car_mesh_range: Option<Range<usize>>,
     pub stats: SceneStats,
     pub car_rig: Option<CarRig>,
 }
@@ -184,6 +198,9 @@ impl Scene {
                 alpha: material
                     .map(|material| material.base_color[3])
                     .unwrap_or(1.0),
+                casts_static_shadow: true,
+                casts_dynamic_shadow: false,
+                is_decal: false,
             });
         }
 
@@ -241,6 +258,7 @@ impl Scene {
             debug_info,
             wheels: Vec::new(),
             garage_bays: Vec::new(),
+            car_mesh_range: None,
             stats,
             car_rig: None,
         })

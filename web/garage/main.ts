@@ -7,6 +7,8 @@ import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { saveSelectedBay, selectedBay as getSelectedBay } from "../src/ui/car-selection.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
+import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { recordFrame } from "../src/ui/fps.ts";
 
 declare global {
   interface Window {
@@ -17,6 +19,7 @@ declare global {
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
+let renderScale = 1;
 const status = document.querySelector<HTMLElement>("#status")!;
 const asset = document.querySelector<HTMLElement>("#asset")!;
 const carStats = document.querySelector<HTMLElement>("#car-stats")!;
@@ -94,7 +97,7 @@ async function loadPack(url: string) {
 }
 
 function resizeCanvas() {
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const ratio = Math.min(window.devicePixelRatio || 1, 2) * renderScale;
   const width = Math.max(1, Math.floor(canvas.clientWidth * ratio));
   const height = Math.max(1, Math.floor(canvas.clientHeight * ratio));
   if (canvas.width !== width || canvas.height !== height) {
@@ -184,6 +187,15 @@ async function boot() {
   status.textContent = "creating renderer";
   const viewer = await GarageViewer.create(canvas, trackPack.bytes, carPack.bytes);
   window.__garageViewer = viewer;
+  setupAssistsDialog(viewer, {
+    gameplay: false,
+    onRenderScale: (scale) => {
+      renderScale = scale;
+      if (resizeCanvas()) {
+        viewer.resize(canvas.width, canvas.height);
+      }
+    },
+  });
 
   const debug = JSON.parse(viewer.debug_info());
   renderDebug(debug);
@@ -273,6 +285,7 @@ async function boot() {
     frames += 1;
     accumulated += delta;
     frameTime += delta;
+    recordFrame(delta);
 
     if (animating) {
       spin = (spin + (delta / 1000) * 4.0) % (Math.PI * 2);

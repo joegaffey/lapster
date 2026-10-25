@@ -31,8 +31,8 @@ Forward rendering is the target.
   they are the practical choice.
 - No G-buffer, SSAO, bloom, screen-space edge detection, or other post-processing.
 - MSAA is preferred over post-process anti-aliasing.
-- Shadows are optional and can start as simple blob/projected shadows. A low-resolution
-  directional shadow map is acceptable later.
+- Shadows use a focused directional shadow map with soft PCF filtering. Keep the map
+  resolution and distance tight enough for stable, artifact-free results.
 
 ## 3. Outlines and Technical Lines
 

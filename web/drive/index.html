@@ -494,61 +494,7 @@
         </div>
       </footer>
     </dialog>
-    <dialog id="assists-dialog" aria-labelledby="assists-title">
-      <header class="setup-header">
-        <h2 id="assists-title">Settings</h2>
-        <button id="assists-close" type="button">Close</button>
-      </header>
-      <div class="assist-body">
-        <div class="assist-row">
-          <span>Traction control</span>
-          <button id="tc-toggle" data-testid="tc-toggle" aria-pressed="true" type="button">TC: On</button>
-        </div>
-        <label class="assist-slider">
-          <span>TC strength</span>
-          <output id="tc-strength-value">100%</output>
-          <input id="tc-strength" type="range" min="0" max="1" step="0.05" value="1" />
-        </label>
-        <div class="assist-row">
-          <span>Anti-lock brakes</span>
-          <button id="abs-toggle" data-testid="abs-toggle" aria-pressed="true" type="button">ABS: On</button>
-        </div>
-        <div class="assist-row">
-          <span>Stability control</span>
-          <button id="esc-toggle" data-testid="esc-toggle" aria-pressed="true" type="button">ESC: On</button>
-        </div>
-        <label class="assist-slider">
-          <span>ESC strength</span>
-          <output id="esc-strength-value">100%</output>
-          <input id="esc-strength" type="range" min="0" max="1" step="0.05" value="1" />
-        </label>
-        <label class="assist-slider">
-          <span>Steering sensitivity</span>
-          <output id="steering-sensitivity-value">100%</output>
-          <input id="steering-sensitivity" type="range" min="0.25" max="2" step="0.05" value="1" />
-        </label>
-        <label class="assist-slider">
-          <span>Anti-aliasing</span>
-          <output id="msaa-applied">—</output>
-          <select id="msaa-mode">
-            <option value="auto">Auto (4× desktop / 2× mobile)</option>
-            <option value="off">Off</option>
-            <option value="2x">2× MSAA</option>
-            <option value="4x">4× MSAA</option>
-          </select>
-        </label>
-        <div class="assist-row">
-          <span>Debug overlay</span>
-          <button id="debug-lines-toggle" aria-pressed="false" type="button">Debug: Off</button>
-        </div>
-      </div>
-      <footer class="setup-footer">
-        <p id="assists-status" class="setup-status" aria-live="polite">Changes apply live</p>
-        <div class="setup-actions">
-          <button id="assists-reset" type="button">Reset assists</button>
-        </div>
-      </footer>
-    </dialog>
+
     <div id="touch-controls" aria-label="Touch controls">
       <div class="touch-cluster">
         <button class="touch-button" data-key="a" type="button" draggable="false" aria-label="Steer left">

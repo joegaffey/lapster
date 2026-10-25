@@ -6,6 +6,7 @@ mod scene;
 use wasm_bindgen::prelude::*;
 
 use crate::camera::Camera;
+use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, GarageBay, Scene};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{Controls, TrackCollider, Vehicle, FIXED_DT};
@@ -45,10 +46,28 @@ impl TrackViewer {
             .map_err(|error| JsValue::from_str(&error))?;
         let debug_info = scene.debug_info.clone();
         let camera = scene.camera;
+        let shadow_focus = camera.target;
+        let (collision_center, region_half) = collision_region(&collision);
+        let region_center = metadata
+            .spawns
+            .first()
+            .map(|spawn| spawn.position)
+            .unwrap_or(collision_center);
+        let collider = TrackCollider::from_collision(&collision, &metadata);
+        let ground_y = collider
+            .raycast(
+                Vec3::new(region_center[0], region_center[1] + 100.0, region_center[2]),
+                Vec3::NEG_Y,
+                300.0,
+            )
+            .map(|hit| hit.point.y)
+            .unwrap_or(region_center[1]);
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
         let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
         renderer.set_lines_visible(false);
+        renderer.set_baked_region(region_center, region_half, ground_y);
+        renderer.set_shadow_focus(shadow_focus, TRACK_SHADOW_EXTENT);
         Ok(TrackViewer {
             renderer,
             debug_info,
@@ -73,6 +92,54 @@ impl TrackViewer {
         camera_json(&self.camera)
     }
 
+    pub fn set_environment_shadow_mode(&mut self, mode: &str) {
+        self.renderer
+            .set_environment_shadow_mode(environment_shadow_mode(mode));
+    }
+
+    pub fn environment_shadow_mode(&self) -> String {
+        environment_shadow_mode_name(self.renderer.environment_shadow_mode()).to_string()
+    }
+
+    pub fn set_car_shadow_mode(&mut self, mode: &str) {
+        self.renderer
+            .set_car_shadow_mode(car_shadow_mode(mode), false);
+    }
+
+    pub fn set_debug_lines_visible(&mut self, visible: bool) {
+        self.renderer.set_lines_visible(visible);
+    }
+
+    pub fn set_msaa_samples(&mut self, requested: u32) -> Result<u32, JsValue> {
+        let actual = self.renderer.set_msaa_samples(requested);
+        self.renderer.render()?;
+        Ok(actual)
+    }
+
+    pub fn msaa_samples(&self) -> u32 {
+        self.renderer.msaa_samples()
+    }
+
+    pub fn car_shadow_mode(&self) -> String {
+        car_shadow_mode_name(self.renderer.car_shadow_mode()).to_string()
+    }
+
+    pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
+        self.renderer.set_time_of_day(hours)
+    }
+
+    pub fn time_of_day(&self) -> f32 {
+        self.renderer.time_of_day()
+    }
+
+    pub fn baked_resolution(&self) -> u32 {
+        self.renderer.baked_resolution()
+    }
+
+    pub fn last_bake_ms(&self) -> f64 {
+        self.renderer.last_bake_ms()
+    }
+
     pub fn set_camera(
         &mut self,
         eye_x: f32,
@@ -85,11 +152,15 @@ impl TrackViewer {
         self.camera.eye = [eye_x, eye_y, eye_z];
         self.camera.target = [target_x, target_y, target_z];
         self.renderer.set_camera(self.camera);
+        self.renderer
+            .set_shadow_focus([target_x, target_y, target_z], TRACK_SHADOW_EXTENT);
     }
 
     pub fn reset_camera(&mut self) {
         self.camera = self.initial_camera;
         self.renderer.set_camera(self.camera);
+        self.renderer
+            .set_shadow_focus(self.camera.target, TRACK_SHADOW_EXTENT);
     }
 }
 
@@ -103,6 +174,7 @@ pub struct GarageViewer {
     spin: f32,
     initial_camera: Camera,
     camera: Camera,
+    car_shadow_range: Option<std::ops::Range<usize>>,
 }
 
 #[wasm_bindgen]
@@ -147,16 +219,48 @@ impl GarageViewer {
             &car_manifest,
             10,
             0,
+            true,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let bays = std::mem::take(&mut scene.garage_bays);
+        let car_shadow_range = scene.car_mesh_range.clone();
         let debug_info = scene.debug_info.clone();
         let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
+        let shadow_focus = camera.target;
+        let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
+        let spawn = track_metadata.spawns.first().cloned();
+        let center = spawn
+            .as_ref()
+            .map(|spawn| [spawn.position[0], spawn.position[1], spawn.position[2]])
+            .unwrap_or(shadow_focus);
+        let ground_y = collider
+            .raycast(
+                Vec3::new(center[0], center[1] + 100.0, center[2]),
+                Vec3::NEG_Y,
+                300.0,
+            )
+            .map(|hit| hit.point.y)
+            .unwrap_or(center[1]);
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for bay in &bays {
+            let point = Vec3::from_array(bay.decal_center);
+            min = min.min(point);
+            max = max.max(point);
+        }
+        let showroom_center = if min.is_finite() && max.is_finite() {
+            (min + max) * 0.5
+        } else {
+            Vec3::new(center[0], ground_y, center[2])
+        };
+        let showroom_half = ((max.x - min.x).max(max.z - min.z) * 0.5 + 20.0).clamp(60.0, 140.0);
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
         let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
         renderer.set_lines_visible(false);
-        Ok(GarageViewer {
+        renderer.set_baked_region(showroom_center.to_array(), showroom_half, ground_y);
+        renderer.set_shadow_focus(shadow_focus, GARAGE_SHADOW_EXTENT);
+        let mut viewer = GarageViewer {
             renderer,
             debug_info,
             bays,
@@ -165,7 +269,30 @@ impl GarageViewer {
             spin: 0.0,
             initial_camera: camera,
             camera,
-        })
+            car_shadow_range,
+        };
+        viewer.update_decals();
+        Ok(viewer)
+    }
+
+    fn update_decals(&mut self) {
+        let light = Vec3::from_array(self.renderer.sun_direction());
+        for bay in &self.bays {
+            let Some(index) = bay.decal_mesh_index else {
+                continue;
+            };
+            let height = (bay.decal_ground_y - bay.decal_center[1]).abs() + 0.7;
+            self.renderer.set_shadow_decal(
+                index,
+                bay.decal_center,
+                [0.0, 1.0, 0.0],
+                bay.decal_yaw,
+                bay.decal_width,
+                bay.decal_length,
+                light.to_array(),
+                height,
+            );
+        }
     }
 
     pub fn resize(&mut self, width: f32, height: f32) {
@@ -201,6 +328,8 @@ impl GarageViewer {
         self.selected_bay = index % self.bays.len();
         let camera = self.bays[self.selected_bay].camera;
         self.initial_camera = camera;
+        self.renderer
+            .set_shadow_focus(camera.target, GARAGE_SHADOW_EXTENT);
         self.apply_wheel_angles();
         camera_json(&camera)
     }
@@ -229,6 +358,61 @@ impl GarageViewer {
         camera_json(&self.camera)
     }
 
+    pub fn set_environment_shadow_mode(&mut self, mode: &str) {
+        self.renderer
+            .set_environment_shadow_mode(environment_shadow_mode(mode));
+    }
+
+    pub fn environment_shadow_mode(&self) -> String {
+        environment_shadow_mode_name(self.renderer.environment_shadow_mode()).to_string()
+    }
+
+    pub fn set_car_shadow_mode(&mut self, mode: &str) {
+        let mode = car_shadow_mode(mode);
+        self.renderer.set_car_shadow_mode(mode, false);
+        if let Some(range) = self.car_shadow_range.clone() {
+            self.renderer
+                .set_static_shadow_range(range, mode != CarShadowMode::Off);
+        }
+        self.update_decals();
+    }
+
+    pub fn set_debug_lines_visible(&mut self, visible: bool) {
+        self.renderer.set_lines_visible(visible);
+    }
+
+    pub fn set_msaa_samples(&mut self, requested: u32) -> Result<u32, JsValue> {
+        let actual = self.renderer.set_msaa_samples(requested);
+        self.renderer.render()?;
+        Ok(actual)
+    }
+
+    pub fn msaa_samples(&self) -> u32 {
+        self.renderer.msaa_samples()
+    }
+
+    pub fn car_shadow_mode(&self) -> String {
+        car_shadow_mode_name(self.renderer.car_shadow_mode()).to_string()
+    }
+
+    pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
+        let bake_ms = self.renderer.set_time_of_day(hours);
+        self.update_decals();
+        bake_ms
+    }
+
+    pub fn time_of_day(&self) -> f32 {
+        self.renderer.time_of_day()
+    }
+
+    pub fn baked_resolution(&self) -> u32 {
+        self.renderer.baked_resolution()
+    }
+
+    pub fn last_bake_ms(&self) -> f64 {
+        self.renderer.last_bake_ms()
+    }
+
     pub fn set_camera(
         &mut self,
         eye_x: f32,
@@ -241,11 +425,15 @@ impl GarageViewer {
         self.camera.eye = [eye_x, eye_y, eye_z];
         self.camera.target = [target_x, target_y, target_z];
         self.renderer.set_camera(self.camera);
+        self.renderer
+            .set_shadow_focus([target_x, target_y, target_z], GARAGE_SHADOW_EXTENT);
     }
 
     pub fn reset_camera(&mut self) {
         self.camera = self.initial_camera;
         self.renderer.set_camera(self.camera);
+        self.renderer
+            .set_shadow_focus(self.camera.target, GARAGE_SHADOW_EXTENT);
     }
 
     pub fn steer_angle(&self) -> f32 {
@@ -261,6 +449,63 @@ fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
+fn collision_region(collision: &sim_types::TrackCollision) -> ([f32; 3], f32) {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for vertex in &collision.vertices {
+        let point = Vec3::from_array(*vertex);
+        min = min.min(point);
+        max = max.max(point);
+    }
+    if !min.is_finite() || !max.is_finite() {
+        return ([0.0, 0.0, 0.0], 80.0);
+    }
+    let center = (min + max) * 0.5;
+    let span = max - min;
+    let half = (span.x.max(span.z) * 0.5 + 20.0).clamp(60.0, 220.0);
+    ([center.x, center.y, center.z], half)
+}
+
+pub(crate) fn shadow_decal_yaw(forward: Vec3) -> f32 {
+    (-forward.x).atan2(-forward.z)
+}
+
+fn environment_shadow_mode(mode: &str) -> EnvironmentShadowMode {
+    if mode.eq_ignore_ascii_case("baked") {
+        EnvironmentShadowMode::Baked
+    } else if mode.eq_ignore_ascii_case("off") {
+        EnvironmentShadowMode::Off
+    } else {
+        EnvironmentShadowMode::High
+    }
+}
+
+fn environment_shadow_mode_name(mode: EnvironmentShadowMode) -> &'static str {
+    match mode {
+        EnvironmentShadowMode::High => "high",
+        EnvironmentShadowMode::Baked => "baked",
+        EnvironmentShadowMode::Off => "off",
+    }
+}
+
+fn car_shadow_mode(mode: &str) -> CarShadowMode {
+    if mode.eq_ignore_ascii_case("silhouette") {
+        CarShadowMode::Silhouette
+    } else if mode.eq_ignore_ascii_case("off") {
+        CarShadowMode::Off
+    } else {
+        CarShadowMode::Dynamic
+    }
+}
+
+fn car_shadow_mode_name(mode: CarShadowMode) -> &'static str {
+    match mode {
+        CarShadowMode::Dynamic => "dynamic",
+        CarShadowMode::Silhouette => "silhouette",
+        CarShadowMode::Off => "off",
+    }
+}
+
 fn camera_json(camera: &Camera) -> String {
     serde_json::json!({
         "eye": camera.eye,
@@ -271,6 +516,9 @@ fn camera_json(camera: &Camera) -> String {
 }
 
 const COCKPIT_GLASS_ALPHA: f32 = 0.32;
+const DRIVE_SHADOW_EXTENT: f32 = 55.0;
+const GARAGE_SHADOW_EXTENT: f32 = 80.0;
+const TRACK_SHADOW_EXTENT: f32 = 120.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CameraMode {
@@ -349,6 +597,7 @@ impl DriveViewer {
             &car_manifest,
             1,
             car_bay,
+            false,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let rig = scene
@@ -379,9 +628,24 @@ impl DriveViewer {
         for _ in 0..500 {
             vehicle.step(Controls::default());
         }
+        let (_, region_half) = collision_region(&track_collision);
+        let region_center = vehicle.state.position.to_array();
+        let ground_y = vehicle
+            .state
+            .wheels
+            .iter()
+            .filter(|wheel| wheel.contact)
+            .map(|wheel| wheel.contact_point.y)
+            .fold(f32::INFINITY, f32::min);
+        let ground_y = if ground_y.is_finite() {
+            ground_y
+        } else {
+            region_center[1]
+        };
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        let renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        renderer.set_baked_region(region_center, region_half, ground_y);
 
         let previous_state = vehicle.state;
         let mut drive = DriveViewer {
@@ -523,6 +787,16 @@ impl DriveViewer {
             "car": self.car_id,
             "carBay": self.car_bay,
             "carColor": garage::BAY_COLOR_NAMES[self.car_bay],
+            "shadowMapSize": self.renderer.shadow_map_size(),
+            "carShadowMapSize": self.renderer.car_shadow_map_size(),
+            "shadowFocus": self.renderer.shadow_focus(),
+            "shadowsEnabled": self.renderer.shadows_enabled(),
+            "environmentShadowMode": environment_shadow_mode_name(self.renderer.environment_shadow_mode()),
+            "carShadowMode": car_shadow_mode_name(self.renderer.effective_car_shadow_mode()),
+            "timeOfDay": self.renderer.time_of_day(),
+            "sunElevation": self.renderer.sun_elevation(),
+            "bakedShadowResolution": self.renderer.baked_resolution(),
+            "shadowBakeMs": self.renderer.last_bake_ms(),
             "tick": state.tick,
             "speedKph": speed * 3.6,
             "speedMps": speed,
@@ -554,6 +828,47 @@ impl DriveViewer {
 
     pub fn info(&self) -> String {
         self.info.clone()
+    }
+
+    pub fn set_environment_shadow_mode(&mut self, mode: &str) {
+        self.renderer
+            .set_environment_shadow_mode(environment_shadow_mode(mode));
+    }
+
+    pub fn environment_shadow_mode(&self) -> String {
+        environment_shadow_mode_name(self.renderer.environment_shadow_mode()).to_string()
+    }
+
+    pub fn set_car_shadow_mode(&mut self, mode: &str) {
+        self.renderer
+            .set_car_shadow_mode(car_shadow_mode(mode), true);
+    }
+
+    pub fn car_shadow_mode(&self) -> String {
+        car_shadow_mode_name(self.renderer.car_shadow_mode()).to_string()
+    }
+
+    pub fn effective_car_shadow_mode(&self) -> String {
+        car_shadow_mode_name(self.renderer.effective_car_shadow_mode()).to_string()
+    }
+
+    pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
+        let bake_ms = self.renderer.set_time_of_day(hours);
+        self.update_visuals();
+        self.update_camera();
+        bake_ms
+    }
+
+    pub fn time_of_day(&self) -> f32 {
+        self.renderer.time_of_day()
+    }
+
+    pub fn baked_resolution(&self) -> u32 {
+        self.renderer.baked_resolution()
+    }
+
+    pub fn last_bake_ms(&self) -> f64 {
+        self.renderer.last_bake_ms()
     }
 
     pub fn set_camera_mode(&mut self, mode: &str) {
@@ -601,6 +916,14 @@ impl DriveViewer {
 
     pub fn set_debug_lines_visible(&mut self, visible: bool) {
         self.renderer.set_lines_visible(visible);
+    }
+
+    pub fn set_shadows_enabled(&mut self, enabled: bool) {
+        self.renderer.set_shadows_enabled(enabled);
+    }
+
+    pub fn shadows_enabled(&self) -> bool {
+        self.renderer.shadows_enabled()
     }
 
     pub fn set_msaa_samples(&mut self, requested: u32) -> Result<u32, JsValue> {
@@ -658,6 +981,16 @@ impl DriveViewer {
         let state = &self.vehicle.state;
         let (position, rotation) = self.visual_pose();
         let car_world = Mat4::from_rotation_translation(rotation, position);
+        let focus = if self.renderer.car_shadow_separate() {
+            Vec3::from_array(
+                self.renderer
+                    .car_shadow_focus((position + Vec3::Y * 0.5).to_array()),
+            )
+        } else {
+            position + rotation * Vec3::NEG_Z * 8.0 + Vec3::Y * 0.5
+        };
+        self.renderer
+            .set_shadow_focus(focus.to_array(), DRIVE_SHADOW_EXTENT);
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
         if let Some(index) = self.rig.glass_mesh_index {
@@ -679,6 +1012,41 @@ impl DriveViewer {
             let steer = state.wheels[0].steer_angle;
             let model = car_world * self.rig.steering_local * Mat4::from_rotation_x(-steer * 3.0);
             self.renderer.set_mesh_model(index, model);
+        }
+        if let Some(index) = self.rig.decal_mesh_index {
+            let mut contact_count = 0.0f32;
+            let mut contact = Vec3::ZERO;
+            let mut normal = Vec3::ZERO;
+            for wheel in &state.wheels {
+                if wheel.contact {
+                    contact += wheel.contact_point;
+                    normal += wheel.contact_normal;
+                    contact_count += 1.0;
+                }
+            }
+            let base = if contact_count > 0.0 {
+                contact / contact_count
+            } else {
+                position
+            };
+            let normal = if normal.length_squared() > 0.001 {
+                normal.normalize()
+            } else {
+                Vec3::Y
+            };
+            let light = Vec3::from_array(self.renderer.sun_direction());
+            let forward = rotation * Vec3::NEG_Z;
+            let yaw = shadow_decal_yaw(forward);
+            self.renderer.set_shadow_decal(
+                index,
+                base.to_array(),
+                normal.to_array(),
+                yaw,
+                self.rig.decal_width,
+                self.rig.decal_length,
+                light.to_array(),
+                0.7,
+            );
         }
     }
 
@@ -751,4 +1119,26 @@ fn performance_now() -> f64 {
         .and_then(|window| window.performance())
         .map(|performance| performance.now())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::FRAC_PI_2;
+
+    #[test]
+    fn shadow_decal_yaw_matches_car_heading() {
+        assert!(shadow_decal_yaw(Vec3::NEG_Z).abs() < 1e-6);
+        assert!((shadow_decal_yaw(Vec3::NEG_X) - FRAC_PI_2).abs() < 1e-6);
+        assert!((shadow_decal_yaw(Vec3::X) + FRAC_PI_2).abs() < 1e-6);
+        assert!((shadow_decal_yaw(Vec3::Z).abs() - std::f32::consts::PI).abs() < 1e-6);
+
+        for angle in [-2.5, -1.0, 0.0, 0.7, 2.8] {
+            let car = Quat::from_rotation_y(angle);
+            let forward = car * Vec3::NEG_Z;
+            let decal = Quat::from_rotation_y(shadow_decal_yaw(forward));
+            assert!((decal * Vec3::NEG_Z - forward).length() < 1e-5);
+            assert!((decal * Vec3::X - car * Vec3::X).length() < 1e-5);
+        }
+    }
 }

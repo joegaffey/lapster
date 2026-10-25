@@ -5,8 +5,13 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 VERSION="${LAPSTER_BUILD_VERSION:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)}"
+CHANNEL="${LAPSTER_BUILD_CHANNEL:-stable}"
+case "$CHANNEL" in
+  stable|dev) ;;
+  *) echo "LAPSTER_BUILD_CHANNEL must be stable or dev" >&2; exit 1 ;;
+esac
 mkdir -p web/src
-printf 'export const APP_VERSION = "%s";\n' "$VERSION" > web/src/version.generated.ts
+printf 'export const APP_VERSION = "%s";\nexport const BUILD_CHANNEL = "%s";\n' "$VERSION" "$CHANNEL" > web/src/version.generated.ts
 printf '{"version":"%s"}\n' "$VERSION" > web/version.json
 
 export PATH="$HOME/.cargo/bin:$PATH"
