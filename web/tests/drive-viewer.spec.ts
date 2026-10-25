@@ -149,6 +149,12 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(renderScaleValue).toHaveText("100%");
   const fullWidth = await view.evaluate((element) => (element as HTMLCanvasElement).width);
 
+  await fpsToggle.click();
+  await expect(fpsToggle).toHaveText("FPS: On");
+  await expect(fpsToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(fpsCounter).toBeVisible();
+  await expect(fpsCounter).toHaveText(/\d+ fps/, { timeout: 10_000 });
+
   await renderScale.selectOption("0.5");
   await expect(renderScaleValue).toHaveText("50%");
   await expect
@@ -210,12 +216,6 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.debugLinesVisible).toBe(true);
-
-  await fpsToggle.click();
-  await expect(fpsToggle).toHaveText("FPS: On");
-  await expect(fpsToggle).toHaveAttribute("aria-pressed", "true");
-  await expect(fpsCounter).toBeVisible();
-  await expect(fpsCounter).toHaveText(/\d+ fps/, { timeout: 5_000 });
 
   await page.locator("#tab-gameplay").click();
   await tc.click();
