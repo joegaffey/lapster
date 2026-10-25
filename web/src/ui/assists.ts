@@ -45,7 +45,8 @@ interface SettingsOptions {
 }
 
 const DEV_BUILD = BUILD_CHANNEL === "dev";
-const STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v3" : "lapster.settings.v2";
+const STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v3" : "lapster.settings.v3";
+const PREVIOUS_STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v2" : "lapster.settings.v2";
 const LEGACY_STORAGE_KEY = DEV_BUILD ? "" : "lapster.assists.v1";
 const SETTINGS_STYLE_ID = "lapster-settings-style";
 
@@ -65,13 +66,11 @@ const BASE_DEFAULTS: AssistSettings = {
   renderScale: 1,
 };
 
-const DEFAULTS: AssistSettings = DEV_BUILD
-  ? {
-      ...BASE_DEFAULTS,
-      environmentShadows: "baked",
-      carShadow: "dynamic",
-    }
-  : BASE_DEFAULTS;
+const DEFAULTS: AssistSettings = {
+  ...BASE_DEFAULTS,
+  environmentShadows: "baked",
+  carShadow: "dynamic",
+};
 
 const SETTINGS_STYLE = `
 #assists-dialog {
@@ -357,6 +356,23 @@ function load(): AssistSettings {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       return sanitize(JSON.parse(stored));
+    }
+    const previous = localStorage.getItem(PREVIOUS_STORAGE_KEY);
+    if (previous) {
+      const old = JSON.parse(previous) as Partial<AssistSettings> | null;
+      if (old && typeof old === "object") {
+        const migrateAutomaticShadows =
+          old.environmentShadows === undefined || old.environmentShadows === "auto";
+        return sanitize({
+          ...old,
+          environmentShadows: migrateAutomaticShadows ? "baked" : old.environmentShadows,
+          carShadow:
+            migrateAutomaticShadows &&
+            (old.carShadow === undefined || old.carShadow === "auto")
+              ? "dynamic"
+              : old.carShadow,
+        });
+      }
     }
     const legacy = LEGACY_STORAGE_KEY ? localStorage.getItem(LEGACY_STORAGE_KEY) : null;
     if (legacy) {
@@ -678,6 +694,7 @@ export function setupAssistsDialog(
     refresh();
     try {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(PREVIOUS_STORAGE_KEY);
       localStorage.removeItem(LEGACY_STORAGE_KEY);
     } catch {
       // Ignore storage failures.
