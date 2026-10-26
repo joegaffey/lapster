@@ -65,8 +65,7 @@ fallback when cross-origin isolation or worker startup fails.
   Main-thread physics remains available with `?physics=main`.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
   `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
-  audio. `?audio=synth` keeps the earlier lightweight worklet for comparison. The toolbar
-  mutes/unmutes it; there are no sample assets yet.
+  audio. The toolbar mutes/unmutes it; there are no sample assets yet.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment

@@ -15,7 +15,6 @@ import { PhysicsClient } from "../src/sim/physics.ts";
 import { SnapshotSmoother } from "../src/sim/interpolate.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
-import { DriveAudio } from "../src/audio/audio.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
 
 declare global {
@@ -23,7 +22,7 @@ declare global {
     __driveViewerReady?: boolean;
     __driveViewerError?: string;
     __driveViewer?: DriveViewer;
-    __driveAudio?: DriveAudio | EngineSimAudio;
+    __driveAudio?: EngineSimAudio;
   }
 }
 
@@ -71,8 +70,7 @@ let accumulated = 0;
 let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
-let audio: DriveAudio | EngineSimAudio | null = null;
-let audioSab: SharedArrayBuffer | null = null;
+let audio: EngineSimAudio | null = null;
 let workerAssists = {
   tc: true,
   tcStrength: 1,
@@ -365,7 +363,6 @@ async function boot() {
       const sab = new SharedArrayBuffer(SAB_TOTAL_SIZE);
       initializeSab(sab);
       validateSab(sab);
-      audioSab = sab;
       const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
       physics = client;
       smoother = new SnapshotSmoother(client.reader);
@@ -406,15 +403,8 @@ async function boot() {
   }
   window.__driveViewer = driver;
 
-  if (physicsWorker && audioSab) {
-    audio =
-      params.get("audio") === "synth"
-        ? new DriveAudio(audioSab, {
-            pulsesPerRev: 2,
-            idleRpm: 900,
-            redlineRpm: 8000,
-          })
-        : new EngineSimAudio();
+  if (physicsWorker) {
+    audio = new EngineSimAudio();
     window.__driveAudio = audio;
     updateAudioButton();
     canvas.addEventListener("pointerdown", () => void startAudio(), { once: true });

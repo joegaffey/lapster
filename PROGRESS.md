@@ -109,10 +109,9 @@ Toolchain setup scripts:
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
 - Audio spike: vendored Engine_Sim MIT synthesiser (`rotary2`) with combustion events,
-  exhaust/intake resonators, transmission, transients, and optional turbo. `?audio=synth`
-  keeps the earlier simple worklet; toolbar mute; no sample assets or track reverb yet.
-  Engine_Sim currently runs its own drivetrain for sound, so its RPM is not yet locked to the
-  vehicle state.
+  exhaust/intake resonators, transmission, transients, and optional turbo; toolbar mute; no
+  sample assets or track reverb yet. Engine_Sim currently runs its own drivetrain for sound,
+  so its RPM is not yet locked to the vehicle state.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -322,7 +321,7 @@ matrix then expands to the other supported wheelbases.
 
 1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset on the reference hardware.
    If it works, drive its combustion `f0`/load from our SAB snapshots instead of its internal
-   drivetrain; otherwise compare with `?audio=synth` and pick a direction.
+   drivetrain.
 2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
 3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
