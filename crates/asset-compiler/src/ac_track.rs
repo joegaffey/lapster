@@ -321,11 +321,10 @@ fn collision_surface_key(name: &str) -> Option<&'static str> {
             _ => None,
         };
     }
-    if upper.starts_with("2ROAD")
-        || upper.starts_with("1ROAD")
-        || upper == "CERCHI"
-        || upper == "TRANSITION"
-    {
+    if upper == "TRANSITION" {
+        return Some("ANELLO");
+    }
+    if upper.starts_with("2ROAD") || upper.starts_with("1ROAD") || upper == "CERCHI" {
         return Some("ASPHALT");
     }
     None
@@ -510,6 +509,7 @@ mod tests {
         assert_eq!(collision_surface_key("0GRASSext"), Some("GRASS"));
         assert_eq!(collision_surface_key("1ASPHALT"), Some("ASPHALT"));
         assert_eq!(collision_surface_key("2ROAD"), Some("ASPHALT"));
+        assert_eq!(collision_surface_key("TRANSITION"), Some("ANELLO"));
         assert_eq!(collision_surface_key("1WALL2_SUB0"), None);
     }
 

@@ -75,6 +75,7 @@ test("snapshot fields match the Rust ABI", () => {
   });
   assert.equal(SNAPSHOT_STATE_FLOATS, 64);
   assert.equal(SNAPSHOT_STATE.tick, 62);
+  assert.equal(SNAPSHOT_STATE.surfaceIds, 63);
   assert.equal(SNAPSHOT_FIELDS.state + SNAPSHOT_STATE_FLOATS * 4, SNAPSHOT_STRIDE);
 });
 

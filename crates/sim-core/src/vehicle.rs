@@ -43,6 +43,7 @@ pub struct WheelState {
     pub slip_ratio: f32,
     pub slip_angle: f32,
     pub surface_friction: f32,
+    pub surface_id: u16,
     pub contact_point: Vec3,
     pub contact_normal: Vec3,
     pub wheel_center: Vec3,
@@ -60,6 +61,7 @@ impl Default for WheelState {
             slip_ratio: 0.0,
             slip_angle: 0.0,
             surface_friction: 1.0,
+            surface_id: 0,
             contact_point: Vec3::ZERO,
             contact_normal: Vec3::Y,
             wheel_center: Vec3::ZERO,
@@ -533,6 +535,7 @@ impl Vehicle {
                 wheel_state.slip_ratio = slip_ratio;
                 wheel_state.slip_angle = slip_angle;
                 wheel_state.surface_friction = hit.friction;
+                wheel_state.surface_id = hit.surface;
                 wheel_state.contact_point = hit.point;
                 wheel_state.contact_normal = hit.normal;
                 wheel_state.wheel_center = wheel_center;

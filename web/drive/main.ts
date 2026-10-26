@@ -45,6 +45,7 @@ const rpmLabel = document.querySelector<HTMLElement>("#rpm")!;
 const gearLabel = document.querySelector<HTMLElement>("#gear")!;
 const contactsLabel = document.querySelector<HTMLElement>("#contacts")!;
 const rackTorqueLabel = document.querySelector<HTMLElement>("#rack-torque")!;
+const surfaceLabel = document.querySelector<HTMLElement>("#surface")!;
 const tickLabel = document.querySelector<HTMLElement>("#tick")!;
 const stepP50Label = document.querySelector<HTMLElement>("#step-p50")!;
 const stepP99Label = document.querySelector<HTMLElement>("#step-p99")!;
@@ -111,6 +112,17 @@ function updateHud(telemetry: any) {
   gearLabel.textContent = telemetry.gear < 0 ? "R" : `A${telemetry.gear}`;
   contactsLabel.textContent = `${telemetry.contacts}/4`;
   rackTorqueLabel.textContent = `${telemetry.steeringRackTorque.toFixed(1)} Nm`;
+  const surfaces = Array.from(
+    new Set(
+      telemetry.wheels
+        .filter((wheel: any) => wheel.contact && wheel.surface)
+        .map((wheel: any) => wheel.surface as string),
+    ),
+  );
+  const road = audio?.roadState();
+  surfaceLabel.textContent = surfaces.length
+    ? `${surfaces.join(" / ")} · ${road ? road.gain.toFixed(3) : "no audio"}`
+    : `air · ${road ? road.gain.toFixed(3) : "no audio"}`;
   tickLabel.textContent = String(telemetry.tick);
   stepP50Label.textContent = `${telemetry.stepP50Ms.toFixed(3)} ms`;
   stepP99Label.textContent = `${telemetry.stepP99Ms.toFixed(3)} ms`;

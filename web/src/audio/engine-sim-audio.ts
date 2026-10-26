@@ -14,6 +14,7 @@ export interface TireAudioWheel {
   slipAngle: number;
   load: number;
   contact: boolean;
+  surface?: string;
 }
 
 export class EngineSimAudio {
@@ -42,6 +43,10 @@ export class EngineSimAudio {
   private roadGrassGain: GainNode | null = null;
   private roadOuterGritGain: GainNode | null = null;
   private roadGrassRustleGain: GainNode | null = null;
+  private outerTremolo: GainNode | null = null;
+  private grassTremolo: GainNode | null = null;
+  private dirtLfos: OscillatorNode[] = [];
+  private dirtLfoGains: GainNode[] = [];
   private roadSurface = {
     asphalt: 0,
     concrete: 0,
@@ -135,24 +140,24 @@ export class EngineSimAudio {
       roadAsphalt.Q.value = 0.7;
       const roadConcrete = context.createBiquadFilter();
       roadConcrete.type = "lowpass";
-      roadConcrete.frequency.value = 260;
-      roadConcrete.Q.value = 0.7;
+      roadConcrete.frequency.value = 320;
+      roadConcrete.Q.value = 0.9;
       const roadOuterGrit = context.createBiquadFilter();
       roadOuterGrit.type = "bandpass";
-      roadOuterGrit.frequency.value = 900;
+      roadOuterGrit.frequency.value = 650;
       roadOuterGrit.Q.value = 0.8;
       const roadKerb = context.createBiquadFilter();
       roadKerb.type = "bandpass";
-      roadKerb.frequency.value = 620;
-      roadKerb.Q.value = 2.2;
+      roadKerb.frequency.value = 520;
+      roadKerb.Q.value = 2.0;
       const roadGrass = context.createBiquadFilter();
       roadGrass.type = "lowpass";
-      roadGrass.frequency.value = 260;
-      roadGrass.Q.value = 0.55;
+      roadGrass.frequency.value = 220;
+      roadGrass.Q.value = 0.7;
       const roadGrassRustle = context.createBiquadFilter();
       roadGrassRustle.type = "bandpass";
-      roadGrassRustle.frequency.value = 1_650;
-      roadGrassRustle.Q.value = 0.9;
+      roadGrassRustle.frequency.value = 600;
+      roadGrassRustle.Q.value = 0.7;
       const roadAsphaltGain = context.createGain();
       const roadConcreteGain = context.createGain();
       const roadKerbGain = context.createGain();
@@ -178,11 +183,40 @@ export class EngineSimAudio {
       roadGrass.connect(roadGrassGain);
       roadGrassRustle.connect(roadGrassRustleGain);
       roadAsphaltGain.connect(gain);
-      roadConcreteGain.connect(gain);
-      roadOuterGritGain.connect(gain);
       roadKerbGain.connect(gain);
-      roadGrassGain.connect(gain);
-      roadGrassRustleGain.connect(gain);
+      const outerTremolo = context.createGain();
+      const grassTremolo = context.createGain();
+      outerTremolo.gain.value = 1;
+      grassTremolo.gain.value = 1;
+      roadConcreteGain.connect(outerTremolo);
+      roadOuterGritGain.connect(outerTremolo);
+      roadGrassGain.connect(grassTremolo);
+      roadGrassRustleGain.connect(grassTremolo);
+      outerTremolo.connect(gain);
+      grassTremolo.connect(gain);
+      const dirtLfos: OscillatorNode[] = [];
+      const dirtLfoGains: GainNode[] = [];
+      for (const [frequency, depth, target] of [
+        [6.3, 0.22, outerTremolo],
+        [10.7, 0.14, outerTremolo],
+        [4.7, 0.26, grassTremolo],
+        [8.9, 0.12, grassTremolo],
+      ] as Array<[number, number, GainNode]>) {
+        const lfo = context.createOscillator();
+        lfo.type = "sine";
+        lfo.frequency.value = frequency;
+        const depthGain = context.createGain();
+        depthGain.gain.value = depth;
+        lfo.connect(depthGain);
+        depthGain.connect(target.gain);
+        lfo.start();
+        dirtLfos.push(lfo);
+        dirtLfoGains.push(depthGain);
+      }
+      this.outerTremolo = outerTremolo;
+      this.grassTremolo = grassTremolo;
+      this.dirtLfos = dirtLfos;
+      this.dirtLfoGains = dirtLfoGains;
       source.start();
       this.roadAsphalt = roadAsphalt;
       this.roadConcrete = roadConcrete;
@@ -231,6 +265,12 @@ export class EngineSimAudio {
       this.roadGrassGain = null;
       this.roadOuterGritGain = null;
       this.roadGrassRustleGain = null;
+      for (const lfo of this.dirtLfos) lfo.stop();
+      for (const lfo of this.dirtLfos) lfo.disconnect();
+      this.dirtLfos = [];
+      this.dirtLfoGains = [];
+      this.outerTremolo = null;
+      this.grassTremolo = null;
       this.sim?.dispose();
       this.sim = null;
       await this.context?.close();
@@ -323,15 +363,15 @@ export class EngineSimAudio {
       if (!wheel.contact) {
         continue;
       }
-      const friction = wheel.surfaceFriction;
-      if (friction < 0.5) {
+      const surface = (wheel.surface ?? "").toUpperCase();
+      if (surface.includes("GRASS")) {
         grass += 1;
-      } else if (friction < 0.95) {
+      } else if (surface.includes("KERB")) {
         kerb += 1;
-      } else if (friction < 0.985) {
-        asphalt += 1;
-      } else {
+      } else if (surface.includes("ANELLO")) {
         concrete += 1;
+      } else {
+        asphalt += 1;
       }
       const lateral = Math.abs(wheel.slipAngle);
       const longitudinal = Math.abs(wheel.slipRatio);
@@ -372,12 +412,12 @@ export class EngineSimAudio {
     const grassWeight = grass / 4;
     const rolling = Math.max(0, Math.min(1, speedMps / 30));
     const grassRolling = Math.max(0, Math.min(1, speedMps / 12));
-    const asphaltGain = rolling * 0.16 * asphaltWeight;
-    const concreteGain = rolling * 0.34 * concreteWeight;
-    const outerGritGain = rolling * 0.14 * concreteWeight;
-    const kerbGain = rolling * 0.22 * kerbWeight;
-    const grassGain = grassRolling * 0.42 * grassWeight;
-    const grassRustleGain = grassRolling * 0.10 * grassWeight;
+    const asphaltGain = rolling * 0.18 * asphaltWeight;
+    const concreteGain = rolling * 2.2 * concreteWeight;
+    const outerGritGain = rolling * 0.35 * concreteWeight;
+    const kerbGain = rolling * 0.5 * kerbWeight;
+    const grassGain = grassRolling * 1.5 * grassWeight;
+    const grassRustleGain = grassRolling * 0.2 * grassWeight;
     this.roadSurface = {
       asphalt: asphaltWeight,
       concrete: concreteWeight,
@@ -503,6 +543,14 @@ export class EngineSimAudio {
     this.roadGrassGain?.disconnect();
     this.roadOuterGritGain?.disconnect();
     this.roadGrassRustleGain?.disconnect();
+    for (const lfo of this.dirtLfos) lfo.stop();
+    for (const lfo of this.dirtLfos) lfo.disconnect();
+    this.dirtLfos = [];
+    this.dirtLfoGains = [];
+    this.outerTremolo?.disconnect();
+    this.grassTremolo?.disconnect();
+    this.outerTremolo = null;
+    this.grassTremolo = null;
     this.roadAsphalt = null;
     this.roadConcrete = null;
     this.roadKerb = null;

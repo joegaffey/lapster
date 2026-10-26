@@ -73,6 +73,7 @@ export const SNAPSHOT_STATE = {
   absActive: 60,
   escActivity: 61,
   tick: 62,
+  surfaceIds: 63,
 } as const;
 
 export const INPUT_MAILBOX_FIELDS = {

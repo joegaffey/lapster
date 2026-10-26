@@ -122,8 +122,9 @@ Toolchain setup scripts:
   and longitudinal slip, load, contact, and speed; it fires for cornering scrub, wheelspin,
   and lockup; its threshold is skid excess rather than ordinary cornering slip, and its gain
   is exposed for diagnostics/tests. A road/surface bed blends asphalt roar, light-brown
-  outer-ring dirt rumble/grit, kerb patter, and grass rumble/rustle from per-wheel friction
-  and speed; tire squeal is suppressed on grass. Both expose state for diagnostics/tests.
+  outer-ring dirt rumble/grit, kerb patter, and grass rumble/rustle from per-wheel surface
+  names and speed; tire squeal is suppressed on grass. The HUD exposes the current wheel
+  surface and road-noise gain. Both expose state for diagnostics/tests.
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
   the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
@@ -206,8 +207,9 @@ Toolchain setup scripts:
     drivable collision subset.
   - First local fixture: Skidpad 0.5, 76,545 visual triangles, 43,885 collision triangles,
     30 draw calls.
-  - Collision includes the central pad, ASP surfaces, outer ANELLO ring, and grass; grass
-    friction is capped at 0.35. Textures are not imported and walls/fences remain visual-only.
+  - Collision includes the central pad, ASP surfaces, outer ANELLO ring, and grass; the tan
+    `TRANSITION` mesh is tagged `ANELLO` so the outer-ring audio layer engages. Grass friction
+    is capped at 0.35. Textures are not imported and walls/fences remain visual-only.
   - Visual coplanar layers are offset: the concrete apron sits 1.5 cm below the tarmac, and
     thin road overlays sit 5 mm above it.
 - Build freshness: generated build version in default pack URLs, `version.json` checks on
@@ -296,12 +298,12 @@ matrix then expands to the other supported wheelbases.
   cue). Launch slip and some overrun pops are reduced. The conditioned audio RPM lags the raw
   signal by roughly 60 ms outside shifts. There is no per-car profile, sample layer, Doppler,
   reverb zones, or mobile listening test yet. Tire screech is a first-pass centered noise layer
-  with no per-axle panning or sample layer. Surface noise classifies friction into
-  asphalt / kerb / concrete-or-outer / grass; the thresholds are tuned to Skidpad's 0.97
-  asphalt, 0.92 kerb, 0.99 ANELLO, and 0.35 grass. The ANELLO case uses a low-pass rumble
-  plus a grit band; grass uses a lower rumble plus a high rustle band. It does not use surface
-  names yet, and is centered mono. Audio is unavailable when physics falls back to the main
-  thread because there is no SAB producer.
+  with no per-axle panning or sample layer. Surface noise uses per-wheel surface names
+  (`ASPHALT`/`ASP*`, `KERB`, `ANELLO`, `GRASS`). Skidpad's tan `TRANSITION` mesh is mapped to
+  `ANELLO` by the AC importer so its dirt layer engages. The ANELLO case uses a low-pass
+  rumble plus grit and amplitude modulation; grass uses a lower rumble plus a low rustle band.
+  Noise is centered mono. Audio is unavailable when physics falls back to the main thread
+  because there is no SAB producer.
 - The raw `sim-core` engine RPM is still wheel-speed-derived and visibly oscillates during
   wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
   but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a
