@@ -212,13 +212,14 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
               gear: 1,
               buttons: 0,
             });
-            return client.reset();
+            return client.reset().then(() => syncLatest());
           };
         case "telemetry":
           return () => {
             const base = JSON.parse(object.telemetry());
             base.stepP50Ms = client.diagnostics.stepP50Ms;
             base.stepP99Ms = client.diagnostics.stepP99Ms;
+            base.physicsHz = client.diagnostics.physicsHz;
             base.physicsMode = "sab";
             base.workerDroppedTicks = client.diagnostics.droppedTicks;
             base.workerCatchupEvents = client.diagnostics.catchupEvents;
@@ -305,7 +306,8 @@ async function boot() {
   asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
 
   let driver: DriveViewer = viewer;
-  if (params.get("physics") !== "main" && window.crossOriginIsolated) {
+  const requestedPhysics = params.get("physics");
+  if ((requestedPhysics === "worker" || requestedPhysics === "sab") && window.crossOriginIsolated) {
     try {
       status.textContent = "starting physics worker";
       const sab = new SharedArrayBuffer(SAB_TOTAL_SIZE);

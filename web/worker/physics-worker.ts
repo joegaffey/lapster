@@ -1,5 +1,5 @@
 import init, { Simulation } from "../pkg/worker/sim_worker.js";
-import { SNAPSHOT_STATE } from "../src/types/asset-layout.ts";
+import { HEADER_FIELDS, SNAPSHOT_STATE } from "../src/types/asset-layout.ts";
 import {
   clearReset,
   getSabFlags,
@@ -10,12 +10,16 @@ import {
   type InputState,
 } from "../src/sim/sab.ts";
 
-const FIXED_DT = 1 / 500;
-const MAX_STEPS = 4;
+const FIXED_STEP_MS = 1000 / 500;
+const MAX_CATCHUP_STEPS = 32;
+const MAX_LAG_MS = 250;
+const PAUSED_WAIT_MS = 20;
 
 let simulation: Simulation | null = null;
-let timer: ReturnType<typeof setTimeout> | null = null;
 let sab: SharedArrayBuffer | null = null;
+let waitWord: Int32Array | null = null;
+let channel: MessageChannel | null = null;
+let loopGeneration = 0;
 let paused = false;
 let lastInput: InputState = {
   steering: 0,
@@ -26,93 +30,163 @@ let lastInput: InputState = {
   buttons: 0,
   timestampSeconds: 0,
 };
-let lastTime = performance.now();
-let accumulator = 0;
+let nextDeadline = performance.now();
 let droppedTicks = 0;
 let catchupEvents = 0;
 let stepTimes: number[] = [];
-let lastDiagnostics = performance.now();
+let lastDiagnosticsTime = performance.now();
+let lastDiagnosticsTick = 0;
 
 function post(type: string, payload: Record<string, unknown> = {}): void {
   self.postMessage({ type, ...payload });
 }
 
-function startLoop(): void {
-  if (timer !== null) {
-    clearTimeout(timer);
-  }
-  lastTime = performance.now();
-  accumulator = 0;
-  const loop = () => {
-    if (!simulation || !sab) {
-      timer = null;
-      return;
-    }
-    const now = performance.now();
-    const dt = Math.min((now - lastTime) / 1000, 0.05);
-    lastTime = now;
-    if (!paused) {
-      accumulator += dt;
-      let steps = 0;
-      while (accumulator >= FIXED_DT && steps < MAX_STEPS) {
-        lastInput = readInput(sab, lastInput);
-        const started = performance.now();
-        simulation.step(
-          lastInput.throttle,
-          lastInput.brake,
-          lastInput.steering,
-          lastInput.gear,
-        );
-        stepTimes.push(performance.now() - started);
-        if (stepTimes.length > 250) {
-          stepTimes.shift();
-        }
-        accumulator -= FIXED_DT;
-        steps += 1;
-        const state = simulation.snapshot();
-        publishSnapshot(sab, Number(simulation.tick()), Date.now() / 1000, new Float32Array(state));
-        writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 10)), true);
-      }
-      if (steps === MAX_STEPS && accumulator >= FIXED_DT) {
-        accumulator = 0;
-        droppedTicks += 1;
-      }
-      if (steps === MAX_STEPS) {
-        catchupEvents += 1;
-      }
-      if ((getSabFlags(sab) & 2) !== 0) {
-        simulation.reset();
-        clearReset(sab);
-        accumulator = 0;
-        publishSnapshot(sab, Number(simulation.tick()), Date.now() / 1000, new Float32Array(simulation.snapshot()));
-      }
-    } else {
-      accumulator = 0;
-    }
-
-    if (now - lastDiagnostics >= 500) {
-      lastDiagnostics = now;
-      const sorted = [...stepTimes].sort((a, b) => a - b);
-      const p50 = sorted[Math.min(sorted.length - 1, Math.round(sorted.length * 0.5))] ?? 0;
-      const p99 = sorted[Math.min(sorted.length - 1, Math.round(sorted.length * 0.99))] ?? 0;
-      post("diagnostics", {
-        tick: Number(simulation.tick()),
-        stepP50Ms: p50,
-        stepP99Ms: p99,
-        droppedTicks,
-        catchupEvents,
-      });
-    }
-    timer = setTimeout(loop, 1);
-  };
-  timer = setTimeout(loop, 1);
+function schedule(): void {
+  channel?.port2.postMessage(0);
 }
 
 function stopLoop(): void {
-  if (timer !== null) {
-    clearTimeout(timer);
-    timer = null;
+  loopGeneration += 1;
+  if (!channel) {
+    return;
   }
+  channel.port1.onmessage = null;
+  channel.port1.close();
+  channel.port2.close();
+  channel = null;
+}
+
+function startLoop(): void {
+  stopLoop();
+  const generation = loopGeneration;
+  const next = new MessageChannel();
+  channel = next;
+  next.port1.onmessage = () => {
+    if (generation !== loopGeneration) {
+      return;
+    }
+    runSlice(generation);
+  };
+  nextDeadline = performance.now();
+  lastDiagnosticsTime = performance.now();
+  lastDiagnosticsTick = simulation ? Number(simulation.tick()) : 0;
+  schedule();
+}
+
+function wake(): void {
+  if (waitWord) {
+    Atomics.notify(waitWord, 0);
+  }
+}
+
+function markDiagnosticsBaseline(): void {
+  lastDiagnosticsTime = performance.now();
+  lastDiagnosticsTick = simulation ? Number(simulation.tick()) : 0;
+}
+
+function publish(): void {
+  if (!simulation || !sab) {
+    return;
+  }
+  publishSnapshot(
+    sab,
+    Number(simulation.tick()),
+    Date.now() / 1000,
+    new Float32Array(simulation.snapshot()),
+  );
+}
+
+function resetFromFlag(): void {
+  if (!simulation || !sab || (getSabFlags(sab) & 2) === 0) {
+    return;
+  }
+  simulation.reset();
+  clearReset(sab);
+  nextDeadline = performance.now();
+  markDiagnosticsBaseline();
+  publish();
+}
+
+function runSlice(generation: number): void {
+  if (generation !== loopGeneration || !simulation || !sab || !waitWord) {
+    return;
+  }
+
+  resetFromFlag();
+
+  if (paused) {
+    Atomics.wait(waitWord, 0, Atomics.load(waitWord, 0), PAUSED_WAIT_MS);
+    emitDiagnostics(performance.now());
+    schedule();
+    return;
+  }
+
+  const now = performance.now();
+  const waitMs = nextDeadline - now;
+  if (waitMs > 0) {
+    Atomics.wait(waitWord, 0, Atomics.load(waitWord, 0), waitMs);
+  }
+
+  const current = performance.now();
+  let steps = 0;
+  while (current >= nextDeadline && steps < MAX_CATCHUP_STEPS) {
+    lastInput = readInput(sab, lastInput);
+    const started = performance.now();
+    simulation.step(
+      lastInput.throttle,
+      lastInput.brake,
+      lastInput.steering,
+      lastInput.gear,
+    );
+    stepTimes.push(performance.now() - started);
+    if (stepTimes.length > 250) {
+      stepTimes.shift();
+    }
+    nextDeadline += FIXED_STEP_MS;
+    steps += 1;
+    const state = simulation.snapshot();
+    publishSnapshot(
+      sab,
+      Number(simulation.tick()),
+      Date.now() / 1000,
+      new Float32Array(state),
+    );
+    writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 10)), true);
+  }
+
+  if (steps > 1) {
+    catchupEvents += 1;
+  }
+  if (steps === MAX_CATCHUP_STEPS && current - nextDeadline > MAX_LAG_MS) {
+    droppedTicks += Math.max(0, Math.round((current - nextDeadline) / FIXED_STEP_MS));
+    nextDeadline = current;
+  }
+
+  emitDiagnostics(performance.now());
+  schedule();
+}
+
+function emitDiagnostics(now: number): void {
+  if (!simulation || now - lastDiagnosticsTime < 500) {
+    return;
+  }
+  const tick = Number(simulation.tick());
+  const elapsedSeconds = (now - lastDiagnosticsTime) / 1000;
+  const physicsHz =
+    elapsedSeconds > 0 ? (tick - lastDiagnosticsTick) / elapsedSeconds : 0;
+  lastDiagnosticsTime = now;
+  lastDiagnosticsTick = tick;
+  const sorted = [...stepTimes].sort((a, b) => a - b);
+  const p50 = sorted[Math.min(sorted.length - 1, Math.round(sorted.length * 0.5))] ?? 0;
+  const p99 = sorted[Math.min(sorted.length - 1, Math.round(sorted.length * 0.99))] ?? 0;
+  post("diagnostics", {
+    tick,
+    physicsHz,
+    stepP50Ms: p50,
+    stepP99Ms: p99,
+    droppedTicks,
+    catchupEvents,
+  });
 }
 
 self.onmessage = async (event: MessageEvent) => {
@@ -121,6 +195,7 @@ self.onmessage = async (event: MessageEvent) => {
     try {
       sab = message.sab as SharedArrayBuffer;
       validateSab(sab);
+      waitWord = new Int32Array(sab, HEADER_FIELDS.flags, 1);
       await init();
       simulation = new Simulation(message.trackBytes, message.carBytes);
       post("ready", { setup: simulation.setup() });
@@ -141,23 +216,21 @@ self.onmessage = async (event: MessageEvent) => {
   switch (message?.type) {
     case "pause":
       paused = true;
-      stopLoop();
-      startLoop();
+      wake();
       post("ack", { id: message.id });
       break;
     case "resume":
       paused = false;
-      lastTime = performance.now();
-      accumulator = 0;
-      startLoop();
+      nextDeadline = performance.now();
+      markDiagnosticsBaseline();
+      wake();
       post("ack", { id: message.id });
       break;
     case "reset":
       simulation.reset();
-      accumulator = 0;
-      if (sab) {
-        publishSnapshot(sab, Number(simulation.tick()), Date.now() / 1000, new Float32Array(simulation.snapshot()));
-      }
+      nextDeadline = performance.now();
+      markDiagnosticsBaseline();
+      publish();
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
     case "simulate": {
@@ -168,11 +241,9 @@ self.onmessage = async (event: MessageEvent) => {
         message.steering,
         message.gear,
       );
-      if (sab) {
-        publishSnapshot(sab, Number(simulation.tick()), Date.now() / 1000, new Float32Array(simulation.snapshot()));
-      }
-      lastTime = performance.now();
-      accumulator = 0;
+      nextDeadline = performance.now();
+      markDiagnosticsBaseline();
+      publish();
       post("ack", { id: message.id, tick });
       break;
     }

@@ -34,7 +34,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(Number(settled.speed)).toBeLessThan(1);
   expect(settled.contacts).toBe("4/4");
   expect(settled.telemetry.tick).toBeGreaterThan(0);
-  expect(settled.telemetry.physicsMode).toBe("sab");
+  expect(settled.telemetry.physicsMode).toBeUndefined();
   expect(["BrowserWebGpu", "Gl"]).toContain(settled.telemetry.rendererBackend);
   if (!process.env.CI) {
     expect(settled.telemetry.rendererBackend).toBe("BrowserWebGpu");
@@ -115,6 +115,17 @@ test("main-thread physics remains available as a fallback", async ({ page }) => 
     { timeout: 10_000 },
   );
   await page.keyboard.up("w");
+});
+
+test("worker physics is available with an explicit opt-in", async ({ page }) => {
+  await page.goto("/web/drive/?physics=worker&track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await waitForReady(page);
+  await page.waitForTimeout(1_000);
+
+  const state = await telemetry(page);
+  expect(state.physicsMode).toBe("sab");
+  expect(state.physicsHz).toBeGreaterThan(0);
+  expect(state.tick).toBeGreaterThan(0);
 });
 
 test("info starts hidden and can be opened", async ({ page }) => {
