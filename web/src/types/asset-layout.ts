@@ -1,5 +1,5 @@
 export const SAB_MAGIC = "LSIM";
-export const SAB_LAYOUT_VERSION = 1;
+export const SAB_LAYOUT_VERSION = 2;
 export const SAB_TOTAL_SIZE = 4096;
 
 export const HEADER_OFFSET = 0;
@@ -7,17 +7,17 @@ export const HEADER_SIZE = 64;
 
 export const SNAPSHOT_OFFSET = 64;
 export const SNAPSHOT_COUNT = 4;
-export const SNAPSHOT_STRIDE = 256;
+export const SNAPSHOT_STRIDE = 288;
 export const SNAPSHOT_REGION_SIZE = SNAPSHOT_COUNT * SNAPSHOT_STRIDE;
 
-export const INPUT_MAILBOX_OFFSET = 1088;
+export const INPUT_MAILBOX_OFFSET = 1216;
 export const INPUT_MAILBOX_SIZE = 64;
 
-export const FFB_MAILBOX_OFFSET = 1152;
+export const FFB_MAILBOX_OFFSET = 1280;
 export const FFB_MAILBOX_SIZE = 64;
 
-export const RESERVED_OFFSET = 1216;
-export const RESERVED_SIZE = 2880;
+export const RESERVED_OFFSET = 1344;
+export const RESERVED_SIZE = 2752;
 
 export const HEADER_FLAG_PAUSED = 1 << 0;
 export const HEADER_FLAG_RESET = 1 << 1;
@@ -44,19 +44,35 @@ export const SNAPSHOT_FIELDS = {
   tick: 8,
   timestampSeconds: 16,
   reserved1: 24,
-  position: 32,
-  rotationXyzw: 48,
-  velocity: 64,
-  angularVelocity: 80,
-  wheelAngularSpeeds: 96,
-  suspensionTravel: 112,
-  engineRpmRackTorqueThrottleBrake: 128,
-  slipRatio: 144,
-  slipAngle: 160,
-  tireLoad: 176,
-  contactFlags: 192,
-  surfaceFriction: 208,
-  reserved2: 224,
+  state: 32,
+} as const;
+
+export const SNAPSHOT_STATE_FLOATS = 64;
+
+export const SNAPSHOT_STATE = {
+  position: 0,
+  rotation: 3,
+  velocity: 7,
+  angularVelocity: 10,
+  wheelAngularSpeeds: 13,
+  suspensionTravel: 17,
+  engineRpm: 21,
+  rackTorque: 22,
+  throttle: 23,
+  brake: 24,
+  slipRatio: 25,
+  slipAngle: 29,
+  tireLoad: 33,
+  contactFlags: 37,
+  surfaceFriction: 41,
+  wheelSteerAngle: 45,
+  wheelSpinAngle: 49,
+  contactCenter: 53,
+  contactNormal: 56,
+  gear: 59,
+  absActive: 60,
+  escActivity: 61,
+  tick: 62,
 } as const;
 
 export const INPUT_MAILBOX_FIELDS = {

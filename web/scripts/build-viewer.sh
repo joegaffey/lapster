@@ -29,6 +29,22 @@ WASM_OPT="$(bash web/scripts/ensure-wasm-opt.sh)"
   --enable-multivalue \
   web/pkg/sim_render_bg.wasm -o web/pkg/sim_render_bg.wasm.opt
 mv web/pkg/sim_render_bg.wasm.opt web/pkg/sim_render_bg.wasm
+
+cargo build -p sim-worker --release --target wasm32-unknown-unknown
+rm -rf web/pkg/worker
+wasm-bindgen --target web --out-dir web/pkg/worker target/wasm32-unknown-unknown/release/sim_worker.wasm
+"$WASM_OPT" -O3 \
+  --enable-bulk-memory \
+  --enable-bulk-memory-opt \
+  --enable-nontrapping-float-to-int \
+  --enable-mutable-globals \
+  --enable-sign-ext \
+  --enable-reference-types \
+  --enable-multivalue \
+  web/pkg/worker/sim_worker_bg.wasm -o web/pkg/worker/sim_worker_bg.wasm.opt
+mv web/pkg/worker/sim_worker_bg.wasm.opt web/pkg/worker/sim_worker_bg.wasm
+
 npx esbuild web/track-viewer/main.ts --bundle --format=esm --outfile=web/track-viewer/main.js --external:../pkg/*
 npx esbuild web/garage/main.ts --bundle --format=esm --outfile=web/garage/main.js --external:../pkg/*
 npx esbuild web/drive/main.ts --bundle --format=esm --outfile=web/drive/main.js --external:../pkg/*
+npx esbuild web/worker/physics-worker.ts --bundle --format=esm --outfile=web/worker/physics-worker.js --external:../pkg/worker/*

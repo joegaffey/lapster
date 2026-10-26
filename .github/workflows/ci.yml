@@ -18,7 +18,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      - run: cargo check -p sim-types -p sim-asset -p sim-core -p sim-render --target wasm32-unknown-unknown
+      - run: cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker --target wasm32-unknown-unknown
 
   web:
     runs-on: ubuntu-latest

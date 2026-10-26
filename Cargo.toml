@@ -6,6 +6,7 @@ members = [
     "crates/asset-compiler",
     "crates/sim-core",
     "crates/sim-render",
+    "crates/sim-worker",
 ]
 
 [workspace.package]

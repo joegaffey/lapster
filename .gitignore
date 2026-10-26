@@ -13,6 +13,7 @@ web/version.json
 web/track-viewer/main.js
 web/drive/main.js
 web/garage/main.js
+web/worker/physics-worker.js
 *.log
 *.pid
 .env

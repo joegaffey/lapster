@@ -1,5 +1,5 @@
 pub const SAB_MAGIC: [u8; 4] = *b"LSIM";
-pub const SAB_LAYOUT_VERSION: u16 = 1;
+pub const SAB_LAYOUT_VERSION: u16 = 2;
 pub const SAB_TOTAL_SIZE: usize = 4096;
 
 pub const HEADER_OFFSET: usize = 0;
@@ -7,22 +7,49 @@ pub const HEADER_SIZE: usize = 64;
 
 pub const SNAPSHOT_OFFSET: usize = 64;
 pub const SNAPSHOT_COUNT: usize = 4;
-pub const SNAPSHOT_STRIDE: usize = 256;
+pub const SNAPSHOT_STRIDE: usize = 288;
 pub const SNAPSHOT_REGION_SIZE: usize = SNAPSHOT_COUNT * SNAPSHOT_STRIDE;
 
-pub const INPUT_MAILBOX_OFFSET: usize = 1088;
+pub const INPUT_MAILBOX_OFFSET: usize = 1216;
 pub const INPUT_MAILBOX_SIZE: usize = 64;
 
-pub const FFB_MAILBOX_OFFSET: usize = 1152;
+pub const FFB_MAILBOX_OFFSET: usize = 1280;
 pub const FFB_MAILBOX_SIZE: usize = 64;
 
-pub const RESERVED_OFFSET: usize = 1216;
-pub const RESERVED_SIZE: usize = 2880;
+pub const RESERVED_OFFSET: usize = 1344;
+pub const RESERVED_SIZE: usize = 2752;
 
 pub const HEADER_FLAG_PAUSED: u32 = 1 << 0;
 pub const HEADER_FLAG_RESET: u32 = 1 << 1;
 pub const FFB_FLAG_ACTIVE: u32 = 1 << 0;
 pub const FFB_FLAG_STOP: u32 = 1 << 1;
+
+pub const SNAPSHOT_STATE_FLOATS: usize = 64;
+pub mod snapshot_state {
+    pub const POSITION: usize = 0;
+    pub const ROTATION: usize = 3;
+    pub const VELOCITY: usize = 7;
+    pub const ANGULAR_VELOCITY: usize = 10;
+    pub const WHEEL_ANGULAR_SPEEDS: usize = 13;
+    pub const SUSPENSION_TRAVEL: usize = 17;
+    pub const ENGINE_RPM: usize = 21;
+    pub const RACK_TORQUE: usize = 22;
+    pub const THROTTLE: usize = 23;
+    pub const BRAKE: usize = 24;
+    pub const SLIP_RATIO: usize = 25;
+    pub const SLIP_ANGLE: usize = 29;
+    pub const TIRE_LOAD: usize = 33;
+    pub const CONTACT_FLAGS: usize = 37;
+    pub const SURFACE_FRICTION: usize = 41;
+    pub const WHEEL_STEER_ANGLE: usize = 45;
+    pub const WHEEL_SPIN_ANGLE: usize = 49;
+    pub const CONTACT_CENTER: usize = 53;
+    pub const CONTACT_NORMAL: usize = 56;
+    pub const GEAR: usize = 59;
+    pub const ABS_ACTIVE: usize = 60;
+    pub const ESC_ACTIVITY: usize = 61;
+    pub const TICK: usize = 62;
+}
 
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,19 +75,7 @@ pub struct SnapshotSlot {
     pub tick: u64,
     pub timestamp_seconds: f64,
     pub reserved1: [u8; 8],
-    pub position: [f32; 4],
-    pub rotation_xyzw: [f32; 4],
-    pub velocity: [f32; 4],
-    pub angular_velocity: [f32; 4],
-    pub wheel_angular_speeds: [f32; 4],
-    pub suspension_travel: [f32; 4],
-    pub engine_rpm_rack_torque_throttle_brake: [f32; 4],
-    pub slip_ratio: [f32; 4],
-    pub slip_angle: [f32; 4],
-    pub tire_load: [f32; 4],
-    pub contact_flags: [f32; 4],
-    pub surface_friction: [f32; 4],
-    pub reserved2: [u8; 32],
+    pub state: [f32; SNAPSHOT_STATE_FLOATS],
 }
 
 #[repr(C, align(8))]
@@ -118,22 +133,8 @@ mod tests {
         assert_eq!(offset_of!(SnapshotSlot, tick), 8);
         assert_eq!(offset_of!(SnapshotSlot, timestamp_seconds), 16);
         assert_eq!(offset_of!(SnapshotSlot, reserved1), 24);
-        assert_eq!(offset_of!(SnapshotSlot, position), 32);
-        assert_eq!(offset_of!(SnapshotSlot, rotation_xyzw), 48);
-        assert_eq!(offset_of!(SnapshotSlot, velocity), 64);
-        assert_eq!(offset_of!(SnapshotSlot, angular_velocity), 80);
-        assert_eq!(offset_of!(SnapshotSlot, wheel_angular_speeds), 96);
-        assert_eq!(offset_of!(SnapshotSlot, suspension_travel), 112);
-        assert_eq!(
-            offset_of!(SnapshotSlot, engine_rpm_rack_torque_throttle_brake),
-            128
-        );
-        assert_eq!(offset_of!(SnapshotSlot, slip_ratio), 144);
-        assert_eq!(offset_of!(SnapshotSlot, slip_angle), 160);
-        assert_eq!(offset_of!(SnapshotSlot, tire_load), 176);
-        assert_eq!(offset_of!(SnapshotSlot, contact_flags), 192);
-        assert_eq!(offset_of!(SnapshotSlot, surface_friction), 208);
-        assert_eq!(offset_of!(SnapshotSlot, reserved2), 224);
+        assert_eq!(offset_of!(SnapshotSlot, state), 32);
+        assert_eq!(snapshot_state::TICK, 62);
     }
 
     #[test]

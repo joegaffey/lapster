@@ -34,6 +34,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(Number(settled.speed)).toBeLessThan(1);
   expect(settled.contacts).toBe("4/4");
   expect(settled.telemetry.tick).toBeGreaterThan(0);
+  expect(settled.telemetry.physicsMode).toBe("sab");
   expect(["BrowserWebGpu", "Gl"]).toContain(settled.telemetry.rendererBackend);
   if (!process.env.CI) {
     expect(settled.telemetry.rendererBackend).toBe("BrowserWebGpu");
@@ -60,16 +61,27 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(moving.shadowFocus).not.toEqual(settled.telemetry.shadowFocus);
 
   await page.keyboard.press("r");
-  await page.waitForTimeout(750);
+  await page.waitForFunction(
+    () => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      return (
+        state.speedKph < 0.1 &&
+        Math.abs(state.position[0]) < 0.01 &&
+        Math.abs(state.position[2]) < 0.01
+      );
+    },
+    undefined,
+    { timeout: 10_000 },
+  );
   const reset = await telemetry(page);
   expect(reset.speedKph).toBeLessThan(2);
   expect(reset.contacts).toBe(4);
 
-  const reverse = await page.evaluate(() => {
+  const reverse = await page.evaluate(async () => {
     const viewer = (window as any).__driveViewer;
     viewer.reset();
     const start = JSON.parse(viewer.telemetry()).position;
-    viewer.simulate(2.0, 0.6, 0.0, 0.0, -1);
+    await viewer.simulate(2.0, 0.6, 0.0, 0.0, -1);
     const end = JSON.parse(viewer.telemetry());
     return {
       ...end,
@@ -80,6 +92,29 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(reverse.distance).toBeGreaterThan(0.25);
   expect(reverse.contacts).toBe(4);
   expect(pageErrors).toEqual([]);
+});
+
+test("main-thread physics remains available as a fallback", async ({ page }) => {
+  await page.goto("/web/drive/?physics=main&track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await waitForReady(page);
+  await page.waitForTimeout(250);
+
+  const state = await page.evaluate(() => ({
+    telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
+    isolated: window.crossOriginIsolated,
+  }));
+  expect(state.telemetry.physicsMode).toBeUndefined();
+  expect(state.telemetry.tick).toBeGreaterThan(0);
+  expect(state.isolated).toBe(true);
+
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.keyboard.down("w");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 2,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("w");
 });
 
 test("info starts hidden and can be opened", async ({ page }) => {
@@ -346,7 +381,7 @@ test("60 second scripted soak stays finite", async ({ page }) => {
   await waitForReady(page);
   await page.waitForTimeout(250);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const viewer = (window as any).__driveViewer;
     viewer.reset();
     const started = performance.now();
@@ -355,7 +390,7 @@ test("60 second scripted soak stays finite", async ({ page }) => {
       const throttle = phase === 0 ? 1.0 : phase === 1 ? 0.4 : 0.0;
       const brake = phase === 2 ? 0.5 : 0.0;
       const steering = phase === 1 ? 0.4 : phase === 3 ? -0.4 : 0.0;
-      viewer.simulate(1.0, throttle, brake, steering, 1);
+      await viewer.simulate(1.0, throttle, brake, steering, 1);
     }
     return {
       elapsedMs: performance.now() - started,
@@ -380,6 +415,22 @@ test("steering keys turn in the expected direction", async ({ page }) => {
   await waitForReady(page);
   await page.waitForTimeout(250);
 
+  const resetToSpawn = async () => {
+    await page.keyboard.press("r");
+    await page.waitForFunction(
+      () => {
+        const state = JSON.parse((window as any).__driveViewer.telemetry());
+        return (
+          state.speedKph < 0.1 &&
+          Math.abs(state.position[0]) < 0.01 &&
+          Math.abs(state.position[2]) < 0.01
+        );
+      },
+      undefined,
+      { timeout: 10_000 },
+    );
+  };
+
   const driveFor = async (steerKey: string) => {
     await page.keyboard.down("w");
     await page.keyboard.down(steerKey);
@@ -396,18 +447,15 @@ test("steering keys turn in the expected direction", async ({ page }) => {
   const left = await driveFor("ArrowLeft");
   expect(left.position[0]).toBeGreaterThan(0.05);
 
-  await page.keyboard.press("r");
-  await page.waitForTimeout(150);
+  await resetToSpawn();
   const right = await driveFor("ArrowRight");
   expect(right.position[0]).toBeLessThan(-0.05);
 
-  await page.keyboard.press("r");
-  await page.waitForTimeout(150);
+  await resetToSpawn();
   const aKey = await driveFor("a");
   expect(aKey.position[0]).toBeGreaterThan(0.05);
 
-  await page.keyboard.press("r");
-  await page.waitForTimeout(150);
+  await resetToSpawn();
   const dKey = await driveFor("d");
   expect(dKey.position[0]).toBeLessThan(-0.05);
 });
@@ -441,7 +489,18 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   expect(braking.speedKph).toBeLessThan(forward.speedKph);
 
   await page.keyboard.press("r");
-  await page.waitForTimeout(150);
+  await page.waitForFunction(
+    () => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      return (
+        state.speedKph < 0.1 &&
+        Math.abs(state.position[0]) < 0.01 &&
+        Math.abs(state.position[2]) < 0.01
+      );
+    },
+    undefined,
+    { timeout: 10_000 },
+  );
   const reverseStart = await telemetry(page);
   await page.keyboard.down("ArrowDown");
   await page.waitForFunction(
@@ -470,7 +529,7 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
 
   await page.keyboard.down("ArrowUp");
   await page.waitForFunction(
-    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph < 0.3,
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph < 0.05,
     undefined,
     { timeout: 10_000 },
   );
@@ -483,6 +542,13 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
     stoppedFromReverse.tick,
     { timeout: 10_000 },
   );
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+  await page.waitForTimeout(500);
   await page.keyboard.down("ArrowUp");
   await page.waitForFunction(
     (before) => {
@@ -573,12 +639,12 @@ test("brake input controls brake lights", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await waitForReady(page);
 
-  const states = await page.evaluate(() => {
+  const states = await page.evaluate(async () => {
     const viewer = (window as any).__driveViewer;
     viewer.reset();
-    viewer.simulate(0.1, 0.0, 1.0, 0.0, 1);
+    await viewer.simulate(0.1, 0.0, 1.0, 0.0, 1);
     const on = JSON.parse(viewer.telemetry()).brakeLightsOn;
-    viewer.simulate(0.1, 0.0, 0.0, 0.0, 1);
+    await viewer.simulate(0.1, 0.0, 0.0, 0.0, 1);
     const off = JSON.parse(viewer.telemetry()).brakeLightsOn;
     return { on, off };
   });
@@ -591,12 +657,12 @@ test("reverse gear controls reverse lights", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await waitForReady(page);
 
-  const states = await page.evaluate(() => {
+  const states = await page.evaluate(async () => {
     const viewer = (window as any).__driveViewer;
     viewer.reset();
-    viewer.simulate(0.1, 0.0, 0.0, 0.0, -1);
+    await viewer.simulate(0.1, 0.0, 0.0, 0.0, -1);
     const reverse = JSON.parse(viewer.telemetry());
-    viewer.simulate(0.1, 0.0, 0.0, 0.0, 1);
+    await viewer.simulate(0.1, 0.0, 0.0, 0.0, 1);
     const forward = JSON.parse(viewer.telemetry());
     return {
       reverseOn: reverse.reverseLightsOn,

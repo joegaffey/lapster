@@ -1008,6 +1008,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim-worker"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "serde_json",
+ "sim-asset",
+ "sim-core",
+ "sim-types",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
