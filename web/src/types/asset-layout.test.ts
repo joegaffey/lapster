@@ -19,6 +19,8 @@ import {
   SNAPSHOT_COUNT,
   SNAPSHOT_FIELDS,
   SNAPSHOT_OFFSET,
+  SNAPSHOT_STATE,
+  SNAPSHOT_STATE_FLOATS,
   SNAPSHOT_REGION_SIZE,
   SNAPSHOT_STRIDE,
   snapshotSlotOffset,
@@ -26,7 +28,7 @@ import {
 
 test("layout identity", () => {
   assert.equal(SAB_MAGIC, "LSIM");
-  assert.equal(SAB_LAYOUT_VERSION, 1);
+  assert.equal(SAB_LAYOUT_VERSION, 2);
 });
 
 test("regions fit the SAB", () => {
@@ -69,21 +71,11 @@ test("snapshot fields match the Rust ABI", () => {
     tick: 8,
     timestampSeconds: 16,
     reserved1: 24,
-    position: 32,
-    rotationXyzw: 48,
-    velocity: 64,
-    angularVelocity: 80,
-    wheelAngularSpeeds: 96,
-    suspensionTravel: 112,
-    engineRpmRackTorqueThrottleBrake: 128,
-    slipRatio: 144,
-    slipAngle: 160,
-    tireLoad: 176,
-    contactFlags: 192,
-    surfaceFriction: 208,
-    reserved2: 224,
+    state: 32,
   });
-  assert.equal(SNAPSHOT_FIELDS.reserved2 + 32, SNAPSHOT_STRIDE);
+  assert.equal(SNAPSHOT_STATE_FLOATS, 64);
+  assert.equal(SNAPSHOT_STATE.tick, 62);
+  assert.equal(SNAPSHOT_FIELDS.state + SNAPSHOT_STATE_FLOATS * 4, SNAPSHOT_STRIDE);
 });
 
 test("mailbox fields match the Rust ABI", () => {

@@ -1,8 +1,8 @@
 # Project Progress
 
-Last updated: 2026-10-23
+Last updated: 2026-10-26
 Repository root: the directory containing this file
-Current phase: **CP5/CP6 in progress — GLB car and AC track imports are the demo defaults**
+Current phase: **CP7 in progress — Drive physics runs in a Rust/Wasm worker over a SAB**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -14,7 +14,7 @@ This file is the resumable project state. The conversation does not persist, but
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo check -p sim-types -p sim-asset -p sim-core -p sim-render \
+cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker \
   --target wasm32-unknown-unknown
 
 cd web
@@ -94,7 +94,7 @@ Toolchain setup scripts:
 ## Current capabilities
 
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
-- 500 Hz fixed-step vehicle physics on the main thread with:
+- 500 Hz fixed-step vehicle physics in a Rust/Wasm worker with:
   - triangle raycast suspension with anti-roll bars, progressive bump stops, and a rear grip
     bias to reduce power oversteer,
   - CG-based load transfer,
@@ -104,7 +104,8 @@ Toolchain setup scripts:
     steering for keyboard input,
   - engine/gearbox/brake model,
   - wall contacts and finite-state reset,
-  - interpolated visual pose.
+  - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
+  - automatic main-thread fallback if SAB/worker startup fails.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -208,8 +209,8 @@ Toolchain setup scripts:
   braking to a stop while steering, setup apply/reset/round-trip, assist strength controls,
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
-- `npm test` — 15 tests
-- `npm run test:viewer` — 26 Playwright tests
+- `npm test` — 22 tests
+- `npm run test:viewer` — 30 Playwright tests
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
@@ -261,7 +262,10 @@ matrix then expands to the other supported wheelbases.
 ## Known issues / carry-forward
 
 - **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
-- Physics currently runs on the **main thread**, not the worker/SAB topology in `SPEC.md`.
+- Drive physics runs in the worker/SAB topology. Garage and Track Viewer have no physics loop.
+- The worker scheduler currently yields with a short timer and uses `performance.now` as the
+  step deadline source; replace the yield with the final Atomics-based scheduler if traces
+  show avoidable jitter.
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
 - Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
@@ -289,8 +293,8 @@ matrix then expands to the other supported wheelbases.
 - Headless Playwright captures the WebGPU canvas as white in this environment; renderer
   stats and debug counters are asserted, and the flat-screen look was checked manually.
 - GitHub Pages supplies no COOP/COEP headers; the PWA service worker injects them for demo
-  navigations. The first controlled load needs one reload. The physics worker/SAB port is
-  still pending, so physics remains on the main thread.
+  navigations and worker script/Wasm responses. The first controlled load needs one reload.
+  Worker responses need the same COOP/COEP/CORP headers; the service worker supplies them.
 - The live Pages URL is https://joegaffey.com/lapster/ (the github.io URL redirects there).
 
 ## Next steps
@@ -299,8 +303,9 @@ matrix then expands to the other supported wheelbases.
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
 2. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
    compatibility, profiles, and hardware fixtures.
-3. **CP7 — worker integration and audio**: SAB mailboxes, HID worker migration, audio, full
-   hardware matrix, and performance traces.
+3. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add the
+   audio worklet over SAB snapshots, expand the hardware matrix, and run performance traces.
+   The physics worker, input mailbox, snapshot ring, and FFB mailbox are already in place.
 4. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
    wheel geometry cleanup, and licensed AC `.ini` physics when a suitable pack is available.
    - Add a simple steering-wheel/interior placeholder.
@@ -321,6 +326,7 @@ matrix then expands to the other supported wheelbases.
 - `crates/sim-asset` — runtime pack validation/access.
 - `crates/asset-compiler` — bake/inspect/validate.
 - `crates/sim-render` — wgpu renderer and wasm viewers.
+- `crates/sim-worker` — Rust/Wasm physics worker simulation wrapper.
 - `web/drive`, `web/garage`, `web/track-viewer` — browser pages.
 - `web/tests` — Node and Playwright tests.
 - `fixtures/cars/minimal`, `fixtures/tracks/minimal` — synthetic fixtures and baked packs.

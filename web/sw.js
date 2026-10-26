@@ -51,4 +51,14 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(networkFirst(request));
     return;
   }
+
+  if (url.pathname.includes("/worker/") || request.destination === "worker") {
+    event.respondWith(
+      networkFirst(request, {
+        "Cross-Origin-Opener-Policy": COOP,
+        "Cross-Origin-Embedder-Policy": COEP,
+        "Cross-Origin-Resource-Policy": "same-origin",
+      }),
+    );
+  }
 });

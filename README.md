@@ -41,8 +41,9 @@ resume, clearing stale caches and reloading when a newer deployment is available
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 Lapster is installable as a PWA. The installed app launches a demo menu, and every demo has a
 `Exit` link to return there. A same-origin service worker supplies the COOP/COEP headers needed
-for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. The physics
-worker/SAB port is still pending, so the current demo runs physics on the main thread.
+for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. Drive physics
+runs in a dedicated Rust/Wasm worker and exchanges fixed-step snapshots through the SAB. If
+cross-origin isolation or worker startup fails, Drive falls back to main-thread physics.
 
 ## Current features
 
@@ -58,6 +59,9 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
+- Dedicated physics worker with a versioned SAB input mailbox, four-slot snapshot ring,
+  seqlock publication, and interpolated main-thread rendering. Main-thread physics remains
+  available as a fallback.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
@@ -148,6 +152,7 @@ crates/
   sim-asset/       runtime pack validation and typed archive access
   asset-compiler/  offline bake/inspect/validate CLI
   sim-core/        custom vehicle dynamics and collision trait
+  sim-worker/      Rust/Wasm physics worker entry and simulation wrapper
   sim-render/      wgpu renderer and wasm viewers
 web/               TypeScript glue, viewers, build scripts, tests
 fixtures/          synthetic car and track fixtures plus baked packs
@@ -173,9 +178,9 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
 in [`PLAN.md`](PLAN.md). Next up: wheel input and force feedback on CAMMUS C5 first, targeting
-all `webhid-wheel`-supported wheelbases, with Chromium WebHID and Gamepad fallback. The
-main-thread FFB spike comes before the worker/SAB migration; then AC `.ini` physics mapping,
-track texture decoding, collision/wall policy, audio, and performance hardening.
+all `webhid-wheel`-supported wheelbases, with Chromium WebHID and Gamepad fallback. The SAB
+physics-worker foundation is now in place; remaining work is the HID/FFB worker, audio, AC
+`.ini` physics mapping, track texture decoding, collision/wall policy, and hardening.
 
 ## License
 

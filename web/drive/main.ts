@@ -11,6 +11,10 @@ import { setupAssistsDialog } from "../src/ui/assists.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import { saveSelectedBay, selectedBay } from "../src/ui/car-selection.ts";
+import { PhysicsClient } from "../src/sim/physics.ts";
+import { SnapshotSmoother } from "../src/sim/interpolate.ts";
+import { initializeSab, validateSab } from "../src/sim/sab.ts";
+import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 
 declare global {
   interface Window {
@@ -60,6 +64,17 @@ let bodyVisible = true;
 let lastFrame = performance.now() / 1000;
 let frames = 0;
 let accumulated = 0;
+let physics: PhysicsClient | null = null;
+let smoother: SnapshotSmoother | null = null;
+let physicsWorker = false;
+let workerAssists = {
+  tc: true,
+  tcStrength: 1,
+  abs: true,
+  esc: true,
+  escStrength: 1,
+  steeringSensitivity: 1,
+};
 
 async function loadPack(url: string) {
   try {
@@ -150,6 +165,122 @@ function reset() {
   lastFrame = performance.now() / 1000;
 }
 
+function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveViewer {
+  let assistPending = false;
+  const queueAssists = () => {
+    if (assistPending) {
+      return;
+    }
+    assistPending = true;
+    queueMicrotask(() => {
+      assistPending = false;
+      client.setAssists(workerAssists);
+    });
+  };
+  const syncLatest = () => {
+    if (!smoother) {
+      return;
+    }
+    smoother.update(performance.now());
+    const state = smoother.latest();
+    if (state) {
+      target.render_remote(state);
+    }
+  };
+  return new Proxy(target, {
+    get(object, property, receiver) {
+      switch (property) {
+        case "simulate":
+          return async (
+            seconds: number,
+            throttle: number,
+            brake: number,
+            steering: number,
+            requestedGear: number,
+          ) => {
+            const tick = await client.simulate(seconds, throttle, brake, steering, requestedGear);
+            syncLatest();
+            return tick;
+          };
+        case "reset":
+          return () => {
+            client.writeInput({
+              steering: 0,
+              throttle: 0,
+              brake: 0,
+              clutch: 0,
+              gear: 1,
+              buttons: 0,
+            });
+            return client.reset();
+          };
+        case "telemetry":
+          return () => {
+            const base = JSON.parse(object.telemetry());
+            base.stepP50Ms = client.diagnostics.stepP50Ms;
+            base.stepP99Ms = client.diagnostics.stepP99Ms;
+            base.physicsMode = "sab";
+            base.workerDroppedTicks = client.diagnostics.droppedTicks;
+            base.workerCatchupEvents = client.diagnostics.catchupEvents;
+            return JSON.stringify(base);
+          };
+        case "apply_car_setup":
+          return (json: string) => {
+            const result = object.apply_car_setup(json);
+            client.applySetup(object.car_setup());
+            return result;
+          };
+        case "reset_car_setup":
+          return () => {
+            const result = object.reset_car_setup();
+            client.resetSetup();
+            return result;
+          };
+        case "set_traction_control":
+          return (value: boolean) => {
+            object.set_traction_control(value);
+            workerAssists.tc = value;
+            queueAssists();
+          };
+        case "set_traction_strength":
+          return (value: number) => {
+            object.set_traction_strength(value);
+            workerAssists.tcStrength = value;
+            queueAssists();
+          };
+        case "set_abs_control":
+          return (value: boolean) => {
+            object.set_abs_control(value);
+            workerAssists.abs = value;
+            queueAssists();
+          };
+        case "set_stability_control":
+          return (value: boolean) => {
+            object.set_stability_control(value);
+            workerAssists.esc = value;
+            queueAssists();
+          };
+        case "set_stability_strength":
+          return (value: number) => {
+            object.set_stability_strength(value);
+            workerAssists.escStrength = value;
+            queueAssists();
+          };
+        case "set_steering_sensitivity":
+          return (value: number) => {
+            object.set_steering_sensitivity(value);
+            workerAssists.steeringSensitivity = value;
+            queueAssists();
+          };
+        default: {
+          const value = Reflect.get(object, property, object);
+          return typeof value === "function" ? value.bind(object) : value;
+        }
+      }
+    },
+  }) as DriveViewer;
+}
+
 async function boot() {
   status.textContent = "starting";
   if (await setupPwa()) {
@@ -167,12 +298,58 @@ async function boot() {
   resizeCanvas();
   status.textContent = "creating physics";
   const viewer = await DriveViewer.create(canvas, trackPack.bytes, carPack.bytes, carBay);
-  window.__driveViewer = viewer;
   saveSelectedBay(carBay);
 
   const info = JSON.parse(viewer.info());
   const initial = JSON.parse(viewer.telemetry());
   asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
+
+  let driver: DriveViewer = viewer;
+  if (params.get("physics") !== "main" && window.crossOriginIsolated) {
+    try {
+      status.textContent = "starting physics worker";
+      const sab = new SharedArrayBuffer(SAB_TOTAL_SIZE);
+      initializeSab(sab);
+      validateSab(sab);
+      const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
+      physics = client;
+      smoother = new SnapshotSmoother(client.reader);
+      physicsWorker = true;
+      workerAssists = {
+        tc: initial.tractionControl,
+        tcStrength: initial.tractionStrength,
+        abs: initial.absControl,
+        esc: initial.stabilityControl,
+        escStrength: initial.stabilityStrength,
+        steeringSensitivity: initial.steeringSensitivity,
+      };
+      client.applySetup(viewer.car_setup());
+      client.setAssists(workerAssists);
+      client.onFatalError = (message) => {
+        console.warn("physics worker failed", message);
+      };
+      document.addEventListener("visibilitychange", () => {
+        if (!physics) {
+          return;
+        }
+        if (document.hidden) {
+          physics.pause();
+        } else {
+          physics.resume();
+        }
+      });
+      window.addEventListener("pagehide", () => physics?.dispose());
+      driver = createDriveFacade(viewer, client);
+    } catch (error) {
+      console.warn("SAB physics unavailable; using main thread", error);
+      physics?.dispose();
+      physics = null;
+      smoother = null;
+      physicsWorker = false;
+      driver = viewer;
+    }
+  }
+  window.__driveViewer = driver;
 
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
@@ -219,8 +396,8 @@ async function boot() {
   cameraButton.addEventListener("click", toggleCameraMode);
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
   setCameraMode("chase");
-  setupCarSetupDialog(viewer, info.car.id, info.asset.id);
-  setupAssistsDialog(viewer, {
+  setupCarSetupDialog(driver, info.car.id, info.asset.id);
+  setupAssistsDialog(driver, {
     onRenderScale: (scale) => {
       renderScale = scale;
       if (resizeCanvas()) {
@@ -286,10 +463,30 @@ async function boot() {
     }
 
     try {
-      viewer.update(now, throttle, brake, steer, gear);
-      const telemetry = JSON.parse(viewer.telemetry());
-      lastSpeedMps = telemetry.speedMps;
-      updateHud(telemetry);
+      if (physicsWorker && physics && smoother) {
+        physics.writeInput({
+          steering: steer,
+          throttle,
+          brake,
+          clutch: 0,
+          gear,
+          buttons: 0,
+        });
+        const renderNow = performance.now();
+        smoother.update(renderNow);
+        const remoteState = smoother.state(renderNow);
+        if (remoteState) {
+          viewer.render_remote(remoteState);
+          const telemetry = JSON.parse(driver.telemetry());
+          lastSpeedMps = telemetry.speedMps;
+          updateHud(telemetry);
+        }
+      } else {
+        driver.update(now, throttle, brake, steer, gear);
+        const telemetry = JSON.parse(driver.telemetry());
+        lastSpeedMps = telemetry.speedMps;
+        updateHud(telemetry);
+      }
 
       frames += 1;
       accumulated += delta;

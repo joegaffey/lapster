@@ -10,7 +10,8 @@ use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, GarageBay, Scene};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{Controls, TrackCollider, Vehicle, FIXED_DT};
-use sim_types::CarTuning;
+use sim_types::snapshot_state as snapshot;
+use sim_types::{CarTuning, SNAPSHOT_STATE_FLOATS};
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -765,6 +766,78 @@ impl DriveViewer {
         self.update_camera();
         let _ = self.renderer.render();
         self.vehicle.state.tick as u32
+    }
+
+    pub fn render_remote(&mut self, frame: &[f32]) -> Result<(), JsValue> {
+        if frame.len() < SNAPSHOT_STATE_FLOATS {
+            return Err(JsValue::from_str("remote snapshot is too short"));
+        }
+        let position = Vec3::new(
+            frame[snapshot::POSITION],
+            frame[snapshot::POSITION + 1],
+            frame[snapshot::POSITION + 2],
+        );
+        let rotation = Quat::from_xyzw(
+            frame[snapshot::ROTATION],
+            frame[snapshot::ROTATION + 1],
+            frame[snapshot::ROTATION + 2],
+            frame[snapshot::ROTATION + 3],
+        );
+        let rotation = if rotation.length_squared() > 1e-8 {
+            rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        let contact_center = Vec3::new(
+            frame[snapshot::CONTACT_CENTER],
+            frame[snapshot::CONTACT_CENTER + 1],
+            frame[snapshot::CONTACT_CENTER + 2],
+        );
+        let contact_normal = Vec3::new(
+            frame[snapshot::CONTACT_NORMAL],
+            frame[snapshot::CONTACT_NORMAL + 1],
+            frame[snapshot::CONTACT_NORMAL + 2],
+        )
+        .normalize_or(Vec3::Y);
+        let mut remote = self.vehicle.state;
+        remote.position = position;
+        remote.rotation = rotation;
+        remote.velocity = Vec3::new(
+            frame[snapshot::VELOCITY],
+            frame[snapshot::VELOCITY + 1],
+            frame[snapshot::VELOCITY + 2],
+        );
+        remote.angular_velocity = Vec3::new(
+            frame[snapshot::ANGULAR_VELOCITY],
+            frame[snapshot::ANGULAR_VELOCITY + 1],
+            frame[snapshot::ANGULAR_VELOCITY + 2],
+        );
+        remote.engine_rpm = frame[snapshot::ENGINE_RPM];
+        remote.gear = frame[snapshot::GEAR].round() as i32;
+        remote.steering_rack_torque = frame[snapshot::RACK_TORQUE];
+        remote.tick = frame[snapshot::TICK].max(0.0) as u64;
+        for (index, wheel) in remote.wheels.iter_mut().enumerate() {
+            wheel.angular_velocity = frame[snapshot::WHEEL_ANGULAR_SPEEDS + index];
+            wheel.suspension_compression = frame[snapshot::SUSPENSION_TRAVEL + index];
+            wheel.slip_ratio = frame[snapshot::SLIP_RATIO + index];
+            wheel.slip_angle = frame[snapshot::SLIP_ANGLE + index];
+            wheel.normal_load = frame[snapshot::TIRE_LOAD + index];
+            wheel.contact = frame[snapshot::CONTACT_FLAGS + index] > 0.5;
+            wheel.surface_friction = frame[snapshot::SURFACE_FRICTION + index];
+            wheel.steer_angle = frame[snapshot::WHEEL_STEER_ANGLE + index];
+            wheel.spin_angle = frame[snapshot::WHEEL_SPIN_ANGLE + index];
+            wheel.contact_point = contact_center;
+            wheel.contact_normal = contact_normal;
+        }
+        self.vehicle.state = remote;
+        self.previous_state = remote;
+        self.last_time = None;
+        self.accumulator = 0.0;
+        self.set_brake_lights(frame[snapshot::BRAKE]);
+        self.set_reverse_lights(remote.gear == -1);
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
     }
 
     pub fn telemetry(&self) -> String {

@@ -466,19 +466,19 @@ vendor profiles.
 
 ## 4. Shared State Memory Contract (`SharedArrayBuffer`)
 
-The SAB is a fixed 4096-byte block. All multi-byte values are little-endian. All `f32x4`
-groups start at 16-byte-aligned offsets. The layout is versioned; unknown versions must be
-rejected.
+The SAB is a fixed 4096-byte block. All multi-byte values are little-endian. Layout version
+2 uses a 64-float state vector per snapshot. The layout is versioned; unknown versions must
+be rejected.
 
 ### 4.1 Layout
 
 | Region | Offset | Size | Purpose |
 | --- | ---: | ---: | --- |
 | Header | 0 | 64 | Magic, version, slot metadata, latest slot |
-| Snapshots | 64 | 1024 | 4 slots × 256 bytes |
-| Input mailbox | 1088 | 64 | HID worker -> physics |
-| FFB mailbox | 1152 | 64 | Physics -> HID worker |
-| Reserved | 1216 | 2880 | Future use; must be zero-initialized |
+| Snapshots | 64 | 1152 | 4 slots × 288 bytes |
+| Input mailbox | 1216 | 64 | Input -> physics |
+| FFB mailbox | 1280 | 64 | Physics -> HID worker |
+| Reserved | 1344 | 2752 | Future use; must be zero-initialized |
 
 #### Header (offset 0, 64 bytes)
 
@@ -488,7 +488,7 @@ rejected.
 | 4 | u16 | Layout major version |
 | 6 | u16 | Header size |
 | 8 | u32 | Slot count (4) |
-| 12 | u32 | Slot stride (256) |
+| 12 | u32 | Slot stride (288) |
 | 16 | u32 | Latest published slot index (atomic) |
 | 20 | u32 | Flags |
 | 24 | u32 | Writer tick (atomic, diagnostic) |
@@ -496,7 +496,7 @@ rejected.
 | 32 | f64 | Writer time base, seconds (absolute) |
 | 40 | u8[24] | Reserved |
 
-#### Snapshot slot (offset `64 + index * 256`, 256 bytes)
+#### Snapshot slot (offset `64 + index * 288`, 288 bytes)
 
 | Slot offset | Type | Field |
 | ---: | --- | --- |
@@ -505,19 +505,36 @@ rejected.
 | 8 | u64 | Physics tick |
 | 16 | f64 | Absolute timestamp, seconds |
 | 24 | u8[8] | Reserved (alignment) |
-| 32 | f32x4 | Position (x, y, z, pad) |
-| 48 | f32x4 | Rotation quaternion (x, y, z, w) |
-| 64 | f32x4 | World velocity (x, y, z, pad) |
-| 80 | f32x4 | Angular velocity (x, y, z, pad) |
-| 96 | f32x4 | Wheel angular speeds (FL, FR, RL, RR) |
-| 112 | f32x4 | Suspension travel (FL, FR, RL, RR) |
-| 128 | f32x4 | Engine RPM, rack torque, throttle, brake |
-| 144 | f32x4 | Slip ratio (FL, FR, RL, RR) |
-| 160 | f32x4 | Slip angle (FL, FR, RL, RR) |
-| 176 | f32x4 | Tire normal load (FL, FR, RL, RR) |
-| 192 | f32x4 | Contact flags per wheel (0 or 1) |
-| 208 | f32x4 | Surface friction per wheel |
-| 224 | u8[32] | Reserved |
+| 32 | f32[64] | Snapshot state vector |
+
+#### Snapshot state vector
+
+| State offset | Type | Field |
+| ---: | --- | --- |
+| 0-2 | f32 | Position (x, y, z) |
+| 3-6 | f32 | Rotation quaternion (x, y, z, w) |
+| 7-9 | f32 | World velocity |
+| 10-12 | f32 | Angular velocity |
+| 13-16 | f32 | Wheel angular speeds (FL, FR, RL, RR) |
+| 17-20 | f32 | Suspension travel (FL, FR, RL, RR) |
+| 21 | f32 | Engine RPM |
+| 22 | f32 | Steering rack torque |
+| 23 | f32 | Throttle |
+| 24 | f32 | Brake |
+| 25-28 | f32 | Slip ratio (FL, FR, RL, RR) |
+| 29-32 | f32 | Slip angle (FL, FR, RL, RR) |
+| 33-36 | f32 | Tire normal load (FL, FR, RL, RR) |
+| 37-40 | f32 | Contact flags per wheel (0 or 1) |
+| 41-44 | f32 | Surface friction per wheel |
+| 45-48 | f32 | Wheel steer angles (FL, FR, RL, RR) |
+| 49-52 | f32 | Wheel spin angles (FL, FR, RL, RR) |
+| 53-55 | f32 | Average contact point |
+| 56-58 | f32 | Average contact normal |
+| 59 | f32 | Gear |
+| 60 | f32 | ABS active (0 or 1) |
+| 61 | f32 | ESC activity |
+| 62 | f32 | Render/telemetry tick snapshot |
+| 63 | f32 | Reserved |
 
 #### Input mailbox (offset 1088, 64 bytes)
 
