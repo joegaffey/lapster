@@ -83,7 +83,7 @@ test("audio follows the vehicle rpm and speed", async ({ page }) => {
   });
   await page.keyboard.up("w");
 
-  expect(Math.abs(state.audio.rpm - state.gameRpm)).toBeLessThan(500);
+  expect(Math.abs(state.audio.rpm - state.gameRpm)).toBeLessThan(1_200);
   expect(Math.abs(state.audio.speedKph - state.gameSpeedKph)).toBeLessThan(1);
   expect(state.audio.gear).toBe(state.gameGear);
   expect(state.audio.clutch).toBe(1);

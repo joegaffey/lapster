@@ -114,12 +114,16 @@ Toolchain setup scripts:
   vehicle and locks the clutch, so the engine note follows the simulation instead of
   Engine_Sim's own drivetrain. A 60 ms RPM conditioner with a 12,000 rpm/s slew limit removes
   pitch judder from wheelspin/TC oscillation while preserving launch flare.
+- Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
+  car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
+  the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
+  `sim-core` once the behaviour is accepted.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
   - `A` / `D` or `←` / `→` steer; left/right direction is verified,
   - `W` / `↑` brakes while reversing,
-  - `0` manual reverse at rest, `1`–`6` gears, `R` reset.
+  - automatic forward gearbox (upshift/downshift with 0.35 s anti-hunt), `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
 - Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
   curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
@@ -218,7 +222,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 34 Playwright tests plus an opt-in physics benchmark
+- `npm run test:viewer` — 35 Playwright tests plus an opt-in physics benchmark
 - `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
   `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
@@ -293,6 +297,9 @@ matrix then expands to the other supported wheelbases.
   ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
   measure frame pacing meaningfully, but the benchmark still checks worker tick rate.
 - Keep the worker opt-in until CPU-throttled results are reproduced on the target hardware.
+- The auto gearbox is currently a UI-layer spike. `sim-core` still takes an explicit gear, so
+  `simulate()` tests and any future AI must supply gears themselves until the logic moves into
+  Rust.
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
 - Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.

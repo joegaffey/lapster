@@ -94,6 +94,22 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
+test("automatic gearbox upshifts from a standstill", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=auto");
+  await page.bringToFront();
+  await waitForReady(page);
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.keyboard.down("w");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear > 1,
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.keyboard.up("w");
+  const shifted = await telemetry(page);
+  expect(shifted.gear).toBeGreaterThan(1);
+});
+
 test("main-thread physics remains available as a fallback", async ({ page }) => {
   await page.goto("/web/drive/?physics=main&track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await waitForReady(page);

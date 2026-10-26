@@ -71,6 +71,11 @@ let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
 let audio: EngineSimAudio | null = null;
+let lastRpm = 900;
+let redlineRpm = 8_000;
+let gearRatios: number[] = [3.48, 2.02, 1.39, 1.0, 0.72, 0.6];
+let maxGear = gearRatios.length;
+let autoShiftCooldown = 0;
 let workerAssists = {
   tc: true,
   tcStrength: 1,
@@ -103,7 +108,7 @@ function resizeCanvas() {
 function updateHud(telemetry: any) {
   speedLabel.textContent = telemetry.speedKph.toFixed(1);
   rpmLabel.textContent = String(Math.round(telemetry.rpm));
-  gearLabel.textContent = String(telemetry.gear);
+  gearLabel.textContent = telemetry.gear < 0 ? "R" : `A${telemetry.gear}`;
   contactsLabel.textContent = `${telemetry.contacts}/4`;
   rackTorqueLabel.textContent = `${telemetry.steeringRackTorque.toFixed(1)} Nm`;
   tickLabel.textContent = String(telemetry.tick);
@@ -163,10 +168,54 @@ function reset() {
   steer = 0;
   gear = 1;
   lastSpeedMps = 0;
+  lastRpm = telemetryRpm();
+  autoShiftCooldown = 0;
   previousForward = false;
   previousReverse = false;
   keys.clear();
   lastFrame = performance.now() / 1000;
+}
+
+function telemetryRpm(): number {
+  const viewer = window.__driveViewer;
+  if (!viewer) {
+    return lastRpm;
+  }
+  try {
+    return JSON.parse(viewer.telemetry()).rpm;
+  } catch {
+    return lastRpm;
+  }
+}
+
+function updateAutoGear(delta: number, throttle: number, brake: number) {
+  autoShiftCooldown = Math.max(0, autoShiftCooldown - delta);
+  if (gear < 1 || autoShiftCooldown > 0) {
+    return;
+  }
+  const upRpm = redlineRpm * (0.62 + 0.3 * throttle);
+  const downRpm = redlineRpm * (0.28 + 0.16 * throttle);
+  if (gear < maxGear && throttle > 0.05 && brake < 0.1 && lastRpm >= upRpm) {
+    gear += 1;
+    autoShiftCooldown = 0.35;
+    return;
+  }
+  const lowerRpm =
+    gear > 1 ? lastRpm * (gearRatios[gear - 2] / gearRatios[gear - 1]) : lastRpm;
+  if (gear > 1 && lastRpm <= downRpm && lowerRpm < redlineRpm * 0.97) {
+    gear -= 1;
+    autoShiftCooldown = 0.35;
+    return;
+  }
+  if (
+    gear > 1 &&
+    throttle >= 0.85 &&
+    lastRpm < redlineRpm * 0.55 &&
+    lowerRpm < redlineRpm * 0.97
+  ) {
+    gear -= 1;
+    autoShiftCooldown = 0.35;
+  }
 }
 
 function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveViewer {
@@ -354,6 +403,13 @@ async function boot() {
 
   const info = JSON.parse(viewer.info());
   const initial = JSON.parse(viewer.telemetry());
+  const setup = JSON.parse(viewer.car_setup());
+  redlineRpm = setup.engine?.redlineRpm ?? redlineRpm;
+  if (Array.isArray(setup.drivetrain?.gearRatios) && setup.drivetrain.gearRatios.length > 1) {
+    gearRatios = setup.drivetrain.gearRatios;
+    maxGear = gearRatios.length;
+  }
+  lastRpm = initial.rpm;
   asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
 
   let driver: DriveViewer = viewer;
@@ -443,13 +499,6 @@ async function boot() {
       "s",
       "d",
       "r",
-      "0",
-      "1",
-      "2",
-      "3",
-      "4",
-      "5",
-      "6",
       "arrowleft",
       "arrowright",
       "arrowup",
@@ -463,13 +512,6 @@ async function boot() {
     }
     if (key === "c") {
       toggleCameraMode();
-    }
-    if (key === "0") {
-      if (Math.abs(lastSpeedMps) < STOP_SPEED_MPS) {
-        gear = -1;
-      }
-    } else if (key >= "1" && key <= "6") {
-      gear = Number(key);
     }
   });
   window.addEventListener("keyup", (event) => {
@@ -531,7 +573,6 @@ async function boot() {
           gear = 1;
         }
       } else {
-        gear = 1;
         throttle = 1;
       }
     } else if (reverseKey) {
@@ -545,6 +586,8 @@ async function boot() {
         throttle = 1;
       }
     }
+
+    updateAutoGear(delta, throttle, brake);
 
     try {
       if (physicsWorker && physics && smoother) {
@@ -563,6 +606,7 @@ async function boot() {
           viewer.render_remote(remoteState);
           const telemetry = JSON.parse(driver.telemetry());
           lastSpeedMps = telemetry.speedMps;
+          lastRpm = telemetry.rpm;
           audio?.update(
             delta,
             throttle,
@@ -577,6 +621,7 @@ async function boot() {
         driver.update(now, throttle, brake, steer, gear);
         const telemetry = JSON.parse(driver.telemetry());
         lastSpeedMps = telemetry.speedMps;
+        lastRpm = telemetry.rpm;
         audio?.update(
           delta,
           throttle,

@@ -15,8 +15,8 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 Both builds default to Baked environment shadows and the Dynamic car shadow.
 
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
-  steering, gears, chase/cockpit cameras, wheel loads, 500 Hz physics, and a shareable
-  tuning dialog.
+  steering, automatic gearbox, chase/cockpit cameras, wheel loads, 500 Hz physics, and a
+  shareable tuning dialog.
 - **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
   opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
   three-quarter start view; screen-side chevrons or arrow keys fly smoothly between bays.
