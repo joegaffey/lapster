@@ -102,6 +102,7 @@ export class EngineSimAudio {
       });
       sim.setAutoShift(false);
       sim.setGear(1);
+      sim.setMix({ transmission: 0 });
       const gain = context.createGain();
       const analyser = context.createAnalyser();
       analyser.fftSize = 1024;

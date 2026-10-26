@@ -124,7 +124,8 @@ Toolchain setup scripts:
   is exposed for diagnostics/tests. A road/surface bed blends asphalt roar, light-brown
   outer-ring dirt rumble/grit, kerb patter, and grass rumble/rustle from per-wheel surface
   names and speed; tire squeal is suppressed on grass. The HUD exposes the current wheel
-  surface and road-noise gain. Both expose state for diagnostics/tests.
+  surface and road-noise gain. Both expose state for diagnostics/tests. EngineSim's
+  transmission mesh whine is disabled for now (`mix.transmission = 0`).
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
   the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
@@ -317,6 +318,8 @@ matrix then expands to the other supported wheelbases.
   ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
   measure frame pacing meaningfully, but the benchmark still checks worker tick rate.
 - Keep the worker opt-in until CPU-throttled results are reproduced on the target hardware.
+- EngineSim's transmission mesh whine is muted pending retuning; gear changes use the
+  click/thump cue instead.
 - The auto gearbox is currently a UI-layer spike. `sim-core` still takes an explicit gear, so
   `simulate()` tests and any future AI must supply gears themselves until the logic moves into
   Rust.
