@@ -65,10 +65,10 @@ fallback when cross-origin isolation or worker startup fails.
   Main-thread physics remains available with `?physics=main`.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
   `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
-  audio. A synthesized surface layer blends asphalt roar, coarse-surface hiss, and grass
-  rumble from per-wheel friction and speed, and a tire-screech layer gates band-passed noise
-  from lateral and longitudinal slip, load, and speed. The toolbar mutes/unmutes both; there
-  are no sample assets yet.
+  audio. A synthesized surface layer blends asphalt roar, concrete/outer-ring hiss, kerb
+  patter, and grass rumble from per-wheel friction and speed, and a tire-screech layer gates
+  band-passed noise from lateral and longitudinal skid, load, and speed. The toolbar
+  mutes/unmutes both; there are no sample assets yet.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment

@@ -89,7 +89,9 @@ test("audio follows the vehicle rpm and speed", async ({ page }) => {
   expect(state.audio.gear).toBe(state.gameGear);
   expect(state.audio.clutch).toBe(1);
   expect(Math.abs(state.audio.clutchSlip)).toBeLessThan(50);
-  expect(state.road.asphalt).toBeGreaterThan(0);
+  expect(
+    state.road.asphalt + state.road.concrete + state.road.kerb + state.road.grass,
+  ).toBeGreaterThan(0);
   expect(state.road.gain).toBeGreaterThan(0);
 });
 
@@ -159,15 +161,15 @@ test("tire screech responds to lateral slip", async ({ page }) => {
   );
   await page.keyboard.down("a");
   await page.waitForFunction(
-    () => (window as any).__driveAudio.tireState().gain > 0.01,
+    () => (window as any).__driveAudio.tireState().gain > 0.03,
     undefined,
     { timeout: 10_000 },
   );
   await page.keyboard.up("a");
   await page.keyboard.up("w");
   const tire = await page.evaluate(() => (window as any).__driveAudio.tireState());
-  expect(tire.slip).toBeGreaterThan(0.05);
-  expect(tire.gain).toBeGreaterThan(0.01);
+  expect(tire.slip).toBeGreaterThan(0.02);
+  expect(tire.gain).toBeGreaterThan(0.03);
 });
 
 test("tire screech responds to straight-line wheelspin", async ({ page }) => {
