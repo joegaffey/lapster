@@ -220,6 +220,7 @@ impl GarageViewer {
             10,
             0,
             true,
+            false,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let bays = std::mem::take(&mut scene.garage_bays);
@@ -551,6 +552,8 @@ pub struct DriveViewer {
     car_id: String,
     car_bay: usize,
     camera_mode: CameraMode,
+    brake_lights_on: bool,
+    reverse_lights_on: bool,
 }
 
 #[wasm_bindgen]
@@ -598,6 +601,7 @@ impl DriveViewer {
             1,
             car_bay,
             false,
+            true,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let rig = scene
@@ -661,6 +665,8 @@ impl DriveViewer {
             car_id: car_manifest.id,
             car_bay,
             camera_mode: CameraMode::Chase,
+            brake_lights_on: false,
+            reverse_lights_on: false,
         };
         drive.write_initial_pose()?;
         Ok(drive)
@@ -679,6 +685,8 @@ impl DriveViewer {
         self.accumulator = 0.0;
         self.last_time = None;
         self.step_times.clear();
+        self.set_brake_lights(0.0);
+        self.set_reverse_lights(false);
         self.update_visuals();
         self.update_camera();
         let _ = self.renderer.render();
@@ -698,6 +706,8 @@ impl DriveViewer {
         };
         self.last_time = Some(time_seconds);
         self.accumulator += dt;
+        self.set_brake_lights(brake);
+        self.set_reverse_lights(gear == -1);
 
         let controls = Controls {
             steering,
@@ -738,6 +748,8 @@ impl DriveViewer {
         gear: i32,
     ) -> u32 {
         let steps = ((seconds.clamp(0.0, 120.0) / FIXED_DT) as u32).min(60_000);
+        self.set_brake_lights(brake);
+        self.set_reverse_lights(gear == -1);
         let controls = Controls {
             steering,
             throttle,
@@ -793,6 +805,8 @@ impl DriveViewer {
             "shadowsEnabled": self.renderer.shadows_enabled(),
             "environmentShadowMode": environment_shadow_mode_name(self.renderer.environment_shadow_mode()),
             "carShadowMode": car_shadow_mode_name(self.renderer.effective_car_shadow_mode()),
+            "brakeLightsOn": self.brake_lights_on,
+            "reverseLightsOn": self.reverse_lights_on,
             "timeOfDay": self.renderer.time_of_day(),
             "sunElevation": self.renderer.sun_elevation(),
             "bakedShadowResolution": self.renderer.baked_resolution(),
@@ -965,6 +979,35 @@ impl DriveViewer {
         if let Some(index) = self.rig.glass_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
+        if let Some(index) = self.rig.brake_light_mesh_index {
+            self.renderer.set_mesh_visible(index, visible);
+        }
+        if let Some(index) = self.rig.reverse_light_mesh_index {
+            self.renderer.set_mesh_visible(index, visible);
+        }
+    }
+
+    fn set_brake_lights(&mut self, brake: f32) {
+        let on = brake > 0.05;
+        if on == self.brake_lights_on {
+            return;
+        }
+        self.brake_lights_on = on;
+        if let Some(index) = self.rig.brake_light_mesh_index {
+            self.renderer
+                .set_mesh_emissive(index, if on { [2.5, 0.04, 0.0] } else { [0.0; 3] });
+        }
+    }
+
+    fn set_reverse_lights(&mut self, on: bool) {
+        if on == self.reverse_lights_on {
+            return;
+        }
+        self.reverse_lights_on = on;
+        if let Some(index) = self.rig.reverse_light_mesh_index {
+            self.renderer
+                .set_mesh_emissive(index, if on { [1.8, 1.8, 1.8] } else { [0.0; 3] });
+        }
     }
 
     pub fn camera_mode(&self) -> String {
@@ -994,6 +1037,14 @@ impl DriveViewer {
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
         if let Some(index) = self.rig.glass_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.body_local);
+        }
+        if let Some(index) = self.rig.brake_light_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.body_local);
+        }
+        if let Some(index) = self.rig.reverse_light_mesh_index {
             self.renderer
                 .set_mesh_model(index, car_world * self.rig.body_local);
         }

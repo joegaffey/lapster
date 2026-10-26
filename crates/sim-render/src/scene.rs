@@ -54,6 +54,7 @@ pub struct MeshData {
     pub texture: Option<usize>,
     pub outline: Option<OutlineMesh>,
     pub alpha: f32,
+    pub emissive: [f32; 3],
     pub casts_static_shadow: bool,
     pub casts_dynamic_shadow: bool,
     pub is_decal: bool,
@@ -78,6 +79,8 @@ pub struct CarRig {
     pub body_mesh_index: usize,
     pub body_local: Mat4,
     pub glass_mesh_index: Option<usize>,
+    pub brake_light_mesh_index: Option<usize>,
+    pub reverse_light_mesh_index: Option<usize>,
     pub wheels: Vec<RigWheel>,
     pub steering_mesh_index: Option<usize>,
     pub steering_local: Mat4,
@@ -198,6 +201,7 @@ impl Scene {
                 alpha: material
                     .map(|material| material.base_color[3])
                     .unwrap_or(1.0),
+                emissive: [0.0; 3],
                 casts_static_shadow: true,
                 casts_dynamic_shadow: false,
                 is_decal: false,

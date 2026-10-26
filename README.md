@@ -64,6 +64,8 @@ worker/SAB port is still pending, so the current demo runs physics on the main t
   shadows (4096² desktop / 2048² mobile and WebGL2), or **Off**. Car shadows are independent:
   dynamic, a generated silhouette decal, or off. Time of day uses a slider plus Apply and
   tints the sky; Baked maps rebake when lighting is applied.
+- Drive brake and reverse lights: rear-lamp lens geometry split from the body and lit
+  emissively by brake input or reverse gear. Garage is unchanged for now.
 - Browser viewers for track, car, and driving.
 - Runtime **Tuning** dialog for chassis, suspension, tires, engine, gearing, brakes, steering,
   and aero; settings persist per car and can be copied/pasted as `lapster/setup@1` JSON.

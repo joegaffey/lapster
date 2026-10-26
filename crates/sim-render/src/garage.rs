@@ -25,6 +25,7 @@ impl Scene {
         car_count: usize,
         color_offset: usize,
         static_car_shadows: bool,
+        brake_lights: bool,
     ) -> Result<Scene, String> {
         let mut scene = Scene::build(
             track_visual,
@@ -89,6 +90,7 @@ impl Scene {
                 transform,
                 color,
                 &format!("bay_{index}"),
+                brake_lights,
             )?;
             if static_car_shadows {
                 for mesh in &mut scene.meshes[car_mesh_start..] {
@@ -402,6 +404,7 @@ fn add_car_decal(
         texture: Some(texture),
         outline: None,
         alpha: 0.20,
+        emissive: [0.0; 3],
         casts_static_shadow: false,
         casts_dynamic_shadow: false,
         is_decal: true,
@@ -457,6 +460,7 @@ fn build_car(
     transform: Mat4,
     body_color: [f32; 3],
     prefix: &str,
+    brake_lights: bool,
 ) -> Result<CarBuild, String> {
     let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
     let body_mesh = car_visual
@@ -468,6 +472,11 @@ fn build_car(
         .get(body_index)
         .ok_or_else(|| "car body mesh has no buffers".to_string())?
         .clone();
+    let (brake_light_buffers, reverse_light_buffers) = if brake_lights {
+        split_rear_lights(&mut body_buffers, &body_mesh.bounds)
+    } else {
+        (None, None)
+    };
     recolor_paint(&mut body_buffers, body_color);
     let body_local = node_matrix(&car_visual.body);
     let body_model = transform * body_local;
@@ -487,6 +496,31 @@ fn build_car(
     )?;
     let body_bounds = world_bounds(&body_buffers, body_model);
     add_box_lines(&mut scene.lines, &body_bounds, [0.25, 0.75, 1.0]);
+
+    let brake_light_mesh_index = if let Some(buffers) = brake_light_buffers {
+        Some(push_car_light_mesh(
+            scene,
+            prefix,
+            "brake_lights",
+            body_mesh,
+            &buffers,
+            body_model,
+        )?)
+    } else {
+        None
+    };
+    let reverse_light_mesh_index = if let Some(buffers) = reverse_light_buffers {
+        Some(push_car_light_mesh(
+            scene,
+            prefix,
+            "reverse_lights",
+            body_mesh,
+            &buffers,
+            body_model,
+        )?)
+    } else {
+        None
+    };
 
     let glass_mesh_index = if let Some(index) = mesh_index_by_name(car_visual, "body_glass") {
         if let (Some(mesh), Some(buffers)) = (
@@ -596,6 +630,8 @@ fn build_car(
         body_mesh_index,
         body_local,
         glass_mesh_index,
+        brake_light_mesh_index,
+        reverse_light_mesh_index,
         wheels: rig_wheels,
         steering_mesh_index,
         steering_local,
@@ -660,11 +696,149 @@ fn push_car_mesh(
             None
         },
         alpha: style.alpha,
+        emissive: [0.0; 3],
         casts_static_shadow: false,
         casts_dynamic_shadow: true,
         is_decal: false,
     });
     Ok(scene.meshes.len() - 1)
+}
+
+fn push_car_light_mesh(
+    scene: &mut Scene,
+    prefix: &str,
+    name: &str,
+    body_mesh: &MeshRef,
+    buffers: &MeshBuffers,
+    model: Mat4,
+) -> Result<usize, String> {
+    let light_ref = MeshRef {
+        name: format!("body_{name}"),
+        vertex_offset: 0,
+        vertex_count: buffers.positions.len() as u32,
+        index_offset: 0,
+        index_count: buffers.indices.len() as u32,
+        material: body_mesh.material,
+        bounds: body_mesh.bounds,
+        lod: 0,
+    };
+    let index = push_car_mesh(
+        scene,
+        &format!("{prefix}_{name}"),
+        &light_ref,
+        buffers,
+        [1.0, 1.0, 1.0],
+        model,
+        CarMeshStyle {
+            texture: None,
+            outline: false,
+            alpha: 1.0,
+        },
+    )?;
+    scene.meshes[index].casts_static_shadow = false;
+    scene.meshes[index].casts_dynamic_shadow = false;
+    Ok(index)
+}
+
+fn split_rear_lights(
+    buffers: &mut MeshBuffers,
+    bounds: &Aabb,
+) -> (Option<MeshBuffers>, Option<MeshBuffers>) {
+    let rear_start = bounds.max[2] - 0.35;
+    let mut brake = new_light_buffers();
+    let mut reverse = new_light_buffers();
+    let mut body_indices = Vec::with_capacity(buffers.indices.len());
+
+    for triangle in buffers.indices.as_chunks::<3>().0 {
+        let rear = triangle.iter().all(|index| {
+            buffers
+                .positions
+                .get(*index as usize)
+                .is_some_and(|position| position[2] >= rear_start)
+        });
+        if !rear {
+            body_indices.extend_from_slice(triangle);
+            continue;
+        }
+        let red_orange = triangle.iter().any(|index| {
+            buffers.colors.get(*index as usize).is_some_and(|color| {
+                color[0] > 0.12
+                    && color[0] > color[1] * 1.5
+                    && color[1] > color[2] * 1.1
+                    && color[1] < 0.35
+            })
+        });
+        let reverse_lens = triangle.iter().all(|index| {
+            buffers
+                .positions
+                .get(*index as usize)
+                .is_some_and(|position| position[0].abs() > 0.30)
+        }) && triangle.iter().any(|index| {
+            buffers.colors.get(*index as usize).is_some_and(|color| {
+                let max = color[0].max(color[1]).max(color[2]);
+                let min = color[0].min(color[1]).min(color[2]);
+                max - min < 0.04 && color[0] > 0.15
+            })
+        });
+        if red_orange {
+            push_light_triangle(&mut brake, buffers, triangle);
+        } else if reverse_lens {
+            push_light_triangle(&mut reverse, buffers, triangle);
+        } else {
+            body_indices.extend_from_slice(triangle);
+        }
+    }
+
+    buffers.indices = body_indices;
+    (
+        if brake.indices.is_empty() {
+            None
+        } else {
+            Some(brake)
+        },
+        if reverse.indices.is_empty() {
+            None
+        } else {
+            Some(reverse)
+        },
+    )
+}
+
+fn new_light_buffers() -> MeshBuffers {
+    MeshBuffers {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        uvs: Vec::new(),
+        colors: Vec::new(),
+        indices: Vec::new(),
+    }
+}
+
+fn push_light_triangle(target: &mut MeshBuffers, source: &MeshBuffers, triangle: &[u32; 3]) {
+    let base = target.positions.len() as u32;
+    for index in triangle {
+        let index = *index as usize;
+        let Some(position) = source.positions.get(index).copied() else {
+            continue;
+        };
+        target.positions.push(position);
+        target.normals.push(
+            source
+                .normals
+                .get(index)
+                .copied()
+                .unwrap_or([0.0, 0.0, 1.0]),
+        );
+        target
+            .uvs
+            .push(source.uvs.get(index).copied().unwrap_or([0.0, 0.0]));
+        target
+            .colors
+            .push(source.colors.get(index).copied().unwrap_or([1.0; 3]));
+    }
+    target
+        .indices
+        .extend_from_slice(&[base, base + 1, base + 2]);
 }
 
 fn car_texture(
