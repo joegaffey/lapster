@@ -58,6 +58,7 @@ struct CameraUniform {
 struct ModelUniform {
     model: [[f32; 4]; 4],
     alpha: [f32; 4],
+    emissive: [f32; 4],
 }
 
 struct GpuOutline {
@@ -83,6 +84,7 @@ struct GpuMesh {
     outline: Option<GpuOutline>,
     visible: bool,
     alpha: f32,
+    emissive: [f32; 3],
     casts_static_shadow: bool,
     casts_dynamic_shadow: bool,
     shadow_static_base: bool,
@@ -337,7 +339,7 @@ impl Renderer {
                 label: Some("model bind group layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -1195,6 +1197,7 @@ impl Renderer {
             let uniform = ModelUniform {
                 model: model.to_cols_array_2d(),
                 alpha: [mesh.alpha, 0.0, 0.0, 0.0],
+                emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
             };
             self.queue
                 .write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -1278,6 +1281,22 @@ impl Renderer {
         }
     }
 
+    pub fn set_mesh_emissive(&mut self, index: usize, emissive: [f32; 3]) {
+        let Some(mesh) = self.meshes.get_mut(index) else {
+            return;
+        };
+        if mesh.emissive == emissive {
+            return;
+        }
+        mesh.emissive = emissive;
+        let offset = std::mem::offset_of!(ModelUniform, emissive) as u64;
+        self.queue.write_buffer(
+            &mesh.model_buffer,
+            offset,
+            bytemuck::bytes_of(&[emissive[0], emissive[1], emissive[2], 0.0]),
+        );
+    }
+
     fn write_camera(&self) {
         let uniform = camera_uniform(
             &self.camera,
@@ -1340,6 +1359,7 @@ fn create_mesh(
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
         alpha: [mesh.alpha, 0.0, 0.0, 0.0],
+        emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
     };
     let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{} model", mesh.name)),
@@ -1409,6 +1429,7 @@ fn create_mesh(
         outline,
         visible: true,
         alpha: mesh.alpha,
+        emissive: mesh.emissive,
         casts_static_shadow: mesh.casts_static_shadow && mesh.alpha >= 0.999,
         casts_dynamic_shadow: mesh.casts_dynamic_shadow && mesh.alpha >= 0.999,
         shadow_static_base: mesh.casts_static_shadow,

@@ -15,6 +15,7 @@ struct Camera {
 struct Model {
     transform: mat4x4<f32>,
     alpha: vec4<f32>,
+    emissive: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -228,7 +229,10 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     let view_dir = normalize(camera.camera_pos.xyz - input.world_position);
     let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 3.0);
     let rim_tint = vec3<f32>(0.55, 0.72, 0.95);
-    let color = base * (0.30 + 0.70 * ramp * shadow) + rim_tint * rim * 0.16;
+    let color =
+        base * (0.30 + 0.70 * ramp * shadow)
+        + rim_tint * rim * 0.16
+        + model.emissive.xyz;
     return vec4<f32>(linear_to_srgb(color), alpha);
 }
 

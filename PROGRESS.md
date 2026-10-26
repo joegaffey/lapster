@@ -170,6 +170,8 @@ Toolchain setup scripts:
   to Baked environment shadows and the Dynamic car shadow. Auto is not offered; legacy
   stored Auto shadow values are coerced to Baked and Dynamic, while explicit modes are
   preserved.
+- Drive brake and reverse lights: rear-lamp lens geometry is split from the body and lit
+  emissively by brake-pedal input or reverse gear only. Garage remains unchanged.
 - GLB car import:
   - `cargo run -p asset-compiler -- bake-glb <car.glb>`
   - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.

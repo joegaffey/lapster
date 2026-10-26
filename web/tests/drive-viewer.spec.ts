@@ -48,7 +48,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   await page.locator("#view").click({ position: { x: 640, y: 360 } });
   await page.keyboard.down("w");
   await page.waitForFunction(
-    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 5,
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 6,
     undefined,
     { timeout: 10_000 },
   );
@@ -567,6 +567,47 @@ test("reverse requires a second brake press after stopping", async ({ page }) =>
   const braking = await telemetry(page);
   expect(braking.gear).toBe(-1);
   expect(braking.speedKph).toBeLessThan(reverse.speedKph);
+});
+
+test("brake input controls brake lights", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await waitForReady(page);
+
+  const states = await page.evaluate(() => {
+    const viewer = (window as any).__driveViewer;
+    viewer.reset();
+    viewer.simulate(0.1, 0.0, 1.0, 0.0, 1);
+    const on = JSON.parse(viewer.telemetry()).brakeLightsOn;
+    viewer.simulate(0.1, 0.0, 0.0, 0.0, 1);
+    const off = JSON.parse(viewer.telemetry()).brakeLightsOn;
+    return { on, off };
+  });
+
+  expect(states.on).toBe(true);
+  expect(states.off).toBe(false);
+});
+
+test("reverse gear controls reverse lights", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await waitForReady(page);
+
+  const states = await page.evaluate(() => {
+    const viewer = (window as any).__driveViewer;
+    viewer.reset();
+    viewer.simulate(0.1, 0.0, 0.0, 0.0, -1);
+    const reverse = JSON.parse(viewer.telemetry());
+    viewer.simulate(0.1, 0.0, 0.0, 0.0, 1);
+    const forward = JSON.parse(viewer.telemetry());
+    return {
+      reverseOn: reverse.reverseLightsOn,
+      reverseBrake: reverse.brakeLightsOn,
+      forwardOn: forward.reverseLightsOn,
+    };
+  });
+
+  expect(states.reverseOn).toBe(true);
+  expect(states.reverseBrake).toBe(false);
+  expect(states.forwardOn).toBe(false);
 });
 
 test("wheels do not idle-spin when stopped", async ({ page }) => {
