@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-26
 Repository root: the directory containing this file
-Current phase: **CP7 in progress — Drive physics runs in a Rust/Wasm worker over a SAB**
+Current phase: **CP7 in progress — worker scheduler hardened; main-thread physics is still the default**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -94,7 +94,8 @@ Toolchain setup scripts:
 ## Current capabilities
 
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
-- 500 Hz fixed-step vehicle physics in a Rust/Wasm worker with:
+- 500 Hz fixed-step vehicle physics on the main thread by default, with an opt-in SAB worker
+  (`?physics=worker`) sharing the same simulation:
   - triangle raycast suspension with anti-roll bars, progressive bump stops, and a rear grip
     bias to reduce power oversteer,
   - CG-based load transfer,
@@ -105,6 +106,7 @@ Toolchain setup scripts:
   - engine/gearbox/brake model,
   - wall contacts and finite-state reset,
   - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
+  - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
 - Keyboard controls:
   - `W` / `↑` throttle,
@@ -210,7 +212,9 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 30 Playwright tests
+- `npm run test:viewer` — 31 Playwright tests plus an opt-in physics benchmark
+- `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
+  `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
 - WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
 - Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
@@ -262,10 +266,14 @@ matrix then expands to the other supported wheelbases.
 ## Known issues / carry-forward
 
 - **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
-- Drive physics runs in the worker/SAB topology. Garage and Track Viewer have no physics loop.
-- The worker scheduler currently yields with a short timer and uses `performance.now` as the
-  step deadline source; replace the yield with the final Atomics-based scheduler if traces
-  show avoidable jitter.
+- Drive physics defaults to the main thread. The SAB worker is available with
+  `?physics=worker` and is still opt-in pending broader hardware validation. Garage and Track
+  Viewer have no physics loop.
+- The worker uses an `Atomics.wait` deadline loop with bounded catch-up. In a local 4× CPU
+  throttling run at 1280×720 it held ~500 Hz and ~17 fps while main-thread physics fell to
+  ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
+  measure frame pacing meaningfully, but the benchmark still checks worker tick rate.
+- Keep the worker opt-in until CPU-throttled results are reproduced on the target hardware.
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
 - Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
@@ -299,24 +307,27 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **CP6.5 — wheel/FFB feel spike (next)**: add the input abstraction, direct-wheel steering,
+1. **Re-enable the worker default (next)**: run `npm run bench:physics` and the throttled
+   variant on the target hardware, then flip the default only after the worker holds ~500 Hz
+   with no frame-pacing regression.
+2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
-2. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
+3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
    compatibility, profiles, and hardware fixtures.
-3. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add the
+4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add the
    audio worklet over SAB snapshots, expand the hardware matrix, and run performance traces.
    The physics worker, input mailbox, snapshot ring, and FFB mailbox are already in place.
-4. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
+5. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
    wheel geometry cleanup, and licensed AC `.ini` physics when a suitable pack is available.
    - Add a simple steering-wheel/interior placeholder.
    - Add real image decoding/KTX2 only where textures are the right choice.
    - WebXR remains a later phase.
-5. **CP6 — real track**: finish the AC path with texture decoding (DDS/KTX2 where useful),
+6. **CP6 — real track**: finish the AC path with texture decoding (DDS/KTX2 where useful),
    wall/fence collision policy, outer-ring collision or streaming, and performance measurement.
-6. Replace per-frame JSON telemetry with typed arrays/SAB.
-7. Add content-hash cache invalidation.
-8. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
-9. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
+7. Replace per-frame JSON telemetry with typed arrays/SAB.
+8. Add content-hash cache invalidation.
+9. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
+10. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
 
 ## Key files
 

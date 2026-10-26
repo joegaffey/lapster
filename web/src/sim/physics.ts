@@ -3,6 +3,7 @@ import { createSnapshotReader, writeInput, type InputState, type SnapshotReader 
 
 export interface PhysicsDiagnostics {
   tick: number;
+  physicsHz: number;
   stepP50Ms: number;
   stepP99Ms: number;
   droppedTicks: number;
@@ -21,6 +22,7 @@ export class PhysicsClient {
   readonly reader: SnapshotReader;
   diagnostics: PhysicsDiagnostics = {
     tick: 0,
+    physicsHz: 0,
     stepP50Ms: 0,
     stepP99Ms: 0,
     droppedTicks: 0,
@@ -173,6 +175,7 @@ export class PhysicsClient {
     if (data?.type === "diagnostics") {
       this.diagnostics = {
         tick: data.tick ?? 0,
+        physicsHz: data.physicsHz ?? 0,
         stepP50Ms: data.stepP50Ms ?? 0,
         stepP99Ms: data.stepP99Ms ?? 0,
         droppedTicks: data.droppedTicks ?? 0,

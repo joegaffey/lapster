@@ -6,7 +6,8 @@
     "test": "node --test src/types/asset-layout.test.ts tests/fixtures.test.ts tests/pack-loader.test.ts tests/sab.test.ts",
     "build:viewer": "bash scripts/build-viewer.sh",
     "test:viewer": "npm run build:viewer && bash scripts/test-viewer.sh",
-    "test:all": "npm test && npm run test:viewer"
+    "test:all": "npm test && npm run test:viewer",
+    "bench:physics": "RUN_PHYSICS_PERF=1 npm run test:viewer -- tests/physics-perf.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
