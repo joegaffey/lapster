@@ -147,7 +147,8 @@ npm run bench:physics
 ```
 
 The audio spike is covered by `web/tests/audio.spec.ts`; Engine_Sim's synthesis graph is driven
-from the vehicle's actual RPM, speed, and gear through its external-state adapter.
+from a conditioned version of the vehicle's RPM plus actual speed and gear through its
+external-state adapter.
 
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
 the NSS/NSPR libraries if the system does not have them. `npm run bench:physics` runs the

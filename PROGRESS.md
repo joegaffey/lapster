@@ -112,7 +112,8 @@ Toolchain setup scripts:
   exhaust/intake resonators, transmission, and optional turbo; toolbar mute; no sample assets
   or track reverb yet. A small external-state adapter drives its RPM/speed/gear from the
   vehicle and locks the clutch, so the engine note follows the simulation instead of
-  Engine_Sim's own drivetrain.
+  Engine_Sim's own drivetrain. A 60 ms RPM conditioner with a 12,000 rpm/s slew limit removes
+  pitch judder from wheelspin/TC oscillation while preserving launch flare.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -217,7 +218,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 33 Playwright tests plus an opt-in physics benchmark
+- `npm run test:viewer` — 34 Playwright tests plus an opt-in physics benchmark
 - `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
   `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
@@ -276,9 +277,13 @@ matrix then expands to the other supported wheelbases.
   Track Viewer have no physics loop.
 - Audio is a spike only: the external-state adapter bypasses Engine_Sim's own clutch/shift
   transients, so shift clunks, launch slip, and some overrun pops are currently reduced. The
-  engine RPM/speed/gear match the vehicle. There is no per-car profile, sample layer, Doppler,
-  reverb zones, or mobile listening test yet. Audio is unavailable when physics falls back to
-  the main thread because there is no SAB producer.
+  conditioned audio RPM lags the raw signal by roughly 60 ms. There is no per-car profile,
+  sample layer, Doppler, reverb zones, or mobile listening test yet. Audio is unavailable when
+  physics falls back to the main thread because there is no SAB producer.
+- The raw `sim-core` engine RPM is still wheel-speed-derived and visibly oscillates during
+  wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
+  but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a
+  sim-core RPM filter if this needs fixing at the source.
 - Engine_Sim declares MIT in its README/package.json but had no license file upstream; the
   vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`;
   `THIRD_PARTY_NOTICES.md` is copied into the Pages output. Ask upstream to add a LICENSE file
@@ -321,9 +326,10 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset with the external-state
-   adapter. If the drivetrain transients are missed, restore selected EngineSim shift/launch
-   events rather than returning to its independent drivetrain.
+1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset with the RPM conditioner.
+   If the drivetrain transients are missed, restore selected EngineSim shift/launch events
+   rather than returning to its independent drivetrain. Decide separately whether to smooth
+   engine RPM in `sim-core` and retune TC.
 2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
 3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker

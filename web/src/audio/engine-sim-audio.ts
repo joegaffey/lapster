@@ -3,6 +3,10 @@ import { EngineSim } from "./engine-sim/engine-sim.js";
 
 export type AudioStatus = "off" | "starting" | "running" | "error";
 
+const AUDIO_RPM_TAU_S = 0.06;
+const MAX_AUDIO_RPM_SLEW = 12_000;
+const MAX_AUDIO_RPM = 9_000;
+
 export class EngineSimAudio {
   status: AudioStatus = "off";
   error = "";
@@ -15,7 +19,9 @@ export class EngineSimAudio {
   private samples: Float32Array | null = null;
   private starting: Promise<void> | null = null;
   private started = false;
+  private audioRpm = 900;
   private lastRpm = 900;
+  private hasRpm = false;
 
   get contextState(): string {
     return this.context?.state ?? "closed";
@@ -93,15 +99,30 @@ export class EngineSimAudio {
       return;
     }
     try {
-      this.sim.updateExternal(deltaSeconds, {
-        rpm,
+      const dt = Math.max(0.001, Math.min(deltaSeconds, 0.1));
+      const targetRpm = Math.max(0, Math.min(MAX_AUDIO_RPM, rpm));
+      if (!this.hasRpm) {
+        this.audioRpm = targetRpm;
+        this.lastRpm = targetRpm;
+        this.hasRpm = true;
+      } else {
+        const alpha = 1 - Math.exp(-dt / AUDIO_RPM_TAU_S);
+        const smoothed = this.audioRpm + (targetRpm - this.audioRpm) * alpha;
+        const maxStep = MAX_AUDIO_RPM_SLEW * dt;
+        this.audioRpm = Math.max(
+          this.audioRpm - maxStep,
+          Math.min(this.audioRpm + maxStep, smoothed),
+        );
+      }
+      this.sim.updateExternal(dt, {
+        rpm: this.audioRpm,
         speed: speedMps,
         gear,
         throttle,
         brake,
         prevRpm: this.lastRpm,
       });
-      this.lastRpm = rpm;
+      this.lastRpm = this.audioRpm;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
       this.status = "error";
