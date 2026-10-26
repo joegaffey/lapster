@@ -120,7 +120,9 @@ Toolchain setup scripts:
   RPM conditioner shortens its time constant during a shift so pitch and cue stay together.
   A separate tire-screech layer uses two band-passed noise bands, gated by per-wheel lateral
   and longitudinal slip, load, contact, and speed; it fires for cornering scrub, wheelspin,
-  and lockup, and its gain is exposed for diagnostics/tests.
+  and lockup, and its gain is exposed for diagnostics/tests. A road/surface bed blends
+  asphalt, coarse-surface, and grass noise from per-wheel friction and speed; tire squeal is
+  suppressed on grass. Both expose state for diagnostics/tests.
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
   the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
@@ -293,8 +295,10 @@ matrix then expands to the other supported wheelbases.
   cue). Launch slip and some overrun pops are reduced. The conditioned audio RPM lags the raw
   signal by roughly 60 ms outside shifts. There is no per-car profile, sample layer, Doppler,
   reverb zones, or mobile listening test yet. Tire screech is a first-pass centered noise layer
-  with no per-axle panning, surface-specific character, or sample layer. Audio is unavailable
-  when physics falls back to the main thread because there is no SAB producer.
+  with no per-axle panning or sample layer. Surface noise currently classifies friction into
+  asphalt / coarse / grass; it does not know surface names (kerb, concrete, gravel), and is
+  centered mono. Audio is unavailable when physics falls back to the main thread because
+  there is no SAB producer.
 - The raw `sim-core` engine RPM is still wheel-speed-derived and visibly oscillates during
   wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
   but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a

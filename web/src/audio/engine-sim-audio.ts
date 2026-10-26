@@ -30,6 +30,13 @@ export class EngineSimAudio {
   private tireBand1: BiquadFilterNode | null = null;
   private tireBand2: BiquadFilterNode | null = null;
   private tireGain: GainNode | null = null;
+  private roadAsphalt: BiquadFilterNode | null = null;
+  private roadConcrete: BiquadFilterNode | null = null;
+  private roadGrass: BiquadFilterNode | null = null;
+  private roadAsphaltGain: GainNode | null = null;
+  private roadConcreteGain: GainNode | null = null;
+  private roadGrassGain: GainNode | null = null;
+  private roadSurface = { asphalt: 0, concrete: 0, grass: 0, gain: 0 };
   private tireSlip = 0;
   private starting: Promise<void> | null = null;
   private started = false;
@@ -109,7 +116,41 @@ export class EngineSimAudio {
       tireBand1.connect(tireGain);
       tireBand2.connect(tireGain);
       tireGain.connect(gain);
+
+      const roadAsphalt = context.createBiquadFilter();
+      roadAsphalt.type = "lowpass";
+      roadAsphalt.frequency.value = 850;
+      roadAsphalt.Q.value = 0.7;
+      const roadConcrete = context.createBiquadFilter();
+      roadConcrete.type = "bandpass";
+      roadConcrete.frequency.value = 1_500;
+      roadConcrete.Q.value = 0.8;
+      const roadGrass = context.createBiquadFilter();
+      roadGrass.type = "lowpass";
+      roadGrass.frequency.value = 450;
+      roadGrass.Q.value = 0.6;
+      const roadAsphaltGain = context.createGain();
+      const roadConcreteGain = context.createGain();
+      const roadGrassGain = context.createGain();
+      roadAsphaltGain.gain.value = 0;
+      roadConcreteGain.gain.value = 0;
+      roadGrassGain.gain.value = 0;
+      source.connect(roadAsphalt);
+      source.connect(roadConcrete);
+      source.connect(roadGrass);
+      roadAsphalt.connect(roadAsphaltGain);
+      roadConcrete.connect(roadConcreteGain);
+      roadGrass.connect(roadGrassGain);
+      roadAsphaltGain.connect(gain);
+      roadConcreteGain.connect(gain);
+      roadGrassGain.connect(gain);
       source.start();
+      this.roadAsphalt = roadAsphalt;
+      this.roadConcrete = roadConcrete;
+      this.roadGrass = roadGrass;
+      this.roadAsphaltGain = roadAsphaltGain;
+      this.roadConcreteGain = roadConcreteGain;
+      this.roadGrassGain = roadGrassGain;
       this.tireSource = source;
       this.tireBand1 = tireBand1;
       this.tireBand2 = tireBand2;
@@ -133,6 +174,12 @@ export class EngineSimAudio {
       this.tireBand1 = null;
       this.tireBand2 = null;
       this.tireGain = null;
+      this.roadAsphalt = null;
+      this.roadConcrete = null;
+      this.roadGrass = null;
+      this.roadAsphaltGain = null;
+      this.roadConcreteGain = null;
+      this.roadGrassGain = null;
       this.sim?.dispose();
       this.sim = null;
       await this.context?.close();
@@ -217,9 +264,21 @@ export class EngineSimAudio {
     }
     let slip = 0;
     let load = 0;
+    let asphalt = 0;
+    let concrete = 0;
+    let grass = 0;
+    let contacts = 0;
     for (const wheel of wheels) {
       if (!wheel.contact) {
         continue;
+      }
+      contacts += 1;
+      if (wheel.surfaceFriction < 0.5) {
+        grass += 1;
+      } else if (wheel.surfaceFriction < 0.8) {
+        concrete += 1;
+      } else {
+        asphalt += 1;
       }
       const lateral = Math.abs(wheel.slipAngle);
       const longitudinal = Math.abs(wheel.slipRatio);
@@ -235,8 +294,12 @@ export class EngineSimAudio {
     this.tireSlip = slip;
     const loadFactor = Math.max(0.2, Math.min(1, load / 4_500));
     const speedFactor = Math.max(0.35, Math.min(1, 0.35 + speedMps / 8));
+    const surfaceScreech = grass > asphalt && grass > concrete ? 0.2 : 1;
     const squeal =
-      Math.max(0, Math.min(1, (slip - 0.04) * 3.2)) * loadFactor * speedFactor;
+      Math.max(0, Math.min(1, (slip - 0.04) * 3.2)) *
+      loadFactor *
+      speedFactor *
+      surfaceScreech;
     const now = this.context.currentTime;
     this.tireGain.gain.setTargetAtTime(squeal * 0.7, now, 0.03);
     this.tireBand1.frequency.setTargetAtTime(
@@ -249,6 +312,24 @@ export class EngineSimAudio {
       now,
       0.05,
     );
+
+    const asphaltWeight = asphalt / 4;
+    const concreteWeight = concrete / 4;
+    const grassWeight = grass / 4;
+    const rolling = Math.max(0, Math.min(1, speedMps / 30));
+    const grassRolling = Math.max(0, Math.min(1, speedMps / 12));
+    const asphaltGain = rolling * 0.06 * asphaltWeight;
+    const concreteGain = rolling * 0.05 * concreteWeight;
+    const grassGain = grassRolling * 0.16 * grassWeight;
+    this.roadSurface = {
+      asphalt: asphaltWeight,
+      concrete: concreteWeight,
+      grass: grassWeight,
+      gain: asphaltGain + concreteGain + grassGain,
+    };
+    this.roadAsphaltGain?.gain.setTargetAtTime(asphaltGain, now, 0.08);
+    this.roadConcreteGain?.gain.setTargetAtTime(concreteGain, now, 0.08);
+    this.roadGrassGain?.gain.setTargetAtTime(grassGain, now, 0.08);
   }
 
   tireState(): { gain: number; slip: number } {
@@ -256,6 +337,15 @@ export class EngineSimAudio {
       gain: this.tireGain?.gain.value ?? 0,
       slip: this.tireSlip,
     };
+  }
+
+  roadState(): {
+    asphalt: number;
+    concrete: number;
+    grass: number;
+    gain: number;
+  } {
+    return { ...this.roadSurface };
   }
 
   state(): {
@@ -333,6 +423,18 @@ export class EngineSimAudio {
     this.tireBand1 = null;
     this.tireBand2 = null;
     this.tireGain = null;
+    this.roadAsphalt?.disconnect();
+    this.roadConcrete?.disconnect();
+    this.roadGrass?.disconnect();
+    this.roadAsphaltGain?.disconnect();
+    this.roadConcreteGain?.disconnect();
+    this.roadGrassGain?.disconnect();
+    this.roadAsphalt = null;
+    this.roadConcrete = null;
+    this.roadGrass = null;
+    this.roadAsphaltGain = null;
+    this.roadConcreteGain = null;
+    this.roadGrassGain = null;
     this.gain?.disconnect();
     this.analyser?.disconnect();
     this.gain = null;

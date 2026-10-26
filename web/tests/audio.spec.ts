@@ -79,6 +79,7 @@ test("audio follows the vehicle rpm and speed", async ({ page }) => {
       gameSpeedKph: game.speedKph,
       gameGear: game.gear,
       audio,
+      road: (window as any).__driveAudio.roadState(),
     };
   });
   await page.keyboard.up("w");
@@ -88,6 +89,8 @@ test("audio follows the vehicle rpm and speed", async ({ page }) => {
   expect(state.audio.gear).toBe(state.gameGear);
   expect(state.audio.clutch).toBe(1);
   expect(Math.abs(state.audio.clutchSlip)).toBeLessThan(50);
+  expect(state.road.asphalt).toBeGreaterThan(0);
+  expect(state.road.gain).toBeGreaterThan(0);
 });
 
 test("audio rpm is conditioned during launch", async ({ page }) => {
