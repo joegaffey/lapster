@@ -509,6 +509,8 @@ export class Drivetrain {
    * @returns {object} the (reused) params object
    */
   step(deltaTime, now = 0) {
+    this.externalDrive = false;
+    this.externalLoad = null;
     let dt = Number(deltaTime) || 0;
     if (dt <= 0) {
       // No time passed: no physics, and no events either. Zeroing keeps the
@@ -1290,6 +1292,8 @@ export class Drivetrain {
     this.throttle = clamp(Number(external.throttle) || 0, 0, 1);
     this.brake = clamp(Number(external.brake) || 0, 0, 1);
     this.thrEff = this.throttle;
+    this.externalDrive = true;
+    this.externalLoad = clamp(Number(external.load) || 0, 0, 1);
     this.we = rpm * RADS_PER_RPM;
     this.wg = this.we;
     this.ww = Math.max(0, Number(external.speed) || 0) / this.r;
@@ -1334,9 +1338,17 @@ export class Drivetrain {
     // Combustion load: what the engine is actually burning, not the pedal.
     // Includes the rev-match blip, which is why a downshift sounds loaded even
     // with the driver's foot off the pedal.
-    const raw = clamp(this.thrEff || 0, 0, 1);
-    const sm = dt > 0 ? clamp(dt * 12, 0, 1) : 1;
-    this.load += (raw - this.load) * sm;
+    const raw = clamp(
+      this.externalLoad != null ? this.externalLoad : (this.thrEff || 0),
+      0,
+      1,
+    );
+    if (this.externalLoad != null) {
+      this.load = raw;
+    } else {
+      const sm = dt > 0 ? clamp(dt * 12, 0, 1) : 1;
+      this.load += (raw - this.load) * sm;
+    }
     p.load = clamp(this.load, 0, 1);
 
     // DFCO: closed throttle, revs well above idle, wheels driving the engine.
@@ -1361,6 +1373,7 @@ export class Drivetrain {
 
     p.boost = this.boost;
     p.shifting = this.shifting;
+    p.externalDrivetrain = !!this.externalDrive;
     p.gearbox = this.vehicle.gearbox;
     p.shiftPhase = this.shiftPhase;
 

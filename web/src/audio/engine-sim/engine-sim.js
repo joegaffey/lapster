@@ -975,6 +975,30 @@ export class EngineSim {
     return this;
   }
 
+  /** Trigger a short mechanical shift cue without starting a shift state machine. */
+  playShift(from, to) {
+    if (!this.running || !this.transients || from === to) {
+      return false;
+    }
+    const now = this.ctx.currentTime;
+    const up = to > from;
+    this.transients.trigger(
+      'click',
+      now + 0.012,
+      up ? 0.30 : 0.36,
+      0.9 + 0.08 * Math.abs(to - from),
+      1,
+    );
+    this.transients.trigger(
+      'thump',
+      now + 0.03,
+      up ? 0.14 : 0.20,
+      1,
+      0.9,
+    );
+    return true;
+  }
+
   /** Drive the synthesis graph from an external vehicle state. */
   updateExternal(deltaTime, external) {
     let dt = Number(deltaTime) || 0;

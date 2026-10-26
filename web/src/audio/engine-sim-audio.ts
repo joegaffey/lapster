@@ -4,6 +4,8 @@ import { EngineSim } from "./engine-sim/engine-sim.js";
 export type AudioStatus = "off" | "starting" | "running" | "error";
 
 const AUDIO_RPM_TAU_S = 0.06;
+const AUDIO_LOAD_ATTACK_S = 0.04;
+const AUDIO_LOAD_RELEASE_S = 0.32;
 const MAX_AUDIO_RPM_SLEW = 12_000;
 const MAX_AUDIO_RPM = 9_000;
 
@@ -20,8 +22,11 @@ export class EngineSimAudio {
   private starting: Promise<void> | null = null;
   private started = false;
   private audioRpm = 900;
+  private audioLoad = 0;
   private lastRpm = 900;
+  private lastGear = 1;
   private hasRpm = false;
+  private hasLoad = false;
 
   get contextState(): string {
     return this.context?.state ?? "closed";
@@ -114,12 +119,27 @@ export class EngineSimAudio {
           Math.min(this.audioRpm + maxStep, smoothed),
         );
       }
+      const targetLoad = Math.max(0, Math.min(1, throttle));
+      if (!this.hasLoad) {
+        this.audioLoad = targetLoad;
+        this.hasLoad = true;
+      } else {
+        const tau = targetLoad > this.audioLoad ? AUDIO_LOAD_ATTACK_S : AUDIO_LOAD_RELEASE_S;
+        this.audioLoad +=
+          (targetLoad - this.audioLoad) * (1 - Math.exp(-dt / tau));
+      }
+      const gameGear = Math.round(gear);
+      if (gameGear >= 1 && this.lastGear >= 1 && gameGear !== this.lastGear) {
+        this.sim.playShift(this.lastGear, gameGear);
+      }
+      this.lastGear = gameGear;
       this.sim.updateExternal(dt, {
         rpm: this.audioRpm,
         speed: speedMps,
         gear,
         throttle,
         brake,
+        load: this.audioLoad,
         prevRpm: this.lastRpm,
       });
       this.lastRpm = this.audioRpm;

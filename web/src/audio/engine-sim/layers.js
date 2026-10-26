@@ -475,8 +475,9 @@ export class TransmissionLayer {
     // --- rattle -------------------------------------------------------------
     // Torsional acceleration of the crank, normalised: 4000 rpm/s is a hard
     // shift transient; idle irregularity is a fraction of that.
-    const dRpmTerm = clamp(Math.abs(fin(p.dRpm, 0)) / 4000, 0, 1);
-    const slipTerm = clamp(Math.abs(fin(p.clutchSlip, 0)) / 800, 0, 1);
+    const externalDrive = p.externalDrivetrain === true;
+    const dRpmTerm = externalDrive ? 0 : clamp(Math.abs(fin(p.dRpm, 0)) / 4000, 0, 1);
+    const slipTerm = externalDrive ? 0 : clamp(Math.abs(fin(p.clutchSlip, 0)) / 800, 0, 1);
 
     // Idle rattle: unloaded gears + engaged clutch + low rpm. In neutral every
     // gear on the layshaft is unloaded, so it is loudest there.
@@ -485,7 +486,9 @@ export class TransmissionLayer {
 
     // Loaded teeth are pressed against one flank and cannot rattle at all.
     const lashOpen = 1 - 0.65 * load * inGear;
-    const drive = clamp(0.5 * idleRattle + 0.75 * dRpmTerm + 0.7 * slipTerm, 0, 1) * lashOpen;
+    const drive = externalDrive
+      ? 0
+      : clamp(0.5 * idleRattle + 0.75 * dRpmTerm + 0.7 * slipTerm, 0, 1) * lashOpen;
 
     setF(this.torsOsc.frequency, this.cyl * f0, now, TC, FMIN);
     setT(this.ratGain.gain, 0.09 * drive * clamp(rpm / Math.max(1, this.idleRpm * 0.6), 0, 1), now, TC);
