@@ -137,3 +137,32 @@ test("audio rpm is conditioned during launch", async ({ page }) => {
   }
   expect(maxAudioRate).toBeLessThan(15_000);
 });
+
+test("tire screech responds to lateral slip", async ({ page }) => {
+  await page.goto("/web/drive/?v=audio-tyre");
+  await waitForReady(page);
+  await page.locator("#audio-toggle").click();
+  await page.waitForFunction(
+    () => (window as any).__driveAudio?.status === "running",
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.keyboard.down("w");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 25,
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.keyboard.down("a");
+  await page.waitForFunction(
+    () => (window as any).__driveAudio.tireState().gain > 0.01,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("a");
+  await page.keyboard.up("w");
+  const tire = await page.evaluate(() => (window as any).__driveAudio.tireState());
+  expect(tire.slip).toBeGreaterThan(0.05);
+  expect(tire.gain).toBeGreaterThan(0.01);
+});

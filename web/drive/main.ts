@@ -614,6 +614,7 @@ async function boot() {
             gear,
             telemetry.rpm,
             telemetry.speedMps,
+            telemetry.wheels,
           );
           updateHud(telemetry);
         }
@@ -629,6 +630,7 @@ async function boot() {
           gear,
           telemetry.rpm,
           telemetry.speedMps,
+          telemetry.wheels,
         );
         updateHud(telemetry);
       }

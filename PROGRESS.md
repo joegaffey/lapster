@@ -118,6 +118,8 @@ Toolchain setup scripts:
   lift-off does not cut the sound abruptly. Continuous lash rattle is disabled in external
   mode; a single click/thump cue is triggered immediately on forward gear changes. The audio
   RPM conditioner shortens its time constant during a shift so pitch and cue stay together.
+  A separate tire-screech layer uses two band-passed noise bands, gated by per-wheel combined
+  slip, load, contact, and speed; its gain is exposed for diagnostics/tests.
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
   the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
@@ -226,7 +228,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 35 Playwright tests plus an opt-in physics benchmark
+- `npm run test:viewer` — 36 Playwright tests plus an opt-in physics benchmark
 - `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
   `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
@@ -289,8 +291,9 @@ matrix then expands to the other supported wheelbases.
   EngineSim's own drivetrain (load floor, overrun attenuation, rattle suppression, and shift
   cue). Launch slip and some overrun pops are reduced. The conditioned audio RPM lags the raw
   signal by roughly 60 ms outside shifts. There is no per-car profile, sample layer, Doppler,
-  reverb zones, or mobile listening test yet. Audio is unavailable when physics falls back to
-  the main thread because there is no SAB producer.
+  reverb zones, or mobile listening test yet. Tire screech is a first-pass centered noise layer
+  with no per-axle panning, surface-specific character, or sample layer. Audio is unavailable
+  when physics falls back to the main thread because there is no SAB producer.
 - The raw `sim-core` engine RPM is still wheel-speed-derived and visibly oscillates during
   wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
   but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a

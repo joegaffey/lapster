@@ -9,6 +9,13 @@ const AUDIO_LOAD_RELEASE_S = 0.32;
 const MAX_AUDIO_RPM_SLEW = 12_000;
 const MAX_AUDIO_RPM = 9_000;
 
+export interface TireAudioWheel {
+  slipRatio: number;
+  slipAngle: number;
+  load: number;
+  contact: boolean;
+}
+
 export class EngineSimAudio {
   status: AudioStatus = "off";
   error = "";
@@ -19,6 +26,11 @@ export class EngineSimAudio {
   private gain: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
   private samples: Float32Array | null = null;
+  private tireSource: AudioBufferSourceNode | null = null;
+  private tireBand1: BiquadFilterNode | null = null;
+  private tireBand2: BiquadFilterNode | null = null;
+  private tireGain: GainNode | null = null;
+  private tireSlip = 0;
   private starting: Promise<void> | null = null;
   private started = false;
   private audioRpm = 900;
@@ -73,6 +85,35 @@ export class EngineSimAudio {
       sim.connect(gain);
       gain.connect(analyser);
       analyser.connect(context.destination);
+
+      const noise = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+      const data = noise.getChannelData(0);
+      for (let index = 0; index < data.length; index += 1) {
+        data[index] = Math.random() * 2 - 1;
+      }
+      const source = context.createBufferSource();
+      source.buffer = noise;
+      source.loop = true;
+      const tireBand1 = context.createBiquadFilter();
+      tireBand1.type = "bandpass";
+      tireBand1.frequency.value = 1_100;
+      tireBand1.Q.value = 9;
+      const tireBand2 = context.createBiquadFilter();
+      tireBand2.type = "bandpass";
+      tireBand2.frequency.value = 2_400;
+      tireBand2.Q.value = 14;
+      const tireGain = context.createGain();
+      tireGain.gain.value = 0;
+      source.connect(tireBand1);
+      source.connect(tireBand2);
+      tireBand1.connect(tireGain);
+      tireBand2.connect(tireGain);
+      tireGain.connect(gain);
+      source.start();
+      this.tireSource = source;
+      this.tireBand1 = tireBand1;
+      this.tireBand2 = tireBand2;
+      this.tireGain = tireGain;
       await sim.start();
       this.sim = sim;
       this.gain = gain;
@@ -83,6 +124,15 @@ export class EngineSimAudio {
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
       this.status = "error";
+      this.tireSource?.stop();
+      this.tireSource?.disconnect();
+      this.tireBand1?.disconnect();
+      this.tireBand2?.disconnect();
+      this.tireGain?.disconnect();
+      this.tireSource = null;
+      this.tireBand1 = null;
+      this.tireBand2 = null;
+      this.tireGain = null;
       this.sim?.dispose();
       this.sim = null;
       await this.context?.close();
@@ -100,6 +150,7 @@ export class EngineSimAudio {
     gear: number,
     rpm: number,
     speedMps: number,
+    wheels: TireAudioWheel[] = [],
   ): void {
     if (!this.started || !this.sim) {
       return;
@@ -152,11 +203,54 @@ export class EngineSimAudio {
         prevRpm: this.lastRpm,
       });
       this.lastRpm = this.audioRpm;
+      this.updateTires(wheels, speedMps);
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
       this.status = "error";
       console.warn("engine audio update failed", error);
     }
+  }
+
+  private updateTires(wheels: TireAudioWheel[], speedMps: number): void {
+    if (!this.tireGain || !this.context || !this.tireBand1 || !this.tireBand2) {
+      return;
+    }
+    let slip = 0;
+    let load = 0;
+    for (const wheel of wheels) {
+      if (!wheel.contact) {
+        continue;
+      }
+      slip = Math.max(
+        slip,
+        Math.abs(wheel.slipAngle) * 0.9 + Math.abs(wheel.slipRatio) * 0.3,
+      );
+      load = Math.max(load, wheel.load);
+    }
+    this.tireSlip = slip;
+    const loadFactor = Math.max(0.15, Math.min(1, load / 4_500));
+    const speedFactor = Math.max(0, Math.min(1, speedMps / 8));
+    const squeal =
+      Math.max(0, Math.min(1, (slip - 0.04) * 2.8)) * loadFactor * speedFactor;
+    const now = this.context.currentTime;
+    this.tireGain.gain.setTargetAtTime(squeal * 0.4, now, 0.03);
+    this.tireBand1.frequency.setTargetAtTime(
+      900 + 650 * Math.max(0, Math.min(1, slip)),
+      now,
+      0.05,
+    );
+    this.tireBand2.frequency.setTargetAtTime(
+      2_000 + 900 * Math.max(0, Math.min(1, slip)),
+      now,
+      0.05,
+    );
+  }
+
+  tireState(): { gain: number; slip: number } {
+    return {
+      gain: this.tireGain?.gain.value ?? 0,
+      slip: this.tireSlip,
+    };
   }
 
   state(): {
@@ -225,6 +319,15 @@ export class EngineSimAudio {
     this.status = "off";
     this.sim?.dispose();
     this.sim = null;
+    this.tireSource?.stop();
+    this.tireSource?.disconnect();
+    this.tireBand1?.disconnect();
+    this.tireBand2?.disconnect();
+    this.tireGain?.disconnect();
+    this.tireSource = null;
+    this.tireBand1 = null;
+    this.tireBand2 = null;
+    this.tireGain = null;
     this.gain?.disconnect();
     this.analyser?.disconnect();
     this.gain = null;
