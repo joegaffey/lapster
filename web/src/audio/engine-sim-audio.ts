@@ -25,6 +25,7 @@ export class EngineSimAudio {
   private audioLoad = 0;
   private lastRpm = 900;
   private lastGear = 1;
+  private shiftTimer = 0;
   private hasRpm = false;
   private hasLoad = false;
 
@@ -105,21 +106,34 @@ export class EngineSimAudio {
     }
     try {
       const dt = Math.max(0.001, Math.min(deltaSeconds, 0.1));
+      this.shiftTimer = Math.max(0, this.shiftTimer - dt);
+      const gameGear = Math.round(gear);
+      if (gameGear >= 1 && this.lastGear >= 1 && gameGear !== this.lastGear) {
+        this.shiftTimer = 0.12;
+        this.sim.playShift(this.lastGear, gameGear);
+      }
+      this.lastGear = gameGear;
+
       const targetRpm = Math.max(0, Math.min(MAX_AUDIO_RPM, rpm));
       if (!this.hasRpm) {
         this.audioRpm = targetRpm;
         this.lastRpm = targetRpm;
         this.hasRpm = true;
       } else {
-        const alpha = 1 - Math.exp(-dt / AUDIO_RPM_TAU_S);
+        const tau = this.shiftTimer > 0 ? 0.015 : AUDIO_RPM_TAU_S;
+        const alpha = 1 - Math.exp(-dt / tau);
         const smoothed = this.audioRpm + (targetRpm - this.audioRpm) * alpha;
-        const maxStep = MAX_AUDIO_RPM_SLEW * dt;
+        const maxStep = MAX_AUDIO_RPM_SLEW * (this.shiftTimer > 0 ? 4 : 1) * dt;
         this.audioRpm = Math.max(
           this.audioRpm - maxStep,
           Math.min(this.audioRpm + maxStep, smoothed),
         );
       }
-      const targetLoad = Math.max(0, Math.min(1, throttle));
+      const movingUnderPower = speedMps > 2 && rpm > 1_500 && throttle < 0.05;
+      const targetLoad = Math.max(
+        throttle,
+        movingUnderPower ? 0.38 : 0,
+      );
       if (!this.hasLoad) {
         this.audioLoad = targetLoad;
         this.hasLoad = true;
@@ -128,11 +142,6 @@ export class EngineSimAudio {
         this.audioLoad +=
           (targetLoad - this.audioLoad) * (1 - Math.exp(-dt / tau));
       }
-      const gameGear = Math.round(gear);
-      if (gameGear >= 1 && this.lastGear >= 1 && gameGear !== this.lastGear) {
-        this.sim.playShift(this.lastGear, gameGear);
-      }
-      this.lastGear = gameGear;
       this.sim.updateExternal(dt, {
         rpm: this.audioRpm,
         speed: speedMps,

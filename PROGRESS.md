@@ -114,9 +114,10 @@ Toolchain setup scripts:
   vehicle and locks the clutch, so the engine note follows the simulation instead of
   Engine_Sim's own drivetrain. A 60 ms RPM conditioner with a 12,000 rpm/s slew limit removes
   pitch judder from wheelspin/TC oscillation while preserving launch flare. Load uses a fast
-  attack and 320 ms release so lift-off does not cut the sound abruptly. Continuous lash
-  rattle is disabled in external mode; a single click/thump cue is triggered on forward gear
-  changes.
+  attack and 320 ms release, with an overrun load floor and reduced overrun attenuation, so
+  lift-off does not cut the sound abruptly. Continuous lash rattle is disabled in external
+  mode; a single click/thump cue is triggered immediately on forward gear changes. The audio
+  RPM conditioner shortens its time constant during a shift so pitch and cue stay together.
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
   the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
@@ -284,10 +285,12 @@ matrix then expands to the other supported wheelbases.
   Track Viewer have no physics loop.
 - Audio is a spike only: the external-state adapter bypasses Engine_Sim's own clutch/shift
   transients. Continuous gear rattle is disabled; a synthetic click/thump covers forward gear
-  changes. Launch slip and some overrun pops are reduced. The conditioned audio RPM lags the
-  raw signal by roughly 60 ms. There is no per-car profile, sample layer, Doppler, reverb
-  zones, or mobile listening test yet. Audio is unavailable when physics falls back to the
-  main thread because there is no SAB producer.
+  changes. This external mode is a set of compensations around library tuning that assumes
+  EngineSim's own drivetrain (load floor, overrun attenuation, rattle suppression, and shift
+  cue). Launch slip and some overrun pops are reduced. The conditioned audio RPM lags the raw
+  signal by roughly 60 ms outside shifts. There is no per-car profile, sample layer, Doppler,
+  reverb zones, or mobile listening test yet. Audio is unavailable when physics falls back to
+  the main thread because there is no SAB producer.
 - The raw `sim-core` engine RPM is still wheel-speed-derived and visibly oscillates during
   wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
   but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a

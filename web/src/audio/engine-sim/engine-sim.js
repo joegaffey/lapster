@@ -984,15 +984,15 @@ export class EngineSim {
     const up = to > from;
     this.transients.trigger(
       'click',
-      now + 0.012,
-      up ? 0.30 : 0.36,
+      now,
+      up ? 0.34 : 0.40,
       0.9 + 0.08 * Math.abs(to - from),
       1,
     );
     this.transients.trigger(
       'thump',
-      now + 0.03,
-      up ? 0.14 : 0.20,
+      now + 0.014,
+      up ? 0.15 : 0.20,
       1,
       0.9,
     );
@@ -1177,10 +1177,11 @@ export class EngineSim {
     // particular engine speaks relative to the rest of the mix, before any
     // user-facing level control. It sat in all sixteen profiles being read by
     // NOTHING until the preset schema went looking for orphans.
+    const overrunCut = this.physics.externalDrive ? 0.08 : 0.45;
     const ampl = (1 + 0.35 * this._bark)
                * (0.32 + 0.68 * Math.pow(x, 0.7))
                * (0.45 + 0.55 * clamp(p.rpmNorm, 0, 1))
-               * (1 - 0.45 * clamp(p.overrun, 0, 1))
+               * (1 - overrunCut * clamp(p.overrun, 0, 1))
                * clamp(Number(this.profile.voice) || 1, 0.2, 2);
     const gSoft = Math.cos(x * Math.PI / 2) * ampl;
     const gHard = Math.sin(x * Math.PI / 2) * ampl;
