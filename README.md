@@ -210,4 +210,5 @@ in this project by you shall be dual licensed as above, without any additional t
 conditions.
 
 Drive audio vendors [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim) under the MIT
-license. See `web/src/audio/engine-sim/NOTICE.md` and `LICENSE`.
+license. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md),
+`web/src/audio/engine-sim/NOTICE.md`, and `LICENSE`.

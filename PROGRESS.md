@@ -279,8 +279,9 @@ matrix then expands to the other supported wheelbases.
   sample layer, Doppler, reverb zones, or mobile listening test yet. Audio is unavailable when
   physics falls back to the main thread because there is no SAB producer.
 - Engine_Sim declares MIT in its README/package.json but had no license file upstream; the
-  vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`.
-  Ask upstream to add a LICENSE file before relying on this for a release.
+  vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`;
+  `THIRD_PARTY_NOTICES.md` is copied into the Pages output. Ask upstream to add a LICENSE file
+  before relying on this for a release.
 - The worker uses an `Atomics.wait` deadline loop with bounded catch-up. In a local 4× CPU
   throttling run at 1280×720 it held ~500 Hz and ~17 fps while main-thread physics fell to
   ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
