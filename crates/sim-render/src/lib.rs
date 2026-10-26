@@ -1079,7 +1079,7 @@ impl DriveViewer {
         self.brake_lights_on = on;
         if let Some(index) = self.rig.brake_light_mesh_index {
             self.renderer
-                .set_mesh_emissive(index, if on { [2.5, 0.04, 0.0] } else { [0.0; 3] });
+                .set_mesh_emissive(index, if on { [5.0, 0.12, 0.02] } else { [0.0; 3] });
         }
     }
 
@@ -1090,7 +1090,7 @@ impl DriveViewer {
         self.reverse_lights_on = on;
         if let Some(index) = self.rig.reverse_light_mesh_index {
             self.renderer
-                .set_mesh_emissive(index, if on { [1.8, 1.8, 1.8] } else { [0.0; 3] });
+                .set_mesh_emissive(index, if on { [3.5, 3.5, 3.5] } else { [0.0; 3] });
         }
     }
 
