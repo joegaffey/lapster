@@ -166,3 +166,30 @@ test("tire screech responds to lateral slip", async ({ page }) => {
   expect(tire.slip).toBeGreaterThan(0.05);
   expect(tire.gain).toBeGreaterThan(0.01);
 });
+
+test("tire screech responds to straight-line wheelspin", async ({ page }) => {
+  await page.goto("/web/drive/?v=audio-tyre-straight");
+  await waitForReady(page);
+  await page.locator("#audio-toggle").click();
+  await page.waitForFunction(
+    () => (window as any).__driveAudio?.status === "running",
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    (window as any).__driveViewer.set_traction_control(false);
+    (window as any).__driveViewer.set_abs_control(false);
+    (window as any).__driveViewer.reset();
+  });
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.keyboard.down("w");
+  await page.waitForFunction(
+    () => (window as any).__driveAudio.tireState().gain > 0.02,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("w");
+  const tire = await page.evaluate(() => (window as any).__driveAudio.tireState());
+  expect(tire.slip).toBeGreaterThan(0.1);
+  expect(tire.gain).toBeGreaterThan(0.02);
+});

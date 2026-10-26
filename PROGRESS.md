@@ -118,8 +118,9 @@ Toolchain setup scripts:
   lift-off does not cut the sound abruptly. Continuous lash rattle is disabled in external
   mode; a single click/thump cue is triggered immediately on forward gear changes. The audio
   RPM conditioner shortens its time constant during a shift so pitch and cue stay together.
-  A separate tire-screech layer uses two band-passed noise bands, gated by per-wheel combined
-  slip, load, contact, and speed; its gain is exposed for diagnostics/tests.
+  A separate tire-screech layer uses two band-passed noise bands, gated by per-wheel lateral
+  and longitudinal slip, load, contact, and speed; it fires for cornering scrub, wheelspin,
+  and lockup, and its gain is exposed for diagnostics/tests.
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
   the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
@@ -228,7 +229,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 36 Playwright tests plus an opt-in physics benchmark
+- `npm run test:viewer` — 37 Playwright tests plus an opt-in physics benchmark
 - `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
   `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.

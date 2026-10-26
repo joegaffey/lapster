@@ -221,19 +221,24 @@ export class EngineSimAudio {
       if (!wheel.contact) {
         continue;
       }
-      slip = Math.max(
-        slip,
-        Math.abs(wheel.slipAngle) * 0.9 + Math.abs(wheel.slipRatio) * 0.3,
+      const lateral = Math.abs(wheel.slipAngle);
+      const longitudinal = Math.abs(wheel.slipRatio);
+      const combined = Math.max(
+        lateral * 0.9 + longitudinal * 0.35,
+        Math.max(0, longitudinal - 0.08),
       );
-      load = Math.max(load, wheel.load);
+      if (combined > slip) {
+        slip = combined;
+        load = wheel.load;
+      }
     }
     this.tireSlip = slip;
-    const loadFactor = Math.max(0.15, Math.min(1, load / 4_500));
-    const speedFactor = Math.max(0, Math.min(1, speedMps / 8));
+    const loadFactor = Math.max(0.2, Math.min(1, load / 4_500));
+    const speedFactor = Math.max(0.35, Math.min(1, 0.35 + speedMps / 8));
     const squeal =
-      Math.max(0, Math.min(1, (slip - 0.04) * 2.8)) * loadFactor * speedFactor;
+      Math.max(0, Math.min(1, (slip - 0.04) * 3.2)) * loadFactor * speedFactor;
     const now = this.context.currentTime;
-    this.tireGain.gain.setTargetAtTime(squeal * 0.4, now, 0.03);
+    this.tireGain.gain.setTargetAtTime(squeal * 0.7, now, 0.03);
     this.tireBand1.frequency.setTargetAtTime(
       900 + 650 * Math.max(0, Math.min(1, slip)),
       now,
