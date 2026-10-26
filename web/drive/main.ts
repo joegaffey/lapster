@@ -77,12 +77,13 @@ let redlineRpm = 8_000;
 let gearRatios: number[] = [3.48, 2.02, 1.39, 1.0, 0.72, 0.6];
 let maxGear = gearRatios.length;
 let autoShiftCooldown = 0;
+let previousAutoThrottle = 0;
 let workerAssists = {
   tc: true,
-  tcStrength: 1,
+  tcStrength: 0.5,
   abs: true,
   esc: true,
-  escStrength: 1,
+  escStrength: 0.5,
   steeringSensitivity: 1,
 };
 
@@ -182,6 +183,7 @@ function reset() {
   lastSpeedMps = 0;
   lastRpm = telemetryRpm();
   autoShiftCooldown = 0;
+  previousAutoThrottle = 0;
   previousForward = false;
   previousReverse = false;
   keys.clear();
@@ -202,6 +204,8 @@ function telemetryRpm(): number {
 
 function updateAutoGear(delta: number, throttle: number, brake: number) {
   autoShiftCooldown = Math.max(0, autoShiftCooldown - delta);
+  const kickdown = throttle >= 0.85 && previousAutoThrottle < 0.5;
+  previousAutoThrottle = throttle;
   if (gear < 1 || autoShiftCooldown > 0) {
     return;
   }
@@ -214,14 +218,19 @@ function updateAutoGear(delta: number, throttle: number, brake: number) {
   }
   const lowerRpm =
     gear > 1 ? lastRpm * (gearRatios[gear - 2] / gearRatios[gear - 1]) : lastRpm;
-  if (gear > 1 && lastRpm <= downRpm && lowerRpm < redlineRpm * 0.97) {
+  if (
+    gear > 1 &&
+    (throttle < 0.5 || brake > 0.1) &&
+    lastRpm <= downRpm &&
+    lowerRpm < redlineRpm * 0.97
+  ) {
     gear -= 1;
     autoShiftCooldown = 0.35;
     return;
   }
   if (
+    kickdown &&
     gear > 1 &&
-    throttle >= 0.85 &&
     lastRpm < redlineRpm * 0.55 &&
     lowerRpm < redlineRpm * 0.97
   ) {

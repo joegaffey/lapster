@@ -105,9 +105,10 @@ test("automatic gearbox upshifts from a standstill", async ({ page }) => {
     undefined,
     { timeout: 15_000 },
   );
-  await page.keyboard.up("w");
+  await page.waitForTimeout(800);
   const shifted = await telemetry(page);
   expect(shifted.gear).toBeGreaterThan(1);
+  await page.keyboard.up("w");
 });
 
 test("main-thread physics remains available as a fallback", async ({ page }) => {
@@ -347,8 +348,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.tractionControl).toBe(true);
   expect(telemetry.absControl).toBe(true);
   expect(telemetry.stabilityControl).toBe(true);
-  expect(telemetry.tractionStrength).toBe(1);
-  expect(telemetry.stabilityStrength).toBe(1);
+  expect(telemetry.tractionStrength).toBe(0.5);
+  expect(telemetry.stabilityStrength).toBe(0.5);
   expect(telemetry.steeringSensitivity).toBe(1);
   expect(telemetry.debugLinesVisible).toBe(false);
   expect(telemetry.environmentShadowMode).toBe("baked");

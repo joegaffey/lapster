@@ -52,10 +52,10 @@ const SETTINGS_STYLE_ID = "lapster-settings-style";
 
 const DEFAULTS: AssistSettings = {
   tc: true,
-  tcStrength: 1,
+  tcStrength: 0.5,
   abs: true,
   esc: true,
-  escStrength: 1,
+  escStrength: 0.5,
   steeringSensitivity: 1,
   debugLines: false,
   environmentShadows: "baked",
@@ -182,8 +182,8 @@ function settingsDialogHtml(): string {
       </div>
       <label class="assist-slider">
         <span>TC strength</span>
-        <output id="tc-strength-value">100%</output>
-        <input id="tc-strength" type="range" min="0" max="1" step="0.05" value="1" />
+        <output id="tc-strength-value">50%</output>
+        <input id="tc-strength" type="range" min="0" max="1" step="0.05" value="0.5" />
       </label>
       <div class="assist-row">
         <span>Anti-lock brakes</span>
@@ -195,8 +195,8 @@ function settingsDialogHtml(): string {
       </div>
       <label class="assist-slider">
         <span>ESC strength</span>
-        <output id="esc-strength-value">100%</output>
-        <input id="esc-strength" type="range" min="0" max="1" step="0.05" value="1" />
+        <output id="esc-strength-value">50%</output>
+        <input id="esc-strength" type="range" min="0" max="1" step="0.05" value="0.5" />
       </label>
       <label class="assist-slider">
         <span>Steering sensitivity</span>
@@ -321,10 +321,10 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
       : "dynamic";
   return {
     tc: value?.tc !== false,
-    tcStrength: clamp(value?.tcStrength ?? 1, 0, 1, 1),
+    tcStrength: clamp(value?.tcStrength ?? 0.5, 0, 1, 1),
     abs: value?.abs !== false,
     esc: value?.esc !== false,
-    escStrength: clamp(value?.escStrength ?? 1, 0, 1, 1),
+    escStrength: clamp(value?.escStrength ?? 0.5, 0, 1, 1),
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
     debugLines: value?.debugLines === true,
     environmentShadows,

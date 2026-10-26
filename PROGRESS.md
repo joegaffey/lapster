@@ -101,9 +101,10 @@ Toolchain setup scripts:
   - CG-based load transfer,
   - Pacejka longitudinal/lateral forces with tire relaxation,
   - tangent-plane tire forces and body contact probes for raised/sloped collision surfaces,
-  - optional ABS, shared rear traction control and stability control, plus speed-sensitive
-    steering for keyboard input,
-  - engine/gearbox/brake model,
+  - optional ABS, shared rear traction control and stability control defaulting to 50%
+    strength, plus speed-sensitive steering for keyboard input,
+  - engine/gearbox/brake model with closed-throttle engine braking,
+  - traction-control launch torque limiting and raw-slip feedback at low speed,
   - wall contacts and finite-state reset,
   - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
@@ -227,7 +228,7 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 52 tests
+- `cargo test --workspace` — 54 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
   control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,
@@ -309,6 +310,9 @@ matrix then expands to the other supported wheelbases.
   wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
   but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a
   sim-core RPM filter if this needs fixing at the source.
+- Traction control now limits launch torque from current raw slip below 8 m/s; above that it
+  relies on the filtered slip controller. Engine braking is a simple rpm-scaled negative
+  driveline torque, not a full engine-inertia/clutch model.
 - Engine_Sim declares MIT in its README/package.json but had no license file upstream; the
   vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`;
   `THIRD_PARTY_NOTICES.md` is copied into the Pages output. Ask upstream to add a LICENSE file
