@@ -115,12 +115,12 @@ export class PhysicsClient {
     );
   }
 
-  pause(): void {
-    void this.command("pause", {});
+  pause(): Promise<void> {
+    return this.command("pause", {}).then(() => undefined);
   }
 
-  resume(): void {
-    void this.command("resume", {});
+  resume(): Promise<void> {
+    return this.command("resume", {}).then(() => undefined);
   }
 
   reset(): Promise<void> {

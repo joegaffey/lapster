@@ -30,6 +30,8 @@ sed "s#__VERSION__#${VERSION}#g" "$ROOT/web/index.html" > "$DIST/web/index.html"
 cp -R "$ROOT/web/icons" "$DIST/web/icons"
 mkdir -p "$DIST/web/worker"
 cp "$ROOT/web/worker/physics-worker.js" "$DIST/web/worker/physics-worker.js"
+mkdir -p "$DIST/web/audio"
+cp "$ROOT/web/audio/engine-worklet.js" "$DIST/web/audio/engine-worklet.js"
 
 for viewer in drive garage track-viewer debug-viewer; do
   mkdir -p "$DIST/web/$viewer"

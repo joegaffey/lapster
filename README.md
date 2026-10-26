@@ -41,11 +41,10 @@ resume, clearing stale caches and reloading when a newer deployment is available
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 Lapster is installable as a PWA. The installed app launches a demo menu, and every demo has a
 `Exit` link to return there. A same-origin service worker supplies the COOP/COEP headers needed
-for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. Drive physics
-runs on the main thread by default. The opt-in worker (`?physics=worker`) runs the same
-fixed-step simulation in a dedicated Rust/Wasm worker and exchanges inputs and snapshots
-through the SAB; if cross-origin isolation or worker startup fails, Drive uses main-thread
-physics.
+for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. On this
+audio spike branch, Drive physics runs in a dedicated Rust/Wasm worker by default and
+exchanges inputs and snapshots through the SAB. `?physics=main` selects the main-thread
+fallback when cross-origin isolation or worker startup fails.
 
 ## Current features
 
@@ -61,9 +60,11 @@ physics.
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
-- Optional physics worker with a versioned SAB input mailbox, four-slot snapshot ring,
-  seqlock publication, an `Atomics.wait` deadline loop, and interpolated main-thread
-  rendering. Main-thread physics remains the default and fallback.
+- Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
+  publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
+  Main-thread physics remains available with `?physics=main`.
+- **Audio spike:** an AudioWorklet synthesizes engine/exhaust, tire scrub, wind, and road
+  noise from SAB snapshots. The toolbar mutes/unmutes it; there are no sample assets yet.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
@@ -144,6 +145,9 @@ npm run test:viewer
 npm run bench:physics
 ```
 
+The audio spike is covered by `web/tests/audio.spec.ts`; it is a synthesized engine bed, not
+the final sound design.
+
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
 the NSS/NSPR libraries if the system does not have them. `npm run bench:physics` runs the
 opt-in main-thread vs worker A/B benchmark; set `PERF_CPU_THROTTLE=4` for a CPU-throttled run.
@@ -184,12 +188,11 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
 ## Status and roadmap
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
-in [`PLAN.md`](PLAN.md). Next: validate the worker on target hardware and decide whether to
-re-enable it by default, then wheel input and force feedback on CAMMUS C5, targeting all
-`webhid-wheel`-supported wheelbases with Chromium WebHID and Gamepad fallback. The SAB physics
-worker now holds 500 Hz under local CPU throttling, but remains opt-in until it is validated
-on more hardware; remaining work is the HID/FFB worker, audio, AC `.ini` physics mapping,
-track texture decoding, collision/wall policy, and hardening.
+in [`PLAN.md`](PLAN.md). This branch is an audio spike: SAB physics is the default and a
+synthesized AudioWorklet is wired up. Next is listening/tuning, per-car audio profiles, and a
+sample/hybrid layer if the synth quality is insufficient. Production still uses main-thread
+physics until this branch is merged. Remaining work includes the HID/FFB worker, AC `.ini`
+physics mapping, track texture decoding, collision/wall policy, and hardening.
 
 ## License
 

@@ -15,12 +15,14 @@ import { PhysicsClient } from "../src/sim/physics.ts";
 import { SnapshotSmoother } from "../src/sim/interpolate.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
+import { DriveAudio } from "../src/audio/audio.ts";
 
 declare global {
   interface Window {
     __driveViewerReady?: boolean;
     __driveViewerError?: string;
     __driveViewer?: DriveViewer;
+    __driveAudio?: DriveAudio;
   }
 }
 
@@ -51,6 +53,7 @@ const wheelsLabel = document.querySelector<HTMLElement>("#wheels")!;
 const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
 const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
+const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
 
 const keys = new Set<string>();
 const STOP_SPEED_MPS = 0.3;
@@ -67,6 +70,8 @@ let accumulated = 0;
 let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
+let audio: DriveAudio | null = null;
+let audioSab: SharedArrayBuffer | null = null;
 let workerAssists = {
   tc: true,
   tcStrength: 1,
@@ -198,9 +203,20 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
             steering: number,
             requestedGear: number,
           ) => {
-            const tick = await client.simulate(seconds, throttle, brake, steering, requestedGear);
-            syncLatest();
-            return tick;
+            await client.pause();
+            try {
+              const tick = await client.simulate(
+                seconds,
+                throttle,
+                brake,
+                steering,
+                requestedGear,
+              );
+              syncLatest();
+              return tick;
+            } finally {
+              setTimeout(() => void client.resume(), 0);
+            }
           };
         case "reset":
           return () => {
@@ -282,6 +298,42 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
   }) as DriveViewer;
 }
 
+function updateAudioButton() {
+  if (!audio) {
+    audioButton.disabled = true;
+    audioButton.textContent = "Audio: N/A";
+    audioButton.setAttribute("aria-pressed", "false");
+    return;
+  }
+  audioButton.disabled = false;
+  audioButton.textContent =
+    audio.status === "starting"
+      ? "Audio: Starting"
+      : audio.status === "error"
+        ? "Audio: Error"
+        : audio.status !== "running"
+          ? "Audio: Off"
+          : audio.muted
+            ? "Audio: Muted"
+            : "Audio: On";
+  audioButton.setAttribute(
+    "aria-pressed",
+    String(audio.status === "running" && !audio.muted),
+  );
+}
+
+async function startAudio() {
+  if (!audio) {
+    return;
+  }
+  try {
+    await audio.start();
+  } catch (error) {
+    console.warn("audio unavailable", error);
+  }
+  updateAudioButton();
+}
+
 async function boot() {
   status.textContent = "starting";
   if (await setupPwa()) {
@@ -306,13 +358,13 @@ async function boot() {
   asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
 
   let driver: DriveViewer = viewer;
-  const requestedPhysics = params.get("physics");
-  if ((requestedPhysics === "worker" || requestedPhysics === "sab") && window.crossOriginIsolated) {
+  if (params.get("physics") !== "main" && window.crossOriginIsolated) {
     try {
       status.textContent = "starting physics worker";
       const sab = new SharedArrayBuffer(SAB_TOTAL_SIZE);
       initializeSab(sab);
       validateSab(sab);
+      audioSab = sab;
       const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
       physics = client;
       smoother = new SnapshotSmoother(client.reader);
@@ -352,6 +404,42 @@ async function boot() {
     }
   }
   window.__driveViewer = driver;
+
+  if (physicsWorker && audioSab) {
+    audio = new DriveAudio(audioSab, {
+      pulsesPerRev: 2,
+      idleRpm: 900,
+      redlineRpm: 8000,
+    });
+    window.__driveAudio = audio;
+    updateAudioButton();
+    canvas.addEventListener("pointerdown", () => void startAudio(), { once: true });
+    window.addEventListener("keydown", () => void startAudio(), { once: true });
+    document.addEventListener("visibilitychange", () => {
+      if (!audio) {
+        return;
+      }
+      if (document.hidden) {
+        audio.suspend();
+      } else {
+        void audio.resume();
+      }
+    });
+    window.addEventListener("pagehide", () => audio?.dispose());
+    audioButton.addEventListener("click", () => {
+      if (!audio) {
+        return;
+      }
+      if (audio.status === "running") {
+        audio.toggleMuted();
+        updateAudioButton();
+      } else {
+        void startAudio();
+      }
+    });
+  } else {
+    updateAudioButton();
+  }
 
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();

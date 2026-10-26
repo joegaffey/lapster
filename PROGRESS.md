@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-26
 Repository root: the directory containing this file
-Current phase: **CP7 in progress — worker scheduler hardened; main-thread physics is still the default**
+Current phase: **Audio spike — SAB worker default and synthesized AudioWorklet**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -94,8 +94,8 @@ Toolchain setup scripts:
 ## Current capabilities
 
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
-- 500 Hz fixed-step vehicle physics on the main thread by default, with an opt-in SAB worker
-  (`?physics=worker`) sharing the same simulation:
+- 500 Hz fixed-step vehicle physics in the SAB worker by default on this branch
+  (`?physics=main` selects the main-thread fallback):
   - triangle raycast suspension with anti-roll bars, progressive bump stops, and a rear grip
     bias to reduce power oversteer,
   - CG-based load transfer,
@@ -108,6 +108,8 @@ Toolchain setup scripts:
   - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
+- Audio spike: AudioWorklet engine/exhaust harmonics plus tire, wind, and road noise driven by
+  SAB snapshots; toolbar mute; no sample assets or track reverb yet.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -212,7 +214,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 31 Playwright tests plus an opt-in physics benchmark
+- `npm run test:viewer` — 32 Playwright tests plus an opt-in physics benchmark
 - `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
   `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
@@ -266,9 +268,12 @@ matrix then expands to the other supported wheelbases.
 ## Known issues / carry-forward
 
 - **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
-- Drive physics defaults to the main thread. The SAB worker is available with
-  `?physics=worker` and is still opt-in pending broader hardware validation. Garage and Track
-  Viewer have no physics loop.
+- This spike branch defaults to the SAB worker. Production still defaults to the main thread
+  until the branch is validated and merged. `?physics=main` selects the fallback. Garage and
+  Track Viewer have no physics loop.
+- Audio is a synthesized spike only: no per-car profile, samples, gear-shift one-shots,
+  Doppler, reverb zones, or mobile listening test yet. Audio is unavailable when physics
+  falls back to the main thread because there is no SAB producer.
 - The worker uses an `Atomics.wait` deadline loop with bounded catch-up. In a local 4× CPU
   throttling run at 1280×720 it held ~500 Hz and ~17 fps while main-thread physics fell to
   ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
@@ -307,16 +312,17 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **Re-enable the worker default (next)**: run `npm run bench:physics` and the throttled
-   variant on the target hardware, then flip the default only after the worker holds ~500 Hz
-   with no frame-pacing regression.
+1. **Audio spike (next)**: listen and tune the engine/tire/wind synth on the reference
+   hardware, add a small RX-7 rotary profile, then decide between keeping synth-only or adding
+   a licensed one-shot/hybrid layer.
 2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
 3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
    compatibility, profiles, and hardware fixtures.
-4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add the
-   audio worklet over SAB snapshots, expand the hardware matrix, and run performance traces.
-   The physics worker, input mailbox, snapshot ring, and FFB mailbox are already in place.
+4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add
+   per-car audio profiles / an optional sample layer, expand the hardware matrix, and run
+   performance traces. The physics worker, input mailbox, snapshot ring, FFB mailbox, and
+   audio worklet spike are already in place.
 5. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
    wheel geometry cleanup, and licensed AC `.ini` physics when a suitable pack is available.
    - Add a simple steering-wheel/interior placeholder.

@@ -34,7 +34,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(Number(settled.speed)).toBeLessThan(1);
   expect(settled.contacts).toBe("4/4");
   expect(settled.telemetry.tick).toBeGreaterThan(0);
-  expect(settled.telemetry.physicsMode).toBeUndefined();
+  expect(settled.telemetry.physicsMode).toBe("sab");
   expect(["BrowserWebGpu", "Gl"]).toContain(settled.telemetry.rendererBackend);
   if (!process.env.CI) {
     expect(settled.telemetry.rendererBackend).toBe("BrowserWebGpu");
