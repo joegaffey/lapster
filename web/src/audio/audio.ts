@@ -89,6 +89,13 @@ export class DriveAudio {
     }
   }
 
+  update(
+    _deltaSeconds: number,
+    _throttle: number,
+    _brake: number,
+    _gear: number,
+  ): void {}
+
   setMuted(muted: boolean): void {
     this.muted = muted;
     if (!this.context || !this.gain) {

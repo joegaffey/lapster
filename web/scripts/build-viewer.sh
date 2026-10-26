@@ -50,3 +50,4 @@ npx esbuild web/drive/main.ts --bundle --format=esm --outfile=web/drive/main.js 
 npx esbuild web/worker/physics-worker.ts --bundle --format=esm --outfile=web/worker/physics-worker.js --external:../pkg/worker/*
 mkdir -p web/audio
 npx esbuild web/src/audio/engine-worklet.ts --bundle --format=esm --outfile=web/audio/engine-worklet.js
+cp web/src/audio/engine-sim/combustion-worklet.js web/audio/combustion-worklet.js

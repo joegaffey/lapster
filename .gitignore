@@ -15,6 +15,7 @@ web/drive/main.js
 web/garage/main.js
 web/worker/physics-worker.js
 web/audio/engine-worklet.js
+web/audio/combustion-worklet.js
 *.log
 *.pid
 .env

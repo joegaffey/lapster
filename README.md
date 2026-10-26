@@ -63,8 +63,10 @@ fallback when cross-origin isolation or worker startup fails.
 - Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
   publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
   Main-thread physics remains available with `?physics=main`.
-- **Audio spike:** an AudioWorklet synthesizes engine/exhaust, tire scrub, wind, and road
-  noise from SAB snapshots. The toolbar mutes/unmutes it; there are no sample assets yet.
+- **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
+  `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
+  audio. `?audio=synth` keeps the earlier lightweight worklet for comparison. The toolbar
+  mutes/unmutes it; there are no sample assets yet.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
@@ -145,8 +147,8 @@ npm run test:viewer
 npm run bench:physics
 ```
 
-The audio spike is covered by `web/tests/audio.spec.ts`; it is a synthesized engine bed, not
-the final sound design.
+The audio spike is covered by `web/tests/audio.spec.ts`; Engine_Sim currently runs its own
+drivetrain for sound, so RPM is not yet locked to the vehicle simulation.
 
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
 the NSS/NSPR libraries if the system does not have them. `npm run bench:physics` runs the
@@ -188,11 +190,11 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
 ## Status and roadmap
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
-in [`PLAN.md`](PLAN.md). This branch is an audio spike: SAB physics is the default and a
-synthesized AudioWorklet is wired up. Next is listening/tuning, per-car audio profiles, and a
-sample/hybrid layer if the synth quality is insufficient. Production still uses main-thread
-physics until this branch is merged. Remaining work includes the HID/FFB worker, AC `.ini`
-physics mapping, track texture decoding, collision/wall policy, and hardening.
+in [`PLAN.md`](PLAN.md). This branch is an audio spike: SAB physics is the default and
+Engine_Sim's rotary2 synthesiser is wired up. Next is listening/tuning and deciding whether to
+sync its combustion parameters to our SAB RPM/load or keep its own drivetrain. Production still
+uses main-thread physics until this branch is merged. Remaining work includes the HID/FFB
+worker, AC `.ini` physics mapping, track texture decoding, collision/wall policy, and hardening.
 
 ## License
 
@@ -206,3 +208,6 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
 in this project by you shall be dual licensed as above, without any additional terms or
 conditions.
+
+Drive audio vendors [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim) under the MIT
+license. See `web/src/audio/engine-sim/NOTICE.md` and `LICENSE`.

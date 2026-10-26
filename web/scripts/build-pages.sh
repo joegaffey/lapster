@@ -32,6 +32,7 @@ mkdir -p "$DIST/web/worker"
 cp "$ROOT/web/worker/physics-worker.js" "$DIST/web/worker/physics-worker.js"
 mkdir -p "$DIST/web/audio"
 cp "$ROOT/web/audio/engine-worklet.js" "$DIST/web/audio/engine-worklet.js"
+cp "$ROOT/web/audio/combustion-worklet.js" "$DIST/web/audio/combustion-worklet.js"
 
 for viewer in drive garage track-viewer debug-viewer; do
   mkdir -p "$DIST/web/$viewer"

@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-26
 Repository root: the directory containing this file
-Current phase: **Audio spike — SAB worker default and synthesized AudioWorklet**
+Current phase: **Audio spike — SAB worker default and Engine_Sim rotary2 AudioWorklet**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -108,8 +108,11 @@ Toolchain setup scripts:
   - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
-- Audio spike: AudioWorklet engine/exhaust harmonics plus tire, wind, and road noise driven by
-  SAB snapshots; toolbar mute; no sample assets or track reverb yet.
+- Audio spike: vendored Engine_Sim MIT synthesiser (`rotary2`) with combustion events,
+  exhaust/intake resonators, transmission, transients, and optional turbo. `?audio=synth`
+  keeps the earlier simple worklet; toolbar mute; no sample assets or track reverb yet.
+  Engine_Sim currently runs its own drivetrain for sound, so its RPM is not yet locked to the
+  vehicle state.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -271,9 +274,13 @@ matrix then expands to the other supported wheelbases.
 - This spike branch defaults to the SAB worker. Production still defaults to the main thread
   until the branch is validated and merged. `?physics=main` selects the fallback. Garage and
   Track Viewer have no physics loop.
-- Audio is a synthesized spike only: no per-car profile, samples, gear-shift one-shots,
-  Doppler, reverb zones, or mobile listening test yet. Audio is unavailable when physics
-  falls back to the main thread because there is no SAB producer.
+- Audio is a spike only: Engine_Sim's rotary2 sound currently uses Engine_Sim's own drivetrain,
+  so engine RPM/load are not yet driven by our SAB snapshots. There is no per-car profile,
+  sample layer, Doppler, reverb zones, or mobile listening test yet. Audio is unavailable when
+  physics falls back to the main thread because there is no SAB producer.
+- Engine_Sim declares MIT in its README/package.json but had no license file upstream; the
+  vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`.
+  Ask upstream to add a LICENSE file before relying on this for a release.
 - The worker uses an `Atomics.wait` deadline loop with bounded catch-up. In a local 4× CPU
   throttling run at 1280×720 it held ~500 Hz and ~17 fps while main-thread physics fell to
   ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
@@ -312,9 +319,9 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **Audio spike (next)**: listen and tune the engine/tire/wind synth on the reference
-   hardware, add a small RX-7 rotary profile, then decide between keeping synth-only or adding
-   a licensed one-shot/hybrid layer.
+1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset on the reference hardware.
+   If it works, drive its combustion `f0`/load from our SAB snapshots instead of its internal
+   drivetrain; otherwise compare with `?audio=synth` and pick a direction.
 2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
 3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
@@ -344,6 +351,7 @@ matrix then expands to the other supported wheelbases.
 - `crates/asset-compiler` — bake/inspect/validate.
 - `crates/sim-render` — wgpu renderer and wasm viewers.
 - `crates/sim-worker` — Rust/Wasm physics worker simulation wrapper.
+- `web/src/audio/engine-sim/` — vendored Engine_Sim MIT DSP; see `NOTICE.md` and `LICENSE`.
 - `web/drive`, `web/garage`, `web/track-viewer` — browser pages.
 - `web/tests` — Node and Playwright tests.
 - `fixtures/cars/minimal`, `fixtures/tracks/minimal` — synthetic fixtures and baked packs.
