@@ -975,6 +975,21 @@ export class EngineSim {
     return this;
   }
 
+  /** Drive the synthesis graph from an external vehicle state. */
+  updateExternal(deltaTime, external) {
+    let dt = Number(deltaTime) || 0;
+    if (dt <= 0) return;
+    dt = Math.min(dt, 0.1);
+    const p = this.physics.updateExternal(dt, {
+      ...external,
+      now: this.ctx.currentTime,
+    });
+    this._evMisfire = 0;
+    this._writeParams(p, false);
+    this._lastParams = p;
+    return this;
+  }
+
   /**
    * Everything a game needs to draw a dashboard and drive its own effects.
    * Safe to call every frame; allocates one small object.

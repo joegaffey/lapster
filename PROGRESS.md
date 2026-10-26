@@ -109,9 +109,10 @@ Toolchain setup scripts:
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
 - Audio spike: vendored Engine_Sim MIT synthesiser (`rotary2`) with combustion events,
-  exhaust/intake resonators, transmission, transients, and optional turbo; toolbar mute; no
-  sample assets or track reverb yet. Engine_Sim currently runs its own drivetrain for sound,
-  so its RPM is not yet locked to the vehicle state.
+  exhaust/intake resonators, transmission, and optional turbo; toolbar mute; no sample assets
+  or track reverb yet. A small external-state adapter drives its RPM/speed/gear from the
+  vehicle and locks the clutch, so the engine note follows the simulation instead of
+  Engine_Sim's own drivetrain.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -216,7 +217,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 32 Playwright tests plus an opt-in physics benchmark
+- `npm run test:viewer` — 33 Playwright tests plus an opt-in physics benchmark
 - `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
   `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
@@ -273,10 +274,11 @@ matrix then expands to the other supported wheelbases.
 - This spike branch defaults to the SAB worker. Production still defaults to the main thread
   until the branch is validated and merged. `?physics=main` selects the fallback. Garage and
   Track Viewer have no physics loop.
-- Audio is a spike only: Engine_Sim's rotary2 sound currently uses Engine_Sim's own drivetrain,
-  so engine RPM/load are not yet driven by our SAB snapshots. There is no per-car profile,
-  sample layer, Doppler, reverb zones, or mobile listening test yet. Audio is unavailable when
-  physics falls back to the main thread because there is no SAB producer.
+- Audio is a spike only: the external-state adapter bypasses Engine_Sim's own clutch/shift
+  transients, so shift clunks, launch slip, and some overrun pops are currently reduced. The
+  engine RPM/speed/gear match the vehicle. There is no per-car profile, sample layer, Doppler,
+  reverb zones, or mobile listening test yet. Audio is unavailable when physics falls back to
+  the main thread because there is no SAB producer.
 - Engine_Sim declares MIT in its README/package.json but had no license file upstream; the
   vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`;
   `THIRD_PARTY_NOTICES.md` is copied into the Pages output. Ask upstream to add a LICENSE file
@@ -319,9 +321,9 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset on the reference hardware.
-   If it works, drive its combustion `f0`/load from our SAB snapshots instead of its internal
-   drivetrain.
+1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset with the external-state
+   adapter. If the drivetrain transients are missed, restore selected EngineSim shift/launch
+   events rather than returning to its independent drivetrain.
 2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
 3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker

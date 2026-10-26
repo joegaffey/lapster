@@ -15,7 +15,7 @@ export class EngineSimAudio {
   private samples: Float32Array | null = null;
   private starting: Promise<void> | null = null;
   private started = false;
-  private lastGear = 1;
+  private lastRpm = 900;
 
   get contextState(): string {
     return this.context?.state ?? "closed";
@@ -81,24 +81,52 @@ export class EngineSimAudio {
     }
   }
 
-  update(deltaSeconds: number, throttle: number, brake: number, gear: number): void {
+  update(
+    deltaSeconds: number,
+    throttle: number,
+    brake: number,
+    gear: number,
+    rpm: number,
+    speedMps: number,
+  ): void {
     if (!this.started || !this.sim) {
       return;
     }
     try {
-      this.sim.setThrottle(throttle);
-      this.sim.setBrake(brake);
-      const targetGear = Math.max(1, Math.min(6, gear));
-      if (targetGear !== this.lastGear) {
-        this.sim.setGear(targetGear);
-        this.lastGear = targetGear;
-      }
-      this.sim.update(deltaSeconds);
+      this.sim.updateExternal(deltaSeconds, {
+        rpm,
+        speed: speedMps,
+        gear,
+        throttle,
+        brake,
+        prevRpm: this.lastRpm,
+      });
+      this.lastRpm = rpm;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
       this.status = "error";
       console.warn("engine audio update failed", error);
     }
+  }
+
+  state(): {
+    rpm: number;
+    speedKph: number;
+    gear: number;
+    clutch: number;
+    clutchSlip: number;
+  } | null {
+    const state = this.sim?.getState();
+    if (!state) {
+      return null;
+    }
+    return {
+      rpm: state.rpm,
+      speedKph: state.speedKmh,
+      gear: state.gear,
+      clutch: state.clutch,
+      clutchSlip: state.clutchSlip,
+    };
   }
 
   setMuted(muted: boolean): void {

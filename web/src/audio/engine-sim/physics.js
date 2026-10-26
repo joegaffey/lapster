@@ -1276,6 +1276,41 @@ export class Drivetrain {
   }
 
   // =========================================================================
+  // External drive state (Lapster integration)
+  // =========================================================================
+
+  /**
+   * Populate audio parameters from an external vehicle simulation instead of
+   * integrating this drivetrain. The engine, wheel, and gearbox speeds come
+   * from the host; the physical resonator/layer graph is unchanged.
+   */
+  updateExternal(dt, external) {
+    const rpm = clamp(Number(external.rpm) || 0, 0, this.engine.redlineRpm * 1.05);
+    this.gear = clamp(Math.round(Number(external.gear) || 1), 1, this.gearCount);
+    this.throttle = clamp(Number(external.throttle) || 0, 0, 1);
+    this.brake = clamp(Number(external.brake) || 0, 0, 1);
+    this.thrEff = this.throttle;
+    this.we = rpm * RADS_PER_RPM;
+    this.wg = this.we;
+    this.ww = Math.max(0, Number(external.speed) || 0) / this.r;
+    this.wo = this.ww * this.fd;
+    this.twist = 0;
+    this.dtwist = 0;
+    this.lash = 0;
+    this.contact = 0;
+    this.clutch = 1;
+    this.clutchCmd = 1;
+    this.shifting = false;
+    this.shiftPhase = '';
+    this.Te = this.throttle > 0 ? this.engine.peakTorque : -1;
+    this.Tp = this.throttle < 0.05 && this.ww > 1 ? -10 : 0;
+    this.prevRpm = Number.isFinite(external.prevRpm) ? external.prevRpm : rpm;
+    this._stepTurbo(dt, this.throttle);
+    this._stepExhaustThermal(dt, this.throttle);
+    return this._writeParams(dt, external.now);
+  }
+
+  // =========================================================================
   // Params
   // =========================================================================
 

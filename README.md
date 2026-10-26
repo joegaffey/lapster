@@ -146,8 +146,8 @@ npm run test:viewer
 npm run bench:physics
 ```
 
-The audio spike is covered by `web/tests/audio.spec.ts`; Engine_Sim currently runs its own
-drivetrain for sound, so RPM is not yet locked to the vehicle simulation.
+The audio spike is covered by `web/tests/audio.spec.ts`; Engine_Sim's synthesis graph is driven
+from the vehicle's actual RPM, speed, and gear through its external-state adapter.
 
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
 the NSS/NSPR libraries if the system does not have them. `npm run bench:physics` runs the
@@ -190,10 +190,11 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
 in [`PLAN.md`](PLAN.md). This branch is an audio spike: SAB physics is the default and
-Engine_Sim's rotary2 synthesiser is wired up. Next is listening/tuning and deciding whether to
-sync its combustion parameters to our SAB RPM/load or keep its own drivetrain. Production still
-uses main-thread physics until this branch is merged. Remaining work includes the HID/FFB
-worker, AC `.ini` physics mapping, track texture decoding, collision/wall policy, and hardening.
+Engine_Sim's rotary2 synthesiser is wired up and follows the vehicle's RPM/speed/gear. Next is
+listening/tuning and deciding whether to restore more of EngineSim's drivetrain transients or
+continue with the external-state path. Production still uses main-thread physics until this
+branch is merged. Remaining work includes the HID/FFB worker, AC `.ini` physics mapping, track
+texture decoding, collision/wall policy, and hardening.
 
 ## License
 

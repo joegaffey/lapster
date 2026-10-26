@@ -546,8 +546,6 @@ async function boot() {
       }
     }
 
-    audio?.update(delta, throttle, brake, gear);
-
     try {
       if (physicsWorker && physics && smoother) {
         physics.writeInput({
@@ -565,12 +563,28 @@ async function boot() {
           viewer.render_remote(remoteState);
           const telemetry = JSON.parse(driver.telemetry());
           lastSpeedMps = telemetry.speedMps;
+          audio?.update(
+            delta,
+            throttle,
+            brake,
+            gear,
+            telemetry.rpm,
+            telemetry.speedMps,
+          );
           updateHud(telemetry);
         }
       } else {
         driver.update(now, throttle, brake, steer, gear);
         const telemetry = JSON.parse(driver.telemetry());
         lastSpeedMps = telemetry.speedMps;
+        audio?.update(
+          delta,
+          throttle,
+          brake,
+          gear,
+          telemetry.rpm,
+          telemetry.speedMps,
+        );
         updateHud(telemetry);
       }
 
