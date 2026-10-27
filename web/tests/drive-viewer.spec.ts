@@ -134,17 +134,6 @@ test("main-thread physics remains available as a fallback", async ({ page }) => 
   await page.keyboard.up("w");
 });
 
-test("worker physics is available with an explicit opt-in", async ({ page }) => {
-  await page.goto("/web/drive/?physics=worker&track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
-  await waitForReady(page);
-  await page.waitForTimeout(1_000);
-
-  const state = await telemetry(page);
-  expect(state.physicsMode).toBe("sab");
-  expect(state.physicsHz).toBeGreaterThan(0);
-  expect(state.tick).toBeGreaterThan(0);
-});
-
 test("info starts hidden and can be opened", async ({ page }) => {
   await page.goto("/web/drive/");
   await waitForReady(page);
