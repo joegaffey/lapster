@@ -4,8 +4,8 @@
 - **License:** no license or readme was included in the archive.
 - **Status:** temporary demo fixture. Replace or confirm redistribution rights before a
   public/commercial release.
-- **File:** `pack.sima`, baked from the local Assetto Corsa mod files at scale `0.70`
-  (30% track reduction). The real-scale car is unchanged; the UI length is 105 m.
+- **File:** `pack.sima`, baked from the local Assetto Corsa mod files at scale `0.85`
+  (15% track reduction). The real-scale car is unchanged; the UI length is 127.5 m.
 
 The raw `.kn5` files are not checked in. The baked pack contains:
 

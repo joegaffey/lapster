@@ -35,7 +35,7 @@ The Skidpad pack is baked from the raw AC mod under `fixtures/real/`:
 
 ```bash
 cargo run -p asset-compiler -- bake-ac-track fixtures/real/tracks/skidpad05 \
-  fixtures/tracks/skidpad05/pack.sima --scale 0.70
+  fixtures/tracks/skidpad05/pack.sima --scale 0.85
 ```
 
 ## Real assets

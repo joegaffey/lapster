@@ -211,7 +211,7 @@ Toolchain setup scripts:
   - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
     drivable collision subset.
   - First local fixture: Skidpad 0.5, 76,545 visual triangles, 43,885 collision triangles,
-    30 draw calls, baked at 0.70 scale to match the real-scale car; UI length is 105 m.
+    30 draw calls, baked at 0.85 scale to match the real-scale car; UI length is 127.5 m.
   - Collision includes the central pad, ASP surfaces, banked outer asphalt ring, and grass;
     the tan `TRANSITION` concrete apron is tagged `ANELLO` so the concrete audio layer
     engages. Grass friction is capped at 0.35. Textures are not imported and walls/fences
