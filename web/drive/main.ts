@@ -484,8 +484,6 @@ async function boot() {
     audio = new EngineSimAudio();
     window.__driveAudio = audio;
     updateAudioButton();
-    canvas.addEventListener("pointerdown", () => void startAudio(), { once: true });
-    window.addEventListener("keydown", () => void startAudio(), { once: true });
     document.addEventListener("visibilitychange", () => {
       if (!audio) {
         return;

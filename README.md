@@ -66,9 +66,10 @@ fallback when cross-origin isolation or worker startup fails.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
   `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
   audio. A synthesized surface layer blends asphalt roar, a low dirt rumble plus grit for the
-  light-brown outer ring, kerb patter, and grass rumble/rustle from per-wheel friction and
-  speed. A tire-screech layer gates band-passed noise from lateral and longitudinal skid,
-  load, and speed. The toolbar mutes/unmutes both; there are no sample assets yet.
+  light-brown outer ring, kerb patter, and grass rumble/rustle from per-wheel surface names
+  and speed. A tire-screech layer gates band-passed noise from lateral and longitudinal skid,
+  load, and speed. Audio starts off and is enabled with the toolbar button; there are no
+  sample assets yet.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
