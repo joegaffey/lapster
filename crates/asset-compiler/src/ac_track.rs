@@ -303,7 +303,7 @@ fn mesh_ref(name: &str, mesh: &MeshBuffers, material: u16) -> MeshRef {
 fn collision_surface_key(name: &str) -> Option<&'static str> {
     let upper = name.to_ascii_uppercase();
     if upper.starts_with("1ANELLO") {
-        return Some("ANELLO");
+        return Some("ASPHALT");
     }
     if upper.contains("GRASS") {
         return Some("GRASS");
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn maps_skidpad_ground_surfaces() {
-        assert_eq!(collision_surface_key("1ANELLO4"), Some("ANELLO"));
+        assert_eq!(collision_surface_key("1ANELLO4"), Some("ASPHALT"));
         assert_eq!(collision_surface_key("1GRASS1"), Some("GRASS"));
         assert_eq!(collision_surface_key("0GRASSext"), Some("GRASS"));
         assert_eq!(collision_surface_key("1ASPHALT"), Some("ASPHALT"));
