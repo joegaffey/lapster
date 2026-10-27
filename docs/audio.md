@@ -45,13 +45,14 @@ Surface selection uses the per-wheel collision surface name, not only friction:
 
 | Surface | Sound |
 | --- | --- |
-| `ASPHALT` / `ASP*` | Low-pass asphalt roar |
-| `ANELLO` | Low-pass dirt rumble plus grit and slow amplitude modulation |
+| `ASPHALT` / `ASP*` | Low-pass asphalt roar, including Skidpad's banked outer ring |
+| `ANELLO` | Concrete apron rumble plus grit and slow amplitude modulation |
 | `KERB` | Low-mid patter |
 | `GRASS` | Low rumble plus a low rustle band; reduced tire squeal |
 
-Skidpad's tan `TRANSITION` apron is tagged `ANELLO` by the AC track importer. The `ANELLO`
-and grass buses each have two low-frequency amplitude modulators for rough-ground texture.
+Skidpad's tan `TRANSITION` concrete apron is tagged `ANELLO` by the AC track importer. The
+`ANELLO` and grass buses each have two low-frequency amplitude modulators for rough-ground
+texture.
 
 Tire screech is a separate two-band noise layer. It is gated by skid excess rather than normal
 cornering slip:
@@ -74,8 +75,8 @@ cornering slip:
 - `web/tests/audio.spec.ts` covers context startup, mute, RPM conditioning, tire screech from
   lateral slip and straight-line wheelspin, and asphalt surface noise.
 - The Drive HUD exposes surface and road gain for manual verification.
-- Manual checks should cover engine load/overrun, ANELLO/grass/kerb transitions, and audio
-  start/mute behavior.
+- Manual checks should cover engine load/overrun, banked-asphalt/asphalt/concrete/grass/kerb
+  transitions, and audio start/mute behavior.
 
 ## Credits and licensing
 

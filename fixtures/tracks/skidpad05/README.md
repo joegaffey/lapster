@@ -9,8 +9,8 @@
 The raw `.kn5` files are not checked in. The baked pack contains:
 
 - 76,545 visual triangles, 30 draw calls.
-- 43,885 collision triangles from the central pad, ASP surfaces, outer ANELLO ring, and
-  grass.
+- 43,885 collision triangles from the central pad, ASP surfaces, outer banked asphalt ring,
+  and grass.
 - One spawn derived from `AC_START_0`.
 - Approximated material colours; KN5 textures are not imported.
 - No tree/fence meshes and no wall/fence collision; ground collision includes the outer ring
