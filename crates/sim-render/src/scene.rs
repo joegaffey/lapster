@@ -72,6 +72,7 @@ pub struct RigWheel {
     pub mesh_index: usize,
     pub local_model: Mat4,
     pub is_front: bool,
+    pub radius: f32,
 }
 
 #[derive(Debug, Clone)]

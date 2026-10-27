@@ -1,11 +1,15 @@
+#![recursion_limit = "256"]
+
 mod camera;
 mod garage;
+mod particles;
 mod renderer;
 mod scene;
 
 use wasm_bindgen::prelude::*;
 
 use crate::camera::Camera;
+use crate::particles::ParticleSystem;
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, GarageBay, Scene};
 use glam::{Mat4, Quat, Vec3};
@@ -556,6 +560,8 @@ pub struct DriveViewer {
     brake_lights_on: bool,
     reverse_lights_on: bool,
     surface_names: Vec<String>,
+    particles: ParticleSystem,
+    last_particle_time: Option<f64>,
 }
 
 #[wasm_bindgen]
@@ -675,6 +681,8 @@ impl DriveViewer {
             brake_lights_on: false,
             reverse_lights_on: false,
             surface_names,
+            particles: ParticleSystem::new(),
+            last_particle_time: None,
         };
         drive.write_initial_pose()?;
         Ok(drive)
@@ -692,7 +700,9 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_particle_time = None;
         self.step_times.clear();
+        self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
@@ -917,6 +927,7 @@ impl DriveViewer {
             "rendererFormat": self.renderer.surface_format(),
             "cameraMode": self.camera_mode.as_str(),
             "contacts": state.wheels.iter().filter(|wheel| wheel.contact).count(),
+            "particles": self.particles.count(),
             "stepP50Ms": p50,
             "stepP99Ms": p99,
             "wheels": wheels,
@@ -1183,6 +1194,21 @@ impl DriveViewer {
                 0.7,
             );
         }
+
+        let now = performance_now();
+        let particle_dt = self
+            .last_particle_time
+            .map(|last| ((now - last) / 1000.0) as f32)
+            .unwrap_or(0.0);
+        self.last_particle_time = Some(now);
+        self.particles.update(
+            particle_dt,
+            car_world,
+            state,
+            &self.rig,
+            &self.surface_names,
+        );
+        self.renderer.set_particles(self.particles.instances());
     }
 
     fn update_camera(&mut self) {
