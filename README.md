@@ -42,9 +42,9 @@ The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is
 Lapster is installable as a PWA. The installed app launches a demo menu, and every demo has a
 `Exit` link to return there. A same-origin service worker supplies the COOP/COEP headers needed
 for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. On this
-audio spike branch, Drive physics runs in a dedicated Rust/Wasm worker by default and
-exchanges inputs and snapshots through the SAB. `?physics=main` selects the main-thread
-fallback when cross-origin isolation or worker startup fails.
+Drive physics runs in a dedicated Rust/Wasm worker by default and exchanges inputs and
+snapshots through the SAB. `?physics=main` selects the main-thread fallback when cross-origin
+isolation or worker startup fails.
 
 ## Current features
 
@@ -69,7 +69,8 @@ fallback when cross-origin isolation or worker startup fails.
   light-brown outer ring, kerb patter, and grass rumble/rustle from per-wheel surface names
   and speed. A tire-screech layer gates band-passed noise from lateral and longitudinal skid,
   load, and speed. Audio starts off and is enabled with the toolbar button; there are no
-  sample assets yet.
+  sample assets yet. See [`docs/audio.md`](docs/audio.md) for the audio architecture and
+  credits.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
@@ -93,16 +94,15 @@ fallback when cross-origin isolation or worker startup fails.
 | `W` / `↑` | Throttle; brakes while reversing |
 | `S` / `↓` | Brake; release and press again at rest to engage reverse |
 | `A` / `D` or `←` / `→` | Steer |
-| `0` | Manual reverse at rest |
-| `1`–`6` | Gears |
 | `C` | Cycle chase / bonnet / cockpit camera |
 | `R` | Reset |
 
-**Reset** and **Camera** remain top-level toolbar actions. **Tuning** opens the top-layer car
-tuning dialog; **Copy settings** produces a versioned JSON payload for sharing, and **Paste
-shared settings** imports one. **Settings** opens the assists menu for TC/ESC/ABS enables,
-independent strengths, steering sensitivity, anti-aliasing, and the debug overlay; these
-settings persist globally. Debug lines/bounds are off by default in drive.
+**Reset** and **Camera** remain top-level toolbar actions. The **Audio** button starts audio
+(off on each load) and mutes/unmutes it afterwards. **Tuning** opens the top-layer car tuning
+dialog; **Copy settings** produces a versioned JSON payload for sharing, and **Paste shared
+settings** imports one. **Settings** opens the assists menu for TC/ESC/ABS enables, independent
+strengths (TC and ESC default to 50%), steering sensitivity, anti-aliasing, and the debug
+overlay; these settings persist globally. Debug lines/bounds are off by default in drive.
 
 The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 276 hp,
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
@@ -190,16 +190,18 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
   Mazda and RX-7 are trademarks of their respective owners.
 - **Skidpad 0.5** is a temporary demo track. The source archive contained no license
   metadata; replace it or confirm redistribution rights before a public/commercial release.
+- **Engine_Sim** by Yigit Salih Emecen, MIT, powers Drive engine audio. See
+  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
+  [`docs/audio.md`](docs/audio.md). No upstream audio samples are included.
 
 ## Status and roadmap
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
-in [`PLAN.md`](PLAN.md). This branch is an audio spike: SAB physics is the default and
-Engine_Sim's rotary2 synthesiser is wired up and follows the vehicle's RPM/speed/gear. Next is
-listening/tuning and deciding whether to restore more of EngineSim's drivetrain transients or
-continue with the external-state path. Production still uses main-thread physics until this
-branch is merged. Remaining work includes the HID/FFB worker, AC `.ini` physics mapping, track
-texture decoding, collision/wall policy, and hardening.
+in [`PLAN.md`](PLAN.md). Drive uses the SAB physics worker by default and an external-state
+Engine_Sim rotary2 audio spike. Next is listening/tuning and deciding whether to restore more
+EngineSim drivetrain transients or move the audio DSP directly onto SAB snapshots. Remaining
+work includes the HID/FFB worker, AC `.ini` physics mapping, track texture decoding,
+collision/wall policy, and hardening.
 
 ## License
 

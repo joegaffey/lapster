@@ -94,8 +94,8 @@ Toolchain setup scripts:
 ## Current capabilities
 
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
-- 500 Hz fixed-step vehicle physics in the SAB worker by default on this branch
-  (`?physics=main` selects the main-thread fallback):
+- 500 Hz fixed-step vehicle physics in the SAB worker by default (`?physics=main` selects the
+  main-thread fallback):
   - triangle raycast suspension with anti-roll bars, progressive bump stops, and a rear grip
     bias to reduce power oversteer,
   - CG-based load transfer,
@@ -290,9 +290,8 @@ matrix then expands to the other supported wheelbases.
 ## Known issues / carry-forward
 
 - **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
-- This spike branch defaults to the SAB worker. Production still defaults to the main thread
-  until the branch is validated and merged. `?physics=main` selects the fallback. Garage and
-  Track Viewer have no physics loop.
+- Drive defaults to the SAB worker. `?physics=main` selects the main-thread fallback. Garage
+  and Track Viewer have no physics loop.
 - Audio is a spike only: the external-state adapter bypasses Engine_Sim's own clutch/shift
   transients. Continuous gear rattle is disabled; a synthetic click/thump covers forward gear
   changes. This external mode is a set of compensations around library tuning that assumes
@@ -394,6 +393,7 @@ matrix then expands to the other supported wheelbases.
 - `crates/sim-render` — wgpu renderer and wasm viewers.
 - `crates/sim-worker` — Rust/Wasm physics worker simulation wrapper.
 - `web/src/audio/engine-sim/` — vendored Engine_Sim MIT DSP; see `NOTICE.md` and `LICENSE`.
+- `docs/audio.md` — current audio architecture, surface model, credits, and deferred work.
 - `web/drive`, `web/garage`, `web/track-viewer` — browser pages.
 - `web/tests` — Node and Playwright tests.
 - `fixtures/cars/minimal`, `fixtures/tracks/minimal` — synthetic fixtures and baked packs.
