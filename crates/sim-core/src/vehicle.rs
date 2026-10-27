@@ -1304,6 +1304,68 @@ mod tests {
     }
 
     #[test]
+    fn low_speed_cornering_is_not_grip_limited() {
+        for initial in [1.0f32, 2.0, 3.0, 4.0] {
+            let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+            for _ in 0..1500 {
+                vehicle.step(Controls::default());
+            }
+            vehicle.state.velocity = Vec3::new(0.0, 0.0, -initial);
+            for _ in 0..500 {
+                vehicle.step(Controls {
+                    throttle: 0.3,
+                    steering: 1.0,
+                    gear: 1,
+                    ..Controls::default()
+                });
+            }
+            let forward = vehicle.state.rotation * Vec3::NEG_Z;
+            let right = vehicle.state.rotation * Vec3::X;
+            let v_long = vehicle.state.velocity.dot(forward);
+            let v_lat = vehicle.state.velocity.dot(right);
+            let yaw = vehicle.state.angular_velocity.y;
+            let speed = vehicle.state.velocity.length();
+            let body_slip = v_lat.atan2(v_long.abs().max(0.1));
+            let rear_slip = vehicle.state.wheels[2..]
+                .iter()
+                .map(|wheel| wheel.slip_angle.abs())
+                .fold(0.0, f32::max);
+            let load_sum: f32 = vehicle
+                .state
+                .wheels
+                .iter()
+                .filter(|wheel| wheel.contact)
+                .map(|wheel| wheel.normal_load)
+                .sum();
+            let friction: f32 = vehicle
+                .state
+                .wheels
+                .iter()
+                .filter(|wheel| wheel.contact)
+                .map(|wheel| wheel.normal_load * wheel.surface_friction)
+                .sum::<f32>()
+                / load_sum.max(1.0);
+            let lateral_accel = speed * yaw.abs();
+            let grip_utilization =
+                vehicle.physics.mass * lateral_accel / (friction * load_sum).max(1.0);
+            let rear_offset = vehicle.physics.wheels[2].position[2].abs();
+            let expected_slip = (rear_offset * yaw / v_long.abs().max(0.1)).atan();
+            assert!(
+                grip_utilization < 0.5,
+                "low-speed cornering used {grip_utilization:.2} of available grip at {speed:.2} m/s"
+            );
+            assert!(
+                (body_slip.abs() - expected_slip.abs()).abs() < 0.06,
+                "body slip {body_slip:.3} does not match rear-axle geometry {expected_slip:.3}"
+            );
+            assert!(
+                rear_slip < 0.05,
+                "rear tires are sliding at low speed: {rear_slip:.3} rad"
+            );
+        }
+    }
+
+    #[test]
     fn steering_limit_reduces_with_speed() {
         let physics = physics();
         let mut slow = Vehicle::new(physics.clone(), collider(), &spawn());
