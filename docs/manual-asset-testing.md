@@ -49,7 +49,7 @@ For an Assetto Corsa track folder containing `*.kn5` and `data/surfaces.ini`:
 
 ```bash
 cargo run -p asset-compiler -- bake-ac-track fixtures/real/tracks/<name> \
-  fixtures/tracks/<name>/pack.sima --scale 0.85
+  fixtures/tracks/<name>/pack.sima
 cargo run -p asset-compiler -- inspect fixtures/tracks/<name>/pack.sima
 cargo run -p asset-compiler -- validate fixtures/tracks/<name>/pack.sima
 ```
