@@ -245,13 +245,35 @@ async function boot() {
     applyAngles();
   };
 
+  const bayOrder = (count: number): number[] => {
+    if (count <= 5) {
+      return Array.from({ length: count }, (_, index) => index);
+    }
+    const order = [0];
+    for (let index = 5; index < count; index += 1) {
+      order.push(index);
+    }
+    for (let index = 4; index >= 1; index -= 1) {
+      order.push(index);
+    }
+    return order;
+  };
+
+  const stepBay = (delta: number) => {
+    const info = JSON.parse(viewer.bay_info());
+    const order = bayOrder(Math.max(1, info.count));
+    const position = Math.max(0, order.indexOf(selectedBay));
+    const next = order[(position + delta + order.length) % order.length];
+    selectBay(next);
+  };
+
   selectBay(getSelectedBay(), false);
   bayPrev.addEventListener("click", () => {
-    selectBay(selectedBay - 1);
+    stepBay(-1);
     showCarNav();
   });
   bayNext.addEventListener("click", () => {
-    selectBay(selectedBay + 1);
+    stepBay(1);
     showCarNav();
   });
   window.addEventListener("keydown", (event) => {
@@ -261,10 +283,10 @@ async function boot() {
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      selectBay(selectedBay - 1);
+      stepBay(-1);
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
-      selectBay(selectedBay + 1);
+      stepBay(1);
     }
   });
 
