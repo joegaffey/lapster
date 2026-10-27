@@ -112,6 +112,7 @@ test("garage bay navigation reverses order in the second row", async ({ page }) 
     { timeout: 30_000 },
   );
 
+  await page.mouse.move(640, 360);
   const bay = page.locator("#bay-label");
   await expect(bay).toContainText("Bay 5");
   await page.click("#bay-next");
