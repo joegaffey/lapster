@@ -28,6 +28,13 @@ struct UiTrack {
 }
 
 pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
+    import_track_scaled(dir, 1.0)
+}
+
+pub fn import_track_scaled(dir: &Path, scale: f32) -> Result<ImportedTrack> {
+    if !scale.is_finite() || scale <= 0.0 {
+        bail!("track scale must be a positive finite number, got {scale}");
+    }
     let surfaces_path = find_file(dir, "surfaces.ini")
         .with_context(|| format!("no surfaces.ini found under {}", dir.display()))?;
     let ui_path = find_file(dir, "ui_track.json");
@@ -58,6 +65,8 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
     };
     let (_, spawn_rotation, spawn_translation) = spawn_world.to_scale_rotation_translation();
     let spawn_rotation = spawn_rotation.normalize();
+    let scale_transform = Mat4::from_scale(Vec3::splat(scale));
+    let spawn_translation = scale_transform.transform_point3(spawn_translation);
 
     let mut visual = TrackVisual {
         meshes: Vec::new(),
@@ -109,9 +118,9 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
             if skip_material(&material.name) {
                 continue;
             }
-            let buffers = transform_mesh(mesh, world);
+            let buffers = transform_mesh(mesh, scale_transform * world);
             let mut visual_buffers = buffers.clone();
-            let visual_offset = visual_y_offset(&node.name);
+            let visual_offset = visual_y_offset(&node.name) * scale;
             if visual_offset != 0.0 {
                 for position in &mut visual_buffers.positions {
                     position[1] += visual_offset;
@@ -171,8 +180,9 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
         .as_ref()
         .and_then(|ui| ui.length.as_deref())
         .and_then(parse_length)
-        .unwrap_or(150.0);
-    let camera = start_camera(&spawn);
+        .unwrap_or(150.0)
+        * scale;
+    let camera = start_camera(&spawn, scale);
     let metadata = TrackMetadata {
         name: title,
         length,
@@ -183,6 +193,7 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
         surfaces,
     };
 
+    warnings.push(format!("track scale {scale:.3}"));
     warnings.push(format!("spawn derived from {spawn_name}"));
     warnings.push(format!(
         "imported {} visual meshes and {} collision triangles",
@@ -241,7 +252,7 @@ fn surface_height_at(collision: &TrackCollision, x: f32, z: f32) -> Option<f32> 
     best
 }
 
-fn start_camera(spawn: &SpawnPoint) -> CameraSpec {
+fn start_camera(spawn: &SpawnPoint, scale: f32) -> CameraSpec {
     let rotation = Quat::from_xyzw(
         spawn.rotation_xyzw[0],
         spawn.rotation_xyzw[1],
@@ -252,11 +263,11 @@ fn start_camera(spawn: &SpawnPoint) -> CameraSpec {
     let position = Vec3::from_array(spawn.position);
     let forward = rotation * Vec3::new(0.0, 0.0, -1.0);
     let right = rotation * Vec3::new(1.0, 0.0, 0.0);
-    let eye = position - forward * 14.0 + right * 5.0 + Vec3::Y * 7.0;
+    let eye = position - forward * (14.0 * scale) + right * (5.0 * scale) + Vec3::Y * (7.0 * scale);
     CameraSpec {
         name: String::from("start"),
         position: eye.to_array(),
-        target: (position + forward * 20.0 + Vec3::Y * 0.5).to_array(),
+        target: (position + forward * (20.0 * scale) + Vec3::Y * (0.5 * scale)).to_array(),
         fov_y: 0.9,
     }
 }
@@ -518,6 +529,21 @@ mod tests {
         assert!(visual_y_offset("1ASPHALT") < 0.0);
         assert!(visual_y_offset("1ROADbrakingzone") > 0.0);
         assert_eq!(visual_y_offset("2ROAD"), 0.0);
+    }
+
+    #[test]
+    fn start_camera_scales_with_the_track() {
+        let spawn = SpawnPoint {
+            name: String::from("start"),
+            position: [10.0, 1.0, 20.0],
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        };
+        let full = start_camera(&spawn, 1.0);
+        let half = start_camera(&spawn, 0.5);
+        for (axis, (full, half)) in full.position.iter().zip(half.position.iter()).enumerate() {
+            assert!((half - (full + spawn.position[axis]) * 0.5).abs() < 1e-4);
+        }
+        assert!((half.target[2] - (full.target[2] + spawn.position[2]) * 0.5).abs() < 1e-4);
     }
 
     #[test]

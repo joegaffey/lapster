@@ -140,7 +140,11 @@ pub fn bake_car_glb(path: &Path) -> Result<Vec<u8>> {
 }
 
 pub fn bake_ac_track(dir: &Path) -> Result<Vec<u8>> {
-    let imported = crate::ac_track::import_track(dir)?;
+    bake_ac_track_scaled(dir, 1.0)
+}
+
+pub fn bake_ac_track_scaled(dir: &Path, scale: f32) -> Result<Vec<u8>> {
+    let imported = crate::ac_track::import_track_scaled(dir, scale)?;
     let statistics = stats(
         &imported.visual.meshes,
         &imported.visual.materials,

@@ -207,11 +207,11 @@ Toolchain setup scripts:
   - Supports custom `?car=`/`?track=` paths in the garage and drive viewers.
   - First local fixture: Mazda RX-7, 18,322 triangles after removing logo geometry.
 - AC track import:
-  - `cargo run -p asset-compiler -- bake-ac-track <track-dir>`
+  - `cargo run -p asset-compiler -- bake-ac-track <track-dir> [out] [--scale <factor>]`
   - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
     drivable collision subset.
   - First local fixture: Skidpad 0.5, 76,545 visual triangles, 43,885 collision triangles,
-    30 draw calls.
+    30 draw calls, baked at 0.70 scale to match the real-scale car; UI length is 105 m.
   - Collision includes the central pad, ASP surfaces, banked outer asphalt ring, and grass;
     the tan `TRANSITION` concrete apron is tagged `ANELLO` so the concrete audio layer
     engages. Grass friction is capped at 0.35. Textures are not imported and walls/fences
