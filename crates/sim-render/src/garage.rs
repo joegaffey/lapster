@@ -594,6 +594,7 @@ fn build_car(
             local_model,
             is_front: wheel.is_front,
             radius: wheel.radius,
+            width: wheel.width,
         });
     }
 

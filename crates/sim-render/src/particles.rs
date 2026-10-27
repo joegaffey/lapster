@@ -192,11 +192,6 @@ impl ParticleSystem {
         let center = car_world.transform_point3(rig_wheel.local_model.w_axis.truncate());
         let normal = wheel.contact_normal.normalize_or(Vec3::Y);
         let contact = center - normal * (rig_wheel.radius + 0.02);
-        let jitter = Vec3::new(
-            self.range(-0.18, 0.18),
-            self.range(0.08, 0.22),
-            self.range(-0.18, 0.18),
-        );
         let forward = car_world
             .transform_vector3(Vec3::NEG_Z)
             .normalize_or(Vec3::NEG_Z);
@@ -207,9 +202,12 @@ impl ParticleSystem {
         } else {
             -right
         };
+        let jitter = right * self.range(-rig_wheel.width * 0.35, rig_wheel.width * 0.35)
+            + forward * self.range(-0.12, 0.12)
+            + Vec3::Y * self.range(0.06, 0.16);
         let velocity = state.velocity * 0.12 - forward * (0.35 + speed * 0.06)
-            + right * self.range(-0.8, 0.8)
-            + outward * self.range(0.5, 1.4)
+            + right * self.range(-0.35, 0.35)
+            + outward * self.range(0.1, 0.4)
             + Vec3::Y * self.range(1.0, 2.3);
         let (color, start_size, end_size, life, alpha, rise, drag) = match surface {
             SurfaceKind::Asphalt => (
@@ -252,9 +250,8 @@ impl ParticleSystem {
         let tint = 0.84 + self.next() * 0.30;
         let rotation = Quat::from_rotation_z(self.range(0.0, TAU));
         let angular_velocity = Vec3::new(0.0, 0.0, self.range(-0.8, 0.8));
-        let outward_offset = self.range(0.16, 0.36);
         self.particles.push(Particle {
-            position: contact + outward * outward_offset + jitter,
+            position: contact + jitter,
             velocity,
             rotation,
             angular_velocity,
@@ -349,6 +346,7 @@ mod tests {
                     )),
                     is_front: index < 2,
                     radius: 0.32,
+                    width: 0.225,
                 })
                 .collect(),
             steering_mesh_index: None,
@@ -447,6 +445,28 @@ mod tests {
             );
         }
         assert!(particles.count() > 0);
+    }
+
+    #[test]
+    fn emitters_start_inside_the_tyre_track() {
+        let mut particles = ParticleSystem::new();
+        let rig = car_rig();
+        let state = sliding_state();
+        for index in [2, 3] {
+            particles.spawn(
+                Mat4::IDENTITY,
+                &state,
+                &rig.wheels[index],
+                &state.wheels[index],
+                SurfaceKind::Asphalt,
+            );
+            let particle = particles.particles.last().expect("particle");
+            assert!(
+                particle.position.x.abs() < 1.0,
+                "particle spawned too far outside the car: {}",
+                particle.position.x
+            );
+        }
     }
 
     #[test]
