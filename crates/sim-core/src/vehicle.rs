@@ -1236,6 +1236,47 @@ mod tests {
     }
 
     #[test]
+    fn low_speed_steering_tracks_ackermann_without_tire_slip() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..1500 {
+            vehicle.step(Controls::default());
+        }
+        vehicle.state.velocity = Vec3::new(0.0, 0.0, -1.0);
+        let mut yaw_sum = 0.0;
+        let mut forward_speed_sum = 0.0;
+        let mut samples = 0.0;
+        for step in 0..400 {
+            vehicle.step(Controls {
+                steering: 0.5,
+                gear: 1,
+                ..Controls::default()
+            });
+            if step >= 300 {
+                let forward = vehicle.state.rotation * Vec3::NEG_Z;
+                yaw_sum += vehicle.state.angular_velocity.y;
+                forward_speed_sum += vehicle.state.velocity.dot(forward);
+                samples += 1.0;
+            }
+        }
+        let yaw = yaw_sum / samples;
+        let forward_speed = forward_speed_sum / samples;
+        let ackermann_yaw =
+            forward_speed * vehicle.steer_angle.tan() / vehicle.physics.wheelbase.max(0.1);
+        let rear_slip = vehicle.state.wheels[2..]
+            .iter()
+            .map(|wheel| wheel.slip_angle.abs())
+            .fold(0.0, f32::max);
+        assert!(
+            (yaw - ackermann_yaw).abs() < ackermann_yaw.abs() * 0.2 + 0.01,
+            "low-speed yaw {yaw:.3} does not match Ackermann {ackermann_yaw:.3}"
+        );
+        assert!(
+            rear_slip < 0.05,
+            "rear tires are sliding at low speed: {rear_slip:.3} rad"
+        );
+    }
+
+    #[test]
     fn steering_limit_reduces_with_speed() {
         let physics = physics();
         let mut slow = Vehicle::new(physics.clone(), collider(), &spawn());
