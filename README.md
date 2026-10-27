@@ -95,7 +95,7 @@ isolation or worker startup fails.
 | `W` / `↑` | Throttle; brakes while reversing |
 | `S` / `↓` | Brake; release and press again at rest to engage reverse |
 | `A` / `D` or `←` / `→` | Steer |
-| `C` | Cycle chase / bonnet / cockpit camera |
+| `C` | Cycle chase / bonnet / cockpit / isometric camera |
 | `R` | Reset |
 
 **Reset** and **Camera** remain top-level toolbar actions. The **Audio** button starts audio

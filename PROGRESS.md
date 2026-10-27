@@ -171,7 +171,8 @@ Toolchain setup scripts:
 - Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
   cockpit mode switches it to 32% alpha in a transparent forward pass; bonnet and external
   views keep it opaque. Body and glass hide together; wheels remain visible.
-- Drive camera: chase → bonnet → cockpit (`C` / button). Bonnet eye height is 1.25 m; cockpit
+- Drive camera: chase → bonnet → cockpit → isometric (`C` / button). The isometric view is a
+  fixed-world-orientation, high-angle follow camera. Bonnet eye height is 1.25 m; cockpit
   eye is 1.10 m and 0.25 m rearward. Body defaults visible; `Body: Visible/Hidden` toggles body
   and glass. A real cockpit still needs an interior model.
 - Renderer reports backend and surface format in telemetry:
