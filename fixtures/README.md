@@ -34,8 +34,8 @@ cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb
 The Skidpad pack is baked from the raw AC mod under `fixtures/real/`:
 
 ```bash
-cargo run -p asset-compiler -- bake-ac-track fixtures/real/tracks/skidpad05
-cp fixtures/real/tracks/skidpad05/pack.sima fixtures/tracks/skidpad05/pack.sima
+cargo run -p asset-compiler -- bake-ac-track fixtures/real/tracks/skidpad05 \
+  fixtures/tracks/skidpad05/pack.sima
 ```
 
 ## Real assets

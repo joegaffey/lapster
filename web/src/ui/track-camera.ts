@@ -41,6 +41,7 @@ const lerp = (a: Vec3, b: Vec3, t: number): Vec3 => [
 ];
 const easeInOutCubic = (t: number) =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const shortestAngle = (delta: number) => Math.atan2(Math.sin(delta), Math.cos(delta));
 const prefersReducedMotion = () =>
   window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 
@@ -254,20 +255,35 @@ export function setupTrackCamera(
 
       const fromEye = [...eye] as Vec3;
       const fromTarget = [...target] as Vec3;
+      const fromOffset = sub(fromEye, fromTarget);
+      const toOffset = sub(nextEye, nextTarget);
+      const fromRadius = Math.max(length(fromOffset), 1e-4);
+      const toRadius = Math.max(length(toOffset), 1e-4);
+      const fromYaw = Math.atan2(fromOffset[0], fromOffset[2]);
+      const toYaw = Math.atan2(toOffset[0], toOffset[2]);
+      const yawDelta = shortestAngle(toYaw - fromYaw);
+      const fromPitch = Math.asin(clamp(fromOffset[1] / fromRadius, -1, 1));
+      const toPitch = Math.asin(clamp(toOffset[1] / toRadius, -1, 1));
       const distance = Math.max(
         length(sub(nextEye, fromEye)),
         length(sub(nextTarget, fromTarget)),
       );
       const duration = clamp(420 + distance * 10, 480, 1200);
-      const lift = Math.min(4, 0.4 + distance * 0.07);
       const start = performance.now();
 
       const step = (now: number) => {
         const progress = clamp((now - start) / duration, 0, 1);
         const eased = easeInOutCubic(progress);
-        eye = lerp(fromEye, nextEye, eased);
-        eye[1] += Math.sin(Math.PI * progress) * lift;
         target = lerp(fromTarget, nextTarget, eased);
+        const yaw = fromYaw + yawDelta * eased;
+        const pitch = fromPitch + (toPitch - fromPitch) * eased;
+        const radius = fromRadius + (toRadius - fromRadius) * eased;
+        const horizontal = Math.cos(pitch) * radius;
+        eye = [
+          target[0] + Math.sin(yaw) * horizontal,
+          target[1] + Math.sin(pitch) * radius,
+          target[2] + Math.cos(yaw) * horizontal,
+        ];
         apply();
         if (progress < 1) {
           flightFrame = requestAnimationFrame(step);

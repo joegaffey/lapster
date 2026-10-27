@@ -59,7 +59,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   const nextBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(nextBay.selected).toBe(1);
+  expect(nextBay.selected).toBe(5);
   await page.waitForTimeout(800);
   const nextCamera = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.camera_info()),
@@ -70,7 +70,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   const keyboardBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(keyboardBay.selected).toBe(2);
+  expect(keyboardBay.selected).toBe(6);
 });
 
 test("garage camera flies between bays", async ({ page }) => {
@@ -100,6 +100,29 @@ test("garage camera flies between bays", async ({ page }) => {
   expect(midFlight.target).not.toEqual(initial.target);
   expect(midFlight.target).not.toEqual(final.target);
   expect(final.target).not.toEqual(initial.target);
+});
+
+test("garage bay navigation reverses order in the second row", async ({ page }) => {
+  await page.goto(
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6&bay=5",
+  );
+  await page.waitForFunction(
+    () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
+    undefined,
+    { timeout: 30_000 },
+  );
+
+  await page.mouse.move(640, 360);
+  const bay = page.locator("#bay-label");
+  await expect(bay).toContainText("Bay 5");
+  await page.click("#bay-next");
+  await expect(bay).toContainText("Bay 4");
+  await page.click("#bay-next");
+  await expect(bay).toContainText("Bay 3");
+  await page.click("#bay-prev");
+  await expect(bay).toContainText("Bay 4");
+  await page.click("#bay-prev");
+  await expect(bay).toContainText("Bay 5");
 });
 
 test("garage car arrows use the screen sides and toggle on mouse movement", async ({ page }) => {

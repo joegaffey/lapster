@@ -129,25 +129,20 @@ impl ParticleSystem {
                     _ => 0.0,
                 };
                 let rate = match surface {
-                    SurfaceKind::Asphalt => {
-                        (skid * 2_000.0).min(210.0) * load * speed_factor
-                    }
+                    SurfaceKind::Asphalt => (skid * 2_000.0).min(210.0) * load * speed_factor,
                     SurfaceKind::Concrete => {
                         (skid * 800.0 + rolling * 500.0).min(150.0) * load * speed_factor
                     }
                     SurfaceKind::Grass => {
                         (skid * 350.0 + rolling * 600.0).min(150.0) * load * speed_factor
                     }
-                    SurfaceKind::Kerb => {
-                        (skid * 400.0).min(100.0) * load * speed_factor
-                    }
+                    SurfaceKind::Kerb => (skid * 400.0).min(100.0) * load * speed_factor,
                 } * front_gate;
                 if rate <= 0.0 {
                     self.accumulators[index] = 0.0;
                     continue;
                 }
-                self.accumulators[index] =
-                    (self.accumulators[index] + rate * dt).min(2.0);
+                self.accumulators[index] = (self.accumulators[index] + rate * dt).min(2.0);
                 let mut spawned = 0;
                 while self.accumulators[index] >= 1.0
                     && self.particles.len() < MAX_PARTICLES
@@ -197,11 +192,6 @@ impl ParticleSystem {
         let center = car_world.transform_point3(rig_wheel.local_model.w_axis.truncate());
         let normal = wheel.contact_normal.normalize_or(Vec3::Y);
         let contact = center - normal * (rig_wheel.radius + 0.02);
-        let jitter = Vec3::new(
-            self.range(-0.18, 0.18),
-            self.range(0.08, 0.22),
-            self.range(-0.18, 0.18),
-        );
         let forward = car_world
             .transform_vector3(Vec3::NEG_Z)
             .normalize_or(Vec3::NEG_Z);
@@ -212,10 +202,12 @@ impl ParticleSystem {
         } else {
             -right
         };
-        let velocity = state.velocity * 0.12
-            - forward * (0.35 + speed * 0.06)
-            + right * self.range(-0.8, 0.8)
-            + outward * self.range(0.5, 1.4)
+        let jitter = right * self.range(-rig_wheel.width * 0.35, rig_wheel.width * 0.35)
+            + forward * self.range(-0.12, 0.12)
+            + Vec3::Y * self.range(0.06, 0.16);
+        let velocity = state.velocity * 0.12 - forward * (0.35 + speed * 0.06)
+            + right * self.range(-0.35, 0.35)
+            + outward * self.range(0.1, 0.4)
             + Vec3::Y * self.range(1.0, 2.3);
         let (color, start_size, end_size, life, alpha, rise, drag) = match surface {
             SurfaceKind::Asphalt => (
@@ -258,9 +250,8 @@ impl ParticleSystem {
         let tint = 0.84 + self.next() * 0.30;
         let rotation = Quat::from_rotation_z(self.range(0.0, TAU));
         let angular_velocity = Vec3::new(0.0, 0.0, self.range(-0.8, 0.8));
-        let outward_offset = self.range(0.16, 0.36);
         self.particles.push(Particle {
-            position: contact + outward * outward_offset + jitter,
+            position: contact + jitter,
             velocity,
             rotation,
             angular_velocity,
@@ -280,8 +271,7 @@ impl ParticleSystem {
         for particle in &self.particles {
             let t = (particle.age / particle.life).clamp(0.0, 1.0);
             let grow = 1.0 - (1.0 - t) * (1.0 - t);
-            let size = particle.start_size
-                + (particle.end_size - particle.start_size) * grow;
+            let size = particle.start_size + (particle.end_size - particle.start_size) * grow;
             let fade_in = smoothstep(0.0, 0.10, t);
             let fade_out = 1.0 - smoothstep(0.55, 1.0, t);
             let alpha = particle.alpha * fade_in * fade_out;
@@ -298,12 +288,7 @@ impl ParticleSystem {
                     particle.rotation.z,
                     particle.rotation.w,
                 ],
-                color_alpha: [
-                    particle.color.x,
-                    particle.color.y,
-                    particle.color.z,
-                    alpha,
-                ],
+                color_alpha: [particle.color.x, particle.color.y, particle.color.z, alpha],
             });
         }
     }
@@ -361,6 +346,7 @@ mod tests {
                     )),
                     is_front: index < 2,
                     radius: 0.32,
+                    width: 0.225,
                 })
                 .collect(),
             steering_mesh_index: None,
@@ -462,6 +448,28 @@ mod tests {
     }
 
     #[test]
+    fn emitters_start_inside_the_tyre_track() {
+        let mut particles = ParticleSystem::new();
+        let rig = car_rig();
+        let state = sliding_state();
+        for index in [2, 3] {
+            particles.spawn(
+                Mat4::IDENTITY,
+                &state,
+                &rig.wheels[index],
+                &state.wheels[index],
+                SurfaceKind::Asphalt,
+            );
+            let particle = particles.particles.last().expect("particle");
+            assert!(
+                particle.position.x.abs() < 1.0,
+                "particle spawned too far outside the car: {}",
+                particle.position.x
+            );
+        }
+    }
+
+    #[test]
     fn emits_dust_on_concrete_and_grass() {
         for surface in ["ANELLO", "GRASS"] {
             let mut particles = ParticleSystem::new();
@@ -505,8 +513,20 @@ mod tests {
         let mut a = ParticleSystem::new();
         let mut b = ParticleSystem::new();
         for _ in 0..30 {
-            a.update(1.0 / 60.0, Mat4::IDENTITY, &state, &rig, &["ASPHALT".to_string()]);
-            b.update(1.0 / 60.0, Mat4::IDENTITY, &state, &rig, &["ASPHALT".to_string()]);
+            a.update(
+                1.0 / 60.0,
+                Mat4::IDENTITY,
+                &state,
+                &rig,
+                &["ASPHALT".to_string()],
+            );
+            b.update(
+                1.0 / 60.0,
+                Mat4::IDENTITY,
+                &state,
+                &rig,
+                &["ASPHALT".to_string()],
+            );
         }
         assert_eq!(a.instances(), b.instances());
     }

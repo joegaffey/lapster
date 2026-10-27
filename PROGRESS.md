@@ -103,6 +103,7 @@ Toolchain setup scripts:
   - tangent-plane tire forces and body contact probes for raised/sloped collision surfaces,
   - optional ABS, shared rear traction control and stability control defaulting to 50%
     strength, plus speed-sensitive steering for keyboard input,
+  - ESC uses rear tire slip for oversteer detection, avoiding false low-speed interventions,
   - engine/gearbox/brake model with closed-throttle engine braking,
   - traction-control launch torque limiting and raw-slip feedback at low speed,
   - wall contacts and finite-state reset,
@@ -171,7 +172,8 @@ Toolchain setup scripts:
 - Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
   cockpit mode switches it to 32% alpha in a transparent forward pass; bonnet and external
   views keep it opaque. Body and glass hide together; wheels remain visible.
-- Drive camera: chase → bonnet → cockpit (`C` / button). Bonnet eye height is 1.25 m; cockpit
+- Drive camera: chase → bonnet → cockpit → isometric (`C` / button). The isometric view is a
+  fixed-world-orientation, high-angle follow camera. Bonnet eye height is 1.25 m; cockpit
   eye is 1.10 m and 0.25 m rearward. Body defaults visible; `Body: Visible/Hidden` toggles body
   and glass. A real cockpit still needs an interior model.
 - Renderer reports backend and surface format in telemetry:
@@ -205,11 +207,11 @@ Toolchain setup scripts:
   - Supports custom `?car=`/`?track=` paths in the garage and drive viewers.
   - First local fixture: Mazda RX-7, 18,322 triangles after removing logo geometry.
 - AC track import:
-  - `cargo run -p asset-compiler -- bake-ac-track <track-dir>`
+  - `cargo run -p asset-compiler -- bake-ac-track <track-dir> [out] [--scale <factor>]`
   - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
     drivable collision subset.
   - First local fixture: Skidpad 0.5, 76,545 visual triangles, 43,885 collision triangles,
-    30 draw calls.
+    30 draw calls, at original scale (UI length 150 m).
   - Collision includes the central pad, ASP surfaces, banked outer asphalt ring, and grass;
     the tan `TRANSITION` concrete apron is tagged `ANELLO` so the concrete audio layer
     engages. Grass friction is capped at 0.35. Textures are not imported and walls/fences

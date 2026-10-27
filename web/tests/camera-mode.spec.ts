@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("drive camera cycles through chase, bonnet, and cockpit", async ({ page }) => {
+test("drive camera cycles through chase, bonnet, cockpit, and isometric", async ({ page }) => {
   await page.goto(
     "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
   );
@@ -30,6 +30,12 @@ test("drive camera cycles through chase, bonnet, and cockpit", async ({ page }) 
   expect(
     await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
   ).toBe("cockpit");
+
+  await camera.click();
+  await expect(camera).toHaveText("Camera: Isometric");
+  expect(
+    await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
+  ).toBe("isometric");
 
   await body.click();
   await expect(body).toHaveText("Body: Hidden");

@@ -1879,7 +1879,6 @@ fn create_baked_placeholder(device: &wgpu::Device) -> wgpu::TextureView {
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ParticleVertex {
@@ -1889,10 +1888,22 @@ struct ParticleVertex {
 
 fn create_particle_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
     let vertices = [
-        ParticleVertex { position: [-1.0, -1.0, 0.0], uv: [-1.0, -1.0] },
-        ParticleVertex { position: [1.0, -1.0, 0.0], uv: [1.0, -1.0] },
-        ParticleVertex { position: [1.0, 1.0, 0.0], uv: [1.0, 1.0] },
-        ParticleVertex { position: [-1.0, 1.0, 0.0], uv: [-1.0, 1.0] },
+        ParticleVertex {
+            position: [-1.0, -1.0, 0.0],
+            uv: [-1.0, -1.0],
+        },
+        ParticleVertex {
+            position: [1.0, -1.0, 0.0],
+            uv: [1.0, -1.0],
+        },
+        ParticleVertex {
+            position: [1.0, 1.0, 0.0],
+            uv: [1.0, 1.0],
+        },
+        ParticleVertex {
+            position: [-1.0, 1.0, 0.0],
+            uv: [-1.0, 1.0],
+        },
     ];
     let indices = [0u32, 1, 2, 0, 2, 3];
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

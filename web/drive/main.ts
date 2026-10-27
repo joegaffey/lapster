@@ -65,7 +65,7 @@ let gear = 1;
 let lastSpeedMps = 0;
 let previousForward = false;
 let previousReverse = false;
-let cameraMode: "chase" | "bonnet" | "cockpit" = "chase";
+let cameraMode: "chase" | "bonnet" | "cockpit" | "isometric" = "chase";
 let bodyVisible = true;
 let lastFrame = performance.now() / 1000;
 let frames = 0;
@@ -156,16 +156,18 @@ function setBodyVisible(visible: boolean) {
   bodyToggle.textContent = visible ? "Body: Visible" : "Body: Hidden";
 }
 
-function setCameraMode(mode: "chase" | "bonnet" | "cockpit") {
+function setCameraMode(mode: "chase" | "bonnet" | "cockpit" | "isometric") {
   cameraMode = mode;
   window.__driveViewer?.set_camera_mode(mode);
   cameraButton.textContent =
-    mode === "cockpit"
-      ? "Camera: Cockpit"
-      : mode === "bonnet"
-        ? "Camera: Bonnet"
-        : "Camera: Chase";
-  if (mode === "chase") {
+    mode === "isometric"
+      ? "Camera: Isometric"
+      : mode === "cockpit"
+        ? "Camera: Cockpit"
+        : mode === "bonnet"
+          ? "Camera: Bonnet"
+          : "Camera: Chase";
+  if (mode === "chase" || mode === "isometric") {
     setBodyVisible(true);
   }
 }
@@ -176,7 +178,9 @@ function toggleCameraMode() {
       ? "bonnet"
       : cameraMode === "bonnet"
         ? "cockpit"
-        : "chase",
+        : cameraMode === "cockpit"
+          ? "isometric"
+          : "chase",
   );
 }
 

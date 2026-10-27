@@ -388,7 +388,11 @@ impl Vehicle {
                 forward_speed * self.steer_angle.tan() / self.physics.wheelbase.max(0.1);
             let actual_yaw = self.state.angular_velocity.y;
             let yaw_excess = actual_yaw.abs() - target_yaw.abs();
-            let slip_excess = body_slip.abs() - 0.12;
+            let rear_slip = self.state.wheels[2..]
+                .iter()
+                .map(|wheel| wheel.slip_angle.abs())
+                .fold(0.0, f32::max);
+            let slip_excess = rear_slip - 0.12;
             if forward_speed > 3.0 && (slip_excess > 0.0 || yaw_excess > 0.08) {
                 esc_activity = (slip_excess / 0.4).max(yaw_excess / 0.5).clamp(0.0, 1.0);
                 esc_brake_wheel = Some(if body_slip > 0.0 { 1 } else { 0 });
@@ -1233,6 +1237,132 @@ mod tests {
         assert!(up.y > 0.99);
         assert!(up.x.abs() < 0.02);
         assert!(up.z.abs() < 0.02);
+    }
+
+    #[test]
+    fn low_speed_steering_tracks_ackermann_without_tire_slip() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..1500 {
+            vehicle.step(Controls::default());
+        }
+        vehicle.state.velocity = Vec3::new(0.0, 0.0, -1.0);
+        let mut yaw_sum = 0.0;
+        let mut forward_speed_sum = 0.0;
+        let mut samples = 0.0;
+        for step in 0..400 {
+            vehicle.step(Controls {
+                steering: 0.5,
+                gear: 1,
+                ..Controls::default()
+            });
+            if step >= 300 {
+                let forward = vehicle.state.rotation * Vec3::NEG_Z;
+                yaw_sum += vehicle.state.angular_velocity.y;
+                forward_speed_sum += vehicle.state.velocity.dot(forward);
+                samples += 1.0;
+            }
+        }
+        let yaw = yaw_sum / samples;
+        let forward_speed = forward_speed_sum / samples;
+        let ackermann_yaw =
+            forward_speed * vehicle.steer_angle.tan() / vehicle.physics.wheelbase.max(0.1);
+        let rear_slip = vehicle.state.wheels[2..]
+            .iter()
+            .map(|wheel| wheel.slip_angle.abs())
+            .fold(0.0, f32::max);
+        assert!(
+            (yaw - ackermann_yaw).abs() < ackermann_yaw.abs() * 0.2 + 0.01,
+            "low-speed yaw {yaw:.3} does not match Ackermann {ackermann_yaw:.3}"
+        );
+        assert!(
+            rear_slip < 0.05,
+            "rear tires are sliding at low speed: {rear_slip:.3} rad"
+        );
+    }
+
+    #[test]
+    fn low_speed_cornering_does_not_trigger_esc() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..1500 {
+            vehicle.step(Controls::default());
+        }
+        vehicle.state.velocity = Vec3::new(0.0, 0.0, -4.0);
+        let mut max_activity = 0.0f32;
+        for _ in 0..500 {
+            vehicle.step(Controls {
+                throttle: 0.4,
+                steering: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+            max_activity = max_activity.max(vehicle.esc_activity());
+        }
+        assert!(
+            max_activity == 0.0,
+            "ESC activated during a normal low-speed turn: {max_activity:.3}"
+        );
+    }
+
+    #[test]
+    fn low_speed_cornering_is_not_grip_limited() {
+        for initial in [1.0f32, 2.0, 3.0, 4.0] {
+            let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+            for _ in 0..1500 {
+                vehicle.step(Controls::default());
+            }
+            vehicle.state.velocity = Vec3::new(0.0, 0.0, -initial);
+            for _ in 0..500 {
+                vehicle.step(Controls {
+                    throttle: 0.3,
+                    steering: 1.0,
+                    gear: 1,
+                    ..Controls::default()
+                });
+            }
+            let forward = vehicle.state.rotation * Vec3::NEG_Z;
+            let right = vehicle.state.rotation * Vec3::X;
+            let v_long = vehicle.state.velocity.dot(forward);
+            let v_lat = vehicle.state.velocity.dot(right);
+            let yaw = vehicle.state.angular_velocity.y;
+            let speed = vehicle.state.velocity.length();
+            let body_slip = v_lat.atan2(v_long.abs().max(0.1));
+            let rear_slip = vehicle.state.wheels[2..]
+                .iter()
+                .map(|wheel| wheel.slip_angle.abs())
+                .fold(0.0, f32::max);
+            let load_sum: f32 = vehicle
+                .state
+                .wheels
+                .iter()
+                .filter(|wheel| wheel.contact)
+                .map(|wheel| wheel.normal_load)
+                .sum();
+            let friction: f32 = vehicle
+                .state
+                .wheels
+                .iter()
+                .filter(|wheel| wheel.contact)
+                .map(|wheel| wheel.normal_load * wheel.surface_friction)
+                .sum::<f32>()
+                / load_sum.max(1.0);
+            let lateral_accel = speed * yaw.abs();
+            let grip_utilization =
+                vehicle.physics.mass * lateral_accel / (friction * load_sum).max(1.0);
+            let rear_offset = vehicle.physics.wheels[2].position[2].abs();
+            let expected_slip = (rear_offset * yaw / v_long.abs().max(0.1)).atan();
+            assert!(
+                grip_utilization < 0.5,
+                "low-speed cornering used {grip_utilization:.2} of available grip at {speed:.2} m/s"
+            );
+            assert!(
+                (body_slip.abs() - expected_slip.abs()).abs() < 0.06,
+                "body slip {body_slip:.3} does not match rear-axle geometry {expected_slip:.3}"
+            );
+            assert!(
+                rear_slip < 0.05,
+                "rear tires are sliding at low speed: {rear_slip:.3} rad"
+            );
+        }
     }
 
     #[test]

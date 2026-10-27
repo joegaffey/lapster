@@ -531,6 +531,7 @@ enum CameraMode {
     Chase,
     Bonnet,
     Cockpit,
+    Isometric,
 }
 
 impl CameraMode {
@@ -539,6 +540,7 @@ impl CameraMode {
             CameraMode::Chase => "chase",
             CameraMode::Bonnet => "bonnet",
             CameraMode::Cockpit => "cockpit",
+            CameraMode::Isometric => "isometric",
         }
     }
 }
@@ -985,6 +987,8 @@ impl DriveViewer {
             CameraMode::Bonnet
         } else if mode.eq_ignore_ascii_case("cockpit") {
             CameraMode::Cockpit
+        } else if mode.eq_ignore_ascii_case("isometric") || mode.eq_ignore_ascii_case("top") {
+            CameraMode::Isometric
         } else {
             CameraMode::Chase
         };
@@ -1230,6 +1234,18 @@ impl DriveViewer {
                 eye: eye.to_array(),
                 target: target.to_array(),
                 fov_y: 1.0,
+            });
+            return;
+        }
+        if self.camera_mode == CameraMode::Isometric {
+            let focus = position + Vec3::Y * 0.45;
+            let aspect = self.renderer.aspect();
+            let fit = (1.0 / aspect.max(0.65)).sqrt().clamp(1.0, 1.45);
+            let offset = Vec3::new(14.0, 24.0, 14.0) * fit;
+            self.renderer.set_camera(Camera {
+                eye: (focus + offset).to_array(),
+                target: focus.to_array(),
+                fov_y: 0.72,
             });
             return;
         }

@@ -30,33 +30,16 @@ fn run() -> Result<()> {
             bake_glb(Path::new(glb), Some(Path::new(out)))?;
         }
         [command, dir] if command == "bake-ac-track" => {
-            let dir = Path::new(dir);
-            let bytes = bake::bake_ac_track(dir)?;
-            let output = dir.join("pack.sima");
-            fs::write(&output, &bytes)
-                .with_context(|| format!("failed to write {}", output.display()))?;
-            println!(
-                "baked AC track {} -> {} ({} bytes)",
-                dir.display(),
-                output.display(),
-                bytes.len()
-            );
+            bake_ac_track(Path::new(dir), None, 1.0)?;
+        }
+        [command, dir, flag, value] if command == "bake-ac-track" && *flag == "--scale" => {
+            bake_ac_track(Path::new(dir), None, parse_scale(value)?)?;
         }
         [command, dir, out] if command == "bake-ac-track" => {
-            let bytes = bake::bake_ac_track(Path::new(dir))?;
-            let output = Path::new(out);
-            if let Some(parent) = output.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create {}", parent.display()))?;
-            }
-            fs::write(output, &bytes)
-                .with_context(|| format!("failed to write {}", output.display()))?;
-            println!(
-                "baked AC track {} -> {} ({} bytes)",
-                dir,
-                output.display(),
-                bytes.len()
-            );
+            bake_ac_track(Path::new(dir), Some(Path::new(out)), 1.0)?;
+        }
+        [command, dir, out, flag, value] if command == "bake-ac-track" && *flag == "--scale" => {
+            bake_ac_track(Path::new(dir), Some(Path::new(out)), parse_scale(value)?)?;
         }
         [command, pack] if command == "inspect" => {
             let bytes = read_pack(pack)?;
@@ -71,6 +54,35 @@ fn run() -> Result<()> {
             bail!("invalid arguments");
         }
     }
+    Ok(())
+}
+
+fn parse_scale(value: &str) -> Result<f32> {
+    let scale: f32 = value
+        .parse()
+        .with_context(|| format!("invalid track scale {value}"))?;
+    if !scale.is_finite() || scale <= 0.0 {
+        bail!("track scale must be a positive finite number, got {scale}");
+    }
+    Ok(scale)
+}
+
+fn bake_ac_track(dir: &Path, out: Option<&Path>, scale: f32) -> Result<()> {
+    let bytes = bake::bake_ac_track_scaled(dir, scale)?;
+    let output = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| dir.join("pack.sima"));
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(&output, &bytes).with_context(|| format!("failed to write {}", output.display()))?;
+    println!(
+        "baked AC track {} -> {} at scale {scale} ({} bytes)",
+        dir.display(),
+        output.display(),
+        bytes.len()
+    );
     Ok(())
 }
 
@@ -122,6 +134,6 @@ fn read_pack(path: &str) -> Result<Vec<u8>> {
 
 fn usage() {
     eprintln!(
-        "usage:\n  asset-compiler bake <car|track> <dir> [out]\n  asset-compiler bake-glb <car.glb> [out]\n  asset-compiler bake-ac-track <dir> [out]\n  asset-compiler inspect <pack>\n  asset-compiler validate <pack>"
+        "usage:\n  asset-compiler bake <car|track> <dir> [out]\n  asset-compiler bake-glb <car.glb> [out]\n  asset-compiler bake-ac-track <dir> [out] [--scale <factor>]\n  asset-compiler inspect <pack>\n  asset-compiler validate <pack>"
     );
 }
