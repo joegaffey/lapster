@@ -103,6 +103,7 @@ Toolchain setup scripts:
   - tangent-plane tire forces and body contact probes for raised/sloped collision surfaces,
   - optional ABS, shared rear traction control and stability control defaulting to 50%
     strength, plus speed-sensitive steering for keyboard input,
+  - ESC uses rear tire slip for oversteer detection, avoiding false low-speed interventions,
   - engine/gearbox/brake model with closed-throttle engine braking,
   - traction-control launch torque limiting and raw-slip feedback at low speed,
   - wall contacts and finite-state reset,

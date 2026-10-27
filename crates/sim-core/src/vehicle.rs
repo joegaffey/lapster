@@ -388,7 +388,11 @@ impl Vehicle {
                 forward_speed * self.steer_angle.tan() / self.physics.wheelbase.max(0.1);
             let actual_yaw = self.state.angular_velocity.y;
             let yaw_excess = actual_yaw.abs() - target_yaw.abs();
-            let slip_excess = body_slip.abs() - 0.12;
+            let rear_slip = self.state.wheels[2..]
+                .iter()
+                .map(|wheel| wheel.slip_angle.abs())
+                .fold(0.0, f32::max);
+            let slip_excess = rear_slip - 0.12;
             if forward_speed > 3.0 && (slip_excess > 0.0 || yaw_excess > 0.08) {
                 esc_activity = (slip_excess / 0.4).max(yaw_excess / 0.5).clamp(0.0, 1.0);
                 esc_brake_wheel = Some(if body_slip > 0.0 { 1 } else { 0 });
@@ -1273,6 +1277,29 @@ mod tests {
         assert!(
             rear_slip < 0.05,
             "rear tires are sliding at low speed: {rear_slip:.3} rad"
+        );
+    }
+
+    #[test]
+    fn low_speed_cornering_does_not_trigger_esc() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..1500 {
+            vehicle.step(Controls::default());
+        }
+        vehicle.state.velocity = Vec3::new(0.0, 0.0, -4.0);
+        let mut max_activity = 0.0f32;
+        for _ in 0..500 {
+            vehicle.step(Controls {
+                throttle: 0.4,
+                steering: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+            max_activity = max_activity.max(vehicle.esc_activity());
+        }
+        assert!(
+            max_activity == 0.0,
+            "ESC activated during a normal low-speed turn: {max_activity:.3}"
         );
     }
 
