@@ -125,8 +125,9 @@ Toolchain setup scripts:
   is exposed for diagnostics/tests. A road/surface bed blends asphalt roar for the pad and
   banked outer ring, concrete apron rumble/grit, kerb patter, and grass rumble/rustle from
   per-wheel surface names and speed; tire squeal is suppressed on grass. The HUD exposes the current wheel
-  surface and road-noise gain. Audio starts off and remains on after the toolbar button is
-  used. EngineSim's transmission mesh whine is disabled for now (`mix.transmission = 0`).
+  surface and road-noise gain. Audio starts off on first use and remains on after the toolbar
+  button is used; the enabled/muted preference is remembered across reloads and resumes on the
+  first gesture. EngineSim's transmission mesh whine is disabled for now (`mix.transmission = 0`).
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
   the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into

@@ -2,7 +2,7 @@ import init, { DriveViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
-import { APP_VERSION } from "../src/version.generated.ts";
+import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
@@ -27,6 +27,8 @@ declare global {
 }
 
 const PACK_VERSION = encodeURIComponent(APP_VERSION);
+const AUDIO_STORAGE_KEY =
+  BUILD_CHANNEL === "dev" ? "lapster.audio.dev.v1" : "lapster.audio.v1";
 setupHud();
 checkForUpdate();
 
@@ -72,6 +74,10 @@ let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
 let audio: EngineSimAudio | null = null;
+const storedAudioPreference = loadAudioPreference();
+let audioEnabled = storedAudioPreference.enabled;
+let audioMuted = storedAudioPreference.muted;
+let audioGestureCleanup: (() => void) | null = null;
 let lastRpm = 900;
 let redlineRpm = 8_000;
 let gearRatios: number[] = [3.48, 2.02, 1.39, 1.0, 0.72, 0.6];
@@ -367,6 +373,55 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
   }) as DriveViewer;
 }
 
+function loadAudioPreference(): { enabled: boolean; muted: boolean } {
+  try {
+    const raw = localStorage.getItem(AUDIO_STORAGE_KEY);
+    if (!raw) {
+      return { enabled: false, muted: false };
+    }
+    const value = JSON.parse(raw) as { enabled?: unknown; muted?: unknown };
+    return { enabled: value?.enabled === true, muted: value?.muted === true };
+  } catch {
+    return { enabled: false, muted: false };
+  }
+}
+
+function saveAudioPreference(): void {
+  try {
+    localStorage.setItem(
+      AUDIO_STORAGE_KEY,
+      JSON.stringify({ enabled: audioEnabled, muted: audioMuted }),
+    );
+  } catch {
+    // Storage may be unavailable in private or embedded contexts.
+  }
+}
+
+function clearAudioGesture(): void {
+  audioGestureCleanup?.();
+  audioGestureCleanup = null;
+}
+
+function armAudioGesture(): void {
+  if (!audio || !audioEnabled || audio.status === "running" || audioGestureCleanup) {
+    return;
+  }
+  const onGesture = (event: Event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest("#audio-toggle")) {
+      return;
+    }
+    clearAudioGesture();
+    void startAudio();
+  };
+  window.addEventListener("pointerdown", onGesture, true);
+  window.addEventListener("keydown", onGesture, true);
+  audioGestureCleanup = () => {
+    window.removeEventListener("pointerdown", onGesture, true);
+    window.removeEventListener("keydown", onGesture, true);
+  };
+}
+
 function updateAudioButton() {
   if (!audio) {
     audioButton.disabled = true;
@@ -375,19 +430,23 @@ function updateAudioButton() {
     return;
   }
   audioButton.disabled = false;
-  audioButton.textContent =
-    audio.status === "starting"
-      ? "Audio: Starting"
-      : audio.status === "error"
-        ? "Audio: Error"
-        : audio.status !== "running"
-          ? "Audio: Off"
-          : audio.muted
-            ? "Audio: Muted"
-            : "Audio: On";
+  if (audio.status === "starting") {
+    audioButton.textContent = "Audio: Starting";
+  } else if (audio.status === "error") {
+    audioButton.textContent = "Audio: Error";
+  } else if (audio.status === "running") {
+    audioButton.textContent = audio.muted ? "Audio: Muted" : "Audio: On";
+  } else if (audioEnabled) {
+    audioButton.textContent = audioMuted ? "Audio: Muted" : "Audio: On";
+  } else {
+    audioButton.textContent = "Audio: Off";
+  }
   audioButton.setAttribute(
     "aria-pressed",
-    String(audio.status === "running" && !audio.muted),
+    String(
+      (audio.status === "running" && !audio.muted) ||
+        (audio.status !== "running" && audioEnabled && !audioMuted),
+    ),
   );
 }
 
@@ -396,7 +455,16 @@ async function startAudio() {
     return;
   }
   try {
+    if (audio.status !== "running") {
+      audio.setMuted(audioMuted);
+    }
     await audio.start();
+    if (audio.status === "running") {
+      audioEnabled = true;
+      audioMuted = audio.muted;
+      saveAudioPreference();
+      clearAudioGesture();
+    }
   } catch (error) {
     console.warn("audio unavailable", error);
   }
@@ -482,8 +550,10 @@ async function boot() {
 
   if (physicsWorker) {
     audio = new EngineSimAudio();
+    audio.setMuted(audioMuted);
     window.__driveAudio = audio;
     updateAudioButton();
+    armAudioGesture();
     document.addEventListener("visibilitychange", () => {
       if (!audio) {
         return;
@@ -500,9 +570,17 @@ async function boot() {
         return;
       }
       if (audio.status === "running") {
+        if (audio.contextState !== "running") {
+          clearAudioGesture();
+          void audio.resume().then(updateAudioButton);
+          return;
+        }
         audio.toggleMuted();
+        audioMuted = audio.muted;
+        audioEnabled = true;
+        saveAudioPreference();
         updateAudioButton();
-      } else {
+      } else if (audio.status !== "starting") {
         void startAudio();
       }
     });
