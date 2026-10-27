@@ -129,25 +129,20 @@ impl ParticleSystem {
                     _ => 0.0,
                 };
                 let rate = match surface {
-                    SurfaceKind::Asphalt => {
-                        (skid * 2_000.0).min(210.0) * load * speed_factor
-                    }
+                    SurfaceKind::Asphalt => (skid * 2_000.0).min(210.0) * load * speed_factor,
                     SurfaceKind::Concrete => {
                         (skid * 800.0 + rolling * 500.0).min(150.0) * load * speed_factor
                     }
                     SurfaceKind::Grass => {
                         (skid * 350.0 + rolling * 600.0).min(150.0) * load * speed_factor
                     }
-                    SurfaceKind::Kerb => {
-                        (skid * 400.0).min(100.0) * load * speed_factor
-                    }
+                    SurfaceKind::Kerb => (skid * 400.0).min(100.0) * load * speed_factor,
                 } * front_gate;
                 if rate <= 0.0 {
                     self.accumulators[index] = 0.0;
                     continue;
                 }
-                self.accumulators[index] =
-                    (self.accumulators[index] + rate * dt).min(2.0);
+                self.accumulators[index] = (self.accumulators[index] + rate * dt).min(2.0);
                 let mut spawned = 0;
                 while self.accumulators[index] >= 1.0
                     && self.particles.len() < MAX_PARTICLES
@@ -212,8 +207,7 @@ impl ParticleSystem {
         } else {
             -right
         };
-        let velocity = state.velocity * 0.12
-            - forward * (0.35 + speed * 0.06)
+        let velocity = state.velocity * 0.12 - forward * (0.35 + speed * 0.06)
             + right * self.range(-0.8, 0.8)
             + outward * self.range(0.5, 1.4)
             + Vec3::Y * self.range(1.0, 2.3);
@@ -280,8 +274,7 @@ impl ParticleSystem {
         for particle in &self.particles {
             let t = (particle.age / particle.life).clamp(0.0, 1.0);
             let grow = 1.0 - (1.0 - t) * (1.0 - t);
-            let size = particle.start_size
-                + (particle.end_size - particle.start_size) * grow;
+            let size = particle.start_size + (particle.end_size - particle.start_size) * grow;
             let fade_in = smoothstep(0.0, 0.10, t);
             let fade_out = 1.0 - smoothstep(0.55, 1.0, t);
             let alpha = particle.alpha * fade_in * fade_out;
@@ -298,12 +291,7 @@ impl ParticleSystem {
                     particle.rotation.z,
                     particle.rotation.w,
                 ],
-                color_alpha: [
-                    particle.color.x,
-                    particle.color.y,
-                    particle.color.z,
-                    alpha,
-                ],
+                color_alpha: [particle.color.x, particle.color.y, particle.color.z, alpha],
             });
         }
     }
@@ -505,8 +493,20 @@ mod tests {
         let mut a = ParticleSystem::new();
         let mut b = ParticleSystem::new();
         for _ in 0..30 {
-            a.update(1.0 / 60.0, Mat4::IDENTITY, &state, &rig, &["ASPHALT".to_string()]);
-            b.update(1.0 / 60.0, Mat4::IDENTITY, &state, &rig, &["ASPHALT".to_string()]);
+            a.update(
+                1.0 / 60.0,
+                Mat4::IDENTITY,
+                &state,
+                &rig,
+                &["ASPHALT".to_string()],
+            );
+            b.update(
+                1.0 / 60.0,
+                Mat4::IDENTITY,
+                &state,
+                &rig,
+                &["ASPHALT".to_string()],
+            );
         }
         assert_eq!(a.instances(), b.instances());
     }
