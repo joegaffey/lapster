@@ -593,6 +593,7 @@ fn build_car(
             mesh_index,
             local_model,
             is_front: wheel.is_front,
+            radius: wheel.radius,
         });
     }
 

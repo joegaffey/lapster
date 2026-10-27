@@ -68,8 +68,9 @@ isolation or worker startup fails.
   audio. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,
   a low concrete rumble plus grit for the transition apron, kerb patter, and grass
   rumble/rustle from per-wheel surface names and speed. A tire-screech layer gates
-  band-passed noise from lateral and longitudinal skid, load, and speed. Audio starts off and is enabled with the toolbar button; there are no
-  sample assets yet. See [`docs/audio.md`](docs/audio.md) for the audio architecture and
+  band-passed noise from lateral and longitudinal skid, load, and speed. Audio starts off on
+  first use and the enabled/muted preference is remembered; after a reload audio starts on the
+  first interaction because browsers require a user gesture. There are no sample assets yet. See [`docs/audio.md`](docs/audio.md) for the audio architecture and
   credits.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.

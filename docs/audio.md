@@ -13,8 +13,10 @@ DSP is moved behind the worker boundary.
 
 ## Runtime topology
 
-- Audio starts **off** on every Drive load. The toolbar `Audio` button creates/resumes the
-  `AudioContext` from a user gesture and enables the graph.
+- Audio starts **off** on first use. The toolbar `Audio` button creates/resumes the
+  `AudioContext` from a user gesture and enables the graph. Enabled and muted state are saved
+  in `localStorage`; after a reload the button reflects the saved state and audio starts on the
+  first user interaction because browsers require a gesture.
 - The main thread reads vehicle telemetry each frame and drives Engine_Sim through
   `EngineSim.updateExternal()`.
 - Engine_Sim owns its AudioWorklet combustion source and Web Audio exhaust/intake/filter

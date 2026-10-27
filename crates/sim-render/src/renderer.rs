@@ -7,6 +7,7 @@ use wasm_bindgen::JsValue;
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
+use crate::particles::{ParticleInstance, MAX_PARTICLES};
 use crate::scene::{LineVertex, MeshData, MeshVertex, OutlineVertex, Scene, SceneTexture};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -36,6 +37,10 @@ static OUTLINE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 static LINE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+static PARTICLE_MESH_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
+static PARTICLE_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+    wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4];
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -51,6 +56,8 @@ struct CameraUniform {
     baked_shadow_params: [f32; 4],
     shadow_modes: [f32; 4],
     car_shadow_params: [f32; 4],
+    camera_right: [f32; 4],
+    camera_up: [f32; 4],
 }
 
 #[repr(C)]
@@ -150,6 +157,12 @@ pub struct Renderer {
     shadow_view_proj: Mat4,
     shadow_dirty: bool,
     meshes: Vec<GpuMesh>,
+    particle_pipeline: wgpu::RenderPipeline,
+    particle_vertex_buffer: wgpu::Buffer,
+    particle_index_buffer: wgpu::Buffer,
+    particle_index_count: u32,
+    particle_instance_buffer: wgpu::Buffer,
+    particle_count: u32,
     line_buffer: Option<wgpu::Buffer>,
     line_count: u32,
     lines_visible: bool,
@@ -483,6 +496,16 @@ impl Renderer {
             format,
             sample_count,
         );
+        let particle_pipeline =
+            create_particle_pipeline(&device, &camera_bind_group_layout, format, sample_count);
+        let (particle_vertex_buffer, particle_index_buffer, particle_index_count) =
+            create_particle_mesh(&device);
+        let particle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("particle instances"),
+            size: (MAX_PARTICLES * std::mem::size_of::<ParticleInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let white_view = create_white_texture(&device, &queue);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("mesh sampler"),
@@ -596,6 +619,12 @@ impl Renderer {
             shadow_view_proj,
             shadow_dirty: true,
             meshes,
+            particle_pipeline,
+            particle_vertex_buffer,
+            particle_index_buffer,
+            particle_index_count,
+            particle_instance_buffer,
+            particle_count: 0,
             line_buffer,
             line_count,
             lines_visible: true,
@@ -603,6 +632,18 @@ impl Renderer {
             backend,
             surface_format,
         })
+    }
+
+    pub fn set_particles(&mut self, instances: &[ParticleInstance]) {
+        self.particle_count = instances.len().min(MAX_PARTICLES) as u32;
+        if self.particle_count == 0 {
+            return;
+        }
+        self.queue.write_buffer(
+            &self.particle_instance_buffer,
+            0,
+            bytemuck::cast_slice(&instances[..self.particle_count as usize]),
+        );
     }
 
     pub fn set_lines_visible(&mut self, visible: bool) {
@@ -640,6 +681,12 @@ impl Renderer {
             &self.device,
             &self.shader,
             &self.decal_pipeline_layout,
+            self.config.format,
+            actual,
+        );
+        self.particle_pipeline = create_particle_pipeline(
+            &self.device,
+            &self.camera_bind_group_layout,
             self.config.format,
             actual,
         );
@@ -825,6 +872,18 @@ impl Renderer {
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
+            }
+
+            if self.particle_count > 0 {
+                pass.set_pipeline(&self.particle_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.particle_vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, self.particle_instance_buffer.slice(..));
+                pass.set_index_buffer(
+                    self.particle_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(0..self.particle_index_count, 0, 0..self.particle_count);
             }
 
             if self.lines_visible {
@@ -1562,6 +1621,19 @@ fn camera_uniform(
         baked_shadow_params,
         shadow_modes,
         car_shadow_params,
+        camera_right: {
+            let eye = Vec3::from_array(camera.eye);
+            let forward = (Vec3::from_array(camera.target) - eye).normalize_or(Vec3::NEG_Z);
+            let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
+            [right.x, right.y, right.z, 0.0]
+        },
+        camera_up: {
+            let eye = Vec3::from_array(camera.eye);
+            let forward = (Vec3::from_array(camera.target) - eye).normalize_or(Vec3::NEG_Z);
+            let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
+            let up = right.cross(forward).normalize_or(Vec3::Y);
+            [up.x, up.y, up.z, 0.0]
+        },
     }
 }
 
@@ -1805,6 +1877,102 @@ fn create_baked_placeholder(device: &wgpu::Device) -> wgpu::TextureView {
         view_formats: &[],
     });
     texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ParticleVertex {
+    position: [f32; 3],
+    uv: [f32; 2],
+}
+
+fn create_particle_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+    let vertices = [
+        ParticleVertex { position: [-1.0, -1.0, 0.0], uv: [-1.0, -1.0] },
+        ParticleVertex { position: [1.0, -1.0, 0.0], uv: [1.0, -1.0] },
+        ParticleVertex { position: [1.0, 1.0, 0.0], uv: [1.0, 1.0] },
+        ParticleVertex { position: [-1.0, 1.0, 0.0], uv: [-1.0, 1.0] },
+    ];
+    let indices = [0u32, 1, 2, 0, 2, 3];
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("particle puff vertices"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("particle puff indices"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    (vertex_buffer, index_buffer, indices.len() as u32)
+}
+
+fn create_particle_pipeline(
+    device: &wgpu::Device,
+    camera_layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("particle shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("particle.wgsl"))),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("particle pipeline layout"),
+        bind_group_layouts: &[Some(camera_layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("particle pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_particle"),
+            compilation_options: Default::default(),
+            buffers: &[
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<ParticleVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &PARTICLE_MESH_ATTRIBUTES,
+                }),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<ParticleInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &PARTICLE_INSTANCE_ATTRIBUTES,
+                }),
+            ],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_particle"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 fn create_decal_pipeline(

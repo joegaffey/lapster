@@ -198,3 +198,48 @@ test("tire screech responds to straight-line wheelspin", async ({ page }) => {
   expect(tire.slip).toBeGreaterThan(0.1);
   expect(tire.gain).toBeGreaterThan(0.02);
 });
+
+test("audio preference survives reload and starts on the first gesture", async ({ page }) => {
+  const url =
+    "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=audio-preference";
+  await page.goto(url);
+  await waitForReady(page);
+  const button = page.locator("#audio-toggle");
+  await button.click();
+  await page.waitForFunction(
+    () => (window as any).__driveAudio?.status === "running",
+    undefined,
+    { timeout: 10_000 },
+  );
+  await expect(button).toHaveText("Audio: On");
+
+  await page.reload();
+  await waitForReady(page);
+  await expect(button).toHaveText("Audio: On");
+  expect(
+    await page.evaluate(() => (window as any).__driveAudio?.status),
+  ).toBe("off");
+
+  await page.keyboard.press("w");
+  await page.waitForFunction(
+    () => (window as any).__driveAudio?.status === "running",
+    undefined,
+    { timeout: 10_000 },
+  );
+  await expect(button).toHaveText("Audio: On");
+
+  await button.click();
+  await expect(button).toHaveText("Audio: Muted");
+  await page.reload();
+  await waitForReady(page);
+  await expect(button).toHaveText("Audio: Muted");
+  await page.keyboard.press("w");
+  await page.waitForFunction(
+    () => (window as any).__driveAudio?.status === "running",
+    undefined,
+    { timeout: 10_000 },
+  );
+  expect(
+    await page.evaluate(() => (window as any).__driveAudio?.muted),
+  ).toBe(true);
+});
