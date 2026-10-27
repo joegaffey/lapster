@@ -43,6 +43,7 @@ pub struct WheelState {
     pub slip_ratio: f32,
     pub slip_angle: f32,
     pub surface_friction: f32,
+    pub surface_id: u16,
     pub contact_point: Vec3,
     pub contact_normal: Vec3,
     pub wheel_center: Vec3,
@@ -60,6 +61,7 @@ impl Default for WheelState {
             slip_ratio: 0.0,
             slip_angle: 0.0,
             surface_friction: 1.0,
+            surface_id: 0,
             contact_point: Vec3::ZERO,
             contact_normal: Vec3::Y,
             wheel_center: Vec3::ZERO,
@@ -94,6 +96,7 @@ pub struct Vehicle {
     previous_compression: [f32; 4],
     filtered_slip_ratio: [f32; 4],
     filtered_slip_angle: [f32; 4],
+    raw_slip_ratio: [f32; 4],
     traction_scale: f32,
     traction_control: bool,
     traction_strength: f32,
@@ -151,13 +154,14 @@ impl Vehicle {
             previous_compression: [0.0; 4],
             filtered_slip_ratio: [0.0; 4],
             filtered_slip_angle: [0.0; 4],
+            raw_slip_ratio: [0.0; 4],
             traction_scale: 1.0,
             traction_control: true,
-            traction_strength: 1.0,
+            traction_strength: 0.5,
             abs_control: true,
             abs_scale: [1.0; 4],
             stability_control: true,
-            stability_strength: 1.0,
+            stability_strength: 0.5,
             steering_sensitivity: 1.0,
             esc_activity: 0.0,
             steer_angle: 0.0,
@@ -244,6 +248,7 @@ impl Vehicle {
         self.refresh_wheel_dimensions();
         self.filtered_slip_ratio = [0.0; 4];
         self.filtered_slip_angle = [0.0; 4];
+        self.raw_slip_ratio = [0.0; 4];
         self.traction_scale = 1.0;
         self.abs_scale = [1.0; 4];
         self.esc_activity = 0.0;
@@ -277,6 +282,7 @@ impl Vehicle {
         self.previous_compression = [0.0; 4];
         self.filtered_slip_ratio = [0.0; 4];
         self.filtered_slip_angle = [0.0; 4];
+        self.raw_slip_ratio = [0.0; 4];
         self.traction_scale = 1.0;
         self.abs_scale = [1.0; 4];
         self.esc_activity = 0.0;
@@ -321,8 +327,21 @@ impl Vehicle {
             / driven_count as f32;
         let rpm = self.engine_rpm(average_driven_omega, gear_ratio);
         self.state.engine_rpm = rpm;
-        let engine_torque = self.engine_torque(rpm) * controls.throttle.clamp(0.0, 1.0);
-        let drive_torque = engine_torque * gear_ratio * self.physics.drivetrain.final_drive * 0.85;
+        let throttle = controls.throttle.clamp(0.0, 1.0);
+        let engine_torque = self.engine_torque(rpm) * throttle;
+        let engine_brake_torque = if throttle < 0.02
+            && gear != 0
+            && average_driven_omega.abs() > 0.5
+            && rpm > self.physics.engine.idle_rpm * 1.1
+        {
+            (8.0 + rpm * 0.006).min(70.0)
+        } else {
+            0.0
+        };
+        let drive_torque = (engine_torque - engine_brake_torque)
+            * gear_ratio
+            * self.physics.drivetrain.final_drive
+            * 0.85;
 
         let car_transform =
             Mat4::from_rotation_translation(self.state.rotation, self.state.position);
@@ -462,6 +481,16 @@ impl Vehicle {
                     - long_velocity)
                     / denominator)
                     .clamp(-2.0, 2.0);
+                self.raw_slip_ratio[index] = raw_slip_ratio;
+                if wheel.driven
+                    && self.traction_control
+                    && controls.throttle > 0.05
+                    && self.state.velocity.length() < 8.0
+                {
+                    let launch_target = (wheel.tire.peak_slip_ratio * 0.9).max(0.05);
+                    let launch_excess = (raw_slip_ratio.abs() - launch_target).max(0.0);
+                    drive *= 1.0 - (launch_excess * 9.0).clamp(0.0, 1.0) * self.traction_strength;
+                }
                 let abs_target = (wheel.tire.peak_slip_ratio * 1.5).max(0.05);
                 let desired_abs =
                     if self.abs_control && controls.brake > 0.01 && long_velocity.abs() > 1.0 {
@@ -533,6 +562,7 @@ impl Vehicle {
                 wheel_state.slip_ratio = slip_ratio;
                 wheel_state.slip_angle = slip_angle;
                 wheel_state.surface_friction = hit.friction;
+                wheel_state.surface_id = hit.surface;
                 wheel_state.contact_point = hit.point;
                 wheel_state.contact_normal = hit.normal;
                 wheel_state.wheel_center = wheel_center;
@@ -540,6 +570,7 @@ impl Vehicle {
             } else {
                 self.previous_compression[index] = 0.0;
                 self.abs_scale[index] = 1.0;
+                self.raw_slip_ratio[index] = 0.0;
                 self.filtered_slip_ratio[index] *= 1.0 - 10.0 * dt;
                 self.filtered_slip_angle[index] *= 1.0 - 10.0 * dt;
                 let brake_torque = brake * self.state.wheels[index].angular_velocity.signum();
@@ -1391,8 +1422,8 @@ mod tests {
         assert!(vehicle.traction_control());
         assert!(vehicle.stability_control());
         assert!(vehicle.abs_control());
-        assert_eq!(vehicle.traction_strength(), 1.0);
-        assert_eq!(vehicle.stability_strength(), 1.0);
+        assert_eq!(vehicle.traction_strength(), 0.5);
+        assert_eq!(vehicle.stability_strength(), 0.5);
         assert_eq!(vehicle.steering_sensitivity(), 1.0);
         vehicle.set_traction_control(false);
         vehicle.set_stability_control(false);
@@ -1438,6 +1469,60 @@ mod tests {
             });
         }
         assert_eq!(vehicle.esc_activity(), 0.0);
+    }
+
+    #[test]
+    fn traction_control_prevents_launch_wheelspin() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        vehicle.set_traction_strength(1.0);
+        let mut max_slip = 0.0f32;
+        for step in 0..1500 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+            if step > 50 && vehicle.state.velocity.length() < 8.0 {
+                for wheel in &vehicle.state.wheels[2..] {
+                    max_slip = max_slip.max(wheel.slip_ratio.abs());
+                }
+            }
+        }
+        assert!(
+            max_slip < 0.15,
+            "launch wheelspin too high with TC: {max_slip:.3}"
+        );
+    }
+
+    #[test]
+    fn engine_braking_slows_more_than_coasting() {
+        let mut braking = Vehicle::new(physics(), collider(), &spawn());
+        let mut coasting = Vehicle::new(physics(), collider(), &spawn());
+        let drive = Controls {
+            throttle: 1.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        for _ in 0..1600 {
+            braking.step(drive);
+            coasting.step(drive);
+        }
+        for _ in 0..500 {
+            braking.step(Controls {
+                gear: 1,
+                ..Controls::default()
+            });
+            coasting.step(Controls {
+                gear: 0,
+                ..Controls::default()
+            });
+        }
+        assert!(
+            braking.state.velocity.length() < coasting.state.velocity.length() - 0.2,
+            "engine braking {:.3} vs coasting {:.3}",
+            braking.state.velocity.length(),
+            coasting.state.velocity.length()
+        );
     }
 
     #[test]

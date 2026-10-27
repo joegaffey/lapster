@@ -49,6 +49,7 @@ pub mod snapshot_state {
     pub const ABS_ACTIVE: usize = 60;
     pub const ESC_ACTIVITY: usize = 61;
     pub const TICK: usize = 62;
+    pub const SURFACE_IDS: usize = 63;
 }
 
 #[repr(C, align(8))]

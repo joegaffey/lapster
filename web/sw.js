@@ -52,7 +52,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.pathname.includes("/worker/") || request.destination === "worker") {
+  if (
+    url.pathname.includes("/worker/") ||
+    url.pathname.includes("/audio/") ||
+    request.destination === "worker"
+  ) {
     event.respondWith(
       networkFirst(request, {
         "Cross-Origin-Opener-Policy": COOP,

@@ -46,6 +46,12 @@ const SURFACE_COLORS: Record<number, string> = {
   2: "#ffe633",
   3: "#cc4dff",
   4: "#33ffb3",
+  5: "#338cbf",
+  6: "#b35933",
+  7: "#8c8cff",
+  8: "#ff8c1a",
+  9: "#33ff59",
+  10: "#ff1aff",
 };
 
 async function loadPack() {

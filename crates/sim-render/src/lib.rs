@@ -555,6 +555,7 @@ pub struct DriveViewer {
     camera_mode: CameraMode,
     brake_lights_on: bool,
     reverse_lights_on: bool,
+    surface_names: Vec<String>,
 }
 
 #[wasm_bindgen]
@@ -577,6 +578,11 @@ impl DriveViewer {
         let track_collision = track_pack.track_collision_owned().map_err(js_error)?;
         let track_manifest = track_pack.manifest().clone();
         drop(track_pack);
+        let surface_names = track_metadata
+            .surfaces
+            .iter()
+            .map(|surface| surface.name.clone())
+            .collect::<Vec<_>>();
 
         let car_bytes = car_pack_bytes.to_vec();
         let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
@@ -668,6 +674,7 @@ impl DriveViewer {
             camera_mode: CameraMode::Chase,
             brake_lights_on: false,
             reverse_lights_on: false,
+            surface_names,
         };
         drive.write_initial_pose()?;
         Ok(drive)
@@ -816,7 +823,9 @@ impl DriveViewer {
         remote.gear = frame[snapshot::GEAR].round() as i32;
         remote.steering_rack_torque = frame[snapshot::RACK_TORQUE];
         remote.tick = frame[snapshot::TICK].max(0.0) as u64;
+        let surface_ids = frame[snapshot::SURFACE_IDS].max(0.0) as u32;
         for (index, wheel) in remote.wheels.iter_mut().enumerate() {
+            wheel.surface_id = ((surface_ids >> (index * 6)) & 0x3f) as u16;
             wheel.angular_velocity = frame[snapshot::WHEEL_ANGULAR_SPEEDS + index];
             wheel.suspension_compression = frame[snapshot::SUSPENSION_TRAVEL + index];
             wheel.slip_ratio = frame[snapshot::SLIP_RATIO + index];
@@ -861,6 +870,8 @@ impl DriveViewer {
                     "slipRatio": wheel.slip_ratio,
                     "slipAngle": wheel.slip_angle,
                     "surfaceFriction": wheel.surface_friction,
+                    "surfaceId": wheel.surface_id,
+                    "surface": self.surface_names.get(wheel.surface_id as usize).cloned().unwrap_or_default(),
                     "steerAngle": wheel.steer_angle,
                     "spinAngle": wheel.spin_angle,
                     "angularVelocity": wheel.angular_velocity,
@@ -1068,7 +1079,7 @@ impl DriveViewer {
         self.brake_lights_on = on;
         if let Some(index) = self.rig.brake_light_mesh_index {
             self.renderer
-                .set_mesh_emissive(index, if on { [2.5, 0.04, 0.0] } else { [0.0; 3] });
+                .set_mesh_emissive(index, if on { [5.0, 0.12, 0.02] } else { [0.0; 3] });
         }
     }
 
@@ -1079,7 +1090,7 @@ impl DriveViewer {
         self.reverse_lights_on = on;
         if let Some(index) = self.rig.reverse_light_mesh_index {
             self.renderer
-                .set_mesh_emissive(index, if on { [1.8, 1.8, 1.8] } else { [0.0; 3] });
+                .set_mesh_emissive(index, if on { [3.5, 3.5, 3.5] } else { [0.0; 3] });
         }
     }
 

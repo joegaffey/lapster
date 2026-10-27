@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-26
 Repository root: the directory containing this file
-Current phase: **CP7 in progress — worker scheduler hardened; main-thread physics is still the default**
+Current phase: **Audio spike — SAB worker default and Engine_Sim rotary2 AudioWorklet**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -94,26 +94,49 @@ Toolchain setup scripts:
 ## Current capabilities
 
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
-- 500 Hz fixed-step vehicle physics on the main thread by default, with an opt-in SAB worker
-  (`?physics=worker`) sharing the same simulation:
+- 500 Hz fixed-step vehicle physics in the SAB worker by default (`?physics=main` selects the
+  main-thread fallback):
   - triangle raycast suspension with anti-roll bars, progressive bump stops, and a rear grip
     bias to reduce power oversteer,
   - CG-based load transfer,
   - Pacejka longitudinal/lateral forces with tire relaxation,
   - tangent-plane tire forces and body contact probes for raised/sloped collision surfaces,
-  - optional ABS, shared rear traction control and stability control, plus speed-sensitive
-    steering for keyboard input,
-  - engine/gearbox/brake model,
+  - optional ABS, shared rear traction control and stability control defaulting to 50%
+    strength, plus speed-sensitive steering for keyboard input,
+  - engine/gearbox/brake model with closed-throttle engine braking,
+  - traction-control launch torque limiting and raw-slip feedback at low speed,
   - wall contacts and finite-state reset,
   - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
+- Audio spike: vendored Engine_Sim MIT synthesiser (`rotary2`) with combustion events,
+  exhaust/intake resonators, transmission, and optional turbo; toolbar mute; no sample assets
+  or track reverb yet. A small external-state adapter drives its RPM/speed/gear from the
+  vehicle and locks the clutch, so the engine note follows the simulation instead of
+  Engine_Sim's own drivetrain. A 60 ms RPM conditioner with a 12,000 rpm/s slew limit removes
+  pitch judder from wheelspin/TC oscillation while preserving launch flare. Load uses a fast
+  attack and 320 ms release, with an overrun load floor and reduced overrun attenuation, so
+  lift-off does not cut the sound abruptly. Continuous lash rattle is disabled in external
+  mode; a single click/thump cue is triggered immediately on forward gear changes. The audio
+  RPM conditioner shortens its time constant during a shift so pitch and cue stay together.
+  A separate tire-screech layer uses two band-passed noise bands, gated by per-wheel lateral
+  and longitudinal slip, load, contact, and speed; it fires for cornering scrub, wheelspin,
+  and lockup; its threshold is skid excess rather than ordinary cornering slip, and its gain
+  is exposed for diagnostics/tests. A road/surface bed blends asphalt roar, light-brown
+  outer-ring dirt rumble/grit, kerb patter, and grass rumble/rustle from per-wheel surface
+  names and speed; tire squeal is suppressed on grass. The HUD exposes the current wheel
+  surface and road-noise gain. Audio starts off and remains on after the toolbar button is
+  used. EngineSim's transmission mesh whine is disabled for now (`mix.transmission = 0`).
+- Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
+  car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
+  the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
+  `sim-core` once the behaviour is accepted.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
   - `A` / `D` or `←` / `→` steer; left/right direction is verified,
   - `W` / `↑` brakes while reversing,
-  - `0` manual reverse at rest, `1`–`6` gears, `R` reset.
+  - automatic forward gearbox (upshift/downshift with 0.35 s anti-hunt), `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
 - Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
   curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
@@ -186,8 +209,9 @@ Toolchain setup scripts:
     drivable collision subset.
   - First local fixture: Skidpad 0.5, 76,545 visual triangles, 43,885 collision triangles,
     30 draw calls.
-  - Collision includes the central pad, ASP surfaces, outer ANELLO ring, and grass; grass
-    friction is capped at 0.35. Textures are not imported and walls/fences remain visual-only.
+  - Collision includes the central pad, ASP surfaces, outer ANELLO ring, and grass; the tan
+    `TRANSITION` mesh is tagged `ANELLO` so the outer-ring audio layer engages. Grass friction
+    is capped at 0.35. Textures are not imported and walls/fences remain visual-only.
   - Visual coplanar layers are offset: the concrete apron sits 1.5 cm below the tarmac, and
     thin road overlays sit 5 mm above it.
 - Build freshness: generated build version in default pack URLs, `version.json` checks on
@@ -204,7 +228,7 @@ Toolchain setup scripts:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 52 tests
+- `cargo test --workspace` — 54 tests
 - Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
   change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
   control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,
@@ -212,7 +236,7 @@ Toolchain setup scripts:
   slope settling/maneuvering, and ABS wheel-lock prevention.
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 22 tests
-- `npm run test:viewer` — 31 Playwright tests plus an opt-in physics benchmark
+- `npm run test:viewer` — 37 Playwright tests plus an opt-in physics benchmark
 - `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
   `PERF_CPU_THROTTLE=4` for a throttled run
 - Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
@@ -266,14 +290,42 @@ matrix then expands to the other supported wheelbases.
 ## Known issues / carry-forward
 
 - **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
-- Drive physics defaults to the main thread. The SAB worker is available with
-  `?physics=worker` and is still opt-in pending broader hardware validation. Garage and Track
-  Viewer have no physics loop.
+- Drive defaults to the SAB worker. `?physics=main` selects the main-thread fallback. Garage
+  and Track Viewer have no physics loop.
+- Audio is a spike only: the external-state adapter bypasses Engine_Sim's own clutch/shift
+  transients. Continuous gear rattle is disabled; a synthetic click/thump covers forward gear
+  changes. This external mode is a set of compensations around library tuning that assumes
+  EngineSim's own drivetrain (load floor, overrun attenuation, rattle suppression, and shift
+  cue). Launch slip and some overrun pops are reduced. The conditioned audio RPM lags the raw
+  signal by roughly 60 ms outside shifts. There is no per-car profile, sample layer, Doppler,
+  reverb zones, or mobile listening test yet. Tire screech is a first-pass centered noise layer
+  with no per-axle panning or sample layer. Surface noise uses per-wheel surface names
+  (`ASPHALT`/`ASP*`, `KERB`, `ANELLO`, `GRASS`). Skidpad's tan `TRANSITION` mesh is mapped to
+  `ANELLO` by the AC importer so its dirt layer engages. The ANELLO case uses a low-pass
+  rumble plus grit and amplitude modulation; grass uses a lower rumble plus a low rustle band.
+  Noise is centered mono. Audio is unavailable when physics falls back to the main thread
+  because there is no SAB producer.
+- The raw `sim-core` engine RPM is still wheel-speed-derived and visibly oscillates during
+  wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
+  but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a
+  sim-core RPM filter if this needs fixing at the source.
+- Traction control now limits launch torque from current raw slip below 8 m/s; above that it
+  relies on the filtered slip controller. Engine braking is a simple rpm-scaled negative
+  driveline torque, not a full engine-inertia/clutch model.
+- Engine_Sim declares MIT in its README/package.json but had no license file upstream; the
+  vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`;
+  `THIRD_PARTY_NOTICES.md` is copied into the Pages output. Ask upstream to add a LICENSE file
+  before relying on this for a release.
 - The worker uses an `Atomics.wait` deadline loop with bounded catch-up. In a local 4× CPU
   throttling run at 1280×720 it held ~500 Hz and ~17 fps while main-thread physics fell to
   ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
   measure frame pacing meaningfully, but the benchmark still checks worker tick rate.
 - Keep the worker opt-in until CPU-throttled results are reproduced on the target hardware.
+- EngineSim's transmission mesh whine is muted pending retuning; gear changes use the
+  click/thump cue instead.
+- The auto gearbox is currently a UI-layer spike. `sim-core` still takes an explicit gear, so
+  `simulate()` tests and any future AI must supply gears themselves until the logic moves into
+  Rust.
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
 - Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
@@ -307,16 +359,18 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **Re-enable the worker default (next)**: run `npm run bench:physics` and the throttled
-   variant on the target hardware, then flip the default only after the worker holds ~500 Hz
-   with no frame-pacing regression.
+1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset with the RPM conditioner.
+   If the drivetrain transients are missed, restore selected EngineSim shift/launch events
+   rather than returning to its independent drivetrain. Decide separately whether to smooth
+   engine RPM in `sim-core` and retune TC.
 2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
    self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
 3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
    compatibility, profiles, and hardware fixtures.
-4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add the
-   audio worklet over SAB snapshots, expand the hardware matrix, and run performance traces.
-   The physics worker, input mailbox, snapshot ring, and FFB mailbox are already in place.
+4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add
+   per-car audio profiles / an optional sample layer, expand the hardware matrix, and run
+   performance traces. The physics worker, input mailbox, snapshot ring, FFB mailbox, and
+   audio worklet spike are already in place.
 5. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
    wheel geometry cleanup, and licensed AC `.ini` physics when a suitable pack is available.
    - Add a simple steering-wheel/interior placeholder.
@@ -338,6 +392,8 @@ matrix then expands to the other supported wheelbases.
 - `crates/asset-compiler` — bake/inspect/validate.
 - `crates/sim-render` — wgpu renderer and wasm viewers.
 - `crates/sim-worker` — Rust/Wasm physics worker simulation wrapper.
+- `web/src/audio/engine-sim/` — vendored Engine_Sim MIT DSP; see `NOTICE.md` and `LICENSE`.
+- `docs/audio.md` — current audio architecture, surface model, credits, and deferred work.
 - `web/drive`, `web/garage`, `web/track-viewer` — browser pages.
 - `web/tests` — Node and Playwright tests.
 - `fixtures/cars/minimal`, `fixtures/tracks/minimal` — synthetic fixtures and baked packs.

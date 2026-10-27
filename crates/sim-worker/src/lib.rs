@@ -208,6 +208,11 @@ impl Simulation {
         out[state::ABS_ACTIVE] = if self.vehicle.abs_active() { 1.0 } else { 0.0 };
         out[state::ESC_ACTIVITY] = self.vehicle.esc_activity();
         out[state::TICK] = state_data.tick as f32;
+        let mut surface_ids = 0u32;
+        for (index, wheel) in state_data.wheels.iter().enumerate() {
+            surface_ids |= ((wheel.surface_id as u32) & 0x3f) << (index * 6);
+        }
+        out[state::SURFACE_IDS] = surface_ids as f32;
         out
     }
 }

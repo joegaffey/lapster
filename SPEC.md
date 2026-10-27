@@ -403,6 +403,12 @@ vendor profiles.
 
 ### Module 6: `sim-audio` (AudioWorklet DSP)
 
+**Current implementation (spike):** Drive uses the vendored Engine_Sim JavaScript
+AudioWorklet with a main-thread external-state adapter, plus synthesized surface and tire
+layers. It does not yet read the SAB directly. See `docs/audio.md` for the implemented
+architecture and credits. The Rust `sim-audio` crate and direct SAB audio path remain the
+target below.
+
 **Responsibility:** Synthesize engine and vehicle audio from simulation snapshots.
 
 **Key requirements:**

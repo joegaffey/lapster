@@ -34,7 +34,7 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(Number(settled.speed)).toBeLessThan(1);
   expect(settled.contacts).toBe("4/4");
   expect(settled.telemetry.tick).toBeGreaterThan(0);
-  expect(settled.telemetry.physicsMode).toBeUndefined();
+  expect(settled.telemetry.physicsMode).toBe("sab");
   expect(["BrowserWebGpu", "Gl"]).toContain(settled.telemetry.rendererBackend);
   if (!process.env.CI) {
     expect(settled.telemetry.rendererBackend).toBe("BrowserWebGpu");
@@ -92,6 +92,23 @@ test("drive viewer settles and accepts keyboard input", async ({ page }) => {
   expect(reverse.distance).toBeGreaterThan(0.25);
   expect(reverse.contacts).toBe(4);
   expect(pageErrors).toEqual([]);
+});
+
+test("automatic gearbox upshifts from a standstill", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=auto");
+  await page.bringToFront();
+  await waitForReady(page);
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.keyboard.down("w");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear > 1,
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.waitForTimeout(800);
+  const shifted = await telemetry(page);
+  expect(shifted.gear).toBeGreaterThan(1);
+  await page.keyboard.up("w");
 });
 
 test("main-thread physics remains available as a fallback", async ({ page }) => {
@@ -331,8 +348,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.tractionControl).toBe(true);
   expect(telemetry.absControl).toBe(true);
   expect(telemetry.stabilityControl).toBe(true);
-  expect(telemetry.tractionStrength).toBe(1);
-  expect(telemetry.stabilityStrength).toBe(1);
+  expect(telemetry.tractionStrength).toBe(0.5);
+  expect(telemetry.stabilityStrength).toBe(0.5);
   expect(telemetry.steeringSensitivity).toBe(1);
   expect(telemetry.debugLinesVisible).toBe(false);
   expect(telemetry.environmentShadowMode).toBe("baked");

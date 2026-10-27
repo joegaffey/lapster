@@ -399,6 +399,10 @@ prioritize the HID worker migration before expanding the device matrix.
 
 ### CP7: Worker integration, audio, and hardware matrix
 
+**Status note (2026-10-27):** the physics worker, SAB topology, synthesized engine audio,
+surface noise, tire screech, and gear-shift cues are implemented as a spike; direct
+worker-side audio DSP, HID migration, and the hardware matrix remain. See `docs/audio.md`.
+
 **Indicative timebox:** 4-6 days.
 
 **Goal:** Move the proven input/FFB path behind the HID worker, move physics to the worker,

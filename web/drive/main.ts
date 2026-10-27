@@ -15,12 +15,14 @@ import { PhysicsClient } from "../src/sim/physics.ts";
 import { SnapshotSmoother } from "../src/sim/interpolate.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
+import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
 
 declare global {
   interface Window {
     __driveViewerReady?: boolean;
     __driveViewerError?: string;
     __driveViewer?: DriveViewer;
+    __driveAudio?: EngineSimAudio;
   }
 }
 
@@ -43,6 +45,7 @@ const rpmLabel = document.querySelector<HTMLElement>("#rpm")!;
 const gearLabel = document.querySelector<HTMLElement>("#gear")!;
 const contactsLabel = document.querySelector<HTMLElement>("#contacts")!;
 const rackTorqueLabel = document.querySelector<HTMLElement>("#rack-torque")!;
+const surfaceLabel = document.querySelector<HTMLElement>("#surface")!;
 const tickLabel = document.querySelector<HTMLElement>("#tick")!;
 const stepP50Label = document.querySelector<HTMLElement>("#step-p50")!;
 const stepP99Label = document.querySelector<HTMLElement>("#step-p99")!;
@@ -51,6 +54,7 @@ const wheelsLabel = document.querySelector<HTMLElement>("#wheels")!;
 const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
 const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
+const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
 
 const keys = new Set<string>();
 const STOP_SPEED_MPS = 0.3;
@@ -67,12 +71,19 @@ let accumulated = 0;
 let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
+let audio: EngineSimAudio | null = null;
+let lastRpm = 900;
+let redlineRpm = 8_000;
+let gearRatios: number[] = [3.48, 2.02, 1.39, 1.0, 0.72, 0.6];
+let maxGear = gearRatios.length;
+let autoShiftCooldown = 0;
+let previousAutoThrottle = 0;
 let workerAssists = {
   tc: true,
-  tcStrength: 1,
+  tcStrength: 0.5,
   abs: true,
   esc: true,
-  escStrength: 1,
+  escStrength: 0.5,
   steeringSensitivity: 1,
 };
 
@@ -99,9 +110,20 @@ function resizeCanvas() {
 function updateHud(telemetry: any) {
   speedLabel.textContent = telemetry.speedKph.toFixed(1);
   rpmLabel.textContent = String(Math.round(telemetry.rpm));
-  gearLabel.textContent = String(telemetry.gear);
+  gearLabel.textContent = telemetry.gear < 0 ? "R" : `A${telemetry.gear}`;
   contactsLabel.textContent = `${telemetry.contacts}/4`;
   rackTorqueLabel.textContent = `${telemetry.steeringRackTorque.toFixed(1)} Nm`;
+  const surfaces = Array.from(
+    new Set(
+      telemetry.wheels
+        .filter((wheel: any) => wheel.contact && wheel.surface)
+        .map((wheel: any) => wheel.surface as string),
+    ),
+  );
+  const road = audio?.roadState();
+  surfaceLabel.textContent = surfaces.length
+    ? `${surfaces.join(" / ")} · ${road ? road.gain.toFixed(3) : "no audio"}`
+    : `air · ${road ? road.gain.toFixed(3) : "no audio"}`;
   tickLabel.textContent = String(telemetry.tick);
   stepP50Label.textContent = `${telemetry.stepP50Ms.toFixed(3)} ms`;
   stepP99Label.textContent = `${telemetry.stepP99Ms.toFixed(3)} ms`;
@@ -159,10 +181,62 @@ function reset() {
   steer = 0;
   gear = 1;
   lastSpeedMps = 0;
+  lastRpm = telemetryRpm();
+  autoShiftCooldown = 0;
+  previousAutoThrottle = 0;
   previousForward = false;
   previousReverse = false;
   keys.clear();
   lastFrame = performance.now() / 1000;
+}
+
+function telemetryRpm(): number {
+  const viewer = window.__driveViewer;
+  if (!viewer) {
+    return lastRpm;
+  }
+  try {
+    return JSON.parse(viewer.telemetry()).rpm;
+  } catch {
+    return lastRpm;
+  }
+}
+
+function updateAutoGear(delta: number, throttle: number, brake: number) {
+  autoShiftCooldown = Math.max(0, autoShiftCooldown - delta);
+  const kickdown = throttle >= 0.85 && previousAutoThrottle < 0.5;
+  previousAutoThrottle = throttle;
+  if (gear < 1 || autoShiftCooldown > 0) {
+    return;
+  }
+  const upRpm = redlineRpm * (0.62 + 0.3 * throttle);
+  const downRpm = redlineRpm * (0.28 + 0.16 * throttle);
+  if (gear < maxGear && throttle > 0.05 && brake < 0.1 && lastRpm >= upRpm) {
+    gear += 1;
+    autoShiftCooldown = 0.35;
+    return;
+  }
+  const lowerRpm =
+    gear > 1 ? lastRpm * (gearRatios[gear - 2] / gearRatios[gear - 1]) : lastRpm;
+  if (
+    gear > 1 &&
+    (throttle < 0.5 || brake > 0.1) &&
+    lastRpm <= downRpm &&
+    lowerRpm < redlineRpm * 0.97
+  ) {
+    gear -= 1;
+    autoShiftCooldown = 0.35;
+    return;
+  }
+  if (
+    kickdown &&
+    gear > 1 &&
+    lastRpm < redlineRpm * 0.55 &&
+    lowerRpm < redlineRpm * 0.97
+  ) {
+    gear -= 1;
+    autoShiftCooldown = 0.35;
+  }
 }
 
 function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveViewer {
@@ -198,9 +272,20 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
             steering: number,
             requestedGear: number,
           ) => {
-            const tick = await client.simulate(seconds, throttle, brake, steering, requestedGear);
-            syncLatest();
-            return tick;
+            await client.pause();
+            try {
+              const tick = await client.simulate(
+                seconds,
+                throttle,
+                brake,
+                steering,
+                requestedGear,
+              );
+              syncLatest();
+              return tick;
+            } finally {
+              setTimeout(() => void client.resume(), 0);
+            }
           };
         case "reset":
           return () => {
@@ -282,6 +367,42 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
   }) as DriveViewer;
 }
 
+function updateAudioButton() {
+  if (!audio) {
+    audioButton.disabled = true;
+    audioButton.textContent = "Audio: N/A";
+    audioButton.setAttribute("aria-pressed", "false");
+    return;
+  }
+  audioButton.disabled = false;
+  audioButton.textContent =
+    audio.status === "starting"
+      ? "Audio: Starting"
+      : audio.status === "error"
+        ? "Audio: Error"
+        : audio.status !== "running"
+          ? "Audio: Off"
+          : audio.muted
+            ? "Audio: Muted"
+            : "Audio: On";
+  audioButton.setAttribute(
+    "aria-pressed",
+    String(audio.status === "running" && !audio.muted),
+  );
+}
+
+async function startAudio() {
+  if (!audio) {
+    return;
+  }
+  try {
+    await audio.start();
+  } catch (error) {
+    console.warn("audio unavailable", error);
+  }
+  updateAudioButton();
+}
+
 async function boot() {
   status.textContent = "starting";
   if (await setupPwa()) {
@@ -303,11 +424,17 @@ async function boot() {
 
   const info = JSON.parse(viewer.info());
   const initial = JSON.parse(viewer.telemetry());
+  const setup = JSON.parse(viewer.car_setup());
+  redlineRpm = setup.engine?.redlineRpm ?? redlineRpm;
+  if (Array.isArray(setup.drivetrain?.gearRatios) && setup.drivetrain.gearRatios.length > 1) {
+    gearRatios = setup.drivetrain.gearRatios;
+    maxGear = gearRatios.length;
+  }
+  lastRpm = initial.rpm;
   asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
 
   let driver: DriveViewer = viewer;
-  const requestedPhysics = params.get("physics");
-  if ((requestedPhysics === "worker" || requestedPhysics === "sab") && window.crossOriginIsolated) {
+  if (params.get("physics") !== "main" && window.crossOriginIsolated) {
     try {
       status.textContent = "starting physics worker";
       const sab = new SharedArrayBuffer(SAB_TOTAL_SIZE);
@@ -353,6 +480,36 @@ async function boot() {
   }
   window.__driveViewer = driver;
 
+  if (physicsWorker) {
+    audio = new EngineSimAudio();
+    window.__driveAudio = audio;
+    updateAudioButton();
+    document.addEventListener("visibilitychange", () => {
+      if (!audio) {
+        return;
+      }
+      if (document.hidden) {
+        audio.suspend();
+      } else {
+        void audio.resume();
+      }
+    });
+    window.addEventListener("pagehide", () => audio?.dispose());
+    audioButton.addEventListener("click", () => {
+      if (!audio) {
+        return;
+      }
+      if (audio.status === "running") {
+        audio.toggleMuted();
+        updateAudioButton();
+      } else {
+        void startAudio();
+      }
+    });
+  } else {
+    updateAudioButton();
+  }
+
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
     if ([
@@ -361,13 +518,6 @@ async function boot() {
       "s",
       "d",
       "r",
-      "0",
-      "1",
-      "2",
-      "3",
-      "4",
-      "5",
-      "6",
       "arrowleft",
       "arrowright",
       "arrowup",
@@ -381,13 +531,6 @@ async function boot() {
     }
     if (key === "c") {
       toggleCameraMode();
-    }
-    if (key === "0") {
-      if (Math.abs(lastSpeedMps) < STOP_SPEED_MPS) {
-        gear = -1;
-      }
-    } else if (key >= "1" && key <= "6") {
-      gear = Number(key);
     }
   });
   window.addEventListener("keyup", (event) => {
@@ -449,7 +592,6 @@ async function boot() {
           gear = 1;
         }
       } else {
-        gear = 1;
         throttle = 1;
       }
     } else if (reverseKey) {
@@ -463,6 +605,8 @@ async function boot() {
         throttle = 1;
       }
     }
+
+    updateAutoGear(delta, throttle, brake);
 
     try {
       if (physicsWorker && physics && smoother) {
@@ -481,12 +625,32 @@ async function boot() {
           viewer.render_remote(remoteState);
           const telemetry = JSON.parse(driver.telemetry());
           lastSpeedMps = telemetry.speedMps;
+          lastRpm = telemetry.rpm;
+          audio?.update(
+            delta,
+            throttle,
+            brake,
+            gear,
+            telemetry.rpm,
+            telemetry.speedMps,
+            telemetry.wheels,
+          );
           updateHud(telemetry);
         }
       } else {
         driver.update(now, throttle, brake, steer, gear);
         const telemetry = JSON.parse(driver.telemetry());
         lastSpeedMps = telemetry.speedMps;
+        lastRpm = telemetry.rpm;
+        audio?.update(
+          delta,
+          throttle,
+          brake,
+          gear,
+          telemetry.rpm,
+          telemetry.speedMps,
+          telemetry.wheels,
+        );
         updateHud(telemetry);
       }
 

@@ -15,8 +15,8 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 Both builds default to Baked environment shadows and the Dynamic car shadow.
 
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
-  steering, gears, chase/cockpit cameras, wheel loads, 500 Hz physics, and a shareable
-  tuning dialog.
+  steering, automatic gearbox, chase/cockpit cameras, wheel loads, 500 Hz physics, and a
+  shareable tuning dialog.
 - **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
   opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
   three-quarter start view; screen-side chevrons or arrow keys fly smoothly between bays.
@@ -41,11 +41,10 @@ resume, clearing stale caches and reloading when a newer deployment is available
 The demo uses WebGPU when available and falls back to WebGL2. Chromium/Chrome is recommended.
 Lapster is installable as a PWA. The installed app launches a demo menu, and every demo has a
 `Exit` link to return there. A same-origin service worker supplies the COOP/COEP headers needed
-for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. Drive physics
-runs on the main thread by default. The opt-in worker (`?physics=worker`) runs the same
-fixed-step simulation in a dedicated Rust/Wasm worker and exchanges inputs and snapshots
-through the SAB; if cross-origin isolation or worker startup fails, Drive uses main-thread
-physics.
+for `SharedArrayBuffer` on GitHub Pages; the first controlled load reloads once. On this
+Drive physics runs in a dedicated Rust/Wasm worker by default and exchanges inputs and
+snapshots through the SAB. `?physics=main` selects the main-thread fallback when cross-origin
+isolation or worker startup fails.
 
 ## Current features
 
@@ -61,9 +60,17 @@ physics.
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
-- Optional physics worker with a versioned SAB input mailbox, four-slot snapshot ring,
-  seqlock publication, an `Atomics.wait` deadline loop, and interpolated main-thread
-  rendering. Main-thread physics remains the default and fallback.
+- Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
+  publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
+  Main-thread physics remains available with `?physics=main`.
+- **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
+  `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
+  audio. A synthesized surface layer blends asphalt roar, a low dirt rumble plus grit for the
+  light-brown outer ring, kerb patter, and grass rumble/rustle from per-wheel surface names
+  and speed. A tire-screech layer gates band-passed noise from lateral and longitudinal skid,
+  load, and speed. Audio starts off and is enabled with the toolbar button; there are no
+  sample assets yet. See [`docs/audio.md`](docs/audio.md) for the audio architecture and
+  credits.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
 - Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
@@ -87,16 +94,15 @@ physics.
 | `W` / `↑` | Throttle; brakes while reversing |
 | `S` / `↓` | Brake; release and press again at rest to engage reverse |
 | `A` / `D` or `←` / `→` | Steer |
-| `0` | Manual reverse at rest |
-| `1`–`6` | Gears |
 | `C` | Cycle chase / bonnet / cockpit camera |
 | `R` | Reset |
 
-**Reset** and **Camera** remain top-level toolbar actions. **Tuning** opens the top-layer car
-tuning dialog; **Copy settings** produces a versioned JSON payload for sharing, and **Paste
-shared settings** imports one. **Settings** opens the assists menu for TC/ESC/ABS enables,
-independent strengths, steering sensitivity, anti-aliasing, and the debug overlay; these
-settings persist globally. Debug lines/bounds are off by default in drive.
+**Reset** and **Camera** remain top-level toolbar actions. The **Audio** button starts audio
+(off on each load) and mutes/unmutes it afterwards. **Tuning** opens the top-layer car tuning
+dialog; **Copy settings** produces a versioned JSON payload for sharing, and **Paste shared
+settings** imports one. **Settings** opens the assists menu for TC/ESC/ABS enables, independent
+strengths (TC and ESC default to 50%), steering sensitivity, anti-aliasing, and the debug
+overlay; these settings persist globally. Debug lines/bounds are off by default in drive.
 
 The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 276 hp,
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
@@ -144,6 +150,10 @@ npm run test:viewer
 npm run bench:physics
 ```
 
+The audio spike is covered by `web/tests/audio.spec.ts`; Engine_Sim's synthesis graph is driven
+from a conditioned version of the vehicle's RPM plus actual speed and gear through its
+external-state adapter.
+
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
 the NSS/NSPR libraries if the system does not have them. `npm run bench:physics` runs the
 opt-in main-thread vs worker A/B benchmark; set `PERF_CPU_THROTTLE=4` for a CPU-throttled run.
@@ -180,16 +190,18 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
   Mazda and RX-7 are trademarks of their respective owners.
 - **Skidpad 0.5** is a temporary demo track. The source archive contained no license
   metadata; replace it or confirm redistribution rights before a public/commercial release.
+- **Engine_Sim** by Yigit Salih Emecen, MIT, powers Drive engine audio. See
+  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
+  [`docs/audio.md`](docs/audio.md). No upstream audio samples are included.
 
 ## Status and roadmap
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
-in [`PLAN.md`](PLAN.md). Next: validate the worker on target hardware and decide whether to
-re-enable it by default, then wheel input and force feedback on CAMMUS C5, targeting all
-`webhid-wheel`-supported wheelbases with Chromium WebHID and Gamepad fallback. The SAB physics
-worker now holds 500 Hz under local CPU throttling, but remains opt-in until it is validated
-on more hardware; remaining work is the HID/FFB worker, audio, AC `.ini` physics mapping,
-track texture decoding, collision/wall policy, and hardening.
+in [`PLAN.md`](PLAN.md). Drive uses the SAB physics worker by default and an external-state
+Engine_Sim rotary2 audio spike. Next is listening/tuning and deciding whether to restore more
+EngineSim drivetrain transients or move the audio DSP directly onto SAB snapshots. Remaining
+work includes the HID/FFB worker, AC `.ini` physics mapping, track texture decoding,
+collision/wall policy, and hardening.
 
 ## License
 
@@ -203,3 +215,7 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
 in this project by you shall be dual licensed as above, without any additional terms or
 conditions.
+
+Drive audio vendors [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim) under the MIT
+license. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md),
+`web/src/audio/engine-sim/NOTICE.md`, and `LICENSE`.

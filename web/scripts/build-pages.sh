@@ -30,6 +30,8 @@ sed "s#__VERSION__#${VERSION}#g" "$ROOT/web/index.html" > "$DIST/web/index.html"
 cp -R "$ROOT/web/icons" "$DIST/web/icons"
 mkdir -p "$DIST/web/worker"
 cp "$ROOT/web/worker/physics-worker.js" "$DIST/web/worker/physics-worker.js"
+mkdir -p "$DIST/web/audio"
+cp "$ROOT/web/audio/combustion-worklet.js" "$DIST/web/audio/combustion-worklet.js"
 
 for viewer in drive garage track-viewer debug-viewer; do
   mkdir -p "$DIST/web/$viewer"
@@ -68,6 +70,7 @@ fi
 cp -R "$ROOT/fixtures/cars" "$DIST/fixtures/cars"
 cp -R "$ROOT/fixtures/tracks" "$DIST/fixtures/tracks"
 cp "$ROOT/fixtures/README.md" "$DIST/fixtures/README.md"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$DIST/THIRD_PARTY_NOTICES.md"
 touch "$DIST/.nojekyll"
 
 echo "Built Pages site in $DIST"
