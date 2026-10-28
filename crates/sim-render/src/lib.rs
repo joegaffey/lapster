@@ -5,6 +5,7 @@ mod garage;
 mod particles;
 mod renderer;
 mod scene;
+mod tuning;
 
 use wasm_bindgen::prelude::*;
 
@@ -12,8 +13,9 @@ use crate::camera::Camera;
 use crate::particles::ParticleSystem;
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, GarageBay, Scene};
+use crate::tuning::{GpuTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
-use sim_core::{Controls, TrackCollider, Vehicle, FIXED_DT};
+use sim_core::{Controls, PhysicsTuning, TrackCollider, Vehicle, FIXED_DT};
 use sim_types::snapshot_state as snapshot;
 use sim_types::{CarTuning, SNAPSHOT_STATE_FLOATS};
 
@@ -52,7 +54,7 @@ impl TrackViewer {
         let debug_info = scene.debug_info.clone();
         let camera = scene.camera;
         let shadow_focus = camera.target;
-        let (collision_center, region_half) = collision_region(&collision);
+        let (collision_center, region_half) = track_region(&collision, &metadata);
         let region_center = metadata
             .spawns
             .first()
@@ -69,9 +71,10 @@ impl TrackViewer {
             .unwrap_or(region_center[1]);
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        let mut renderer =
+            renderer::Renderer::new(canvas, width, height, scene, &GpuTuning::default()).await?;
         renderer.set_lines_visible(false);
-        renderer.set_baked_region(region_center, region_half, ground_y);
+        renderer.set_baked_region(collision_center, region_half, ground_y);
         renderer.set_shadow_focus(shadow_focus, TRACK_SHADOW_EXTENT);
         Ok(TrackViewer {
             renderer,
@@ -262,7 +265,8 @@ impl GarageViewer {
         let showroom_half = ((max.x - min.x).max(max.z - min.z) * 0.5 + 20.0).clamp(60.0, 140.0);
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
+        let mut renderer =
+            renderer::Renderer::new(canvas, width, height, scene, &GpuTuning::default()).await?;
         renderer.set_lines_visible(false);
         renderer.set_baked_region(showroom_center.to_array(), showroom_half, ground_y);
         renderer.set_shadow_focus(shadow_focus, GARAGE_SHADOW_EXTENT);
@@ -455,20 +459,64 @@ fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
-fn collision_region(collision: &sim_types::TrackCollision) -> ([f32; 3], f32) {
+fn merge_json(target: &mut serde_json::Value, patch: serde_json::Value) {
+    match (target, patch) {
+        (serde_json::Value::Object(target), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                match target.get_mut(&key) {
+                    Some(existing) => merge_json(existing, value),
+                    None => {
+                        target.insert(key, value);
+                    }
+                }
+            }
+        }
+        (target, patch) => *target = patch,
+    }
+}
+
+fn track_region(
+    collision: &sim_types::TrackCollision,
+    metadata: &sim_types::TrackMetadata,
+) -> ([f32; 3], f32) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
-    for vertex in &collision.vertices {
-        let point = Vec3::from_array(*vertex);
-        min = min.min(point);
-        max = max.max(point);
+    let mut any = false;
+    for (triangle, surface_id) in collision.surface_ids.iter().enumerate() {
+        let grass = metadata
+            .surfaces
+            .get(*surface_id as usize)
+            .is_some_and(|surface| surface.name.to_ascii_uppercase().contains("GRASS"));
+        if grass {
+            continue;
+        }
+        let start = triangle * 3;
+        let Some(indices) = collision.indices.get(start..start + 3) else {
+            break;
+        };
+        for index in indices {
+            let Some(vertex) = collision.vertices.get(*index as usize) else {
+                continue;
+            };
+            let point = Vec3::from_array(*vertex);
+            min = min.min(point);
+            max = max.max(point);
+            any = true;
+        }
+    }
+    if !any || !min.is_finite() || !max.is_finite() {
+        for vertex in &collision.vertices {
+            let point = Vec3::from_array(*vertex);
+            min = min.min(point);
+            max = max.max(point);
+        }
     }
     if !min.is_finite() || !max.is_finite() {
         return ([0.0, 0.0, 0.0], 80.0);
     }
     let center = (min + max) * 0.5;
     let span = max - min;
-    let half = (span.x.max(span.z) * 0.5 + 20.0).clamp(60.0, 220.0);
+    let half = (span.x.max(span.z) * 0.5 + 20.0).max(60.0);
     ([center.x, center.y, center.z], half)
 }
 
@@ -477,7 +525,9 @@ pub(crate) fn shadow_decal_yaw(forward: Vec3) -> f32 {
 }
 
 fn environment_shadow_mode(mode: &str) -> EnvironmentShadowMode {
-    if mode.eq_ignore_ascii_case("baked") {
+    if mode.eq_ignore_ascii_case("hybrid") {
+        EnvironmentShadowMode::Hybrid
+    } else if mode.eq_ignore_ascii_case("baked") {
         EnvironmentShadowMode::Baked
     } else if mode.eq_ignore_ascii_case("off") {
         EnvironmentShadowMode::Off
@@ -489,6 +539,7 @@ fn environment_shadow_mode(mode: &str) -> EnvironmentShadowMode {
 fn environment_shadow_mode_name(mode: EnvironmentShadowMode) -> &'static str {
     match mode {
         EnvironmentShadowMode::High => "high",
+        EnvironmentShadowMode::Hybrid => "hybrid",
         EnvironmentShadowMode::Baked => "baked",
         EnvironmentShadowMode::Off => "off",
     }
@@ -521,8 +572,6 @@ fn camera_json(camera: &Camera) -> String {
     .to_string()
 }
 
-const COCKPIT_GLASS_ALPHA: f32 = 0.32;
-const DRIVE_SHADOW_EXTENT: f32 = 55.0;
 const GARAGE_SHADOW_EXTENT: f32 = 80.0;
 const TRACK_SHADOW_EXTENT: f32 = 120.0;
 
@@ -564,6 +613,9 @@ pub struct DriveViewer {
     surface_names: Vec<String>,
     particles: ParticleSystem,
     last_particle_time: Option<f64>,
+    tuning: TuningConfig,
+    track_shadow_center: Vec3,
+    track_shadow_half: f32,
 }
 
 #[wasm_bindgen]
@@ -573,7 +625,12 @@ impl DriveViewer {
         track_pack_bytes: js_sys::Uint8Array,
         car_pack_bytes: js_sys::Uint8Array,
         car_bay: Option<usize>,
+        tuning_json: Option<String>,
     ) -> Result<DriveViewer, JsValue> {
+        let mut tuning = tuning_json
+            .and_then(|json| serde_json::from_str::<TuningConfig>(&json).ok())
+            .unwrap_or_default();
+        tuning.sanitize();
         let track_bytes = track_pack_bytes.to_vec();
         let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
         if track_pack.kind() != sim_types::AssetKind::Track {
@@ -644,10 +701,21 @@ impl DriveViewer {
         spawn.rotation_xyzw =
             (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
         let mut vehicle = Vehicle::new(car_physics, collider, &spawn);
+        vehicle.set_physics_tuning(&tuning.physics);
         for _ in 0..500 {
             vehicle.step(Controls::default());
         }
-        let (_, region_half) = collision_region(&track_collision);
+        let (track_shadow_center, track_shadow_half) =
+            track_region(&track_collision, &track_metadata);
+        let region_half = track_shadow_half;
+        let baked_half_extent = if tuning.gpu.baked_half_extent > 0.0 {
+            tuning
+                .gpu
+                .baked_half_extent
+                .clamp(10.0, region_half.max(10.0))
+        } else {
+            region_half
+        };
         let region_center = vehicle.state.position.to_array();
         let ground_y = vehicle
             .state
@@ -663,8 +731,9 @@ impl DriveViewer {
         };
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        let mut renderer = renderer::Renderer::new(canvas, width, height, scene).await?;
-        renderer.set_baked_region(region_center, region_half, ground_y);
+        let mut renderer =
+            renderer::Renderer::new(canvas, width, height, scene, &tuning.gpu).await?;
+        renderer.set_baked_region(track_shadow_center, baked_half_extent, ground_y);
 
         let previous_state = vehicle.state;
         let mut drive = DriveViewer {
@@ -685,7 +754,14 @@ impl DriveViewer {
             surface_names,
             particles: ParticleSystem::new(),
             last_particle_time: None,
+            tuning,
+            track_shadow_center: Vec3::from_array(track_shadow_center),
+            track_shadow_half,
         };
+        drive.renderer.set_shadow_tuning(&drive.tuning.shadows);
+        drive
+            .renderer
+            .set_particle_render_tuning(&drive.tuning.particles.render);
         drive.write_initial_pose()?;
         Ok(drive)
     }
@@ -906,6 +982,7 @@ impl DriveViewer {
             "timeOfDay": self.renderer.time_of_day(),
             "sunElevation": self.renderer.sun_elevation(),
             "bakedShadowResolution": self.renderer.baked_resolution(),
+            "bakedRegionHalfExtent": self.renderer.baked_region_half_extent(),
             "shadowBakeMs": self.renderer.last_bake_ms(),
             "tick": state.tick,
             "speedKph": speed * 3.6,
@@ -992,15 +1069,19 @@ impl DriveViewer {
         } else {
             CameraMode::Chase
         };
+        self.apply_cockpit_glass_alpha();
+        self.update_camera();
+    }
+
+    fn apply_cockpit_glass_alpha(&mut self) {
         if let Some(index) = self.rig.glass_mesh_index {
             let alpha = if self.camera_mode == CameraMode::Cockpit {
-                COCKPIT_GLASS_ALPHA
+                self.tuning.camera.cockpit_glass_alpha
             } else {
                 1.0
             };
             self.renderer.set_mesh_alpha(index, alpha);
         }
-        self.update_camera();
     }
 
     pub fn set_traction_control(&mut self, enabled: bool) {
@@ -1113,6 +1194,59 @@ impl DriveViewer {
         self.camera_mode.as_str().to_string()
     }
 
+    pub fn tuning(&self) -> String {
+        let values = serde_json::to_value(&self.tuning).unwrap_or(serde_json::Value::Null);
+        let schema = serde_json::from_str(&TuningConfig::schema_json())
+            .unwrap_or(serde_json::Value::Array(Vec::new()));
+        serde_json::json!({ "values": values, "schema": schema }).to_string()
+    }
+
+    pub fn apply_tuning(&mut self, json: &str) -> Result<(), JsValue> {
+        let patch: serde_json::Value = serde_json::from_str(json).map_err(js_error)?;
+        let mut values = serde_json::to_value(&self.tuning).map_err(js_error)?;
+        merge_json(&mut values, patch);
+        let mut tuning: TuningConfig = serde_json::from_value(values).map_err(js_error)?;
+        tuning.sanitize();
+        self.tuning = tuning;
+        self.renderer.set_shadow_tuning(&self.tuning.shadows);
+        self.renderer
+            .set_particle_render_tuning(&self.tuning.particles.render);
+        self.apply_cockpit_glass_alpha();
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
+    }
+
+    pub fn apply_physics_tuning(&mut self, json: &str) -> Result<(), JsValue> {
+        let tuning: PhysicsTuning = serde_json::from_str(json).map_err(js_error)?;
+        self.vehicle.set_physics_tuning(&tuning);
+        self.vehicle.reset();
+        for _ in 0..500 {
+            self.vehicle.step(Controls::default());
+        }
+        self.previous_state = self.vehicle.state;
+        self.accumulator = 0.0;
+        self.last_time = None;
+        self.last_particle_time = None;
+        self.particles.clear();
+        self.set_brake_lights(0.0);
+        self.set_reverse_lights(false);
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
+    }
+
+    pub fn reset_tuning(&mut self) -> Result<(), JsValue> {
+        self.tuning = TuningConfig::default();
+        self.renderer.set_shadow_tuning(&self.tuning.shadows);
+        self.renderer
+            .set_particle_render_tuning(&self.tuning.particles.render);
+        self.apply_cockpit_glass_alpha();
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
+    }
+
     fn write_initial_pose(&mut self) -> Result<(), JsValue> {
         self.update_visuals();
         self.update_camera();
@@ -1123,16 +1257,22 @@ impl DriveViewer {
         let state = &self.vehicle.state;
         let (position, rotation) = self.visual_pose();
         let car_world = Mat4::from_rotation_translation(rotation, position);
-        let focus = if self.renderer.car_shadow_separate() {
-            Vec3::from_array(
-                self.renderer
-                    .car_shadow_focus((position + Vec3::Y * 0.5).to_array()),
-            )
+        let full_track_dynamic = self.tuning.shadows.full_track
+            && self.renderer.environment_shadow_mode() == EnvironmentShadowMode::High;
+        let (focus, extent) = if full_track_dynamic {
+            (self.track_shadow_center, self.track_shadow_half)
         } else {
-            position + rotation * Vec3::NEG_Z * 8.0 + Vec3::Y * 0.5
+            let focus = if self.renderer.car_shadow_separate() {
+                Vec3::from_array(
+                    self.renderer
+                        .car_shadow_focus((position + Vec3::Y * 0.5).to_array()),
+                )
+            } else {
+                position + rotation * Vec3::NEG_Z * 8.0 + Vec3::Y * 0.5
+            };
+            (focus, self.tuning.shadows.drive_extent)
         };
-        self.renderer
-            .set_shadow_focus(focus.to_array(), DRIVE_SHADOW_EXTENT);
+        self.renderer.set_shadow_focus(focus.to_array(), extent);
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
         if let Some(index) = self.rig.glass_mesh_index {
@@ -1211,6 +1351,7 @@ impl DriveViewer {
             state,
             &self.rig,
             &self.surface_names,
+            &self.tuning.particles,
         );
         self.renderer.set_particles(self.particles.instances());
     }
@@ -1218,49 +1359,56 @@ impl DriveViewer {
     fn update_camera(&mut self) {
         let (position, rotation) = self.visual_pose();
         if self.camera_mode == CameraMode::Bonnet {
-            let eye = position + rotation * Vec3::new(-0.35, 1.25, -0.1);
-            let target = position + rotation * Vec3::new(-0.35, 1.05, -20.0);
+            let shot = &self.tuning.camera.bonnet;
+            let eye = position + rotation * Vec3::from_array(shot.eye);
+            let target = position + rotation * Vec3::from_array(shot.target);
             self.renderer.set_camera(Camera {
                 eye: eye.to_array(),
                 target: target.to_array(),
-                fov_y: 1.0,
+                fov_y: shot.fov_y,
             });
             return;
         }
         if self.camera_mode == CameraMode::Cockpit {
-            let eye = position + rotation * Vec3::new(-0.35, 1.10, 0.25);
-            let target = position + rotation * Vec3::new(-0.35, 1.00, -20.0);
+            let shot = &self.tuning.camera.cockpit;
+            let eye = position + rotation * Vec3::from_array(shot.eye);
+            let target = position + rotation * Vec3::from_array(shot.target);
             self.renderer.set_camera(Camera {
                 eye: eye.to_array(),
                 target: target.to_array(),
-                fov_y: 1.0,
+                fov_y: shot.fov_y,
             });
             return;
         }
         if self.camera_mode == CameraMode::Isometric {
-            let focus = position + Vec3::Y * 0.45;
+            let tuning = &self.tuning.camera.isometric;
+            let focus = position + Vec3::Y * tuning.focus_height;
             let aspect = self.renderer.aspect();
-            let fit = (1.0 / aspect.max(0.65)).sqrt().clamp(1.0, 1.45);
-            let offset = Vec3::new(14.0, 24.0, 14.0) * fit;
+            let fit = (1.0 / aspect.max(tuning.fit_aspect_floor))
+                .powf(tuning.fit_power)
+                .clamp(tuning.fit_min, tuning.fit_max);
+            let offset = Vec3::from_array(tuning.offset) * fit;
             self.renderer.set_camera(Camera {
                 eye: (focus + offset).to_array(),
                 target: focus.to_array(),
-                fov_y: 0.72,
+                fov_y: tuning.fov_y,
             });
             return;
         }
 
+        let tuning = &self.tuning.camera.chase;
         let aspect = self.renderer.aspect();
-        let landscape = ((aspect - 0.75) / (2.0 - 0.75)).clamp(0.0, 1.0);
-        let back = 7.2 + (4.8 - 7.2) * landscape;
-        let height = 2.7 + (2.0 - 2.7) * landscape;
-        let look_ahead = -5.0 + 2.5 * landscape;
+        let range = (tuning.aspect_far - tuning.aspect_near).max(0.0001);
+        let landscape = ((aspect - tuning.aspect_near) / range).clamp(0.0, 1.0);
+        let back = tuning.back_near + (tuning.back_far - tuning.back_near) * landscape;
+        let height = tuning.height_near + (tuning.height_far - tuning.height_near) * landscape;
+        let look_ahead = tuning.look_near + (tuning.look_far - tuning.look_near) * landscape;
         let eye = position + rotation * Vec3::new(0.0, height, back);
-        let target = position + rotation * Vec3::new(0.0, 0.65, look_ahead);
+        let target = position + rotation * Vec3::new(0.0, tuning.target_height, look_ahead);
         self.renderer.set_camera(Camera {
-            eye: [eye.x, eye.y.max(0.8), eye.z],
+            eye: [eye.x, eye.y.max(tuning.min_eye_y), eye.z],
             target: [target.x, target.y, target.z],
-            fov_y: 0.95,
+            fov_y: tuning.fov_y,
         });
     }
 

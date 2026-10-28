@@ -135,6 +135,12 @@ export class PhysicsClient {
     void this.command("reset_setup", {});
   }
 
+  applyPhysicsTuning(tuning: string): Promise<number> {
+    return this.command("apply_physics_tuning", { tuning }).then(
+      (ack) => ack.tick ?? 0,
+    );
+  }
+
   setAssists(assists: {
     tc: boolean;
     tcStrength: number;

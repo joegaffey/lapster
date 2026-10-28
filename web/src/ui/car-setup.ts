@@ -9,7 +9,7 @@ interface SetupViewer {
   reset_car_setup(): void;
 }
 
-interface Field {
+export interface CarSetupField {
   path: string;
   label: string;
   min?: number;
@@ -20,10 +20,9 @@ interface Field {
   factor?: number;
 }
 
-interface Section {
+export interface CarSetupSection {
   title: string;
-  open?: boolean;
-  fields: Field[];
+  fields: CarSetupField[];
 }
 
 const number = (
@@ -33,11 +32,11 @@ const number = (
   max: number,
   step: number,
   unit?: string,
-): Field => ({ path, label, min, max, step, unit });
+): CarSetupField => ({ path, label, min, max, step, unit });
 
-const json = (path: string, label: string): Field => ({ path, label, kind: "json" });
+const json = (path: string, label: string): CarSetupField => ({ path, label, kind: "json" });
 
-const axleSections = (axle: "front" | "rear", title: string): Section[] => {
+const axleSections = (axle: "front" | "rear", title: string): CarSetupSection[] => {
   const prefix = `${axle}`;
   return [
     {
@@ -69,10 +68,9 @@ const axleSections = (axle: "front" | "rear", title: string): Section[] => {
   ];
 };
 
-const SECTIONS: Section[] = [
+export const CAR_SETUP_SECTIONS: CarSetupSection[] = [
   {
     title: "Chassis",
-    open: true,
     fields: [
       number("chassis.inertia.0", "Inertia X", 50, 10_000, 10, "kg·m²"),
       number("chassis.inertia.1", "Inertia Y", 50, 10_000, 10, "kg·m²"),
@@ -124,7 +122,7 @@ const SECTIONS: Section[] = [
   },
 ];
 
-function getPath(target: any, path: string): any {
+export function getSetupPath(target: any, path: string): any {
   let current = target;
   for (const key of path.split(".")) {
     current = current?.[key];
@@ -132,7 +130,7 @@ function getPath(target: any, path: string): any {
   return current;
 }
 
-function setPath(target: any, path: string, value: any): void {
+export function setSetupPath(target: any, path: string, value: any): void {
   const keys = path.split(".");
   let current = target;
   for (const key of keys.slice(0, -1)) {
@@ -145,6 +143,10 @@ function formatNumber(value: number, step = 0.01): string {
   if (!Number.isFinite(value)) return "0";
   if (step >= 1) return String(Math.round(value));
   return String(Number(value.toFixed(4)));
+}
+
+export function carSetupStorageKey(carId: string): string {
+  return `lapster.setup.${carId}`;
 }
 
 export function setupCarSetupDialog(
@@ -178,9 +180,9 @@ export function setupCarSetupDialog(
   }
 
   const inputs = new Map<string, HTMLInputElement>();
-  const storageKey = `lapster.setup.${carId}`;
+  const storageKey = carSetupStorageKey(carId);
 
-  for (const section of SECTIONS) {
+  for (const section of CAR_SETUP_SECTIONS) {
     const details = document.createElement("details");
     details.className = "setup-section";
     details.open = Boolean(section.open);
@@ -227,7 +229,7 @@ export function setupCarSetupDialog(
   }
 
   const fieldForPath = (path: string) => {
-    for (const section of SECTIONS) {
+    for (const section of CAR_SETUP_SECTIONS) {
       const field = section.fields.find((candidate) => candidate.path === path);
       if (field) return field;
     }
@@ -237,7 +239,7 @@ export function setupCarSetupDialog(
   const populate = (setup: any) => {
     for (const [path, input] of inputs) {
       const field = fieldForPath(path);
-      const value = getPath(setup, path);
+      const value = getSetupPath(setup, path);
       if (field?.kind === "json") {
         input.value = JSON.stringify(value);
       } else {
@@ -256,13 +258,13 @@ export function setupCarSetupDialog(
         if (!Array.isArray(parsed)) {
           throw new Error(`${field.label} must be a JSON array`);
         }
-        setPath(setup, path, parsed);
+        setSetupPath(setup, path, parsed);
       } else {
         const value = Number(input.value);
         if (!Number.isFinite(value)) {
           throw new Error(`${field?.label ?? path} is not a number`);
         }
-        setPath(setup, path, value / (field?.factor ?? 1));
+        setSetupPath(setup, path, value / (field?.factor ?? 1));
       }
     }
     return setup;

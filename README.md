@@ -12,7 +12,7 @@ Live demo: **https://joegaffey.com/lapster/**
 
 Development preview: **https://joegaffey.com/lapster-dev/**
 
-Both builds default to Baked environment shadows and the Dynamic car shadow.
+Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
   steering, automatic gearbox, chase/cockpit cameras, wheel loads, 500 Hz physics, and a
@@ -29,7 +29,14 @@ Both builds default to Baked environment shadows and the Dynamic car shadow.
   model artifacts.
 
 The demos load these assets by default; no query parameters are required. Custom packs can
-still be selected with `?car=` and `?track=`. Every 3D viewer shows a full-screen loading
+still be selected with `?car=` and `?track=`. Append `?dev=1` to Drive to enable the developer
+drawer: a left slide-in panel with live assists, view, audio, camera profiles, particle
+emission/spawn/fade/render settings for every surface, shadow strength/bias/extents, physics
+globals, GPU texture sizes, and every car-tuning field as sliders or JSON inputs. It starts
+closed; use the auto-hiding `DEV` tab at the left edge or the backslash key to toggle it.
+Physics changes use `Apply physics`, audio can be restarted in place, and GPU texture changes
+use `Apply GPU & reload` with the tuning persisted across the reload. Every 3D viewer shows a
+full-screen loading
 indicator until its first rendered frame; the info HUD starts collapsed in markup on
 every demo, so it cannot flash before boot; drive actions live in a detached top toolbar,
 with `Exit` returning to the menu. The drive demo adds on-screen steering, throttle, and
@@ -74,8 +81,9 @@ isolation or worker startup fails.
   credits.
 - wgpu 30 renderer with WebGPU/WebGL2 support, native MSAA (4× desktop / 2× mobile
   auto), a Settings override, and a soft sky gradient.
-- Three-way shadow setup: dynamic **High** (4-tap PCF), startup-baked **Baked** environment
-  shadows (4096² desktop / 2048² mobile and WebGL2), or **Off**. Car shadows are independent:
+- Four environment shadow modes: **High** dynamic (4-tap PCF), **Hybrid** full-track baked
+  coverage plus a near dynamic car map, startup-baked **Baked** (4096² desktop / 2048²
+  mobile and WebGL2), or **Off**. Car shadows are independent:
   dynamic, a generated silhouette decal, or off. Time of day uses a slider plus Apply and
   tints the sky; Baked maps rebake when lighting is applied.
 - Drive brake and reverse lights: rear-lamp lens geometry split from the body and lit

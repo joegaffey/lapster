@@ -192,11 +192,14 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   const renderScaleValue = page.locator("#render-scale-value");
   const view = page.locator("#view");
 
-  await expect(environment).toHaveValue("baked");
+  await expect(environment).toHaveValue("hybrid");
   await expect(carShadow).toHaveValue("dynamic");
   await expect(environment.locator('option[value="auto"]')).toHaveCount(0);
   await expect(carShadow.locator('option[value="auto"]')).toHaveCount(0);
   await expect(environment.locator('option[value="baked"]')).toHaveText("Static");
+  await expect(environment.locator('option[value="hybrid"]')).toHaveText(
+    "Static + near dynamic",
+  );
   await expect(environment.locator('option[value="high"]')).toHaveText("Dynamic");
   await expect(timeValue).toHaveText("15:00");
   await expect(debug).toHaveText("Debug: Off");
@@ -224,6 +227,13 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.environmentShadowMode).toBe("high");
+  expect(telemetry.carShadowMode).toBe("dynamic");
+
+  await environment.selectOption("hybrid");
+  telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.environmentShadowMode).toBe("hybrid");
   expect(telemetry.carShadowMode).toBe("dynamic");
 
   await carShadow.selectOption("silhouette");
@@ -341,11 +351,11 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.stabilityStrength).toBe(0.5);
   expect(telemetry.steeringSensitivity).toBe(1);
   expect(telemetry.debugLinesVisible).toBe(false);
-  expect(telemetry.environmentShadowMode).toBe("baked");
+  expect(telemetry.environmentShadowMode).toBe("hybrid");
   expect(telemetry.carShadowMode).toBe("dynamic");
   expect(telemetry.timeOfDay).toBeCloseTo(15);
   await expect(msaa).toHaveValue("auto");
-  await expect(environment).toHaveValue("baked");
+  await expect(environment).toHaveValue("hybrid");
   await expect(carShadow).toHaveValue("dynamic");
   await expect(environment.locator('option[value="auto"]')).toHaveCount(0);
   await expect(carShadow.locator('option[value="auto"]')).toHaveCount(0);
@@ -384,11 +394,11 @@ test("migrates automatic shadow settings to baked and dynamic", async ({ page })
     telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
     stored: JSON.parse(localStorage.getItem("lapster.settings.v3") ?? "null"),
   }));
-  expect(migrated.telemetry.environmentShadowMode).toBe("baked");
+  expect(migrated.telemetry.environmentShadowMode).toBe("hybrid");
   expect(migrated.telemetry.carShadowMode).toBe("dynamic");
   expect(migrated.telemetry.tractionControl).toBe(false);
   expect(migrated.telemetry.timeOfDay).toBeCloseTo(18);
-  expect(migrated.stored.environmentShadows).toBe("baked");
+  expect(migrated.stored.environmentShadows).toBe("hybrid");
   expect(migrated.stored.carShadow).toBe("dynamic");
 });
 

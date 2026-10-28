@@ -181,6 +181,19 @@ fn car_shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
     return mix(1.0, lit / 32.0, camera.shadow_params.z * fade);
 }
 
+fn near_shadow_weight(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let world_texel = camera.shadow_params.y;
+    let offset_position = world_position + normal * clamp(world_texel * 1.5, 0.03, 0.20);
+    let clip = camera.light_view_proj * vec4<f32>(offset_position, 1.0);
+    let ndc = clip.xyz / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 {
+        return 0.0;
+    }
+    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    return smoothstep(0.0, 0.12, edge);
+}
+
 fn shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
     if camera.shadow_params.z <= 0.0 {
         return 1.0;
@@ -216,7 +229,12 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     }
     let base = input.color * texel.rgb;
     var environment_shadow = 1.0;
-    if camera.shadow_modes.x > 0.5 {
+    if camera.shadow_modes.w > 0.5 {
+        let dynamic = shadow_visibility(input.world_position, normal);
+        let baked = sample_baked_shadow(input.world_position, normal);
+        let weight = near_shadow_weight(input.world_position, normal);
+        environment_shadow = mix(baked, dynamic, weight);
+    } else if camera.shadow_modes.x > 0.5 {
         environment_shadow = shadow_visibility(input.world_position, normal);
     } else if camera.shadow_modes.y > 0.5 {
         environment_shadow = sample_baked_shadow(input.world_position, normal);

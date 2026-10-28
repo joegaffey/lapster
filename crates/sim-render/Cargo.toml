@@ -13,6 +13,7 @@ bytemuck = { version = "1", features = ["derive"] }
 console_error_panic_hook = "0.1"
 glam = "0.27"
 js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sim-asset = { path = "../sim-asset" }
 sim-core = { path = "../sim-core" }
