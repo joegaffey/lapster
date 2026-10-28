@@ -1299,7 +1299,7 @@ impl DriveViewer {
                 CockpitNeedleSource::Gear => gear_fraction,
             };
             let angle =
-                -std::f32::consts::FRAC_PI_4 * 3.0 + fraction * std::f32::consts::FRAC_PI_4 * 6.0;
+                -std::f32::consts::FRAC_PI_4 * 3.0 - fraction * std::f32::consts::FRAC_PI_4 * 6.0;
             let model = car_world
                 * self.rig.dashboard_local
                 * Mat4::from_translation(needle.center)

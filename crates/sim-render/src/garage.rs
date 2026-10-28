@@ -983,33 +983,102 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    let face_center = buffers.positions.len() as u32;
-    buffers.positions.push([center[0], center[1], z_front]);
-    buffers.normals.push([0.0, 0.0, 1.0]);
-    buffers.uvs.push([0.5, 0.5]);
-    buffers.colors.push(face);
-    let face_base = buffers.positions.len() as u32;
+    let inner_radius = radius * 0.84;
+    let white_z = z_front - 0.004;
     for index in 0..segments {
-        let angle = tau * index as f32 / segments as f32;
-        let (sin, cos) = angle.sin_cos();
+        let a = tau * index as f32 / segments as f32;
+        let b = tau * (index + 1) as f32 / segments as f32;
+        let (sa, ca) = a.sin_cos();
+        let (sb, cb) = b.sin_cos();
+        let quad = [
+            (
+                [center[0] + ca * radius, center[1] + sa * radius, z_front],
+                [0.0, 0.0, 1.0],
+            ),
+            (
+                [center[0] + cb * radius, center[1] + sb * radius, z_front],
+                [0.0, 0.0, 1.0],
+            ),
+            (
+                [
+                    center[0] + cb * inner_radius,
+                    center[1] + sb * inner_radius,
+                    z_front,
+                ],
+                [0.0, 0.0, 1.0],
+            ),
+            (
+                [
+                    center[0] + ca * inner_radius,
+                    center[1] + sa * inner_radius,
+                    z_front,
+                ],
+                [0.0, 0.0, 1.0],
+            ),
+        ];
+        let base = buffers.positions.len() as u32;
+        for (position, normal) in quad {
+            buffers.positions.push(position);
+            buffers.normals.push(normal);
+            buffers.uvs.push([0.0, 0.0]);
+            buffers.colors.push(face);
+        }
         buffers
-            .positions
-            .push([center[0] + cos * radius, center[1] + sin * radius, z_front]);
-        buffers.normals.push([0.0, 0.0, 1.0]);
-        buffers.uvs.push([0.5 + cos * 0.5, 0.5 + sin * 0.5]);
-        buffers.colors.push(face);
-    }
-    for index in 0..segments {
-        let next = (index + 1) % segments;
-        buffers.indices.extend_from_slice(&[
-            face_center,
-            face_base + index as u32,
-            face_base + next as u32,
-        ]);
+            .indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    let white_radius = radius * 0.62;
-    let white_z = z_front + 0.0015;
+    for index in 0..segments {
+        let a = tau * index as f32 / segments as f32;
+        let b = tau * (index + 1) as f32 / segments as f32;
+        let (sa, ca) = a.sin_cos();
+        let (sb, cb) = b.sin_cos();
+        let quad = [
+            (
+                [
+                    center[0] + ca * inner_radius,
+                    center[1] + sa * inner_radius,
+                    z_front,
+                ],
+                [-ca, -sa, 0.0],
+            ),
+            (
+                [
+                    center[0] + cb * inner_radius,
+                    center[1] + sb * inner_radius,
+                    z_front,
+                ],
+                [-cb, -sb, 0.0],
+            ),
+            (
+                [
+                    center[0] + cb * inner_radius,
+                    center[1] + sb * inner_radius,
+                    white_z,
+                ],
+                [-cb, -sb, 0.0],
+            ),
+            (
+                [
+                    center[0] + ca * inner_radius,
+                    center[1] + sa * inner_radius,
+                    white_z,
+                ],
+                [-ca, -sa, 0.0],
+            ),
+        ];
+        let base = buffers.positions.len() as u32;
+        for (position, normal) in quad {
+            buffers.positions.push(position);
+            buffers.normals.push(normal);
+            buffers.uvs.push([0.0, 0.0]);
+            buffers.colors.push(face);
+        }
+        buffers
+            .indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
     let white_center = buffers.positions.len() as u32;
     buffers.positions.push([center[0], center[1], white_z]);
     buffers.normals.push([0.0, 0.0, 1.0]);
@@ -1020,8 +1089,8 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
         let angle = tau * index as f32 / segments as f32;
         let (sin, cos) = angle.sin_cos();
         buffers.positions.push([
-            center[0] + cos * white_radius,
-            center[1] + sin * white_radius,
+            center[0] + cos * inner_radius,
+            center[1] + sin * inner_radius,
             white_z,
         ]);
         buffers.normals.push([0.0, 0.0, 1.0]);
@@ -1039,7 +1108,7 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
 }
 
 fn needle_buffers(radius: f32) -> MeshBuffers {
-    let width = radius * 0.025;
+    let width = radius * 0.02;
     let length = radius * 0.55;
     MeshBuffers {
         positions: vec![[-width, 0.0, 0.0], [width, 0.0, 0.0], [0.0, length, 0.0]],
