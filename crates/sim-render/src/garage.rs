@@ -524,9 +524,9 @@ fn build_car(
 
     let dashboard_mesh_index = if brake_lights {
         let buffers = box_buffers(
-            [-0.68, 0.42, -0.52],
-            [0.68, 0.86, -0.15],
-            [0.07, 0.075, 0.08],
+            [-0.68, 0.86, -0.60],
+            [0.68, 0.90, -0.57],
+            [0.015, 0.018, 0.022],
         );
         let mesh_ref = MeshRef {
             name: "dashboard".to_string(),
@@ -536,8 +536,8 @@ fn build_car(
             index_count: buffers.indices.len() as u32,
             material: 0,
             bounds: Aabb {
-                min: [-0.68, 0.42, -0.52],
-                max: [0.68, 0.86, -0.15],
+                min: [-0.68, 0.86, -0.60],
+                max: [0.68, 0.90, -0.57],
             },
             lod: 0,
         };
@@ -546,7 +546,7 @@ fn build_car(
             format!("{}_dashboard", prefix).as_str(),
             &mesh_ref,
             &buffers,
-            [0.07, 0.075, 0.08],
+            [0.015, 0.018, 0.022],
             transform,
             CarMeshStyle {
                 texture: None,
