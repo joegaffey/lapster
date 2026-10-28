@@ -1082,6 +1082,12 @@ impl DriveViewer {
         for needle in &self.rig.cockpit_needles {
             self.renderer.set_mesh_visible(needle.mesh_index, visible);
         }
+        for (index, segment) in self.rig.gear_segments.iter().enumerate() {
+            self.renderer.set_mesh_visible(
+                segment.mesh_index,
+                visible && self.vehicle.state.gear == (index + 1) as i32,
+            );
+        }
     }
 
     fn apply_cockpit_glass_alpha(&mut self) {
@@ -1299,12 +1305,21 @@ impl DriveViewer {
                 CockpitNeedleSource::Gear => gear_fraction,
             };
             let angle =
-                -std::f32::consts::FRAC_PI_4 * 3.0 - fraction * std::f32::consts::FRAC_PI_4 * 6.0;
+                -std::f32::consts::FRAC_PI_6 * 5.0 - fraction * std::f32::consts::FRAC_PI_3 * 4.0;
             let model = car_world
                 * self.rig.dashboard_local
                 * Mat4::from_translation(needle.center)
                 * Mat4::from_rotation_z(angle);
             self.renderer.set_mesh_model(needle.mesh_index, model);
+        }
+        for (index, segment) in self.rig.gear_segments.iter().enumerate() {
+            let model =
+                car_world * self.rig.dashboard_local * Mat4::from_translation(segment.center);
+            self.renderer.set_mesh_model(segment.mesh_index, model);
+            self.renderer.set_mesh_visible(
+                segment.mesh_index,
+                self.camera_mode == CameraMode::Cockpit && state.gear == (index + 1) as i32,
+            );
         }
         if let Some(index) = self.rig.glass_mesh_index {
             self.renderer

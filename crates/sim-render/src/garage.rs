@@ -8,9 +8,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::camera::Camera;
 use crate::scene::{
-    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitNeedle,
-    CockpitNeedleSource, GarageBay, LineVertex, MeshData, MeshVertex, RigWheel, Scene,
-    SceneTexture, SceneWheel,
+    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitGearSegment,
+    CockpitNeedle, CockpitNeedleSource, GarageBay, LineVertex, MeshData, MeshVertex, RigWheel,
+    Scene, SceneTexture, SceneWheel,
 };
 use crate::shadow_decal_yaw;
 
@@ -620,8 +620,11 @@ fn build_car(
     let mut cockpit_needles = Vec::new();
     if brake_lights && dashboard_mesh_index.is_some() {
         for (source, center, radius, depth) in COCKPIT_DIALS {
+            if source == CockpitNeedleSource::Gear {
+                continue;
+            }
             let buffers = needle_buffers(radius);
-            let center = Vec3::new(center[0], center[1], center[2] + depth * 0.5 + 0.003);
+            let center = Vec3::new(center[0], center[1], center[2] + depth * 0.5 - 0.0225);
             let mesh_ref = MeshRef {
                 name: format!("dashboard_needle_{}", source as u8),
                 vertex_offset: 0,
@@ -655,6 +658,57 @@ fn build_car(
                 center,
                 source,
             });
+        }
+    }
+
+    let mut gear_segments = Vec::new();
+    if brake_lights && dashboard_mesh_index.is_some() {
+        if let Some((_, center, radius, depth)) = COCKPIT_DIALS
+            .iter()
+            .find(|(source, _, _, _)| *source == CockpitNeedleSource::Gear)
+        {
+            let z = center[2] + depth * 0.5 - 0.021;
+            let segment_width = radius * 0.50;
+            let segment_height = radius * 0.065;
+            let gap = radius * 0.155;
+            for index in 0..6 {
+                let y = center[1] - gap * 2.5 + index as f32 * gap;
+                let segment_center = Vec3::new(center[0], y, z);
+                let buffers = quad_buffers(segment_width, segment_height, [0.9, 0.025, 0.015]);
+                let mesh_ref = MeshRef {
+                    name: format!("gear_segment_{}", index + 1),
+                    vertex_offset: 0,
+                    vertex_count: 4,
+                    index_offset: 0,
+                    index_count: 6,
+                    material: 0,
+                    bounds: Aabb {
+                        min: [-segment_width, -segment_height, 0.0],
+                        max: [segment_width, segment_height, 0.0],
+                    },
+                    lod: 0,
+                };
+                let mesh_index = push_car_mesh(
+                    scene,
+                    &format!("{}_gear_{}", prefix, index + 1),
+                    &mesh_ref,
+                    &buffers,
+                    [0.9, 0.025, 0.015],
+                    body_model * Mat4::from_translation(segment_center),
+                    CarMeshStyle {
+                        texture: None,
+                        outline: false,
+                        alpha: 1.0,
+                    },
+                )?;
+                scene.meshes[mesh_index].emissive = [1.6, 0.04, 0.02];
+                scene.meshes[mesh_index].casts_static_shadow = false;
+                scene.meshes[mesh_index].casts_dynamic_shadow = false;
+                gear_segments.push(CockpitGearSegment {
+                    mesh_index,
+                    center: segment_center,
+                });
+            }
         }
     }
 
@@ -747,6 +801,7 @@ fn build_car(
         dashboard_mesh_index,
         dashboard_local: body_local,
         cockpit_needles,
+        gear_segments,
         wheels: rig_wheels,
         steering_mesh_index,
         steering_local,
@@ -933,8 +988,11 @@ fn cockpit_cowl_buffers(glass: &MeshBuffers) -> Option<MeshBuffers> {
         colors,
         indices,
     };
-    for (_, center, radius, depth) in COCKPIT_DIALS {
+    for (source, center, radius, depth) in COCKPIT_DIALS {
         append_dial(&mut buffers, center, radius, depth);
+        if source == CockpitNeedleSource::Gear {
+            append_gear_face(&mut buffers, center, radius, depth);
+        }
     }
     Some(buffers)
 }
@@ -984,7 +1042,7 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
     }
 
     let inner_radius = radius * 0.84;
-    let white_z = z_front - 0.004;
+    let white_z = z_front - 0.024;
     for index in 0..segments {
         let a = tau * index as f32 / segments as f32;
         let b = tau * (index + 1) as f32 / segments as f32;
@@ -1104,6 +1162,51 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
             white_base + index as u32,
             white_base + next as u32,
         ]);
+    }
+}
+
+fn append_gear_face(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: f32) {
+    let segments = 24;
+    let z = center[2] + depth * 0.5 - 0.022;
+    let radius = radius * 0.85;
+    let color = [0.004, 0.005, 0.006];
+    let tau = std::f32::consts::TAU;
+    let center_index = buffers.positions.len() as u32;
+    buffers.positions.push([center[0], center[1], z]);
+    buffers.normals.push([0.0, 0.0, 1.0]);
+    buffers.uvs.push([0.5, 0.5]);
+    buffers.colors.push(color);
+    let ring = buffers.positions.len() as u32;
+    for index in 0..segments {
+        let angle = tau * index as f32 / segments as f32;
+        let (sin, cos) = angle.sin_cos();
+        buffers
+            .positions
+            .push([center[0] + cos * radius, center[1] + sin * radius, z]);
+        buffers.normals.push([0.0, 0.0, 1.0]);
+        buffers.uvs.push([0.5 + cos * 0.5, 0.5 + sin * 0.5]);
+        buffers.colors.push(color);
+    }
+    for index in 0..segments {
+        let next = (index + 1) % segments;
+        buffers
+            .indices
+            .extend_from_slice(&[center_index, ring + index as u32, ring + next as u32]);
+    }
+}
+
+fn quad_buffers(half_width: f32, half_height: f32, color: [f32; 3]) -> MeshBuffers {
+    MeshBuffers {
+        positions: vec![
+            [-half_width, -half_height, 0.0],
+            [half_width, -half_height, 0.0],
+            [half_width, half_height, 0.0],
+            [-half_width, half_height, 0.0],
+        ],
+        normals: vec![[0.0, 0.0, 1.0]; 4],
+        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        colors: vec![color; 4],
+        indices: vec![0, 1, 2, 0, 2, 3],
     }
 }
 
