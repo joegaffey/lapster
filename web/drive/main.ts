@@ -142,7 +142,8 @@ function resizeCanvas() {
 function updateHud(telemetry: any) {
   speedLabel.textContent = telemetry.speedKph.toFixed(1);
   rpmLabel.textContent = String(Math.round(telemetry.rpm));
-  gearLabel.textContent = telemetry.gear < 0 ? "R" : `A${telemetry.gear}`;
+  gearLabel.textContent =
+    telemetry.gear < 0 ? "R" : telemetry.gear === 0 ? "N" : `A${telemetry.gear}`;
   contactsLabel.textContent = `${telemetry.contacts}/4`;
   rackTorqueLabel.textContent = `${telemetry.steeringRackTorque.toFixed(1)} Nm`;
   const surfaces = Array.from(
@@ -563,12 +564,15 @@ function toggleAudioMute(): void {
   updateAudioButton();
 }
 
-async function loadSpeedometerTexture(viewer: DriveViewer): Promise<void> {
+async function loadDialTexture(
+  file: string,
+  apply: (width: number, height: number, rgba: Uint8Array) => void,
+): Promise<void> {
   try {
-    const url = new URL("../assets/speedometer.png", import.meta.url);
+    const url = new URL(`../assets/${file}`, import.meta.url);
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`speedometer texture returned ${response.status}`);
+      throw new Error(`${file} returned ${response.status}`);
     }
     const bitmap = await createImageBitmap(await response.blob());
     const canvas = document.createElement("canvas");
@@ -576,18 +580,14 @@ async function loadSpeedometerTexture(viewer: DriveViewer): Promise<void> {
     canvas.height = bitmap.height;
     const context = canvas.getContext("2d");
     if (!context) {
-      throw new Error("could not create speedometer texture context");
+      throw new Error(`could not create ${file} texture context`);
     }
     context.drawImage(bitmap, 0, 0);
     bitmap.close();
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    viewer.set_speedometer_texture(
-      canvas.width,
-      canvas.height,
-      new Uint8Array(pixels.buffer),
-    );
+    apply(canvas.width, canvas.height, new Uint8Array(pixels.buffer));
   } catch (error) {
-    console.warn("speedometer texture unavailable", error);
+    console.warn(`${file} texture unavailable`, error);
   }
 }
 
@@ -738,8 +738,10 @@ async function boot() {
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
   setCameraMode("chase");
   setupCarSetupDialog(driver, info.car.id, info.asset.id);
-  wheel = new WheelFfb(ffbSab ?? undefined);
-  window.__wheelFfb = wheel;
+  if (typeof (navigator as any).hid?.requestDevice === "function") {
+    wheel = new WheelFfb(ffbSab ?? undefined);
+    window.__wheelFfb = wheel;
+  }
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       wheel?.stop();
@@ -747,7 +749,7 @@ async function boot() {
   });
   window.addEventListener("pagehide", () => wheel?.stop());
   const settings = setupAssistsDialog(driver, {
-    wheel,
+    wheel: wheel ?? undefined,
     onRenderScale: (scale) => {
       renderScale = scale;
       if (resizeCanvas()) {
@@ -755,7 +757,17 @@ async function boot() {
       }
     },
   });
-  await loadSpeedometerTexture(viewer);
+  await Promise.all([
+    loadDialTexture("speedometer.png", (width, height, rgba) =>
+      viewer.set_speedometer_texture(width, height, rgba),
+    ),
+    loadDialTexture("rpms.png", (width, height, rgba) =>
+      viewer.set_rpm_texture(width, height, rgba),
+    ),
+    loadDialTexture("7seg.png", (width, height, rgba) =>
+      viewer.set_gear_texture(width, height, rgba),
+    ),
+  ]);
   if (devMode && settings) {
     setupDevMenu(driver, {
       carId: info.car.id,
@@ -822,6 +834,13 @@ async function boot() {
     const forwardPressed = forwardKey && !previousForward;
     const reversePressed = reverseKey && !previousReverse;
     const stopped = Math.abs(lastSpeedMps) < STOP_SPEED_MPS;
+    if (stopped && gear === 0) {
+      if (forwardPressed && !reverseKey) {
+        gear = 1;
+      } else if (reversePressed && !forwardKey) {
+        gear = -1;
+      }
+    }
     previousForward = forwardKey;
     previousReverse = reverseKey;
     let throttle = 0;
@@ -835,7 +854,7 @@ async function boot() {
         if (stopped && forwardPressed) {
           gear = 1;
         }
-      } else {
+      } else if (gear > 0) {
         throttle = 1;
       }
     } else if (reverseKey) {
@@ -844,12 +863,15 @@ async function boot() {
         if (stopped && reversePressed) {
           gear = -1;
         }
-      } else {
-        gear = -1;
+      } else if (gear < 0) {
         throttle = 1;
       }
     }
 
+    if (stopped && throttle === 0 && gear !== 0) {
+      gear = 0;
+      autoShiftCooldown = 0;
+    }
     updateAutoGear(delta, throttle, brake);
 
     try {

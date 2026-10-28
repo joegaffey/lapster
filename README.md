@@ -65,6 +65,7 @@ isolation or worker startup fails.
     slip and combined-slip limiting,
   - CG-based load transfer, engine, gearbox, brakes, optional ABS, shared rear traction
     control, stability control, and speed-sensitive steering for keyboard input,
+  - automatic gearbox that selects neutral at rest and re-engages on throttle or brake,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
@@ -76,7 +77,11 @@ isolation or worker startup fails.
   SAB FFB mailbox at 200 Hz. Drive exposes the wheel controls under **Settings → Controls**
   for connect, strength, inversions, deadzone, test force, and emergency stop. The same tab
   has configurable feel controls for rear breakaway lightening, front-grip shudder, road
-  noise, roughness, and slip-driven looseness.
+  noise, roughness, and slip-driven looseness. Browsers without WebHID still boot normally
+  and hide the wheel controls.
+- **Cockpit dial cluster:** a generated cowl, runtime speedometer/RPM textures, a
+  seven-segment sprite gear display for `N`, `1–6`, and `R`, and red needles calibrated to
+  `7:30 → 4:30`; dial faces are recessed into their cylinders.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
   `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
   audio. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,
@@ -126,9 +131,9 @@ estimates until a licensed AC `.ini` source is available.
 
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
 opaque glass; cockpit mode renders it at 6% alpha. The body is visible by default, wheels
-always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. Bonnet eye
-height is 1.25 m; cockpit eye is 1.10 m, pushed 0.25 m rearward. A real cockpit still requires
-an interior model.
+always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. The bonnet
+camera is centered on the car's longitudinal axis at 1.25 m; cockpit eye is 1.10 m, pushed
+0.25 m rearward. The generated dial cowl is not yet a full interior model.
 
 ## Build and run
 

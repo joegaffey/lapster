@@ -199,8 +199,8 @@ impl Default for CameraTuning {
     fn default() -> Self {
         Self {
             bonnet: CameraShot {
-                eye: [-0.35, 1.25, -0.1],
-                target: [-0.35, 1.05, -20.0],
+                eye: [0.0, 1.25, -0.1],
+                target: [0.0, 1.05, -20.0],
                 fov_y: 1.0,
             },
             cockpit: CameraShot {

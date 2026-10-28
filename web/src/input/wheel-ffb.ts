@@ -77,7 +77,10 @@ export class WheelFfb {
   }
 
   get available(): boolean {
-    return typeof navigator !== "undefined" && "hid" in navigator;
+    return (
+      typeof navigator !== "undefined" &&
+      typeof (navigator as any).hid?.requestDevice === "function"
+    );
   }
 
   get connected(): boolean {

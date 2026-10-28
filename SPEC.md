@@ -380,7 +380,8 @@ vendor profiles.
 - Consume versioned asset packs and flat vertex/index buffers from the asset compiler.
 - Forward-rendered toon/flat-shaded materials. PBR is not required. Vertex colors are the
   default; textures are allowed where practical (dashboard gauges, signs, decals, sprites,
-  liveries) but not as full PBR sets. See `docs/art-style.md`.
+  liveries) but not as full PBR sets. Runtime browser-decoded textures may update individual
+  cockpit meshes; sprite-sheet UVs are used for gear characters. See `docs/art-style.md`.
 - Object-space inverted-hull outlines and procedural grid shaders. No screen-space edge
   filters or post-processing that would break stereo depth.
 - Instanced track-side objects, frustum culling, and LOD selection.

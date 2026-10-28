@@ -561,8 +561,13 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
     { timeout: 10_000 },
   );
   await page.keyboard.up("ArrowUp");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 0,
+    undefined,
+    { timeout: 10_000 },
+  );
   const stoppedFromReverse = await telemetry(page);
-  expect(stoppedFromReverse.gear).toBe(-1);
+  expect(stoppedFromReverse.gear).toBe(0);
 
   await page.waitForFunction(
     (tick) => JSON.parse((window as any).__driveViewer.telemetry()).tick > tick + 5,
@@ -602,6 +607,38 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   ).toBeGreaterThan(0.1);
 });
 
+test("automatic gearbox selects neutral when stopped", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=neutral");
+  await page.bringToFront();
+  await waitForReady(page);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 0,
+    undefined,
+    { timeout: 10_000 },
+  );
+  const neutral = await telemetry(page);
+  expect(neutral.gear).toBe(0);
+  await expect(page.locator("#gear")).toHaveText("N");
+
+  await page.keyboard.down("ArrowUp");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 1,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("ArrowUp");
+});
+
+test("drive viewer boots without WebHID", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "hid", { value: undefined, configurable: true });
+  });
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=no-hid");
+  await page.bringToFront();
+  await waitForReady(page);
+  expect(await page.evaluate(() => (window as any).__driveViewerError)).toBeUndefined();
+});
+
 test("reverse requires a second brake press after stopping", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();
@@ -622,9 +659,13 @@ test("reverse requires a second brake press after stopping", async ({ page }) =>
     undefined,
     { timeout: 10_000 },
   );
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 0,
+    undefined,
+    { timeout: 10_000 },
+  );
   const held = await telemetry(page);
-  expect(held.gear).toBe(1);
+  expect(held.gear).toBe(0);
   expect(held.speedKph).toBeLessThan(0.05);
 
   await page.keyboard.up("ArrowDown");
