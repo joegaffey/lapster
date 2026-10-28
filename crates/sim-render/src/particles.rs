@@ -326,6 +326,7 @@ mod tests {
             reverse_light_mesh_index: None,
             dashboard_mesh_index: None,
             dashboard_local: Mat4::IDENTITY,
+            cockpit_needles: Vec::new(),
             wheels: (0..4)
                 .map(|index| RigWheel {
                     mesh_index: index,

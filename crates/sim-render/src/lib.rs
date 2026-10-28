@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 use crate::camera::Camera;
 use crate::particles::ParticleSystem;
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
-use crate::scene::{CarRig, GarageBay, Scene};
+use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene};
 use crate::tuning::{GpuTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{Controls, PhysicsTuning, TrackCollider, Vehicle, FIXED_DT};
@@ -1075,9 +1075,12 @@ impl DriveViewer {
     }
 
     fn update_dashboard_visibility(&mut self) {
+        let visible = self.camera_mode == CameraMode::Cockpit;
         if let Some(index) = self.rig.dashboard_mesh_index {
-            self.renderer
-                .set_mesh_visible(index, self.camera_mode == CameraMode::Cockpit);
+            self.renderer.set_mesh_visible(index, visible);
+        }
+        for needle in &self.rig.cockpit_needles {
+            self.renderer.set_mesh_visible(needle.mesh_index, visible);
         }
     }
 
@@ -1286,6 +1289,22 @@ impl DriveViewer {
         if let Some(index) = self.rig.dashboard_mesh_index {
             self.renderer
                 .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        }
+        let speed_kph = state.velocity.length() * 3.6;
+        let gear_fraction = ((state.gear.max(1) - 1) as f32 / 5.0).clamp(0.0, 1.0);
+        for needle in &self.rig.cockpit_needles {
+            let fraction = match needle.source {
+                CockpitNeedleSource::Speed => (speed_kph / 240.0).clamp(0.0, 1.0),
+                CockpitNeedleSource::Rpm => (state.engine_rpm / 8_000.0).clamp(0.0, 1.0),
+                CockpitNeedleSource::Gear => gear_fraction,
+            };
+            let angle =
+                -std::f32::consts::FRAC_PI_4 * 3.0 + fraction * std::f32::consts::FRAC_PI_4 * 6.0;
+            let model = car_world
+                * self.rig.dashboard_local
+                * Mat4::from_translation(needle.center)
+                * Mat4::from_rotation_z(angle);
+            self.renderer.set_mesh_model(needle.mesh_index, model);
         }
         if let Some(index) = self.rig.glass_mesh_index {
             self.renderer

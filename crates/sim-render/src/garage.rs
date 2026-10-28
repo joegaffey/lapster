@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::camera::Camera;
 use crate::scene::{
-    build_outline, build_vertices, push_line, scene_texture, CarRig, GarageBay, LineVertex,
-    MeshData, MeshVertex, RigWheel, Scene, SceneTexture, SceneWheel,
+    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitNeedle,
+    CockpitNeedleSource, GarageBay, LineVertex, MeshData, MeshVertex, RigWheel, Scene,
+    SceneTexture, SceneWheel,
 };
 use crate::shadow_decal_yaw;
 
@@ -454,6 +455,27 @@ const BAY_COLORS: [[f32; 3]; 10] = [
     [0.02, 0.56, 0.55],
 ];
 
+const COCKPIT_DIALS: [(CockpitNeedleSource, [f32; 3], f32, f32); 3] = [
+    (
+        CockpitNeedleSource::Speed,
+        [-0.462, 0.935, -0.22],
+        0.044,
+        0.035,
+    ),
+    (
+        CockpitNeedleSource::Rpm,
+        [-0.35, 0.945, -0.22],
+        0.060,
+        0.045,
+    ),
+    (
+        CockpitNeedleSource::Gear,
+        [-0.238, 0.935, -0.22],
+        0.044,
+        0.035,
+    ),
+];
+
 fn build_car(
     scene: &mut Scene,
     car_visual: &CarVisual,
@@ -595,6 +617,47 @@ fn build_car(
         None
     };
 
+    let mut cockpit_needles = Vec::new();
+    if brake_lights && dashboard_mesh_index.is_some() {
+        for (source, center, radius, depth) in COCKPIT_DIALS {
+            let buffers = needle_buffers(radius);
+            let center = Vec3::new(center[0], center[1], center[2] + depth * 0.5 + 0.003);
+            let mesh_ref = MeshRef {
+                name: format!("dashboard_needle_{}", source as u8),
+                vertex_offset: 0,
+                vertex_count: buffers.positions.len() as u32,
+                index_offset: 0,
+                index_count: buffers.indices.len() as u32,
+                material: 0,
+                bounds: Aabb {
+                    min: [-radius * 0.025, 0.0, 0.0],
+                    max: [radius * 0.025, radius * 0.55, 0.0],
+                },
+                lod: 0,
+            };
+            let mesh_index = push_car_mesh(
+                scene,
+                &format!("{}_needle_{}", prefix, source as u8),
+                &mesh_ref,
+                &buffers,
+                [0.012, 0.014, 0.018],
+                body_model * Mat4::from_translation(center),
+                CarMeshStyle {
+                    texture: None,
+                    outline: false,
+                    alpha: 1.0,
+                },
+            )?;
+            scene.meshes[mesh_index].casts_static_shadow = false;
+            scene.meshes[mesh_index].casts_dynamic_shadow = false;
+            cockpit_needles.push(CockpitNeedle {
+                mesh_index,
+                center,
+                source,
+            });
+        }
+    }
+
     let mut wheels = Vec::with_capacity(car_visual.wheels.len());
     let mut rig_wheels = Vec::with_capacity(car_visual.wheels.len());
     for wheel in &car_visual.wheels {
@@ -682,7 +745,8 @@ fn build_car(
         brake_light_mesh_index,
         reverse_light_mesh_index,
         dashboard_mesh_index,
-        dashboard_local: Mat4::IDENTITY,
+        dashboard_local: body_local,
+        cockpit_needles,
         wheels: rig_wheels,
         steering_mesh_index,
         steering_local,
@@ -869,9 +933,9 @@ fn cockpit_cowl_buffers(glass: &MeshBuffers) -> Option<MeshBuffers> {
         colors,
         indices,
     };
-    append_dial(&mut buffers, [-0.35, 0.945, -0.22], 0.075, 0.045);
-    append_dial(&mut buffers, [-0.49, 0.935, -0.22], 0.055, 0.035);
-    append_dial(&mut buffers, [-0.21, 0.935, -0.22], 0.055, 0.035);
+    for (_, center, radius, depth) in COCKPIT_DIALS {
+        append_dial(&mut buffers, center, radius, depth);
+    }
     Some(buffers)
 }
 
@@ -882,7 +946,6 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
     let outer = [0.018, 0.022, 0.028];
     let face = [0.035, 0.04, 0.046];
     let white = [0.82, 0.84, 0.79];
-    let needle = [0.012, 0.014, 0.018];
     let tau = std::f32::consts::TAU;
 
     for index in 0..segments {
@@ -973,31 +1036,18 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
             white_base + next as u32,
         ]);
     }
+}
 
-    let needle_width = radius * 0.06;
-    let needle_length = white_radius * 0.72;
-    let needle_z = white_z + 0.001;
-    let angle: f32 = -0.65;
-    let (sin, cos) = angle.sin_cos();
-    let side = [-sin * needle_width, cos * needle_width];
-    let tip = [
-        center[0] + cos * needle_length,
-        center[1] + sin * needle_length,
-    ];
-    let base = buffers.positions.len() as u32;
-    for position in [
-        [center[0] + side[0], center[1] + side[1], needle_z],
-        [center[0] - side[0], center[1] - side[1], needle_z],
-        [tip[0], tip[1], needle_z],
-    ] {
-        buffers.positions.push(position);
-        buffers.normals.push([0.0, 0.0, 1.0]);
-        buffers.uvs.push([0.5, 0.5]);
-        buffers.colors.push(needle);
+fn needle_buffers(radius: f32) -> MeshBuffers {
+    let width = radius * 0.025;
+    let length = radius * 0.55;
+    MeshBuffers {
+        positions: vec![[-width, 0.0, 0.0], [width, 0.0, 0.0], [0.0, length, 0.0]],
+        normals: vec![[0.0, 0.0, 1.0]; 3],
+        uvs: vec![[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        colors: vec![[0.012, 0.014, 0.018]; 3],
+        indices: vec![0, 1, 2],
     }
-    buffers
-        .indices
-        .extend_from_slice(&[base, base + 1, base + 2]);
 }
 
 struct CarMeshStyle {
