@@ -4,6 +4,7 @@ use sim_types::{
     Aabb, AssetManifest, CarPhysics, CarVisual, MeshBuffers, MeshRef, NodeTransform,
     TrackCollision, TrackMetadata, TrackVisual,
 };
+use std::collections::{HashMap, HashSet};
 
 use crate::camera::Camera;
 use crate::scene::{
@@ -522,45 +523,6 @@ fn build_car(
         None
     };
 
-    let dashboard_mesh_index = if brake_lights {
-        let buffers = box_buffers(
-            [-0.68, 0.86, -0.60],
-            [0.68, 0.90, -0.57],
-            [0.015, 0.018, 0.022],
-        );
-        let mesh_ref = MeshRef {
-            name: "dashboard".to_string(),
-            vertex_offset: 0,
-            vertex_count: buffers.positions.len() as u32,
-            index_offset: 0,
-            index_count: buffers.indices.len() as u32,
-            material: 0,
-            bounds: Aabb {
-                min: [-0.68, 0.86, -0.60],
-                max: [0.68, 0.90, -0.57],
-            },
-            lod: 0,
-        };
-        let index = push_car_mesh(
-            scene,
-            format!("{}_dashboard", prefix).as_str(),
-            &mesh_ref,
-            &buffers,
-            [0.015, 0.018, 0.022],
-            transform,
-            CarMeshStyle {
-                texture: None,
-                outline: false,
-                alpha: 1.0,
-            },
-        )?;
-        scene.meshes[index].casts_static_shadow = false;
-        scene.meshes[index].casts_dynamic_shadow = false;
-        Some(index)
-    } else {
-        None
-    };
-
     let glass_mesh_index = if let Some(index) = mesh_index_by_name(car_visual, "body_glass") {
         if let (Some(mesh), Some(buffers)) = (
             car_visual.meshes.get(index),
@@ -580,6 +542,52 @@ fn build_car(
                     alpha: 1.0,
                 },
             )?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let dashboard_mesh_index = if brake_lights {
+        let dashboard = mesh_index_by_name(car_visual, "body_glass")
+            .and_then(|index| car_visual.mesh_buffers.get(index))
+            .and_then(cockpit_cowl_buffers);
+        if let Some(buffers) = dashboard {
+            let mut min = [f32::INFINITY; 3];
+            let mut max = [f32::NEG_INFINITY; 3];
+            for position in &buffers.positions {
+                for axis in 0..3 {
+                    min[axis] = min[axis].min(position[axis]);
+                    max[axis] = max[axis].max(position[axis]);
+                }
+            }
+            let mesh_ref = MeshRef {
+                name: "dashboard".to_string(),
+                vertex_offset: 0,
+                vertex_count: buffers.positions.len() as u32,
+                index_offset: 0,
+                index_count: buffers.indices.len() as u32,
+                material: 0,
+                bounds: Aabb { min, max },
+                lod: 0,
+            };
+            let index = push_car_mesh(
+                scene,
+                format!("{}_dashboard", prefix).as_str(),
+                &mesh_ref,
+                &buffers,
+                [0.04, 0.045, 0.05],
+                body_model,
+                CarMeshStyle {
+                    texture: None,
+                    outline: false,
+                    alpha: 1.0,
+                },
+            )?;
+            scene.meshes[index].casts_static_shadow = false;
+            scene.meshes[index].casts_dynamic_shadow = false;
+            Some(index)
         } else {
             None
         }
@@ -698,50 +706,169 @@ fn build_car(
     })
 }
 
-fn box_buffers(min: [f32; 3], max: [f32; 3], color: [f32; 3]) -> MeshBuffers {
-    let corners = [
-        [min[0], min[1], min[2]],
-        [max[0], min[1], min[2]],
-        [max[0], max[1], min[2]],
-        [min[0], max[1], min[2]],
-        [min[0], min[1], max[2]],
-        [max[0], min[1], max[2]],
-        [max[0], max[1], max[2]],
-        [min[0], max[1], max[2]],
-    ];
-    let faces = [
-        ([0, 1, 2, 3], [0.0, 0.0, -1.0]),
-        ([4, 7, 6, 5], [0.0, 0.0, 1.0]),
-        ([0, 4, 5, 1], [0.0, -1.0, 0.0]),
-        ([3, 2, 6, 7], [0.0, 1.0, 0.0]),
-        ([0, 3, 7, 4], [-1.0, 0.0, 0.0]),
-        ([1, 5, 6, 2], [1.0, 0.0, 0.0]),
-    ];
-    let mut positions = Vec::with_capacity(24);
-    let mut normals = Vec::with_capacity(24);
-    let mut uvs = Vec::with_capacity(24);
-    let mut colors = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    for (face, normal) in faces {
-        let base = positions.len() as u32;
-        for (corner, uv) in face
-            .into_iter()
-            .zip([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
-        {
-            positions.push(corners[corner]);
-            normals.push(normal);
-            uvs.push(uv);
-            colors.push(color);
+fn cockpit_cowl_buffers(glass: &MeshBuffers) -> Option<MeshBuffers> {
+    let mut edge_counts: HashMap<(u32, u32), u32> = HashMap::new();
+    for triangle in glass.indices.as_chunks::<3>().0 {
+        for (a, b) in [
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ] {
+            let key = if a < b { (a, b) } else { (b, a) };
+            *edge_counts.entry(key).or_default() += 1;
         }
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
-    MeshBuffers {
+
+    let mut adjacency: HashMap<u32, Vec<u32>> = HashMap::new();
+    for ((a, b), count) in edge_counts {
+        if count != 1 {
+            continue;
+        }
+        adjacency.entry(a).or_default().push(b);
+        adjacency.entry(b).or_default().push(a);
+    }
+
+    let mut unvisited: HashSet<u32> = adjacency.keys().copied().collect();
+    let mut front_loop: Option<Vec<u32>> = None;
+    let mut front_z = f32::INFINITY;
+    while let Some(start) = unvisited.iter().next().copied() {
+        let mut component = Vec::new();
+        let mut stack = vec![start];
+        unvisited.remove(&start);
+        while let Some(vertex) = stack.pop() {
+            component.push(vertex);
+            if let Some(neighbors) = adjacency.get(&vertex) {
+                for neighbor in neighbors {
+                    if unvisited.remove(neighbor) {
+                        stack.push(*neighbor);
+                    }
+                }
+            }
+        }
+        if component.len() < 3 {
+            continue;
+        }
+        let min_z = component
+            .iter()
+            .filter_map(|index| glass.positions.get(*index as usize))
+            .map(|position| position[2])
+            .fold(f32::INFINITY, f32::min);
+        if min_z < front_z {
+            front_z = min_z;
+            front_loop = Some(component);
+        }
+    }
+
+    let component = front_loop?;
+    let y_of = |index: u32| {
+        glass
+            .positions
+            .get(index as usize)
+            .map(|position| position[1])
+            .unwrap_or(f32::INFINITY)
+    };
+    let start = *component.iter().min_by(|a, b| {
+        y_of(**a)
+            .partial_cmp(&y_of(**b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })?;
+
+    let mut order = vec![start];
+    let mut previous = None;
+    let mut current = start;
+    loop {
+        let next = adjacency
+            .get(&current)?
+            .iter()
+            .copied()
+            .find(|vertex| Some(*vertex) != previous)?;
+        if next == start {
+            break;
+        }
+        order.push(next);
+        previous = Some(current);
+        current = next;
+        if order.len() > component.len() {
+            return None;
+        }
+    }
+
+    let min_y = order
+        .iter()
+        .map(|index| y_of(*index))
+        .fold(f32::INFINITY, f32::min);
+    let threshold = min_y + 0.05;
+    let mut best_start = 0;
+    let mut best_len = 0;
+    for candidate in 0..order.len() {
+        if y_of(order[candidate]) > threshold {
+            continue;
+        }
+        let mut length = 0;
+        while length < order.len() && y_of(order[(candidate + length) % order.len()]) <= threshold {
+            length += 1;
+        }
+        if length > best_len {
+            best_len = length;
+            best_start = candidate;
+        }
+    }
+    if best_len < 3 {
+        return None;
+    }
+    let arc: Vec<u32> = (0..best_len)
+        .map(|offset| order[(best_start + offset) % order.len()])
+        .collect();
+
+    let max_y = arc
+        .iter()
+        .map(|index| y_of(*index))
+        .fold(f32::NEG_INFINITY, f32::max);
+    let top_color = [0.04, 0.045, 0.05];
+    let bulkhead_color = [0.022, 0.026, 0.03];
+    let mut positions = Vec::with_capacity(arc.len() * 3);
+    let mut normals = Vec::with_capacity(arc.len() * 3);
+    let mut uvs = Vec::with_capacity(arc.len() * 3);
+    let mut colors = Vec::with_capacity(arc.len() * 3);
+    for index in &arc {
+        let position = Vec3::from_array(*glass.positions.get(*index as usize)?);
+        positions.push(position.to_array());
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.0, 0.0]);
+        colors.push(top_color);
+
+        positions.push([position.x * 0.92, max_y, position.z + 0.38]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([1.0, 0.0]);
+        colors.push(top_color);
+    }
+    for index in &arc {
+        let position = Vec3::from_array(*glass.positions.get(*index as usize)?);
+        positions.push([position.x * 0.92, max_y - 0.28, position.z + 0.38]);
+        normals.push([0.0, 0.0, 1.0]);
+        uvs.push([1.0, 1.0]);
+        colors.push(bulkhead_color);
+    }
+
+    let mut indices = Vec::with_capacity((arc.len() - 1) * 12);
+    for index in 0..arc.len() - 1 {
+        let front = (index * 2) as u32;
+        let next_front = ((index + 1) * 2) as u32;
+        let inner = front + 1;
+        let next_inner = next_front + 1;
+        indices.extend_from_slice(&[front, next_front, next_inner, front, next_inner, inner]);
+        let bottom = (arc.len() * 2 + index) as u32;
+        let next_bottom = (arc.len() * 2 + index + 1) as u32;
+        indices.extend_from_slice(&[inner, next_inner, next_bottom, inner, next_bottom, bottom]);
+    }
+
+    Some(MeshBuffers {
         positions,
         normals,
         uvs,
         colors,
         indices,
-    }
+    })
 }
 
 struct CarMeshStyle {
