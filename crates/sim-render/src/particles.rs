@@ -324,6 +324,8 @@ mod tests {
             glass_mesh_index: None,
             brake_light_mesh_index: None,
             reverse_light_mesh_index: None,
+            dashboard_mesh_index: None,
+            dashboard_local: Mat4::IDENTITY,
             wheels: (0..4)
                 .map(|index| RigWheel {
                     mesh_index: index,

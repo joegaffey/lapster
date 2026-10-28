@@ -1070,7 +1070,15 @@ impl DriveViewer {
             CameraMode::Chase
         };
         self.apply_cockpit_glass_alpha();
+        self.update_dashboard_visibility();
         self.update_camera();
+    }
+
+    fn update_dashboard_visibility(&mut self) {
+        if let Some(index) = self.rig.dashboard_mesh_index {
+            self.renderer
+                .set_mesh_visible(index, self.camera_mode == CameraMode::Cockpit);
+        }
     }
 
     fn apply_cockpit_glass_alpha(&mut self) {
@@ -1275,6 +1283,10 @@ impl DriveViewer {
         self.renderer.set_shadow_focus(focus.to_array(), extent);
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
+        if let Some(index) = self.rig.dashboard_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        }
         if let Some(index) = self.rig.glass_mesh_index {
             self.renderer
                 .set_mesh_model(index, car_world * self.rig.body_local);

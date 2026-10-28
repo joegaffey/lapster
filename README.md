@@ -125,7 +125,7 @@ The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 27
 estimates until a licensed AC `.ini` source is available.
 
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
-opaque glass; cockpit mode renders it at 12% alpha. The body is visible by default, wheels
+opaque glass; cockpit mode renders it at 6% alpha. The body is visible by default, wheels
 always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. Bonnet eye
 height is 1.25 m; cockpit eye is 1.10 m, pushed 0.25 m rearward. A real cockpit still requires
 an interior model.

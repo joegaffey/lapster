@@ -522,6 +522,45 @@ fn build_car(
         None
     };
 
+    let dashboard_mesh_index = if brake_lights {
+        let buffers = box_buffers(
+            [-0.68, 0.42, -0.52],
+            [0.68, 0.86, -0.15],
+            [0.07, 0.075, 0.08],
+        );
+        let mesh_ref = MeshRef {
+            name: "dashboard".to_string(),
+            vertex_offset: 0,
+            vertex_count: buffers.positions.len() as u32,
+            index_offset: 0,
+            index_count: buffers.indices.len() as u32,
+            material: 0,
+            bounds: Aabb {
+                min: [-0.68, 0.42, -0.52],
+                max: [0.68, 0.86, -0.15],
+            },
+            lod: 0,
+        };
+        let index = push_car_mesh(
+            scene,
+            format!("{}_dashboard", prefix).as_str(),
+            &mesh_ref,
+            &buffers,
+            [0.07, 0.075, 0.08],
+            transform,
+            CarMeshStyle {
+                texture: None,
+                outline: false,
+                alpha: 1.0,
+            },
+        )?;
+        scene.meshes[index].casts_static_shadow = false;
+        scene.meshes[index].casts_dynamic_shadow = false;
+        Some(index)
+    } else {
+        None
+    };
+
     let glass_mesh_index = if let Some(index) = mesh_index_by_name(car_visual, "body_glass") {
         if let (Some(mesh), Some(buffers)) = (
             car_visual.meshes.get(index),
@@ -634,6 +673,8 @@ fn build_car(
         glass_mesh_index,
         brake_light_mesh_index,
         reverse_light_mesh_index,
+        dashboard_mesh_index,
+        dashboard_local: Mat4::IDENTITY,
         wheels: rig_wheels,
         steering_mesh_index,
         steering_local,
@@ -655,6 +696,52 @@ fn build_car(
         bounds: body_bounds,
         ground_y,
     })
+}
+
+fn box_buffers(min: [f32; 3], max: [f32; 3], color: [f32; 3]) -> MeshBuffers {
+    let corners = [
+        [min[0], min[1], min[2]],
+        [max[0], min[1], min[2]],
+        [max[0], max[1], min[2]],
+        [min[0], max[1], min[2]],
+        [min[0], min[1], max[2]],
+        [max[0], min[1], max[2]],
+        [max[0], max[1], max[2]],
+        [min[0], max[1], max[2]],
+    ];
+    let faces = [
+        ([0, 1, 2, 3], [0.0, 0.0, -1.0]),
+        ([4, 7, 6, 5], [0.0, 0.0, 1.0]),
+        ([0, 4, 5, 1], [0.0, -1.0, 0.0]),
+        ([3, 2, 6, 7], [0.0, 1.0, 0.0]),
+        ([0, 3, 7, 4], [-1.0, 0.0, 0.0]),
+        ([1, 5, 6, 2], [1.0, 0.0, 0.0]),
+    ];
+    let mut positions = Vec::with_capacity(24);
+    let mut normals = Vec::with_capacity(24);
+    let mut uvs = Vec::with_capacity(24);
+    let mut colors = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+    for (face, normal) in faces {
+        let base = positions.len() as u32;
+        for (corner, uv) in face
+            .into_iter()
+            .zip([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+        {
+            positions.push(corners[corner]);
+            normals.push(normal);
+            uvs.push(uv);
+            colors.push(color);
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    MeshBuffers {
+        positions,
+        normals,
+        uvs,
+        colors,
+        indices,
+    }
 }
 
 struct CarMeshStyle {

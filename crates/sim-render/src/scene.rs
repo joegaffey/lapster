@@ -83,6 +83,8 @@ pub struct CarRig {
     pub glass_mesh_index: Option<usize>,
     pub brake_light_mesh_index: Option<usize>,
     pub reverse_light_mesh_index: Option<usize>,
+    pub dashboard_mesh_index: Option<usize>,
+    pub dashboard_local: Mat4,
     pub wheels: Vec<RigWheel>,
     pub steering_mesh_index: Option<usize>,
     pub steering_local: Mat4,

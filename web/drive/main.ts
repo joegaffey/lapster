@@ -44,6 +44,14 @@ if (devMode) {
   try {
     storedDevTuning = localStorage.getItem(DEV_TUNING_KEY);
     storedTuning = storedDevTuning ? JSON.parse(storedDevTuning) : null;
+    if (
+      storedTuning?.camera &&
+      (storedTuning.camera.cockpitGlassAlpha === 0.12 ||
+        storedTuning.camera.cockpitGlassAlpha === 0.32)
+    ) {
+      storedTuning.camera.cockpitGlassAlpha = 0.06;
+      storedDevTuning = JSON.stringify(storedTuning);
+    }
   } catch {
     storedDevTuning = null;
     storedTuning = null;
