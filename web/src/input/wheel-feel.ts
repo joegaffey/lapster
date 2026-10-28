@@ -21,16 +21,16 @@ export interface WheelFeelState {
 }
 
 export const DEFAULT_FEEL: WheelFeelSettings = {
-  rearLightening: 0.6,
-  rearSlipThreshold: 0.12,
-  frontShudder: 0.4,
-  frontSlipThreshold: 0.1,
-  shudderHz: 18,
-  roadNoise: 0.15,
-  roughness: 0.25,
-  roughnessHz: 32,
-  looseness: 0.35,
-  looseSlipThreshold: 0.08,
+  rearLightening: 0.7,
+  rearSlipThreshold: 0.08,
+  frontShudder: 0.8,
+  frontSlipThreshold: 0.06,
+  shudderHz: 22,
+  roadNoise: 0.55,
+  roughness: 0.65,
+  roughnessHz: 42,
+  looseness: 0.45,
+  looseSlipThreshold: 0.06,
 };
 
 const TAU = Math.PI * 2;
@@ -69,12 +69,12 @@ export function computeFfbOutput(
     Math.sin(TAU * settings.shudderHz * timeSeconds) *
     frontExcess *
     settings.frontShudder *
-    0.18;
+    0.32;
   const rough =
     (noise * 0.6 + Math.sin(TAU * settings.roughnessHz * timeSeconds) * 0.4) *
     settings.roughness *
     speed *
-    (0.03 + 0.07 * combinedSlip);
-  const road = noise * settings.roadNoise * speed * 0.05;
+    (0.05 + 0.15 * combinedSlip);
+  const road = noise * settings.roadNoise * speed * 0.12;
   return clamp(scaledBase + shudder + rough + road, -1, 1);
 }

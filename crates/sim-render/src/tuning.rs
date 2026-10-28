@@ -210,7 +210,7 @@ impl Default for CameraTuning {
             },
             isometric: IsometricTuning::default(),
             chase: ChaseTuning::default(),
-            cockpit_glass_alpha: 0.32,
+            cockpit_glass_alpha: 0.12,
         }
     }
 }

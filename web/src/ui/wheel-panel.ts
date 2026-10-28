@@ -4,7 +4,8 @@ import {
   type WheelFeelSettings,
 } from "../input/wheel-feel.ts";
 
-const STORAGE_KEY = "lapster.wheel.v1";
+const STORAGE_KEY = "lapster.wheel.v2";
+const LEGACY_STORAGE_KEY = "lapster.wheel.v1";
 const STYLE_ID = "lapster-wheel-controls-style";
 
 interface WheelSettings extends WheelFeelSettings {
@@ -78,7 +79,26 @@ const STYLE = `
 function loadSettings(): WheelSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS };
+    if (!raw) {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        const old = JSON.parse(legacy) as Partial<WheelSettings>;
+        return {
+          ...DEFAULTS,
+          strength:
+            typeof old.strength === "number"
+              ? Math.min(1, Math.max(0, old.strength))
+              : DEFAULTS.strength,
+          invertForce: old.invertForce === true,
+          invertSteering: old.invertSteering === true,
+          deadzone:
+            typeof old.deadzone === "number"
+              ? Math.min(0.5, Math.max(0, old.deadzone))
+              : DEFAULTS.deadzone,
+        };
+      }
+      return { ...DEFAULTS };
+    }
     const value = JSON.parse(raw) as Partial<WheelSettings>;
     const number = (next: unknown, fallback: number, min: number, max: number) =>
       typeof next === "number" ? Math.min(max, Math.max(min, next)) : fallback;
@@ -164,52 +184,52 @@ export function setupWheelControls(wheel: WheelFfb, host: HTMLElement): void {
       <div class="wheel-feel-grid">
         <label class="wheel-field">
           <span>Rear breakaway lightening</span>
-          <output id="wheel-rear-lightening-value">60%</output>
+          <output id="wheel-rear-lightening-value">70%</output>
           <input id="wheel-rear-lightening" type="range" min="0" max="1" step="0.05" />
         </label>
         <label class="wheel-field">
           <span>Rear slip threshold</span>
-          <output id="wheel-rear-threshold-value">0.12</output>
+          <output id="wheel-rear-threshold-value">0.08</output>
           <input id="wheel-rear-threshold" type="range" min="0" max="0.8" step="0.01" />
         </label>
         <label class="wheel-field">
           <span>Front grip shudder</span>
-          <output id="wheel-front-shudder-value">40%</output>
+          <output id="wheel-front-shudder-value">80%</output>
           <input id="wheel-front-shudder" type="range" min="0" max="1" step="0.05" />
         </label>
         <label class="wheel-field">
           <span>Front slip threshold</span>
-          <output id="wheel-front-threshold-value">0.10</output>
+          <output id="wheel-front-threshold-value">0.06</output>
           <input id="wheel-front-threshold" type="range" min="0" max="0.8" step="0.01" />
         </label>
         <label class="wheel-field">
           <span>Shudder frequency</span>
-          <output id="wheel-shudder-hz-value">18 Hz</output>
+          <output id="wheel-shudder-hz-value">22 Hz</output>
           <input id="wheel-shudder-hz" type="range" min="4" max="80" step="1" />
         </label>
         <label class="wheel-field">
           <span>Road noise</span>
-          <output id="wheel-road-noise-value">15%</output>
+          <output id="wheel-road-noise-value">55%</output>
           <input id="wheel-road-noise" type="range" min="0" max="1" step="0.05" />
         </label>
         <label class="wheel-field">
           <span>Roughness</span>
-          <output id="wheel-roughness-value">25%</output>
+          <output id="wheel-roughness-value">65%</output>
           <input id="wheel-roughness" type="range" min="0" max="1" step="0.05" />
         </label>
         <label class="wheel-field">
           <span>Roughness frequency</span>
-          <output id="wheel-roughness-hz-value">32 Hz</output>
+          <output id="wheel-roughness-hz-value">42 Hz</output>
           <input id="wheel-roughness-hz" type="range" min="4" max="120" step="1" />
         </label>
         <label class="wheel-field">
           <span>Loose response</span>
-          <output id="wheel-looseness-value">35%</output>
+          <output id="wheel-looseness-value">45%</output>
           <input id="wheel-looseness" type="range" min="0" max="1" step="0.05" />
         </label>
         <label class="wheel-field">
           <span>Loose slip threshold</span>
-          <output id="wheel-loose-threshold-value">0.08</output>
+          <output id="wheel-loose-threshold-value">0.06</output>
           <input id="wheel-loose-threshold" type="range" min="0" max="0.8" step="0.01" />
         </label>
       </div>
