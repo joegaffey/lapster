@@ -599,7 +599,7 @@ fn build_car(
                 format!("{}_dashboard", prefix).as_str(),
                 &mesh_ref,
                 &buffers,
-                [0.04, 0.045, 0.05],
+                [0.0, 0.0, 0.0],
                 body_model,
                 CarMeshStyle {
                     texture: None,
@@ -976,8 +976,8 @@ fn cockpit_cowl_buffers(glass: &MeshBuffers) -> Option<MeshBuffers> {
         .iter()
         .map(|index| y_of(*index))
         .fold(f32::NEG_INFINITY, f32::max);
-    let top_color = [0.04, 0.045, 0.05];
-    let bulkhead_color = [0.022, 0.026, 0.03];
+    let top_color = [0.0, 0.0, 0.0];
+    let bulkhead_color = [0.0, 0.0, 0.0];
     let mut positions = Vec::with_capacity(arc.len() * 3);
     let mut normals = Vec::with_capacity(arc.len() * 3);
     let mut uvs = Vec::with_capacity(arc.len() * 3);
@@ -1077,8 +1077,8 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
     let segments = 24;
     let z_front = center[2] + depth * 0.5;
     let z_back = center[2] - depth * 0.5;
-    let outer = [0.018, 0.022, 0.028];
-    let face = [0.035, 0.04, 0.046];
+    let outer = [0.0, 0.0, 0.0];
+    let face = [0.0, 0.0, 0.0];
     let white = [0.82, 0.84, 0.79];
     let tau = std::f32::consts::TAU;
 
