@@ -74,7 +74,9 @@ isolation or worker startup fails.
 - **Wheel/FFB dev spike:** vendored `webhid-wheel` WebHID input, direct wheel steering,
   front-axle self-aligning torque, and a main-thread fast constant-force path fed from the
   SAB FFB mailbox at 200 Hz. Drive exposes the wheel controls under **Settings → Controls**
-  for connect, strength, inversions, deadzone, test force, and emergency stop.
+  for connect, strength, inversions, deadzone, test force, and emergency stop. The same tab
+  has configurable feel controls for rear breakaway lightening, front-grip shudder, road
+  noise, roughness, and slip-driven looseness.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
   `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
   audio. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,

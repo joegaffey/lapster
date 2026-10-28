@@ -254,8 +254,10 @@ Toolchain setup scripts:
 
 **Status:** dev spike implemented. `webhid-wheel` is vendored from the `webhid-wheel-dev`
 fast-constant-force commit, Drive exposes wheel/FFB controls under Settings → Controls, and the
-physics worker publishes normalized FFB torque through the SAB mailbox. Worker-side HID
-acquisition, pedal calibration, and the hardware matrix remain.
+physics worker publishes normalized FFB torque through the SAB mailbox. A configurable
+main-thread feel mixer adds rear breakaway lightening, front-grip shudder, road noise,
+roughness, and slip-driven looseness. Surface-specific dirt/grass mapping, pedal calibration,
+worker-side HID acquisition, and the hardware matrix remain.
 
 **Decisions:**
 

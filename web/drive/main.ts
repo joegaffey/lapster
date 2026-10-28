@@ -842,7 +842,7 @@ async function boot() {
             telemetry.speedMps,
             telemetry.wheels,
           );
-          wheel?.setTorque(telemetry.steeringRackTorque);
+          wheel?.updateTelemetry(telemetry);
           updateHud(telemetry);
         }
       } else {
@@ -859,7 +859,7 @@ async function boot() {
           telemetry.speedMps,
           telemetry.wheels,
         );
-        wheel?.setTorque(telemetry.steeringRackTorque);
+        wheel?.updateTelemetry(telemetry);
         updateHud(telemetry);
       }
 

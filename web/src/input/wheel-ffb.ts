@@ -1,5 +1,10 @@
 import { readFfb } from "../sim/sab.ts";
 import { WebHIDWheel } from "../vendor/webhid-wheel/webhid-wheel.js";
+import {
+  computeFfbOutput,
+  DEFAULT_FEEL,
+  type WheelFeelSettings,
+} from "./wheel-feel.ts";
 
 const TORQUE_REFERENCE_NM = 20;
 const FFB_INTERVAL_MS = 5;
@@ -17,6 +22,10 @@ export interface WheelFfbStatus {
   ffb: boolean;
   error: string;
   steering: number;
+  base: number;
+  output: number;
+  frontSlip: number;
+  rearSlip: number;
 }
 
 export class WheelFfb {
@@ -24,8 +33,15 @@ export class WheelFfb {
   private loop: number | null = null;
   private steeringValue = 0;
   private steeringAt = 0;
-  private torque = 0;
+  private baseTorque = 0;
   private torqueAt = 0;
+  private feel: WheelFeelSettings = { ...DEFAULT_FEEL };
+  private speedMps = 0;
+  private frontSlip = 0;
+  private rearSlip = 0;
+  private noise = 0;
+  private lastBase = 0;
+  private lastOutput = 0;
   private lastSent = Number.NaN;
   private lastSentAt = 0;
   private testTorque = 0;
@@ -88,6 +104,10 @@ export class WheelFfb {
       ffb: this.ffbAvailable,
       error: this.error,
       steering: this.steering,
+      base: this.lastBase,
+      output: this.lastOutput,
+      frontSlip: this.frontSlip,
+      rearSlip: this.rearSlip,
     };
   }
 
@@ -131,11 +151,37 @@ export class WheelFfb {
     this.wheel.deadzone = clamp(deadzone, 0, 0.5);
   }
 
+  setFeel(feel: WheelFeelSettings): void {
+    this.feel = {
+      ...DEFAULT_FEEL,
+      ...feel,
+      shudderHz: clamp(feel.shudderHz, 4, 80),
+      roughnessHz: clamp(feel.roughnessHz, 4, 120),
+    };
+  }
+
+  updateTelemetry(telemetry: any): void {
+    this.speedMps = Number(telemetry?.speedMps ?? 0);
+    let frontSlip = 0;
+    let rearSlip = 0;
+    const wheels = Array.isArray(telemetry?.wheels) ? telemetry.wheels : [];
+    for (let index = 0; index < wheels.length; index += 1) {
+      const wheel = wheels[index];
+      if (wheel?.contact === false) continue;
+      const slip = Math.abs(Number(wheel?.slipAngle ?? 0));
+      if (index < 2) frontSlip = Math.max(frontSlip, slip);
+      else rearSlip = Math.max(rearSlip, slip);
+    }
+    this.frontSlip = frontSlip;
+    this.rearSlip = rearSlip;
+    this.setTorque(Number(telemetry?.steeringRackTorque ?? 0));
+  }
+
   setTorque(torqueNm: number): void {
     if (this.ffbSab || performance.now() < this.testUntil) {
       return;
     }
-    this.torque = clamp(torqueNm / TORQUE_REFERENCE_NM, -1, 1);
+    this.baseTorque = clamp(torqueNm / TORQUE_REFERENCE_NM, -1, 1);
     this.torqueAt = performance.now();
   }
 
@@ -155,6 +201,7 @@ export class WheelFfb {
     this.stopped = true;
     this.testUntil = 0;
     this.lastSent = Number.NaN;
+    this.lastOutput = 0;
     if (this.wheel.ffb) {
       void this.wheel.setConstantForce(0).catch(() => undefined);
     }
@@ -181,34 +228,53 @@ export class WheelFfb {
       return;
     }
     const now = performance.now();
+    let output = 0;
     if (now < this.testUntil) {
-      this.torque = this.testTorque;
+      output = this.testTorque;
+      this.lastBase = output;
       this.torqueAt = now;
-    } else if (this.ffbSab) {
-      const ffb = readFfb(this.ffbSab);
-      const ageSeconds = ffb ? Date.now() / 1000 - ffb.timestampSeconds : Infinity;
-      if (!ffb || !ffb.active || ageSeconds > FFB_STALE_MS / 1000) {
+    } else {
+      let base = this.baseTorque;
+      if (this.ffbSab) {
+        const ffb = readFfb(this.ffbSab);
+        const ageSeconds = ffb ? Date.now() / 1000 - ffb.timestampSeconds : Infinity;
+        if (!ffb || !ffb.active || ageSeconds > FFB_STALE_MS / 1000) {
+          if (!this.stopped) {
+            this.stop();
+          }
+          return;
+        }
+        base = clamp(ffb.torque, -1, 1);
+        this.torqueAt = now;
+      }
+      if (now - this.torqueAt > FFB_STALE_MS) {
         if (!this.stopped) {
           this.stop();
         }
         return;
       }
-      this.torque = clamp(ffb.torque, -1, 1);
-      this.torqueAt = now;
-    }
-    if (now - this.torqueAt > FFB_STALE_MS) {
-      if (!this.stopped) {
-        this.stop();
-      }
-      return;
+      this.noise = this.noise * 0.65 + (Math.random() * 2 - 1) * 0.35;
+      this.lastBase = base;
+      output = computeFfbOutput(
+        base,
+        {
+          speedMps: this.speedMps,
+          frontSlip: this.frontSlip,
+          rearSlip: this.rearSlip,
+        },
+        this.feel,
+        now / 1000,
+        this.noise,
+      );
     }
     this.stopped = false;
-    if (this.torque === this.lastSent && now - this.lastSentAt < 20) {
+    this.lastOutput = output;
+    if (output === this.lastSent && now - this.lastSentAt < 20) {
       return;
     }
-    this.lastSent = this.torque;
+    this.lastSent = output;
     this.lastSentAt = now;
-    void this.wheel.setConstantForceFast(this.torque).catch((error) => {
+    void this.wheel.setConstantForceFast(output).catch((error) => {
       this.error = error instanceof Error ? error.message : String(error);
     });
   }
