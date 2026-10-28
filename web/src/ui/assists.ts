@@ -1,5 +1,7 @@
 import { BUILD_CHANNEL } from "../version.generated.ts";
 import { setFpsCounterVisible } from "./fps.ts";
+import { setupWheelControls } from "./wheel-panel.ts";
+import type { WheelFfb } from "../input/wheel-ffb.ts";
 
 export interface SettingsViewer {
   set_traction_control?(enabled: boolean): void;
@@ -41,6 +43,7 @@ export interface AssistSettings {
 
 interface SettingsOptions {
   gameplay?: boolean;
+  wheel?: WheelFfb;
   onRenderScale?: (scale: number) => void;
 }
 
@@ -179,6 +182,7 @@ function settingsDialogHtml(): string {
   </header>
   <div class="settings-tabs" role="tablist" aria-label="Settings sections">
     <button id="tab-gameplay" class="settings-tab" role="tab" aria-selected="true" aria-controls="settings-gameplay" data-tab="gameplay" type="button">Gameplay</button>
+    <button id="tab-controls" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-controls" data-tab="controls" type="button">Controls</button>
     <button id="tab-graphics" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-graphics" data-tab="graphics" type="button">Graphics</button>
   </div>
   <section id="settings-gameplay" class="settings-panel" role="tabpanel" aria-labelledby="tab-gameplay">
@@ -210,6 +214,11 @@ function settingsDialogHtml(): string {
         <output id="steering-sensitivity-value">100%</output>
         <input id="steering-sensitivity" type="range" min="0.25" max="2" step="0.05" value="1" />
       </label>
+    </div>
+  </section>
+  <section id="settings-controls" class="settings-panel" role="tabpanel" aria-labelledby="tab-controls" hidden>
+    <div class="assist-body">
+      <div id="wheel-controls"></div>
     </div>
   </section>
   <section id="settings-graphics" class="settings-panel" role="tabpanel" aria-labelledby="tab-graphics" hidden>
@@ -281,7 +290,7 @@ function settingsDialogHtml(): string {
 </dialog>`;
 }
 
-function ensureSettingsUi(gameplay: boolean): void {
+function ensureSettingsUi(gameplay: boolean, hasWheel: boolean): void {
   if (!document.querySelector(`#${SETTINGS_STYLE_ID}`)) {
     const style = document.createElement("style");
     style.id = SETTINGS_STYLE_ID;
@@ -304,9 +313,19 @@ function ensureSettingsUi(gameplay: boolean): void {
   if (!gameplay) {
     document.querySelector("#tab-gameplay")?.remove();
     document.querySelector("#settings-gameplay")?.remove();
-    const graphicsTab = document.querySelector<HTMLButtonElement>("#tab-graphics");
-    graphicsTab?.setAttribute("aria-selected", "true");
-    document.querySelector("#settings-graphics")?.removeAttribute("hidden");
+  }
+  if (!hasWheel) {
+    document.querySelector("#tab-controls")?.remove();
+    document.querySelector("#settings-controls")?.remove();
+  }
+  const selected = document.querySelector<HTMLButtonElement>(
+    ".settings-tab[aria-selected='true']",
+  );
+  if (!selected) {
+    const first = document.querySelector<HTMLButtonElement>(".settings-tab");
+    first?.setAttribute("aria-selected", "true");
+    const panel = first?.dataset.tab ? `#settings-${first.dataset.tab}` : null;
+    if (panel) document.querySelector(panel)?.removeAttribute("hidden");
   }
 }
 
@@ -411,7 +430,8 @@ export function setupAssistsDialog(
   options: SettingsOptions = {},
 ): SettingsController | null {
   const gameplay = options.gameplay !== false;
-  ensureSettingsUi(gameplay);
+  const hasWheel = Boolean(options.wheel);
+  ensureSettingsUi(gameplay, hasWheel);
 
   const dialog = document.querySelector<HTMLDialogElement>("#assists-dialog");
   const openButton = document.querySelector<HTMLButtonElement>("#assists-open");
@@ -476,6 +496,13 @@ export function setupAssistsDialog(
   let settings = load();
   let actualMsaa = 1;
   let appliedEnvironment: "high" | "hybrid" | "baked" | "off" = "high";
+
+  if (options.wheel) {
+    const wheelHost = document.querySelector<HTMLElement>("#wheel-controls");
+    if (wheelHost) {
+      setupWheelControls(options.wheel, wheelHost);
+    }
+  }
 
   const applyAssists = () => {
     if (!gameplay) return;
@@ -578,9 +605,11 @@ export function setupAssistsDialog(
     for (const button of dialog.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
       const selected = button.dataset.tab === tab;
       button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
     }
-    document.querySelector("#settings-gameplay")?.toggleAttribute("hidden", tab !== "gameplay");
-    document.querySelector("#settings-graphics")?.toggleAttribute("hidden", tab !== "graphics");
+    for (const panel of dialog.querySelectorAll<HTMLElement>(".settings-panel")) {
+      panel.toggleAttribute("hidden", panel.id !== `settings-${tab}`);
+    }
   };
   for (const button of dialog.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
     button.addEventListener("click", () => setTab(button.dataset.tab ?? "gameplay"));
@@ -589,15 +618,15 @@ export function setupAssistsDialog(
     const keyboard = event as KeyboardEvent;
     if (keyboard.key !== "ArrowLeft" && keyboard.key !== "ArrowRight") return;
     keyboard.preventDefault();
-    setTab(
-      document
-        .querySelector<HTMLButtonElement>(".settings-tab[aria-selected='true']")
-        ?.dataset.tab === "gameplay"
-        ? "graphics"
-        : "gameplay",
-    );
+    const tabs = [...dialog.querySelectorAll<HTMLButtonElement>(".settings-tab")];
+    if (tabs.length === 0) return;
+    const current = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    const delta = keyboard.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(current + delta + tabs.length) % tabs.length];
+    setTab(next.dataset.tab ?? tabs[0].dataset.tab ?? "graphics");
+    next.focus();
   });
-  setTab(gameplay ? "gameplay" : "graphics");
+  setTab(gameplay ? "gameplay" : hasWheel ? "controls" : "graphics");
 
   if (gameplay) {
     tcToggle!.addEventListener("click", () => {

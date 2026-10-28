@@ -8,18 +8,19 @@ async function waitForReady(page: import("@playwright/test").Page) {
   );
 }
 
-test("dev wheel panel reports WebHID and FFB test controls", async ({ page }) => {
+test("wheel controls live in the default settings dialog", async ({ page }) => {
   await page.goto(
-    "/web/drive/?dev=1&track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=wheel-panel",
+    "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=wheel-settings",
   );
   await waitForReady(page);
 
-  const open = page.locator("#wheel-open");
-  await expect(open).toBeVisible();
-  await open.click();
+  await expect(page.locator("#wheel-open")).toHaveCount(0);
+  await page.locator("#assists-open").click();
 
-  const dialog = page.locator("#wheel-dialog");
-  await expect(dialog).toHaveAttribute("open", "");
+  const controlsTab = page.locator("#tab-controls");
+  await expect(controlsTab).toBeVisible();
+  await controlsTab.click();
+  await expect(page.locator("#settings-controls")).toBeVisible();
   await expect(page.locator("#wheel-status")).toContainText(
     /WebHID (available|unavailable)/,
   );
@@ -37,4 +38,8 @@ test("dev wheel panel reports WebHID and FFB test controls", async ({ page }) =>
 
   await page.locator("#wheel-invert-force").check();
   await expect(page.locator("#wheel-invert-force")).toBeChecked();
+
+  await page.locator("#wheel-reset").click();
+  await expect(page.locator("#wheel-strength")).toHaveValue("0.5");
+  await expect(page.locator("#wheel-invert-force")).not.toBeChecked();
 });

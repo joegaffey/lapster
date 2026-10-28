@@ -18,7 +18,6 @@ import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
 import { WheelFfb } from "../src/input/wheel-ffb.ts";
-import { setupWheelPanel } from "../src/ui/wheel-panel.ts";
 
 declare global {
   interface Window {
@@ -655,15 +654,11 @@ async function boot() {
       }
       if (document.hidden) {
         audio.suspend();
-        wheel?.stop();
       } else {
         void audio.resume();
       }
     });
-    window.addEventListener("pagehide", () => {
-      wheel?.stop();
-      audio?.dispose();
-    });
+    window.addEventListener("pagehide", () => audio?.dispose());
     audioButton.addEventListener("click", toggleAudio);
   } else {
     updateAudioButton();
@@ -707,7 +702,16 @@ async function boot() {
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
   setCameraMode("chase");
   setupCarSetupDialog(driver, info.car.id, info.asset.id);
+  wheel = new WheelFfb(ffbSab ?? undefined);
+  window.__wheelFfb = wheel;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      wheel?.stop();
+    }
+  });
+  window.addEventListener("pagehide", () => wheel?.stop());
   const settings = setupAssistsDialog(driver, {
+    wheel,
     onRenderScale: (scale) => {
       renderScale = scale;
       if (resizeCanvas()) {
@@ -715,17 +719,6 @@ async function boot() {
       }
     },
   });
-  if (devMode || BUILD_CHANNEL === "dev") {
-    wheel = new WheelFfb(ffbSab ?? undefined);
-    window.__wheelFfb = wheel;
-    setupWheelPanel(wheel);
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) {
-        wheel?.stop();
-      }
-    });
-    window.addEventListener("pagehide", () => wheel?.stop());
-  }
   if (devMode && settings) {
     setupDevMenu(driver, {
       carId: info.car.id,
