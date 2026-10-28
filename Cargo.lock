@@ -977,6 +977,7 @@ name = "sim-core"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "serde",
  "sim-types",
 ]
 
@@ -988,6 +989,7 @@ dependencies = [
  "console_error_panic_hook",
  "glam",
  "js-sys",
+ "serde",
  "serde_json",
  "sim-asset",
  "sim-core",

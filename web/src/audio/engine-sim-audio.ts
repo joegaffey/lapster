@@ -3,11 +3,39 @@ import { EngineSim } from "./engine-sim/engine-sim.js";
 
 export type AudioStatus = "off" | "starting" | "running" | "error";
 
-const AUDIO_RPM_TAU_S = 0.06;
-const AUDIO_LOAD_ATTACK_S = 0.04;
-const AUDIO_LOAD_RELEASE_S = 0.32;
-const MAX_AUDIO_RPM_SLEW = 12_000;
-const MAX_AUDIO_RPM = 9_000;
+export interface AudioTuning {
+  masterGain: number;
+  tireGain: number;
+  transmissionMix: number;
+  rpmTau: number;
+  loadAttack: number;
+  loadRelease: number;
+  maxRpmSlew: number;
+  maxAudioRpm: number;
+  tireLateralThreshold: number;
+  tireLongitudinalThreshold: number;
+  tireLateralScale: number;
+  tireLongitudinalScale: number;
+  tireLoadReference: number;
+  tireSquealScale: number;
+}
+
+const DEFAULT_AUDIO_TUNING: AudioTuning = {
+  masterGain: 0.35,
+  tireGain: 0.9,
+  transmissionMix: 0,
+  rpmTau: 0.06,
+  loadAttack: 0.04,
+  loadRelease: 0.32,
+  maxRpmSlew: 12_000,
+  maxAudioRpm: 9_000,
+  tireLateralThreshold: 0.09,
+  tireLongitudinalThreshold: 0.14,
+  tireLateralScale: 1.4,
+  tireLongitudinalScale: 1.0,
+  tireLoadReference: 4_500,
+  tireSquealScale: 4.2,
+};
 
 export interface TireAudioWheel {
   slipRatio: number;
@@ -21,6 +49,7 @@ export class EngineSimAudio {
   status: AudioStatus = "off";
   error = "";
   muted = false;
+  tuning: AudioTuning = { ...DEFAULT_AUDIO_TUNING };
 
   private context: AudioContext | null = null;
   private sim: EngineSim | null = null;
@@ -102,11 +131,11 @@ export class EngineSimAudio {
       });
       sim.setAutoShift(false);
       sim.setGear(1);
-      sim.setMix({ transmission: 0 });
+      sim.setMix({ transmission: this.tuning.transmissionMix });
       const gain = context.createGain();
       const analyser = context.createAnalyser();
       analyser.fftSize = 1024;
-      gain.gain.value = this.muted ? 0 : 0.35;
+      gain.gain.value = this.muted ? 0 : this.tuning.masterGain;
       sim.connect(gain);
       gain.connect(analyser);
       analyser.connect(context.destination);
@@ -304,16 +333,16 @@ export class EngineSimAudio {
       }
       this.lastGear = gameGear;
 
-      const targetRpm = Math.max(0, Math.min(MAX_AUDIO_RPM, rpm));
+      const targetRpm = Math.max(0, Math.min(this.tuning.maxAudioRpm, rpm));
       if (!this.hasRpm) {
         this.audioRpm = targetRpm;
         this.lastRpm = targetRpm;
         this.hasRpm = true;
       } else {
-        const tau = this.shiftTimer > 0 ? 0.015 : AUDIO_RPM_TAU_S;
+        const tau = this.shiftTimer > 0 ? 0.015 : this.tuning.rpmTau;
         const alpha = 1 - Math.exp(-dt / tau);
         const smoothed = this.audioRpm + (targetRpm - this.audioRpm) * alpha;
-        const maxStep = MAX_AUDIO_RPM_SLEW * (this.shiftTimer > 0 ? 4 : 1) * dt;
+        const maxStep = this.tuning.maxRpmSlew * (this.shiftTimer > 0 ? 4 : 1) * dt;
         this.audioRpm = Math.max(
           this.audioRpm - maxStep,
           Math.min(this.audioRpm + maxStep, smoothed),
@@ -328,7 +357,10 @@ export class EngineSimAudio {
         this.audioLoad = targetLoad;
         this.hasLoad = true;
       } else {
-        const tau = targetLoad > this.audioLoad ? AUDIO_LOAD_ATTACK_S : AUDIO_LOAD_RELEASE_S;
+        const tau =
+          targetLoad > this.audioLoad
+            ? this.tuning.loadAttack
+            : this.tuning.loadRelease;
         this.audioLoad +=
           (targetLoad - this.audioLoad) * (1 - Math.exp(-dt / tau));
       }
@@ -377,8 +409,10 @@ export class EngineSimAudio {
       const lateral = Math.abs(wheel.slipAngle);
       const longitudinal = Math.abs(wheel.slipRatio);
       const skid = Math.max(
-        Math.max(0, lateral - 0.09) * 1.4,
-        Math.max(0, longitudinal - 0.14) * 1.0,
+        Math.max(0, lateral - this.tuning.tireLateralThreshold) *
+          this.tuning.tireLateralScale,
+        Math.max(0, longitudinal - this.tuning.tireLongitudinalThreshold) *
+          this.tuning.tireLongitudinalScale,
       );
       if (skid > slip) {
         slip = skid;
@@ -386,16 +420,19 @@ export class EngineSimAudio {
       }
     }
     this.tireSlip = slip;
-    const loadFactor = Math.max(0.2, Math.min(1, load / 4_500));
+    const loadFactor = Math.max(
+      0.2,
+      Math.min(1, load / Math.max(1, this.tuning.tireLoadReference)),
+    );
     const speedFactor = Math.max(0.35, Math.min(1, 0.35 + speedMps / 8));
     const surfaceScreech = grass > asphalt && grass > concrete ? 0.15 : 1;
     const squeal =
-      Math.max(0, Math.min(1, slip * 4.2)) *
+      Math.max(0, Math.min(1, slip * this.tuning.tireSquealScale)) *
       loadFactor *
       speedFactor *
       surfaceScreech;
     const now = this.context.currentTime;
-    this.tireGain.gain.setTargetAtTime(squeal * 0.9, now, 0.03);
+    this.tireGain.gain.setTargetAtTime(squeal * this.tuning.tireGain, now, 0.03);
     this.tireBand1.frequency.setTargetAtTime(
       900 + 650 * Math.max(0, Math.min(1, slip)),
       now,
@@ -483,7 +520,7 @@ export class EngineSimAudio {
       return;
     }
     this.gain.gain.setTargetAtTime(
-      muted ? 0 : 0.35,
+      muted ? 0 : this.tuning.masterGain,
       this.context.currentTime,
       0.02,
     );
@@ -492,6 +529,29 @@ export class EngineSimAudio {
   toggleMuted(): boolean {
     this.setMuted(!this.muted);
     return this.muted;
+  }
+
+  applyTuning(patch: Partial<AudioTuning>): void {
+    this.tuning = { ...this.tuning, ...patch };
+    if (!this.context || !this.gain) {
+      return;
+    }
+    this.gain.gain.setTargetAtTime(
+      this.muted ? 0 : this.tuning.masterGain,
+      this.context.currentTime,
+      0.02,
+    );
+    this.sim?.setMix({ transmission: this.tuning.transmissionMix });
+  }
+
+  async restart(): Promise<void> {
+    if (!this.started) {
+      return;
+    }
+    const muted = this.muted;
+    this.dispose();
+    this.muted = muted;
+    await this.start();
   }
 
   suspend(): void {

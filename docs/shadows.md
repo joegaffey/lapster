@@ -12,14 +12,16 @@
 ## Settings
 
 Shadow settings are global and persisted in `lapster.settings.v3`; the dev Pages build
-uses `lapster.settings.dev.v3`. Both desktop and mobile default to Baked environment
+uses `lapster.settings.dev.v3`. Both desktop and mobile default to Hybrid environment
 shadows plus the Dynamic car shadow. There is no Auto mode; legacy stored Auto values are
-coerced to Baked and Dynamic, while explicit modes are preserved.
+coerced to Hybrid and Dynamic, while explicit modes are preserved.
 
 ### Environment shadows
 
 - **Static** - high-resolution light-space shadow map baked once at startup; sampled
   with 4-tap PCF and no per-frame shadow pass.
+- **Hybrid** - full-track baked static map plus a smaller dynamic map around the car;
+  the near map supplies moving detail and the baked map covers the rest of the track.
 - **Dynamic** - current focused light-space map with 4-tap PCF, refreshed per frame.
 - **Off** - no environment shadows.
 
@@ -60,8 +62,9 @@ the Baked map is not rebuilt continuously.
   - Drive: around the settled vehicle spawn.
   - Track Viewer: around the track spawn.
   - Garage: the showroom.
-  - The region spans the track extent capped at 220 m per side, so very large tracks
-    keep useful local resolution instead of baking the entire level.
+  - The region covers the full drivable collision extent, excluding grass/terrain, with a
+    20 m margin. Very large tracks trade local resolution for complete static coverage;
+    Hybrid supplies near dynamic detail without shrinking that coverage.
 - Resolution: 4096 on desktop WebGPU when supported, otherwise 2048; 2048 on mobile
   and WebGL2.
 - Format: static Depth32Float light-space shadow map.

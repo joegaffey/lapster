@@ -247,6 +247,14 @@ self.onmessage = async (event: MessageEvent) => {
       post("ack", { id: message.id, tick });
       break;
     }
+    case "apply_physics_tuning": {
+      const tick = simulation.apply_physics_tuning(message.tuning);
+      nextDeadline = performance.now();
+      markDiagnosticsBaseline();
+      publish();
+      post("ack", { id: message.id, tick });
+      break;
+    }
     case "apply_setup": {
       const setup = simulation.apply_setup(message.setup);
       post("ack", { id: message.id, setup });

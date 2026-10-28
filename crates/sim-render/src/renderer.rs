@@ -9,17 +9,14 @@ use wgpu::util::DeviceExt;
 use crate::camera::Camera;
 use crate::particles::{ParticleInstance, MAX_PARTICLES};
 use crate::scene::{LineVertex, MeshData, MeshVertex, OutlineVertex, Scene, SceneTexture};
+use crate::tuning::{GpuTuning, ParticleRenderTuning, ShadowTuning};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SHADOW_STRENGTH: f32 = 0.82;
-const SHADOW_DEPTH_BIAS: f32 = 0.0008;
-const CAR_SHADOW_EXTENT: f32 = 8.0;
-const CAR_SHADOW_MAX_EXTENT: f32 = 14.0;
-const CAR_SHADOW_HEIGHT: f32 = 1.6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvironmentShadowMode {
     High,
+    Hybrid,
     Baked,
     Off,
 }
@@ -58,6 +55,8 @@ struct CameraUniform {
     car_shadow_params: [f32; 4],
     camera_right: [f32; 4],
     camera_up: [f32; 4],
+    particle_params: [f32; 4],
+    particle_shade: [f32; 4],
 }
 
 #[repr(C)]
@@ -131,6 +130,13 @@ pub struct Renderer {
     sun_elevation: f32,
     sky_horizon: [f32; 4],
     sky_zenith: [f32; 4],
+    shadow_strength: f32,
+    shadow_depth_bias: f32,
+    car_shadow_extent: f32,
+    car_shadow_max_extent: f32,
+    car_shadow_height: f32,
+    particle_params: [f32; 4],
+    particle_shade: [f32; 4],
     environment_mode: EnvironmentShadowMode,
     car_shadow_mode: CarShadowMode,
     car_dynamic_supported: bool,
@@ -177,6 +183,7 @@ impl Renderer {
         width: u32,
         height: u32,
         scene: Scene,
+        gpu: &GpuTuning,
     ) -> Result<Self, JsValue> {
         #[cfg(target_arch = "wasm32")]
         let instance = wgpu::util::new_instance_with_webgpu_detection(wgpu::InstanceDescriptor {
@@ -204,6 +211,8 @@ impl Renderer {
         let sun_time = 15.0;
         let (sun_direction, sun_elevation) = sun_for_time(sun_time);
         let (sky_horizon, sky_zenith) = sky_colors(sun_elevation);
+        let shadow = ShadowTuning::default();
+        let particles = ParticleRenderTuning::default();
 
         let adapter_limits = adapter.limits();
         let mut limits = if cfg!(target_arch = "wasm32") {
@@ -250,8 +259,16 @@ impl Renderer {
         let depth_view = create_depth_view(&device, &config, sample_count);
         let msaa_color_view = create_msaa_color_view(&device, &config, sample_count);
 
-        let shadow_map_size = preferred_shadow_map_size(&backend);
-        let car_shadow_map_size = preferred_car_shadow_map_size(&backend, &adapter_limits);
+        let shadow_map_size = resolve_texture_size(
+            gpu.shadow_map_size,
+            preferred_shadow_map_size(&backend),
+            adapter_limits.max_texture_dimension_2d,
+        );
+        let car_shadow_map_size = resolve_texture_size(
+            gpu.car_shadow_map_size,
+            preferred_car_shadow_map_size(&backend, &adapter_limits),
+            adapter_limits.max_texture_dimension_2d,
+        );
         let shadow_extent = 60.0;
         let shadow_focus = scene.camera.target;
         let shadow_view_proj = shadow_view_proj(
@@ -262,7 +279,11 @@ impl Renderer {
         );
         let shadow_view = create_shadow_map(&device, shadow_map_size);
         let car_shadow_view = create_shadow_map(&device, car_shadow_map_size);
-        let baked_resolution = preferred_baked_resolution(&backend, adapter_limits);
+        let baked_resolution = resolve_texture_size(
+            gpu.baked_resolution,
+            preferred_baked_resolution(&backend, &adapter_limits),
+            adapter_limits.max_texture_dimension_2d,
+        );
         let baked_view = create_baked_placeholder(&device);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow sampler"),
@@ -299,11 +320,20 @@ impl Renderer {
             [
                 1.0 / baked_resolution as f32,
                 2.0 * shadow_extent / baked_resolution as f32,
-                SHADOW_DEPTH_BIAS,
+                shadow.depth_bias,
                 0.0,
             ],
             [1.0, 0.0, 0.0, 0.0],
             [0.0; 4],
+            shadow.strength,
+            shadow.depth_bias,
+            [
+                particles.near_fade_start,
+                particles.near_fade_end,
+                particles.radial_start,
+                particles.radial_end,
+            ],
+            [particles.shade_min, particles.shade_max, 0.0, 0.0],
         );
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera uniform"),
@@ -583,6 +613,18 @@ impl Renderer {
             sun_elevation,
             sky_horizon,
             sky_zenith,
+            shadow_strength: shadow.strength,
+            shadow_depth_bias: shadow.depth_bias,
+            car_shadow_extent: shadow.car_extent,
+            car_shadow_max_extent: shadow.car_max_extent,
+            car_shadow_height: shadow.car_height,
+            particle_params: [
+                particles.near_fade_start,
+                particles.near_fade_end,
+                particles.radial_start,
+                particles.radial_end,
+            ],
+            particle_shade: [particles.shade_min, particles.shade_max, 0.0, 0.0],
             environment_mode: EnvironmentShadowMode::High,
             car_shadow_mode: CarShadowMode::Dynamic,
             car_dynamic_supported: true,
@@ -593,7 +635,7 @@ impl Renderer {
             baked_shadow_params: [
                 1.0 / baked_resolution as f32,
                 2.0 * shadow_extent / baked_resolution as f32,
-                SHADOW_DEPTH_BIAS,
+                shadow.depth_bias,
                 0.0,
             ],
             baked_region: [
@@ -924,7 +966,7 @@ impl Renderer {
         self.shadow_extent = self.active_high_extent();
         if self.car_dynamic_separate() {
             let direction = car_shadow_direction(self.sun_direction);
-            let length = car_shadow_length(self.sun_elevation);
+            let length = car_shadow_length(self.sun_elevation, self.car_shadow_height);
             let origin = Vec3::from_array(focus) - direction * (length * 0.5);
             self.car_shadow_params = [
                 origin.x,
@@ -944,6 +986,37 @@ impl Renderer {
             self.shadow_dirty = true;
             self.write_camera();
         }
+    }
+
+    pub fn set_shadow_tuning(&mut self, tuning: &ShadowTuning) {
+        self.shadow_strength = tuning.strength.clamp(0.0, 1.0);
+        self.shadow_depth_bias = tuning.depth_bias.clamp(0.0, 0.02);
+        self.car_shadow_extent = tuning.car_extent.clamp(1.0, 100.0);
+        self.car_shadow_max_extent = tuning
+            .car_max_extent
+            .max(self.car_shadow_extent)
+            .clamp(1.0, 200.0);
+        self.car_shadow_height = tuning.car_height.clamp(0.1, 20.0);
+        self.shadow_extent = self.active_high_extent();
+        self.shadow_view_proj = shadow_view_proj(
+            self.active_shadow_map_size(),
+            Vec3::from_array(self.shadow_focus),
+            self.shadow_extent,
+            self.sun_direction,
+        );
+        self.shadow_dirty = true;
+        self.write_camera();
+    }
+
+    pub fn set_particle_render_tuning(&mut self, tuning: &ParticleRenderTuning) {
+        self.particle_params = [
+            tuning.near_fade_start,
+            tuning.near_fade_end,
+            tuning.radial_start,
+            tuning.radial_end,
+        ];
+        self.particle_shade = [tuning.shade_min, tuning.shade_max, 0.0, 0.0];
+        self.write_camera();
     }
 
     pub fn shadow_map_size(&self) -> u32 {
@@ -983,7 +1056,11 @@ impl Renderer {
             } else {
                 0.0
             },
-            0.0,
+            if self.environment_mode == EnvironmentShadowMode::Hybrid {
+                1.0
+            } else {
+                0.0
+            },
         ]
     }
 
@@ -998,6 +1075,7 @@ impl Renderer {
     fn car_dynamic_separate(&self) -> bool {
         self.effective_car_mode() == CarShadowMode::Dynamic
             && self.environment_mode != EnvironmentShadowMode::High
+            && self.environment_mode != EnvironmentShadowMode::Hybrid
     }
 
     pub fn car_shadow_separate(&self) -> bool {
@@ -1006,7 +1084,7 @@ impl Renderer {
 
     pub fn car_shadow_focus(&self, base: [f32; 3]) -> [f32; 3] {
         let direction = car_shadow_direction(self.sun_direction);
-        let offset = car_shadow_length(self.sun_elevation) * 0.5;
+        let offset = car_shadow_length(self.sun_elevation, self.car_shadow_height) * 0.5;
         (Vec3::from_array(base) + direction * offset).to_array()
     }
 
@@ -1023,14 +1101,25 @@ impl Renderer {
     }
 
     fn high_shadow_active(&self) -> bool {
-        self.environment_mode == EnvironmentShadowMode::High || self.car_dynamic_separate()
+        matches!(
+            self.environment_mode,
+            EnvironmentShadowMode::High | EnvironmentShadowMode::Hybrid
+        ) || self.car_dynamic_separate()
     }
 
     fn active_high_extent(&self) -> f32 {
-        if self.environment_mode == EnvironmentShadowMode::High {
+        if matches!(
+            self.environment_mode,
+            EnvironmentShadowMode::High | EnvironmentShadowMode::Hybrid
+        ) {
             self.env_shadow_extent
         } else if self.car_dynamic_separate() {
-            car_shadow_extent_for_elevation(self.sun_elevation)
+            car_shadow_extent_for_elevation(
+                self.sun_elevation,
+                self.car_shadow_extent,
+                self.car_shadow_max_extent,
+                self.car_shadow_height,
+            )
         } else {
             self.env_shadow_extent
         }
@@ -1040,7 +1129,10 @@ impl Renderer {
         if !mesh.visible {
             return false;
         }
-        if self.environment_mode == EnvironmentShadowMode::High {
+        if matches!(
+            self.environment_mode,
+            EnvironmentShadowMode::High | EnvironmentShadowMode::Hybrid
+        ) {
             mesh.casts_static_shadow
                 || (self.effective_car_mode() == CarShadowMode::Dynamic
                     && mesh.casts_dynamic_shadow)
@@ -1061,7 +1153,11 @@ impl Renderer {
             self.sun_direction,
         );
         self.shadow_dirty = true;
-        if mode == EnvironmentShadowMode::Baked && !self.baked_valid {
+        if matches!(
+            mode,
+            EnvironmentShadowMode::Baked | EnvironmentShadowMode::Hybrid
+        ) && !self.baked_valid
+        {
             self.bake_environment();
         }
         self.write_camera();
@@ -1103,6 +1199,10 @@ impl Renderer {
         self.baked_resolution
     }
 
+    pub fn baked_region_half_extent(&self) -> f32 {
+        self.baked_region[2]
+    }
+
     pub fn last_bake_ms(&self) -> f64 {
         self.last_bake_ms
     }
@@ -1124,7 +1224,10 @@ impl Renderer {
         );
         self.shadow_dirty = true;
         self.baked_valid = false;
-        if self.environment_mode == EnvironmentShadowMode::Baked {
+        if matches!(
+            self.environment_mode,
+            EnvironmentShadowMode::Baked | EnvironmentShadowMode::Hybrid
+        ) {
             self.bake_environment();
             self.write_camera();
             self.last_bake_ms
@@ -1158,7 +1261,7 @@ impl Renderer {
         self.baked_shadow_params = [
             1.0 / resolution as f32,
             2.0 * half_extent / resolution as f32,
-            SHADOW_DEPTH_BIAS,
+            self.shadow_depth_bias,
             0.0,
         ];
         let bake_uniform = camera_uniform(
@@ -1176,6 +1279,10 @@ impl Renderer {
             self.baked_shadow_params,
             self.shadow_modes(),
             [0.0; 4],
+            self.shadow_strength,
+            self.shadow_depth_bias,
+            self.particle_params,
+            self.particle_shade,
         );
         self.queue.write_buffer(
             &self.bake_camera_buffer,
@@ -1372,6 +1479,10 @@ impl Renderer {
             self.baked_shadow_params,
             self.shadow_modes(),
             self.car_shadow_params,
+            self.shadow_strength,
+            self.shadow_depth_bias,
+            self.particle_params,
+            self.particle_shade,
         );
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -1593,6 +1704,10 @@ fn camera_uniform(
     baked_shadow_params: [f32; 4],
     shadow_modes: [f32; 4],
     car_shadow_params: [f32; 4],
+    shadow_strength: f32,
+    shadow_depth_bias: f32,
+    particle_params: [f32; 4],
+    particle_shade: [f32; 4],
 ) -> CameraUniform {
     let aspect = width as f32 / height as f32;
     let view_proj = camera.view_proj(aspect).to_cols_array_2d();
@@ -1609,11 +1724,11 @@ fn camera_uniform(
             shadow_texel,
             shadow_world_texel,
             if shadows_enabled {
-                SHADOW_STRENGTH
+                shadow_strength
             } else {
                 0.0
             },
-            SHADOW_DEPTH_BIAS,
+            shadow_depth_bias,
         ],
         sky_horizon,
         sky_zenith,
@@ -1634,6 +1749,8 @@ fn camera_uniform(
             let up = right.cross(forward).normalize_or(Vec3::Y);
             [up.x, up.y, up.z, 0.0]
         },
+        particle_params,
+        particle_shade,
     }
 }
 
@@ -1834,18 +1951,32 @@ fn performance_now() -> f64 {
     }
 }
 
-fn car_shadow_extent_for_elevation(elevation: f32) -> f32 {
+fn car_shadow_extent_for_elevation(
+    elevation: f32,
+    extent: f32,
+    max_extent: f32,
+    height: f32,
+) -> f32 {
     let elevation = elevation.max(0.05);
-    let length = CAR_SHADOW_HEIGHT / elevation.tan();
-    (length * 0.5 + 4.0).clamp(CAR_SHADOW_EXTENT, CAR_SHADOW_MAX_EXTENT)
+    let length = height / elevation.tan();
+    (length * 0.5 + 4.0).clamp(extent, max_extent)
 }
 
 fn car_shadow_direction(light: Vec3) -> Vec3 {
     Vec3::new(light.x, 0.0, light.z).normalize_or(Vec3::X)
 }
 
-fn car_shadow_length(elevation: f32) -> f32 {
-    CAR_SHADOW_HEIGHT / elevation.max(0.05).tan()
+fn car_shadow_length(elevation: f32, height: f32) -> f32 {
+    height / elevation.max(0.05).tan()
+}
+
+fn resolve_texture_size(requested: u32, fallback: u32, max: u32) -> u32 {
+    let requested = if requested == 0 {
+        fallback
+    } else {
+        requested.max(256)
+    };
+    requested.min(max.max(256))
 }
 
 fn preferred_car_shadow_map_size(_backend: &str, adapter_limits: &wgpu::Limits) -> u32 {
@@ -1853,7 +1984,7 @@ fn preferred_car_shadow_map_size(_backend: &str, adapter_limits: &wgpu::Limits) 
     preferred.min(adapter_limits.max_texture_dimension_2d)
 }
 
-fn preferred_baked_resolution(backend: &str, adapter_limits: wgpu::Limits) -> u32 {
+fn preferred_baked_resolution(backend: &str, adapter_limits: &wgpu::Limits) -> u32 {
     if backend == "Gl" || small_viewport() {
         2048
     } else {
@@ -2410,6 +2541,7 @@ mod tests {
         car_shadow_extent_for_elevation, preferred_car_shadow_map_size, preferred_shadow_map_size,
         select_sample_count, shadow_decal_model, shadow_view_proj,
     };
+    use crate::tuning::ShadowTuning;
     use glam::{Vec3, Vec4};
 
     #[test]
@@ -2484,10 +2616,21 @@ mod tests {
 
     #[test]
     fn car_shadow_extent_grows_at_low_sun() {
-        let noon = car_shadow_extent_for_elevation(super::sun_for_time(15.0).1);
-        let evening = car_shadow_extent_for_elevation(super::sun_for_time(20.0).1);
+        let shadow = ShadowTuning::default();
+        let noon = car_shadow_extent_for_elevation(
+            super::sun_for_time(15.0).1,
+            shadow.car_extent,
+            shadow.car_max_extent,
+            shadow.car_height,
+        );
+        let evening = car_shadow_extent_for_elevation(
+            super::sun_for_time(20.0).1,
+            shadow.car_extent,
+            shadow.car_max_extent,
+            shadow.car_height,
+        );
         assert!(evening > noon);
-        assert!(evening <= super::CAR_SHADOW_MAX_EXTENT);
-        assert!(noon >= super::CAR_SHADOW_EXTENT);
+        assert!(evening <= shadow.car_max_extent);
+        assert!(noon >= shadow.car_extent);
     }
 }

@@ -197,7 +197,7 @@ Toolchain setup scripts:
   Time of day uses a slider plus Apply, tints the sky, updates sun direction, and rebakes
   Baked maps. Settings are global across all viewers. All desktop and mobile builds default
   to Baked environment shadows and the Dynamic car shadow. Auto is not offered; legacy
-  stored Auto shadow values are coerced to Baked and Dynamic, while explicit modes are
+  stored Auto shadow values are coerced to Hybrid and Dynamic, while explicit modes are
   preserved.
 - Drive brake and reverse lights: rear-lamp lens geometry is split from the body and lit
   emissively by brake-pedal input or reverse gear only. Garage remains unchanged.

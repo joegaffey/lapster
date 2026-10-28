@@ -1,15 +1,54 @@
 use glam::{Mat4, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 use sim_types::{CarPhysics, CarTuning, PacejkaCoefficients, SpawnPoint, TorquePoint};
 
 use crate::collider::TrackCollider;
 
 pub const FIXED_DT: f32 = 1.0 / 500.0;
-const GRAVITY: f32 = 9.81;
-const AIR_DENSITY: f32 = 1.225;
-const WHEEL_MASS: f32 = 20.0;
-const BUMP_STOP_RATE_MULTIPLIER: f32 = 12.0;
-const STEERING_SPEED_FALLOFF: f32 = 0.09;
-const BODY_PROBE_HEIGHT: f32 = 5.0;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PhysicsTuning {
+    pub gravity: f32,
+    pub air_density: f32,
+    pub wheel_mass: f32,
+    pub bump_stop_rate_multiplier: f32,
+    pub steering_speed_falloff: f32,
+    pub steering_min_limit: f32,
+    pub body_probe_height: f32,
+    pub body_probe_margin: f32,
+    pub max_load_factor: f32,
+}
+
+impl Default for PhysicsTuning {
+    fn default() -> Self {
+        Self {
+            gravity: 9.81,
+            air_density: 1.225,
+            wheel_mass: 20.0,
+            bump_stop_rate_multiplier: 12.0,
+            steering_speed_falloff: 0.09,
+            steering_min_limit: 0.08,
+            body_probe_height: 5.0,
+            body_probe_margin: 5.0,
+            max_load_factor: 3.0,
+        }
+    }
+}
+
+impl PhysicsTuning {
+    pub fn sanitize(&mut self) {
+        self.gravity = self.gravity.clamp(0.0, 50.0);
+        self.air_density = self.air_density.clamp(0.0, 5.0);
+        self.wheel_mass = self.wheel_mass.clamp(1.0, 200.0);
+        self.bump_stop_rate_multiplier = self.bump_stop_rate_multiplier.clamp(0.0, 100.0);
+        self.steering_speed_falloff = self.steering_speed_falloff.clamp(0.0, 2.0);
+        self.steering_min_limit = self.steering_min_limit.clamp(0.001, 1.0);
+        self.body_probe_height = self.body_probe_height.clamp(0.1, 50.0);
+        self.body_probe_margin = self.body_probe_margin.clamp(0.0, 50.0);
+        self.max_load_factor = self.max_load_factor.clamp(1.0, 20.0);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Controls {
@@ -107,6 +146,7 @@ pub struct Vehicle {
     steering_sensitivity: f32,
     esc_activity: f32,
     steer_angle: f32,
+    physics_tuning: PhysicsTuning,
 }
 
 impl Vehicle {
@@ -125,8 +165,9 @@ impl Vehicle {
         let spawn_position = Vec3::from_array(spawn.position) + Vec3::Y * 0.25;
 
         let default_tuning = CarTuning::from_physics(&physics);
+        let physics_tuning = PhysicsTuning::default();
         let (wheel_attach_local, wheel_radius, rest_length, wheel_inertia) =
-            wheel_dimensions(&physics);
+            wheel_dimensions(&physics, physics_tuning.wheel_mass);
 
         let state = VehicleState {
             position: spawn_position,
@@ -165,7 +206,19 @@ impl Vehicle {
             steering_sensitivity: 1.0,
             esc_activity: 0.0,
             steer_angle: 0.0,
+            physics_tuning,
         }
+    }
+
+    pub fn set_physics_tuning(&mut self, tuning: &PhysicsTuning) {
+        let mut tuning = tuning.clone();
+        tuning.sanitize();
+        self.physics_tuning = tuning;
+        self.refresh_wheel_dimensions();
+    }
+
+    pub fn physics_tuning(&self) -> PhysicsTuning {
+        self.physics_tuning.clone()
     }
 
     pub fn set_traction_control(&mut self, enabled: bool) {
@@ -259,7 +312,8 @@ impl Vehicle {
     }
 
     fn refresh_wheel_dimensions(&mut self) {
-        let (attach, radius, rest, inertia) = wheel_dimensions(&self.physics);
+        let (attach, radius, rest, inertia) =
+            wheel_dimensions(&self.physics, self.physics_tuning.wheel_mass);
         self.wheel_attach_local = attach;
         self.wheel_radius = radius;
         self.rest_length = rest;
@@ -298,8 +352,8 @@ impl Vehicle {
 
         let steer_speed = Vec3::new(self.state.velocity.x, 0.0, self.state.velocity.z).length();
         let steer_limit = (self.physics.steering.max_angle
-            / (1.0 + steer_speed * STEERING_SPEED_FALLOFF))
-            .max(0.08);
+            / (1.0 + steer_speed * self.physics_tuning.steering_speed_falloff))
+            .max(self.physics_tuning.steering_min_limit);
         let steer_input =
             (controls.steering.clamp(-1.0, 1.0) * self.steering_sensitivity).clamp(-1.0, 1.0);
         self.steer_angle = steer_input * steer_limit;
@@ -401,7 +455,7 @@ impl Vehicle {
         let esc_activity = esc_activity * self.stability_strength;
         self.esc_activity = esc_activity;
         let drive_torque = drive_torque * (1.0 - 0.5 * esc_activity);
-        let mut total_force = Vec3::new(0.0, -self.physics.mass * GRAVITY, 0.0);
+        let mut total_force = Vec3::new(0.0, -self.physics.mass * self.physics_tuning.gravity, 0.0);
         let mut total_torque = Vec3::ZERO;
         let mut rack_torque = 0.0;
 
@@ -461,9 +515,12 @@ impl Vehicle {
                 } else {
                     0.0
                 };
-                let bump_stop_force =
-                    bump_compression * wheel.suspension.spring_rate * BUMP_STOP_RATE_MULTIPLIER;
-                let max_load = self.physics.mass * GRAVITY * 3.0;
+                let bump_stop_force = bump_compression
+                    * wheel.suspension.spring_rate
+                    * self.physics_tuning.bump_stop_rate_multiplier;
+                let max_load = self.physics.mass
+                    * self.physics_tuning.gravity
+                    * self.physics_tuning.max_load_factor;
                 let normal_load = (wheel.suspension.spring_rate * compression
                     + damper * compression_velocity
                     + anti_roll_force
@@ -616,7 +673,7 @@ impl Vehicle {
         }
         if speed > 0.1 {
             let drag = 0.5
-                * AIR_DENSITY
+                * self.physics_tuning.air_density
                 * self.physics.aero.drag_coefficient
                 * self.physics.aero.frontal_area
                 * speed
@@ -684,11 +741,12 @@ impl Vehicle {
         let mut lift = Vec3::ZERO;
         for offset in offsets {
             let point = self.state.position + self.state.rotation * offset;
-            let origin = point + Vec3::Y * BODY_PROBE_HEIGHT;
-            let Some(hit) = self
-                .collider
-                .raycast(origin, Vec3::NEG_Y, BODY_PROBE_HEIGHT + 5.0)
-            else {
+            let origin = point + Vec3::Y * self.physics_tuning.body_probe_height;
+            let Some(hit) = self.collider.raycast(
+                origin,
+                Vec3::NEG_Y,
+                self.physics_tuning.body_probe_height + self.physics_tuning.body_probe_margin,
+            ) else {
                 continue;
             };
             let clearance = point.y - hit.point.y;
@@ -758,7 +816,10 @@ impl Vehicle {
     }
 }
 
-fn wheel_dimensions(physics: &CarPhysics) -> ([Vec3; 4], [f32; 4], [f32; 4], [f32; 4]) {
+fn wheel_dimensions(
+    physics: &CarPhysics,
+    wheel_mass: f32,
+) -> ([Vec3; 4], [f32; 4], [f32; 4], [f32; 4]) {
     let mut wheel_attach_local = [Vec3::ZERO; 4];
     let mut wheel_radius = [0.33; 4];
     let mut rest_length = [0.19; 4];
@@ -769,7 +830,7 @@ fn wheel_dimensions(physics: &CarPhysics) -> ([Vec3; 4], [f32; 4], [f32; 4], [f3
         wheel_attach_local[index] = local + Vec3::Y * wheel.suspension.travel;
         wheel_radius[index] = radius;
         rest_length[index] = (wheel_attach_local[index].y - radius).max(0.01);
-        wheel_inertia[index] = 0.5 * WHEEL_MASS * radius * radius;
+        wheel_inertia[index] = 0.5 * wheel_mass * radius * radius;
     }
     (wheel_attach_local, wheel_radius, rest_length, wheel_inertia)
 }
@@ -1830,7 +1891,9 @@ mod tests {
     fn hard_landing_stays_finite_and_settles() {
         let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
         vehicle.state.position.y += 0.5;
-        let max_load = vehicle.physics.mass * GRAVITY * 3.0;
+        let max_load = vehicle.physics.mass
+            * vehicle.physics_tuning.gravity
+            * vehicle.physics_tuning.max_load_factor;
         for _ in 0..2500 {
             vehicle.step(Controls::default());
             assert!(vehicle.state.position.is_finite());

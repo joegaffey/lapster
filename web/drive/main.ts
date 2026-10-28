@@ -8,6 +8,7 @@ import { setupPwa } from "../src/pwa.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
 import { setupCarSetupDialog } from "../src/ui/car-setup.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { setupDevMenu } from "../src/ui/dev-menu.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import { saveSelectedBay, selectedBay } from "../src/ui/car-selection.ts";
@@ -33,6 +34,19 @@ setupHud();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
+const devMode = params.has("dev") && params.get("dev") !== "0";
+const DEV_TUNING_KEY = "lapster.tuning.dev.v1";
+let storedDevTuning: string | null = null;
+let storedTuning: any = null;
+if (devMode) {
+  try {
+    storedDevTuning = localStorage.getItem(DEV_TUNING_KEY);
+    storedTuning = storedDevTuning ? JSON.parse(storedDevTuning) : null;
+  } catch {
+    storedDevTuning = null;
+    storedTuning = null;
+  }
+}
 const TRACK_URL =
   params.get("track") ?? `../../fixtures/tracks/skidpad05/pack.sima?v=${PACK_VERSION}`;
 const CAR_URL =
@@ -249,6 +263,14 @@ function updateAutoGear(delta: number, throttle: number, brake: number) {
   }
 }
 
+function syncCarSetup(setup: any): void {
+  redlineRpm = setup.engine?.redlineRpm ?? redlineRpm;
+  if (Array.isArray(setup.drivetrain?.gearRatios) && setup.drivetrain.gearRatios.length > 1) {
+    gearRatios = setup.drivetrain.gearRatios;
+    maxGear = gearRatios.length;
+  }
+}
+
 function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveViewer {
   let assistPending = false;
   const queueAssists = () => {
@@ -412,7 +434,7 @@ function armAudioGesture(): void {
   }
   const onGesture = (event: Event) => {
     const target = event.target;
-    if (target instanceof Element && target.closest("#audio-toggle")) {
+    if (target instanceof Element && target.closest("#audio-toggle, #dev-audio-toggle, #dev-audio-mute")) {
       return;
     }
     clearAudioGesture();
@@ -475,6 +497,60 @@ async function startAudio() {
   updateAudioButton();
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.tagName === "INPUT" ||
+      target.tagName === "SELECT" ||
+      target.tagName === "TEXTAREA")
+  );
+}
+
+function getAudioState(): { enabled: boolean; muted: boolean; status: string } {
+  return {
+    enabled: audioEnabled,
+    muted: audioMuted,
+    status: audio?.status ?? "unavailable",
+  };
+}
+
+function toggleAudio(): void {
+  if (!audio) {
+    return;
+  }
+  if (audio.status === "running") {
+    if (audio.contextState !== "running") {
+      clearAudioGesture();
+      void audio.resume().then(updateAudioButton);
+      return;
+    }
+    audio.toggleMuted();
+    audioMuted = audio.muted;
+    audioEnabled = true;
+    saveAudioPreference();
+    updateAudioButton();
+  } else if (audio.status !== "starting") {
+    void startAudio();
+  }
+}
+
+function toggleAudioMute(): void {
+  if (!audio) {
+    return;
+  }
+  if (audio.status === "running") {
+    audio.toggleMuted();
+    audioMuted = audio.muted;
+    audioEnabled = true;
+  } else {
+    audioMuted = !audioMuted;
+    audio.setMuted(audioMuted);
+  }
+  saveAudioPreference();
+  updateAudioButton();
+}
+
 async function boot() {
   status.textContent = "starting";
   if (await setupPwa()) {
@@ -491,17 +567,19 @@ async function boot() {
 
   resizeCanvas();
   status.textContent = "creating physics";
-  const viewer = await DriveViewer.create(canvas, trackPack.bytes, carPack.bytes, carBay);
+  const viewer = await DriveViewer.create(
+    canvas,
+    trackPack.bytes,
+    carPack.bytes,
+    carBay,
+    storedDevTuning ?? undefined,
+  );
   saveSelectedBay(carBay);
 
   const info = JSON.parse(viewer.info());
   const initial = JSON.parse(viewer.telemetry());
   const setup = JSON.parse(viewer.car_setup());
-  redlineRpm = setup.engine?.redlineRpm ?? redlineRpm;
-  if (Array.isArray(setup.drivetrain?.gearRatios) && setup.drivetrain.gearRatios.length > 1) {
-    gearRatios = setup.drivetrain.gearRatios;
-    maxGear = gearRatios.length;
-  }
+  syncCarSetup(setup);
   lastRpm = initial.rpm;
   asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
 
@@ -526,6 +604,9 @@ async function boot() {
       };
       client.applySetup(viewer.car_setup());
       client.setAssists(workerAssists);
+      if (storedTuning?.physics) {
+        await client.applyPhysicsTuning(JSON.stringify(storedTuning.physics));
+      }
       client.onFatalError = (message) => {
         console.warn("physics worker failed", message);
       };
@@ -554,6 +635,9 @@ async function boot() {
 
   if (physicsWorker) {
     audio = new EngineSimAudio();
+    if (storedTuning?.audio) {
+      audio.applyTuning(storedTuning.audio);
+    }
     audio.setMuted(audioMuted);
     window.__driveAudio = audio;
     updateAudioButton();
@@ -569,30 +653,15 @@ async function boot() {
       }
     });
     window.addEventListener("pagehide", () => audio?.dispose());
-    audioButton.addEventListener("click", () => {
-      if (!audio) {
-        return;
-      }
-      if (audio.status === "running") {
-        if (audio.contextState !== "running") {
-          clearAudioGesture();
-          void audio.resume().then(updateAudioButton);
-          return;
-        }
-        audio.toggleMuted();
-        audioMuted = audio.muted;
-        audioEnabled = true;
-        saveAudioPreference();
-        updateAudioButton();
-      } else if (audio.status !== "starting") {
-        void startAudio();
-      }
-    });
+    audioButton.addEventListener("click", toggleAudio);
   } else {
     updateAudioButton();
   }
 
   window.addEventListener("keydown", (event) => {
+    if (isEditableTarget(event.target)) {
+      return;
+    }
     const key = event.key.toLowerCase();
     if ([
       "w",
@@ -617,6 +686,9 @@ async function boot() {
   });
   window.addEventListener("keyup", (event) => {
     keys.delete(event.key.toLowerCase());
+    if (isEditableTarget(event.target)) {
+      return;
+    }
   });
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", reset);
@@ -624,7 +696,7 @@ async function boot() {
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
   setCameraMode("chase");
   setupCarSetupDialog(driver, info.car.id, info.asset.id);
-  setupAssistsDialog(driver, {
+  const settings = setupAssistsDialog(driver, {
     onRenderScale: (scale) => {
       renderScale = scale;
       if (resizeCanvas()) {
@@ -632,6 +704,40 @@ async function boot() {
       }
     },
   });
+  if (devMode && settings) {
+    setupDevMenu(driver, {
+      carId: info.car.id,
+      settings,
+      getCameraMode: () => cameraMode,
+      setCameraMode,
+      getBodyVisible: () => bodyVisible,
+      setBodyVisible,
+      getAudioState,
+      toggleAudio,
+      toggleAudioMute,
+      onCarSetup: syncCarSetup,
+      restartPhysics: async (tuning) => {
+        if (physics) {
+          await physics.applyPhysicsTuning(JSON.stringify(tuning));
+        } else {
+          viewer.apply_physics_tuning(JSON.stringify(tuning));
+        }
+      },
+      restartAudio: async (tuning) => {
+        if (!audio) {
+          return;
+        }
+        audio.applyTuning(tuning);
+        await audio.restart();
+        updateAudioButton();
+      },
+      reloadGpu: () => window.location.reload(),
+      applyAudio: (tuning) => {
+        audio?.applyTuning(tuning);
+        updateAudioButton();
+      },
+    });
+  }
   setupTouchControls(keys);
 
   const observer = new ResizeObserver(() => {

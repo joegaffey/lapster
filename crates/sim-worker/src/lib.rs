@@ -1,5 +1,5 @@
 use glam::{Quat, Vec3};
-use sim_core::{Controls, TrackCollider, Vehicle, FIXED_DT};
+use sim_core::{Controls, PhysicsTuning, TrackCollider, Vehicle, FIXED_DT};
 use sim_types::snapshot_state as state;
 use sim_types::{CarTuning, SNAPSHOT_STATE_FLOATS};
 use wasm_bindgen::prelude::*;
@@ -120,6 +120,14 @@ impl Simulation {
 
     pub fn default_setup(&self) -> String {
         serde_json::to_string(&self.vehicle.default_setup()).unwrap_or_default()
+    }
+
+    pub fn apply_physics_tuning(&mut self, json: &str) -> Result<f64, JsValue> {
+        let tuning: PhysicsTuning = serde_json::from_str(json)
+            .map_err(|error| JsValue::from_str(&format!("invalid physics tuning: {error}")))?;
+        self.vehicle.set_physics_tuning(&tuning);
+        self.reset();
+        Ok(self.tick())
     }
 
     pub fn apply_setup(&mut self, json: &str) -> Result<String, JsValue> {

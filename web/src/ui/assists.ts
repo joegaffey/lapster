@@ -1,7 +1,7 @@
 import { BUILD_CHANNEL } from "../version.generated.ts";
 import { setFpsCounterVisible } from "./fps.ts";
 
-interface SettingsViewer {
+export interface SettingsViewer {
   set_traction_control?(enabled: boolean): void;
   set_traction_strength?(strength: number): void;
   set_abs_control?(enabled: boolean): void;
@@ -16,14 +16,14 @@ interface SettingsViewer {
   msaa_samples(): number;
 }
 
-type AntiAliasing = "auto" | "off" | "2x" | "4x";
-type EnvironmentShadows = "high" | "baked" | "off";
-type CarShadow = "dynamic" | "silhouette" | "off";
-type RenderScale = 1 | 0.85 | 0.75 | 0.67 | 0.5;
+export type AntiAliasing = "auto" | "off" | "2x" | "4x";
+export type EnvironmentShadows = "high" | "hybrid" | "baked" | "off";
+export type CarShadow = "dynamic" | "silhouette" | "off";
+export type RenderScale = 1 | 0.85 | 0.75 | 0.67 | 0.5;
 
 const RENDER_SCALES: RenderScale[] = [1, 0.85, 0.75, 0.67, 0.5];
 
-interface AssistSettings {
+export interface AssistSettings {
   tc: boolean;
   tcStrength: number;
   abs: boolean;
@@ -44,6 +44,13 @@ interface SettingsOptions {
   onRenderScale?: (scale: number) => void;
 }
 
+export interface SettingsController {
+  get(): AssistSettings;
+  update(patch: Partial<AssistSettings>): void;
+  refresh(): void;
+  reset(): void;
+}
+
 const DEV_BUILD = BUILD_CHANNEL === "dev";
 const STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v3" : "lapster.settings.v3";
 const PREVIOUS_STORAGE_KEY = DEV_BUILD ? "lapster.settings.dev.v2" : "lapster.settings.v2";
@@ -58,7 +65,7 @@ const DEFAULTS: AssistSettings = {
   escStrength: 0.5,
   steeringSensitivity: 1,
   debugLines: false,
-  environmentShadows: "baked",
+  environmentShadows: "hybrid",
   carShadow: "dynamic",
   timeOfDay: 15,
   antiAliasing: "auto",
@@ -232,6 +239,7 @@ function settingsDialogHtml(): string {
         <span>Environment shadows</span>
         <select id="environment-shadows">
           <option value="baked">Static</option>
+          <option value="hybrid">Static + near dynamic</option>
           <option value="high">Dynamic</option>
           <option value="off">Off</option>
         </select>
@@ -309,10 +317,11 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
 function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
   const environmentShadows =
     value?.environmentShadows === "high" ||
+    value?.environmentShadows === "hybrid" ||
     value?.environmentShadows === "baked" ||
     value?.environmentShadows === "off"
       ? value.environmentShadows
-      : "baked";
+      : "hybrid";
   const carShadow =
     value?.carShadow === "dynamic" ||
     value?.carShadow === "silhouette" ||
@@ -364,7 +373,7 @@ function load(): AssistSettings {
       };
       return sanitize({
         ...(old as Partial<AssistSettings>),
-        environmentShadows: old.shadows === false ? "off" : "baked",
+        environmentShadows: old.shadows === false ? "off" : "hybrid",
         carShadow: old.shadows === false ? "off" : "dynamic",
       });
     }
@@ -400,7 +409,7 @@ function formatTime(hours: number): string {
 export function setupAssistsDialog(
   viewer: SettingsViewer,
   options: SettingsOptions = {},
-): void {
+): SettingsController | null {
   const gameplay = options.gameplay !== false;
   ensureSettingsUi(gameplay);
 
@@ -447,7 +456,7 @@ export function setupAssistsDialog(
     !renderScaleValue ||
     !status
   ) {
-    return;
+    return null;
   }
   if (
     gameplay &&
@@ -461,12 +470,12 @@ export function setupAssistsDialog(
       !escValue ||
       !steeringValue)
   ) {
-    return;
+    return null;
   }
 
   let settings = load();
   let actualMsaa = 1;
-  let appliedEnvironment: "high" | "baked" | "off" = "high";
+  let appliedEnvironment: "high" | "hybrid" | "baked" | "off" = "high";
 
   const applyAssists = () => {
     if (!gameplay) return;
@@ -533,6 +542,37 @@ export function setupAssistsDialog(
   viewer.set_time_of_day(settings.timeOfDay);
   apply();
   refresh();
+
+  const resetAll = () => {
+    settings = { ...DEFAULTS };
+    viewer.set_time_of_day(settings.timeOfDay);
+    apply();
+    refresh();
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(PREVIOUS_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      // Ignore storage failures.
+    }
+    status.textContent = "Reset to defaults";
+  };
+
+  const controller: SettingsController = {
+    get: () => ({ ...settings }),
+    update: (patch) => {
+      const timeChanged = patch.timeOfDay !== undefined;
+      settings = sanitize({ ...settings, ...patch });
+      if (timeChanged) {
+        viewer.set_time_of_day(settings.timeOfDay);
+      }
+      apply();
+      refresh();
+      status.textContent = "Saved";
+    },
+    refresh,
+    reset: resetAll,
+  };
 
   const setTab = (tab: string) => {
     for (const button of dialog.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
@@ -649,20 +689,7 @@ export function setupAssistsDialog(
     refresh();
     status.textContent = "Saved";
   });
-  resetButton.addEventListener("click", () => {
-    settings = { ...DEFAULTS };
-    viewer.set_time_of_day(settings.timeOfDay);
-    apply();
-    refresh();
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(PREVIOUS_STORAGE_KEY);
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
-    } catch {
-      // Ignore storage failures.
-    }
-    status.textContent = "Reset to defaults";
-  });
+  resetButton.addEventListener("click", resetAll);
   closeButton.addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) {
@@ -674,4 +701,5 @@ export function setupAssistsDialog(
     status.textContent = "Changes apply live";
     dialog.showModal();
   });
+  return controller;
 }

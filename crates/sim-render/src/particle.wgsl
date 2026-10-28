@@ -12,6 +12,8 @@ struct Camera {
     car_shadow_params: vec4<f32>,
     camera_right: vec4<f32>,
     camera_up: vec4<f32>,
+    particle_params: vec4<f32>,
+    particle_shade: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -68,9 +70,9 @@ fn vs_particle(input: ParticleIn) -> ParticleOut {
 
 @fragment
 fn fs_particle(input: ParticleOut) -> @location(0) vec4<f32> {
-    let radial = 1.0 - smoothstep(0.55, 1.0, length(input.uv));
-    let near = smoothstep(0.45, 2.6, distance(camera.camera_pos.xyz, input.world));
+    let radial = 1.0 - smoothstep(camera.particle_params.z, camera.particle_params.w, length(input.uv));
+    let near = smoothstep(camera.particle_params.x, camera.particle_params.y, distance(camera.camera_pos.xyz, input.world));
     let alpha = input.alpha * radial * near;
-    let shade = 0.78 + 0.22 * clamp(input.uv.y, 0.0, 1.0);
+    let shade = camera.particle_shade.x + (camera.particle_shade.y - camera.particle_shade.x) * clamp(input.uv.y, 0.0, 1.0);
     return vec4<f32>(linear_to_srgb(input.color * shade), alpha);
 }

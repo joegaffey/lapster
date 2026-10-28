@@ -3,6 +3,7 @@ use glam::{Mat4, Quat, Vec3};
 use sim_core::VehicleState;
 
 use crate::scene::CarRig;
+use crate::tuning::{ParticleSurface, ParticleTuning};
 
 pub const MAX_PARTICLES: usize = 1024;
 const TAU: f32 = std::f32::consts::TAU;
@@ -77,6 +78,7 @@ impl ParticleSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         dt: f32,
@@ -84,15 +86,17 @@ impl ParticleSystem {
         state: &VehicleState,
         rig: &CarRig,
         surface_names: &[String],
+        tuning: &ParticleTuning,
     ) {
-        let dt = dt.clamp(0.0, 0.05);
+        let dt = dt.clamp(0.0, tuning.max_dt);
         if dt <= 0.0 {
             return;
         }
         self.step(dt);
 
+        let max_active = tuning.max_active.min(MAX_PARTICLES);
         let speed = state.velocity.length();
-        if speed > 1.5 {
+        if max_active > 0 && speed > tuning.min_speed {
             for (index, wheel) in state.wheels.iter().enumerate() {
                 if !wheel.contact {
                     self.accumulators[index] = 0.0;
@@ -102,14 +106,20 @@ impl ParticleSystem {
                     self.accumulators[index] = 0.0;
                     continue;
                 };
-                let surface = surface_kind(
+                let surface_kind = surface_kind(
                     surface_names
                         .get(wheel.surface_id as usize)
                         .map(String::as_str)
                         .unwrap_or(""),
                 );
+                let surface = match surface_kind {
+                    SurfaceKind::Asphalt => &tuning.surfaces.asphalt,
+                    SurfaceKind::Concrete => &tuning.surfaces.concrete,
+                    SurfaceKind::Grass => &tuning.surfaces.grass,
+                    SurfaceKind::Kerb => &tuning.surfaces.kerb,
+                };
                 let front_gate = if rig_wheel.is_front {
-                    ((speed - 8.0) / 10.0).clamp(0.0, 1.0)
+                    ((speed - tuning.front_gate_speed) / tuning.front_gate_range).clamp(0.0, 1.0)
                 } else {
                     1.0
                 };
@@ -117,42 +127,37 @@ impl ParticleSystem {
                     self.accumulators[index] = 0.0;
                     continue;
                 }
-                let lateral = (wheel.slip_angle.abs() - 0.09).max(0.0) * 1.5;
-                let longitudinal = (wheel.slip_ratio.abs() - 0.14).max(0.0);
+                let lateral = (wheel.slip_angle.abs() - tuning.lateral_threshold).max(0.0)
+                    * tuning.lateral_scale;
+                let longitudinal =
+                    (wheel.slip_ratio.abs() - tuning.longitudinal_threshold).max(0.0);
                 let skid = lateral.max(longitudinal);
-                let load = (wheel.normal_load / 4_500.0).clamp(0.12, 1.0);
-                let speed_factor = ((speed - 1.5) / 8.0).clamp(0.0, 1.0);
-                let rolling = match surface {
-                    SurfaceKind::Concrete | SurfaceKind::Grass => {
-                        (speed / 12.0).clamp(0.0, 1.0) * 0.18
-                    }
-                    _ => 0.0,
-                };
-                let rate = match surface {
-                    SurfaceKind::Asphalt => (skid * 2_000.0).min(210.0) * load * speed_factor,
-                    SurfaceKind::Concrete => {
-                        (skid * 800.0 + rolling * 500.0).min(150.0) * load * speed_factor
-                    }
-                    SurfaceKind::Grass => {
-                        (skid * 350.0 + rolling * 600.0).min(150.0) * load * speed_factor
-                    }
-                    SurfaceKind::Kerb => (skid * 400.0).min(100.0) * load * speed_factor,
-                } * front_gate;
+                let load = (wheel.normal_load / tuning.load_reference).clamp(tuning.load_min, 1.0);
+                let speed_factor =
+                    ((speed - tuning.min_speed) / tuning.speed_factor_range).clamp(0.0, 1.0);
+                let rolling = (speed / surface.rolling_speed.max(0.01)).clamp(0.0, 1.0)
+                    * surface.rolling_amount;
+                let rate = (skid * surface.rate_scale + rolling * surface.rolling_rate)
+                    .min(surface.rate_cap)
+                    * load
+                    * speed_factor
+                    * front_gate;
                 if rate <= 0.0 {
                     self.accumulators[index] = 0.0;
                     continue;
                 }
-                self.accumulators[index] = (self.accumulators[index] + rate * dt).min(2.0);
+                self.accumulators[index] =
+                    (self.accumulators[index] + rate * dt).min(tuning.accumulator_max);
                 let mut spawned = 0;
                 while self.accumulators[index] >= 1.0
-                    && self.particles.len() < MAX_PARTICLES
-                    && spawned < 8
+                    && self.particles.len() < max_active
+                    && spawned < tuning.max_spawn_per_step
                 {
                     self.accumulators[index] -= 1.0;
                     spawned += 1;
-                    self.spawn(car_world, state, rig_wheel, wheel, surface);
+                    self.spawn(car_world, state, rig_wheel, wheel, surface, tuning);
                 }
-                if self.particles.len() >= MAX_PARTICLES {
+                if self.particles.len() >= max_active {
                     self.accumulators[index] = 0.0;
                 }
             }
@@ -160,7 +165,7 @@ impl ParticleSystem {
             self.accumulators = [0.0; 4];
         }
 
-        self.rebuild_instances();
+        self.rebuild_instances(tuning);
     }
 
     fn step(&mut self, dt: f32) {
@@ -187,11 +192,12 @@ impl ParticleSystem {
         state: &VehicleState,
         rig_wheel: &crate::scene::RigWheel,
         wheel: &sim_core::WheelState,
-        surface: SurfaceKind,
+        surface: &ParticleSurface,
+        tuning: &ParticleTuning,
     ) {
         let center = car_world.transform_point3(rig_wheel.local_model.w_axis.truncate());
         let normal = wheel.contact_normal.normalize_or(Vec3::Y);
-        let contact = center - normal * (rig_wheel.radius + 0.02);
+        let contact = center - normal * (rig_wheel.radius + tuning.spawn.contact_offset);
         let forward = car_world
             .transform_vector3(Vec3::NEG_Z)
             .normalize_or(Vec3::NEG_Z);
@@ -202,54 +208,34 @@ impl ParticleSystem {
         } else {
             -right
         };
-        let jitter = right * self.range(-rig_wheel.width * 0.35, rig_wheel.width * 0.35)
-            + forward * self.range(-0.12, 0.12)
-            + Vec3::Y * self.range(0.06, 0.16);
-        let velocity = state.velocity * 0.12 - forward * (0.35 + speed * 0.06)
-            + right * self.range(-0.35, 0.35)
-            + outward * self.range(0.1, 0.4)
-            + Vec3::Y * self.range(1.0, 2.3);
-        let (color, start_size, end_size, life, alpha, rise, drag) = match surface {
-            SurfaceKind::Asphalt => (
-                Vec3::new(0.55, 0.56, 0.58),
-                self.range(0.10, 0.17),
-                self.range(0.75, 1.55) * self.range(0.90, 1.20),
-                self.range(1.10, 1.70),
-                0.30,
-                0.60,
-                1.0,
-            ),
-            SurfaceKind::Concrete => (
-                Vec3::new(0.50, 0.44, 0.33),
-                self.range(0.09, 0.15),
-                self.range(0.55, 1.15),
-                self.range(0.80, 1.25),
-                0.56,
-                0.45,
-                1.3,
-            ),
-            SurfaceKind::Grass => (
-                Vec3::new(0.30, 0.36, 0.22),
-                self.range(0.08, 0.13),
-                self.range(0.45, 0.95),
-                self.range(0.60, 1.00),
-                0.52,
-                0.35,
-                1.6,
-            ),
-            SurfaceKind::Kerb => (
-                Vec3::new(0.50, 0.44, 0.32),
-                self.range(0.07, 0.11),
-                self.range(0.35, 0.75),
-                self.range(0.50, 0.85),
-                0.50,
-                0.30,
-                1.7,
-            ),
-        };
-        let tint = 0.84 + self.next() * 0.30;
+        let jitter = right
+            * self.range(
+                -rig_wheel.width * tuning.spawn.width_jitter_fraction,
+                rig_wheel.width * tuning.spawn.width_jitter_fraction,
+            )
+            + forward * self.range(-tuning.spawn.forward_jitter, tuning.spawn.forward_jitter)
+            + Vec3::Y * self.range(tuning.spawn.up_jitter_min, tuning.spawn.up_jitter_max);
+        let velocity = state.velocity * tuning.spawn.velocity_inherit
+            - forward
+                * (tuning.spawn.forward_speed_base + speed * tuning.spawn.forward_speed_scale)
+            + right * self.range(-tuning.spawn.lateral_spread, tuning.spawn.lateral_spread)
+            + outward * self.range(tuning.spawn.outward_min, tuning.spawn.outward_max)
+            + Vec3::Y * self.range(tuning.spawn.up_velocity_min, tuning.spawn.up_velocity_max);
+        let color = Vec3::from_array(surface.color);
+        let start_size = self.range(surface.start_size_min, surface.start_size_max);
+        let end_size = self.range(surface.end_size_min, surface.end_size_max)
+            * self.range(surface.end_variance_min, surface.end_variance_max);
+        let life = self.range(surface.life_min, surface.life_max);
+        let alpha = surface.alpha;
+        let rise = surface.rise;
+        let drag = surface.drag;
+        let tint = self.range(tuning.spawn.tint_min, tuning.spawn.tint_max);
         let rotation = Quat::from_rotation_z(self.range(0.0, TAU));
-        let angular_velocity = Vec3::new(0.0, 0.0, self.range(-0.8, 0.8));
+        let angular_velocity = Vec3::new(
+            0.0,
+            0.0,
+            self.range(tuning.spawn.spin_min, tuning.spawn.spin_max),
+        );
         self.particles.push(Particle {
             position: contact + jitter,
             velocity,
@@ -266,14 +252,16 @@ impl ParticleSystem {
         });
     }
 
-    fn rebuild_instances(&mut self) {
+    fn rebuild_instances(&mut self, tuning: &ParticleTuning) {
         self.instances.clear();
+        let fade_in_end = tuning.fade.fade_in_end.clamp(0.0, 1.0);
+        let fade_out_start = tuning.fade.fade_out_start.max(fade_in_end).clamp(0.0, 1.0);
         for particle in &self.particles {
             let t = (particle.age / particle.life).clamp(0.0, 1.0);
-            let grow = 1.0 - (1.0 - t) * (1.0 - t);
+            let grow = 1.0 - (1.0 - t).powf(tuning.fade.grow_power.max(0.1));
             let size = particle.start_size + (particle.end_size - particle.start_size) * grow;
-            let fade_in = smoothstep(0.0, 0.10, t);
-            let fade_out = 1.0 - smoothstep(0.55, 1.0, t);
+            let fade_in = smoothstep(0.0, fade_in_end.max(0.0001), t);
+            let fade_out = 1.0 - smoothstep(fade_out_start, 1.0, t);
             let alpha = particle.alpha * fade_in * fade_out;
             self.instances.push(ParticleInstance {
                 center_scale: [
@@ -389,6 +377,7 @@ mod tests {
                 &state,
                 &car_rig(),
                 &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
             );
         }
         assert!(particles.count() > 0);
@@ -405,6 +394,7 @@ mod tests {
             &calm,
             &car_rig(),
             &["ASPHALT".to_string()],
+            &ParticleTuning::default(),
         );
         assert_eq!(particles.count(), 0);
     }
@@ -428,6 +418,7 @@ mod tests {
                 &state,
                 &car_rig(),
                 &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
             );
         }
         assert_eq!(particles.count(), 0);
@@ -442,6 +433,7 @@ mod tests {
                 &state,
                 &car_rig(),
                 &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
             );
         }
         assert!(particles.count() > 0);
@@ -452,13 +444,15 @@ mod tests {
         let mut particles = ParticleSystem::new();
         let rig = car_rig();
         let state = sliding_state();
+        let tuning = ParticleTuning::default();
         for index in [2, 3] {
             particles.spawn(
                 Mat4::IDENTITY,
                 &state,
                 &rig.wheels[index],
                 &state.wheels[index],
-                SurfaceKind::Asphalt,
+                &tuning.surfaces.asphalt,
+                &tuning,
             );
             let particle = particles.particles.last().expect("particle");
             assert!(
@@ -481,6 +475,7 @@ mod tests {
                     &state,
                     &car_rig(),
                     &[surface.to_string()],
+                    &ParticleTuning::default(),
                 );
             }
             assert!(particles.count() > 0, "{surface}");
@@ -498,6 +493,7 @@ mod tests {
                 &state,
                 &car_rig(),
                 &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
             );
         }
         assert!(particles.count() <= MAX_PARTICLES);
@@ -519,6 +515,7 @@ mod tests {
                 &state,
                 &rig,
                 &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
             );
             b.update(
                 1.0 / 60.0,
@@ -526,6 +523,7 @@ mod tests {
                 &state,
                 &rig,
                 &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
             );
         }
         assert_eq!(a.instances(), b.instances());
