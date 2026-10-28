@@ -563,6 +563,34 @@ function toggleAudioMute(): void {
   updateAudioButton();
 }
 
+async function loadSpeedometerTexture(viewer: DriveViewer): Promise<void> {
+  try {
+    const url = new URL("../assets/speedometer.png", import.meta.url);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`speedometer texture returned ${response.status}`);
+    }
+    const bitmap = await createImageBitmap(await response.blob());
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("could not create speedometer texture context");
+    }
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    viewer.set_speedometer_texture(
+      canvas.width,
+      canvas.height,
+      new Uint8Array(pixels.buffer),
+    );
+  } catch (error) {
+    console.warn("speedometer texture unavailable", error);
+  }
+}
+
 async function boot() {
   status.textContent = "starting";
   if (await setupPwa()) {
@@ -727,6 +755,7 @@ async function boot() {
       }
     },
   });
+  await loadSpeedometerTexture(viewer);
   if (devMode && settings) {
     setupDevMenu(driver, {
       carId: info.car.id,

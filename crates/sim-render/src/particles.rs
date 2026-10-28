@@ -326,6 +326,7 @@ mod tests {
             reverse_light_mesh_index: None,
             dashboard_mesh_index: None,
             dashboard_local: Mat4::IDENTITY,
+            speedometer_face_mesh_index: None,
             cockpit_needles: Vec::new(),
             gear_segments: Vec::new(),
             wheels: (0..4)

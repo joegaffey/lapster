@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 use crate::camera::Camera;
 use crate::particles::ParticleSystem;
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
-use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene};
+use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
 use crate::tuning::{GpuTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{Controls, PhysicsTuning, TrackCollider, Vehicle, FIXED_DT};
@@ -1079,6 +1079,9 @@ impl DriveViewer {
         if let Some(index) = self.rig.dashboard_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
+        if let Some(index) = self.rig.speedometer_face_mesh_index {
+            self.renderer.set_mesh_visible(index, visible);
+        }
         for needle in &self.rig.cockpit_needles {
             self.renderer.set_mesh_visible(needle.mesh_index, visible);
         }
@@ -1168,6 +1171,27 @@ impl DriveViewer {
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
+    }
+
+    pub fn set_speedometer_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), JsValue> {
+        if width == 0 || height == 0 || rgba.len() != (width * height * 4) as usize {
+            return Err(JsValue::from_str("invalid speedometer texture"));
+        }
+        if let Some(index) = self.rig.speedometer_face_mesh_index {
+            let texture = SceneTexture {
+                width,
+                height,
+                rgba8: rgba.to_vec(),
+            };
+            self.renderer.set_mesh_texture(index, &texture);
+            self.renderer.render()?;
+        }
+        Ok(())
     }
 
     pub fn set_body_visible(&mut self, visible: bool) {
@@ -1293,6 +1317,10 @@ impl DriveViewer {
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
         if let Some(index) = self.rig.dashboard_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        }
+        if let Some(index) = self.rig.speedometer_face_mesh_index {
             self.renderer
                 .set_mesh_model(index, car_world * self.rig.dashboard_local);
         }

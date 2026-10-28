@@ -458,19 +458,19 @@ const BAY_COLORS: [[f32; 3]; 10] = [
 const COCKPIT_DIALS: [(CockpitNeedleSource, [f32; 3], f32, f32); 3] = [
     (
         CockpitNeedleSource::Speed,
-        [-0.462, 0.935, -0.22],
+        [-0.447, 0.935, -0.22],
         0.044,
         0.035,
     ),
     (
         CockpitNeedleSource::Rpm,
-        [-0.35, 0.945, -0.22],
-        0.060,
+        [-0.35, 0.925, -0.22],
+        0.050,
         0.045,
     ),
     (
         CockpitNeedleSource::Gear,
-        [-0.238, 0.935, -0.22],
+        [-0.253, 0.935, -0.22],
         0.044,
         0.035,
     ),
@@ -617,6 +617,48 @@ fn build_car(
         None
     };
 
+    let speedometer_face_mesh_index = if brake_lights && dashboard_mesh_index.is_some() {
+        if let Some((_, center, radius, depth)) = COCKPIT_DIALS
+            .iter()
+            .find(|(source, _, _, _)| *source == CockpitNeedleSource::Speed)
+        {
+            let buffers = speedometer_face_buffers(*center, *radius, *depth);
+            let mesh_ref = MeshRef {
+                name: "speedometer_face".to_string(),
+                vertex_offset: 0,
+                vertex_count: buffers.positions.len() as u32,
+                index_offset: 0,
+                index_count: buffers.indices.len() as u32,
+                material: 0,
+                bounds: Aabb {
+                    min: [center[0] - radius, center[1] - radius, center[2]],
+                    max: [center[0] + radius, center[1] + radius, center[2]],
+                },
+                lod: 0,
+            };
+            let index = push_car_mesh(
+                scene,
+                format!("{}_speedometer_face", prefix).as_str(),
+                &mesh_ref,
+                &buffers,
+                [1.0, 1.0, 1.0],
+                body_model,
+                CarMeshStyle {
+                    texture: None,
+                    outline: false,
+                    alpha: 1.0,
+                },
+            )?;
+            scene.meshes[index].casts_static_shadow = false;
+            scene.meshes[index].casts_dynamic_shadow = false;
+            Some(index)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let mut cockpit_needles = Vec::new();
     if brake_lights && dashboard_mesh_index.is_some() {
         for (source, center, radius, depth) in COCKPIT_DIALS {
@@ -624,7 +666,7 @@ fn build_car(
                 continue;
             }
             let buffers = needle_buffers(radius);
-            let center = Vec3::new(center[0], center[1], center[2] + depth * 0.5 - 0.0225);
+            let center = Vec3::new(center[0], center[1], center[2] + depth * 0.5 - 0.0015);
             let mesh_ref = MeshRef {
                 name: format!("dashboard_needle_{}", source as u8),
                 vertex_offset: 0,
@@ -643,7 +685,7 @@ fn build_car(
                 &format!("{}_needle_{}", prefix, source as u8),
                 &mesh_ref,
                 &buffers,
-                [0.012, 0.014, 0.018],
+                [1.0, 0.02, 0.01],
                 body_model * Mat4::from_translation(center),
                 CarMeshStyle {
                     texture: None,
@@ -651,6 +693,7 @@ fn build_car(
                     alpha: 1.0,
                 },
             )?;
+            scene.meshes[mesh_index].emissive = [1.0, 0.0, 0.0];
             scene.meshes[mesh_index].casts_static_shadow = false;
             scene.meshes[mesh_index].casts_dynamic_shadow = false;
             cockpit_needles.push(CockpitNeedle {
@@ -667,7 +710,7 @@ fn build_car(
             .iter()
             .find(|(source, _, _, _)| *source == CockpitNeedleSource::Gear)
         {
-            let z = center[2] + depth * 0.5 - 0.021;
+            let z = center[2] + depth * 0.5 - 0.001;
             let segment_width = radius * 0.50;
             let segment_height = radius * 0.065;
             let gap = radius * 0.155;
@@ -800,6 +843,7 @@ fn build_car(
         reverse_light_mesh_index,
         dashboard_mesh_index,
         dashboard_local: body_local,
+        speedometer_face_mesh_index,
         cockpit_needles,
         gear_segments,
         wheels: rig_wheels,
@@ -1042,7 +1086,7 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
     }
 
     let inner_radius = radius * 0.84;
-    let white_z = z_front - 0.024;
+    let white_z = z_front - 0.004;
     for index in 0..segments {
         let a = tau * index as f32 / segments as f32;
         let b = tau * (index + 1) as f32 / segments as f32;
@@ -1165,9 +1209,44 @@ fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: 
     }
 }
 
+fn speedometer_face_buffers(center: [f32; 3], radius: f32, depth: f32) -> MeshBuffers {
+    let segments = 48;
+    let z = center[2] + depth * 0.5 - 0.0025;
+    let radius = radius * 0.94;
+    let tau = std::f32::consts::TAU;
+    let mut positions = Vec::with_capacity(segments + 1);
+    let mut normals = Vec::with_capacity(segments + 1);
+    let mut uvs = Vec::with_capacity(segments + 1);
+    let mut colors = Vec::with_capacity(segments + 1);
+    let mut indices = Vec::with_capacity(segments * 3);
+    positions.push([center[0], center[1], z]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([0.5, 0.5]);
+    colors.push([1.0, 1.0, 1.0]);
+    for index in 0..segments {
+        let angle = tau * index as f32 / segments as f32;
+        let (sin, cos) = angle.sin_cos();
+        positions.push([center[0] + cos * radius, center[1] + sin * radius, z]);
+        normals.push([0.0, 0.0, 1.0]);
+        uvs.push([0.5 + cos * 0.5, 0.5 - sin * 0.5]);
+        colors.push([1.0, 1.0, 1.0]);
+    }
+    for index in 0..segments {
+        let next = (index + 1) % segments;
+        indices.extend_from_slice(&[0, index as u32 + 1, next as u32 + 1]);
+    }
+    MeshBuffers {
+        positions,
+        normals,
+        uvs,
+        colors,
+        indices,
+    }
+}
+
 fn append_gear_face(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: f32) {
     let segments = 24;
-    let z = center[2] + depth * 0.5 - 0.022;
+    let z = center[2] + depth * 0.5 - 0.002;
     let radius = radius * 0.85;
     let color = [0.004, 0.005, 0.006];
     let tau = std::f32::consts::TAU;
@@ -1217,7 +1296,7 @@ fn needle_buffers(radius: f32) -> MeshBuffers {
         positions: vec![[-width, 0.0, 0.0], [width, 0.0, 0.0], [0.0, length, 0.0]],
         normals: vec![[0.0, 0.0, 1.0]; 3],
         uvs: vec![[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
-        colors: vec![[0.012, 0.014, 0.018]; 3],
+        colors: vec![[1.0, 0.02, 0.01]; 3],
         indices: vec![0, 1, 2],
     }
 }

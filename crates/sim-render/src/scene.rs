@@ -105,6 +105,7 @@ pub struct CarRig {
     pub reverse_light_mesh_index: Option<usize>,
     pub dashboard_mesh_index: Option<usize>,
     pub dashboard_local: Mat4,
+    pub speedometer_face_mesh_index: Option<usize>,
     pub cockpit_needles: Vec<CockpitNeedle>,
     pub gear_segments: Vec<CockpitGearSegment>,
     pub wheels: Vec<RigWheel>,
