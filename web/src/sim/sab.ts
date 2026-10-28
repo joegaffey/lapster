@@ -1,4 +1,5 @@
 import {
+  FFB_FLAG_ACTIVE,
   FFB_MAILBOX_FIELDS,
   FFB_MAILBOX_OFFSET,
   HEADER_FIELDS,
@@ -200,6 +201,35 @@ export function createSnapshotReader(sab: SharedArrayBuffer): SnapshotReader {
       return null;
     },
   };
+}
+
+export interface FfbState {
+  torque: number;
+  timestampSeconds: number;
+  active: boolean;
+}
+
+export function readFfb(sab: SharedArrayBuffer): FfbState | null {
+  const ints = new Int32Array(sab, FFB_MAILBOX_OFFSET, 16);
+  const view = new DataView(sab);
+  const seqIndex = FFB_MAILBOX_FIELDS.seq / 4;
+  const before = AtomicLoad(ints, seqIndex);
+  if (before & 1) {
+    return null;
+  }
+  const state = {
+    active:
+      (view.getUint32(FFB_MAILBOX_OFFSET + FFB_MAILBOX_FIELDS.flags, true) &
+        FFB_FLAG_ACTIVE) !==
+      0,
+    timestampSeconds: view.getFloat64(
+      FFB_MAILBOX_OFFSET + FFB_MAILBOX_FIELDS.timestampSeconds,
+      true,
+    ),
+    torque: view.getFloat32(FFB_MAILBOX_OFFSET + FFB_MAILBOX_FIELDS.torque, true),
+  };
+  const after = AtomicLoad(ints, seqIndex);
+  return before === after ? state : null;
 }
 
 export function writeFfb(sab: SharedArrayBuffer, torque: number, active: boolean): void {

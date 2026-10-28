@@ -35,7 +35,8 @@ emission/spawn/fade/render settings for every surface, shadow strength/bias/exte
 globals, GPU texture sizes, and every car-tuning field as sliders or JSON inputs. It starts
 closed; use the auto-hiding `DEV` tab at the left edge or the backslash key to toggle it.
 Physics changes use `Apply physics`, audio can be restarted in place, and GPU texture changes
-use `Apply GPU & reload` with the tuning persisted across the reload. Every 3D viewer shows a
+use `Apply GPU & reload` with the tuning persisted across the reload. The dev build also exposes
+a `Wheel` panel for WebHID input and constant-force FFB testing. Every 3D viewer shows a
 full-screen loading
 indicator until its first rendered frame; the info HUD starts collapsed in markup on
 every demo, so it cannot flash before boot; drive actions live in a detached top toolbar,
@@ -70,6 +71,10 @@ isolation or worker startup fails.
 - Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
   publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
   Main-thread physics remains available with `?physics=main`.
+- **Wheel/FFB dev spike:** vendored `webhid-wheel` WebHID input, direct wheel steering,
+  front-axle self-aligning torque, and a main-thread fast constant-force path fed from the
+  SAB FFB mailbox at 200 Hz. The dev build exposes a `Wheel` panel for connect, strength,
+  inversions, deadzone, test force, and emergency stop.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
   `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
   audio. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,

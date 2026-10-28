@@ -17,6 +17,8 @@ import { SnapshotSmoother } from "../src/sim/interpolate.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
+import { WheelFfb } from "../src/input/wheel-ffb.ts";
+import { setupWheelPanel } from "../src/ui/wheel-panel.ts";
 
 declare global {
   interface Window {
@@ -24,6 +26,7 @@ declare global {
     __driveViewerError?: string;
     __driveViewer?: DriveViewer;
     __driveAudio?: EngineSimAudio;
+    __wheelFfb?: WheelFfb;
   }
 }
 
@@ -88,6 +91,8 @@ let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
 let audio: EngineSimAudio | null = null;
+let wheel: WheelFfb | null = null;
+let ffbSab: SharedArrayBuffer | null = null;
 const storedAudioPreference = loadAudioPreference();
 let audioEnabled = storedAudioPreference.enabled;
 let audioMuted = storedAudioPreference.muted;
@@ -590,6 +595,7 @@ async function boot() {
       const sab = new SharedArrayBuffer(SAB_TOTAL_SIZE);
       initializeSab(sab);
       validateSab(sab);
+      ffbSab = sab;
       const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
       physics = client;
       smoother = new SnapshotSmoother(client.reader);
@@ -626,6 +632,7 @@ async function boot() {
       console.warn("SAB physics unavailable; using main thread", error);
       physics?.dispose();
       physics = null;
+      ffbSab = null;
       smoother = null;
       physicsWorker = false;
       driver = viewer;
@@ -648,11 +655,15 @@ async function boot() {
       }
       if (document.hidden) {
         audio.suspend();
+        wheel?.stop();
       } else {
         void audio.resume();
       }
     });
-    window.addEventListener("pagehide", () => audio?.dispose());
+    window.addEventListener("pagehide", () => {
+      wheel?.stop();
+      audio?.dispose();
+    });
     audioButton.addEventListener("click", toggleAudio);
   } else {
     updateAudioButton();
@@ -704,6 +715,17 @@ async function boot() {
       }
     },
   });
+  if (devMode || BUILD_CHANNEL === "dev") {
+    wheel = new WheelFfb(ffbSab ?? undefined);
+    window.__wheelFfb = wheel;
+    setupWheelPanel(wheel);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        wheel?.stop();
+      }
+    });
+    window.addEventListener("pagehide", () => wheel?.stop());
+  }
   if (devMode && settings) {
     setupDevMenu(driver, {
       carId: info.car.id,
@@ -756,10 +778,14 @@ async function boot() {
     const delta = Math.min(Math.max(now - lastFrame, 0), 0.05);
     lastFrame = now;
 
-    const steerLeft = keys.has("a") || keys.has("arrowleft");
-    const steerRight = keys.has("d") || keys.has("arrowright");
-    const targetSteer = (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
-    steer += (targetSteer - steer) * Math.min(1, delta * 8);
+    if (wheel?.connected) {
+      steer = wheel.steering;
+    } else {
+      const steerLeft = keys.has("a") || keys.has("arrowleft");
+      const steerRight = keys.has("d") || keys.has("arrowright");
+      const targetSteer = (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
+      steer += (targetSteer - steer) * Math.min(1, delta * 8);
+    }
 
     const forwardKey = keys.has("w") || keys.has("arrowup");
     const reverseKey = keys.has("s") || keys.has("arrowdown");
@@ -823,6 +849,7 @@ async function boot() {
             telemetry.speedMps,
             telemetry.wheels,
           );
+          wheel?.setTorque(telemetry.steeringRackTorque);
           updateHud(telemetry);
         }
       } else {
@@ -839,6 +866,7 @@ async function boot() {
           telemetry.speedMps,
           telemetry.wheels,
         );
+        wheel?.setTorque(telemetry.steeringRackTorque);
         updateHud(telemetry);
       }
 
@@ -861,6 +889,7 @@ async function boot() {
 }
 
 function fail(error: unknown) {
+  wheel?.stop();
   showLoadingFailure(error);
   const message = error instanceof Error ? error.message : String(error);
   window.__driveViewerError = message;

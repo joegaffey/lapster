@@ -15,6 +15,7 @@ import {
   getSabFlags,
   initializeSab,
   publishSnapshot,
+  readFfb,
   readInput,
   requestReset,
   setPaused,
@@ -116,12 +117,17 @@ test("updates pause and reset flags", () => {
   assert.equal(getSabFlags(sab) & 2, 0);
 });
 
-test("writes the FFB mailbox without exposing a torn sequence", () => {
+test("writes and reads the FFB mailbox without exposing a torn sequence", () => {
   const sab = makeSab();
   writeFfb(sab, 0.4, true);
   const view = new DataView(sab);
   assert.equal(view.getFloat32(1280 + 16, true), Math.fround(0.4));
   assert.equal(view.getUint32(1280 + 4, true), 1);
+
+  const ffb = readFfb(sab);
+  assert.ok(ffb);
+  assert.equal(ffb?.active, true);
+  assert.equal(ffb?.torque, Math.fround(0.4));
 });
 
 test("snapshot slot fields match the payload offset", () => {

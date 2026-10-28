@@ -252,7 +252,10 @@ Toolchain setup scripts:
 
 ## Wheel and FFB workstream
 
-**Status:** planned, not implemented. No HID or FFB dependency is wired into the app yet.
+**Status:** dev spike implemented. `webhid-wheel` is vendored from the `webhid-wheel-dev`
+fast-constant-force commit, the dev Drive build exposes a Wheel/FFB panel, and the physics
+worker publishes normalized FFB torque through the SAB mailbox. Worker-side HID acquisition,
+pedal calibration, and the hardware matrix remain.
 
 **Decisions:**
 

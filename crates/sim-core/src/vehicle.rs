@@ -457,7 +457,7 @@ impl Vehicle {
         let drive_torque = drive_torque * (1.0 - 0.5 * esc_activity);
         let mut total_force = Vec3::new(0.0, -self.physics.mass * self.physics_tuning.gravity, 0.0);
         let mut total_torque = Vec3::ZERO;
-        let mut rack_torque = 0.0;
+        let mut front_lateral_force = 0.0;
 
         for index in 0..wheel_count {
             let wheel = &self.physics.wheels[index];
@@ -597,7 +597,9 @@ impl Vehicle {
                 let tire_force = wheel_forward * (fx * scale) + wheel_right * (fy * scale);
                 total_force += tire_force;
                 total_torque += (hit.point - cg_world).cross(tire_force);
-                rack_torque += fy * 0.01;
+                if wheel.steerable {
+                    front_lateral_force += fy * scale;
+                }
 
                 let tire_torque = fx * scale * radius;
                 let omega_before = self.state.wheels[index].angular_velocity;
@@ -718,7 +720,11 @@ impl Vehicle {
 
         self.resolve_wall_collisions();
         self.resolve_body_contacts();
-        self.state.steering_rack_torque = rack_torque;
+        let caster_trail = self.physics.steering.caster.abs() * self.wheel_radius[0].max(0.1);
+        let pneumatic_trail = 0.05;
+        let column_torque = -front_lateral_force * (pneumatic_trail + caster_trail)
+            / self.physics.steering.ratio.max(1.0);
+        self.state.steering_rack_torque = column_torque.clamp(-30.0, 30.0);
 
         if !self.state.position.is_finite()
             || !self.state.velocity.is_finite()

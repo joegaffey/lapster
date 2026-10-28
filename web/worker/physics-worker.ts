@@ -151,7 +151,7 @@ function runSlice(generation: number): void {
       Date.now() / 1000,
       new Float32Array(state),
     );
-    writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 10)), true);
+    writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 20)), true);
   }
 
   if (steps > 1) {
