@@ -90,7 +90,8 @@ pub struct InputMailbox {
     pub brake: f32,
     pub clutch: f32,
     pub gear: i32,
-    pub reserved: [u8; 28],
+    pub handbrake: f32,
+    pub reserved: [u8; 24],
 }
 
 #[repr(C, align(8))]
@@ -150,7 +151,8 @@ mod tests {
         assert_eq!(offset_of!(InputMailbox, brake), 24);
         assert_eq!(offset_of!(InputMailbox, clutch), 28);
         assert_eq!(offset_of!(InputMailbox, gear), 32);
-        assert_eq!(offset_of!(InputMailbox, reserved), 36);
+        assert_eq!(offset_of!(InputMailbox, handbrake), 36);
+        assert_eq!(offset_of!(InputMailbox, reserved), 40);
 
         assert_eq!(size_of::<FfbMailbox>(), FFB_MAILBOX_SIZE);
         assert_eq!(align_of::<FfbMailbox>(), 8);

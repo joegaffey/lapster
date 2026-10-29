@@ -400,6 +400,7 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
               brake: 0,
               clutch: 0,
               gear: 1,
+              handbrake: 0,
               buttons: 0,
             });
             return client.reset().then(() => syncLatest());
@@ -946,7 +947,11 @@ async function boot() {
     }
 
     throttle = Math.max(throttle, wheelChannel("throttle"));
-    brake = Math.max(brake, wheelChannel("brake"), wheelChannel("handbrake"));
+    brake = Math.max(brake, wheelChannel("brake"));
+    const handbrake = Math.max(
+      keys.has(" ") ? 1 : 0,
+      wheelChannel("handbrake"),
+    );
 
     const keyShiftUp = queuedShift > 0;
     const keyShiftDown = queuedShift < 0;
@@ -1044,6 +1049,7 @@ async function boot() {
           brake,
           clutch,
           gear,
+          handbrake,
           buttons: 0,
         });
         const renderNow = performance.now();
@@ -1067,7 +1073,7 @@ async function boot() {
           updateHud(telemetry);
         }
       } else {
-        driver.update_with_clutch(now, throttle, brake, steer, gear, clutch);
+        driver.update_with_clutch(now, throttle, brake, steer, gear, clutch, handbrake);
         const telemetry = JSON.parse(driver.telemetry());
         lastSpeedMps = telemetry.speedMps;
         lastRpm = telemetry.rpm;

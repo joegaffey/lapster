@@ -57,6 +57,7 @@ pub struct Controls {
     pub brake: f32,
     pub clutch: f32,
     pub gear: i32,
+    pub handbrake: f32,
 }
 
 impl Default for Controls {
@@ -67,6 +68,7 @@ impl Default for Controls {
             brake: 0.0,
             clutch: 0.0,
             gear: 1,
+            handbrake: 0.0,
         }
     }
 }
@@ -494,7 +496,15 @@ impl Vehicle {
             } else {
                 0.0
             };
-            let mut brake = (driver_brake + esc_brake).min(self.physics.brakes.max_torque[index]);
+            let service_brake =
+                (driver_brake + esc_brake).min(self.physics.brakes.max_torque[index]);
+            let handbrake_brake = if wheel.is_front {
+                0.0
+            } else {
+                self.physics.brakes.max_torque[index] * controls.handbrake.clamp(0.0, 1.0)
+            };
+            let mut brake =
+                (service_brake + handbrake_brake).min(self.physics.brakes.max_torque[index]);
 
             if let Some(hit) = hit {
                 let projected = (steer_forward - hit.normal * steer_forward.dot(hit.normal))
@@ -573,7 +583,8 @@ impl Vehicle {
                         1.0
                     };
                 self.abs_scale[index] += (desired_abs - self.abs_scale[index]) * 0.25;
-                brake *= self.abs_scale[index];
+                brake = (service_brake * self.abs_scale[index] + handbrake_brake)
+                    .min(self.physics.brakes.max_torque[index]);
                 let slip_angle = (-lateral_velocity).atan2(denominator).clamp(-1.5, 1.5);
                 let relaxation_length = wheel.tire.relaxation_length.max(0.01);
                 let relaxation_speed = long_velocity.abs().max(2.0);
@@ -1254,6 +1265,42 @@ mod tests {
             disengaged.step(clutched);
         }
         assert!((disengaged.state.engine_rpm - redline).abs() < 1.0);
+    }
+
+    #[test]
+    fn handbrake_brakes_rear_wheels_only() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        let drive = Controls {
+            throttle: 1.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        for _ in 0..1000 {
+            vehicle.step(drive);
+        }
+        let front_index = (0..4)
+            .find(|&index| vehicle.physics.wheels[index].is_front)
+            .expect("front wheel");
+        let rear_index = (0..4)
+            .find(|&index| !vehicle.physics.wheels[index].is_front)
+            .expect("rear wheel");
+
+        let handbrake = Controls {
+            clutch: 1.0,
+            handbrake: 1.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        for _ in 0..250 {
+            vehicle.step(handbrake);
+        }
+        let front = vehicle.state.wheels[front_index].angular_velocity.abs();
+        let rear = vehicle.state.wheels[rear_index].angular_velocity.abs();
+        assert!(front > 0.5, "front wheel should still roll: {front}");
+        assert!(
+            rear < front * 0.5,
+            "rear {rear} should be much slower than front {front}"
+        );
     }
 
     #[test]

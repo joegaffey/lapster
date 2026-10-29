@@ -84,6 +84,7 @@ test("writes and reads the input mailbox", () => {
     brake: 0,
     clutch: 0,
     gear: 1,
+    handbrake: 0,
     buttons: 0,
     timestampSeconds: 0,
   };
@@ -93,6 +94,7 @@ test("writes and reads the input mailbox", () => {
     brake: 0.25,
     clutch: 0,
     gear: -1,
+    handbrake: 0.75,
     buttons: 3,
     timestampSeconds: 42,
   });
@@ -101,6 +103,7 @@ test("writes and reads the input mailbox", () => {
   assert.equal(input.throttle, 1);
   assert.equal(input.brake, 0.25);
   assert.equal(input.gear, -1);
+  assert.equal(input.handbrake, Math.fround(0.75));
   assert.equal(input.buttons, 3);
   assert.equal(input.timestampSeconds, 42);
 });

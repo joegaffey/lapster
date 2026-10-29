@@ -191,6 +191,7 @@ pub struct Controls {
     pub brake: f32,      // 0..1
     pub clutch: f32,     // 0..1
     pub gear: i32,
+    pub handbrake: f32,  // 0..1, rear wheels only
 }
 
 pub struct WheelState {
@@ -306,8 +307,8 @@ is the target architecture, not a prerequisite for the first hardware spike.
   `navigator.hid.getDevices()` and matches by vendor/product ID. If worker acquisition
   fails, fall back to running the adapter on the main thread with a documented latency
   penalty and diagnostics.
-- Publish normalized steering, throttle, brake, clutch, buttons, and a timestamp into the
-  input mailbox.
+- Publish normalized steering, throttle, brake, clutch, handbrake, buttons, and a timestamp
+  into the input mailbox.
 - Read the FFB torque mailbox, coalesce to the latest value, clamp, apply strength and
   inversion, and send at a device-safe rate. Target 100-250 Hz updates. Do not block the
   physics loop on HID writes.
@@ -551,7 +552,7 @@ be rejected.
 | 62 | f32 | Render/telemetry tick snapshot |
 | 63 | f32 | Reserved |
 
-#### Input mailbox (offset 1088, 64 bytes)
+#### Input mailbox (offset 1216, 64 bytes)
 
 | Offset | Type | Field |
 | ---: | --- | --- |
@@ -563,7 +564,8 @@ be rejected.
 | 24 | f32 | Brake, 0..1 |
 | 28 | f32 | Clutch, 0..1 |
 | 32 | i32 | Requested gear |
-| 36 | u8[28] | Reserved |
+| 36 | f32 | Handbrake, 0..1 (rear wheels only) |
+| 40 | u8[24] | Reserved |
 
 #### FFB mailbox (offset 1152, 64 bytes)
 

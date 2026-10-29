@@ -140,7 +140,9 @@ Toolchain setup scripts:
   and releasing it returns to neutral. `sim-core` models clutch disengagement for drive torque
   and engine RPM, and neutral or a disengaged clutch allows free revving to redline. Generic
   HID layout parsing now splits multi-axis report items, covering Arduino handbrakes that send
-  several axes in one report. Shift scheduling still lives in `web/drive/main.ts`.
+  several axes in one report. The handbrake is a separate input and applies braking torque to
+  the rear wheels only; `Space` is the keyboard fallback. Shift scheduling still lives in
+  `web/drive/main.ts`.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,

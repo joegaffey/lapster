@@ -21,6 +21,7 @@ export interface InputState {
   brake: number;
   clutch: number;
   gear: number;
+  handbrake: number;
   buttons: number;
   timestampSeconds: number;
 }
@@ -106,7 +107,7 @@ export function clearReset(sab: SharedArrayBuffer): void {
 }
 
 export function writeInput(sab: SharedArrayBuffer, input: InputState): void {
-  const ints = new Int32Array(sab, INPUT_MAILBOX_OFFSET, INPUT_MAILBOX_FIELDS.reserved / 4 + 7);
+  const ints = new Int32Array(sab, INPUT_MAILBOX_OFFSET, 16);
   const view = new DataView(sab);
   const seqIndex = INPUT_MAILBOX_FIELDS.seq / 4;
   const seq = AtomicLoad(ints, seqIndex);
@@ -122,6 +123,7 @@ export function writeInput(sab: SharedArrayBuffer, input: InputState): void {
   view.setFloat32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.brake, input.brake, true);
   view.setFloat32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.clutch, input.clutch, true);
   view.setInt32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.gear, input.gear, true);
+  view.setFloat32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.handbrake, input.handbrake, true);
   AtomicStore(ints, seqIndex, seq + 2);
 }
 
@@ -144,6 +146,7 @@ export function readInput(sab: SharedArrayBuffer, previous: InputState): InputSt
     brake: view.getFloat32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.brake, true),
     clutch: view.getFloat32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.clutch, true),
     gear: view.getInt32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.gear, true),
+    handbrake: view.getFloat32(INPUT_MAILBOX_OFFSET + INPUT_MAILBOX_FIELDS.handbrake, true),
   };
   const after = AtomicLoad(ints, seqIndex);
   return before === after ? next : previous;

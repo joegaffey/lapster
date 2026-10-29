@@ -85,7 +85,8 @@ export const INPUT_MAILBOX_FIELDS = {
   brake: 24,
   clutch: 28,
   gear: 32,
-  reserved: 36,
+  handbrake: 36,
+  reserved: 40,
 } as const;
 
 export const FFB_MAILBOX_FIELDS = {
