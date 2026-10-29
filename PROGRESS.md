@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
 Repository root: the directory containing this file
 Current phase: **WebHID wheel/FFB feel spike and cockpit dial presentation (dev branch)**
 
@@ -91,7 +91,7 @@ Toolchain setup scripts:
 | GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
 | GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/`; dev preview deploys branch builds separately |
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
-| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel`, direct wheel steering, front-axle SAT, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
+| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.34, multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
 
 ## Current capabilities
@@ -261,21 +261,23 @@ Toolchain setup scripts:
 
 ## Wheel and FFB workstream
 
-**Status:** dev spike implemented. `webhid-wheel` is vendored from the `webhid-wheel-dev`
-fast-constant-force commit, Drive exposes wheel/FFB controls under Settings → Controls, and the
-physics worker publishes normalized FFB torque through the SAB mailbox. A configurable
-main-thread feel mixer adds rear breakaway lightening, front-grip shudder, road noise,
-roughness, and slip-driven looseness. Browsers without WebHID boot normally and hide the
-wheel controls. Surface-specific dirt/grass mapping, pedal calibration, worker-side HID
-acquisition, and the hardware matrix remain.
+**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.34 (`b70798e`) with
+multi-device `WheelManager` sessions, portable setup profiles, and the shared
+`<webhid-config-panel>`. Drive mounts the panel under Settings → Controls and keeps the
+main-thread feel mixer in its `extra-settings` slot. Mapped steering, throttle, brake,
+clutch, handbrake, and gear buttons feed the drive input alongside keyboard and touch. The
+physics worker publishes normalized FFB torque through the SAB mailbox, and the adapter keeps
+the 200 Hz constant-force path with its watchdog. Browsers without WebHID boot normally and
+hide the wheel controls. Hardware acceptance, surface-specific dirt/grass mapping, and
+worker-side HID acquisition remain.
 
 **Decisions:**
 
 - Target every wheelbase supported by [`webhid-wheel`](https://github.com/joegaffey/webhid-wheel),
   not a CAMMUS-only path.
 - Test CAMMUS C5 first, then CAMMUS C12 and FFBeast; generic USB-PID wheels are best effort.
-- Logitech/Fanatec initially get input only; their vendor FFB protocols are not in scope until
-  the upstream library adds profiles.
+- Logitech G29/DFGT constant force is supported by the vendored profiles; T248/T300 remain
+  input-only, and other Fanatec/Logitech vendor protocols remain future work.
 - CP6.5 runs the FFB adapter on the **main thread**. Move it to the HID worker later as an
   optimization if measurements show frame-pacing or `sendReport` jitter problems.
 - Keep `webhid-wheel` behind an input/FFB adapter so the worker migration does not change the
@@ -295,12 +297,18 @@ acquisition, and the hardware matrix remain.
    strength and steering sensitivity.
 6. Unit, Rust, and Playwright coverage; manual CAMMUS C5 hardware checklist.
 
-**Upstream `webhid-wheel` work tracked separately:**
+**Upstream `webhid-wheel` work tracked separately:** see the
+[package, setup profiles and Lapster integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
-- Optional multi-device rig for wheel + pedals + shifter.
-- High-frequency constant-force path with coalescing and backpressure.
-- Worker-compatible acquisition and reconnect.
-- Expanded profiles and recorded report fixtures.
+- Generic multi-device sessions (`WebHIDDevice` + `mapChannels`); the `WebHIDRig` proposal is
+  dropped. Implemented and wired into Drive.
+- Dual-entry package with optional `webhid-wheel/ui` custom elements and
+  `<webhid-config-panel>`. Implemented and mounted in Settings → Controls.
+- Portable setup profiles with hardware matching and lazy reconnect. Implemented with the
+  `lapster.wheel.v3` store and `metadata.lapster` feel round-trip.
+- High-frequency constant-force path with coalescing and backpressure. Implemented.
+- Worker-compatible acquisition and reconnect. Core remains DOM-free for CP7.
+- Expanded profiles and recorded report fixtures. CAMMUS C5/C12, FFBeast, G29/DFGT.
 - CAMMUS C5 primary verification, then C12/FFBeast.
 
 **Hardware acceptance:** CAMMUS C5 steering and FFB, with watchdog/stop behavior. The device
@@ -388,8 +396,8 @@ matrix then expands to the other supported wheelbases.
    engine RPM in `sim-core` and retune TC.
 2. **CP6.5 — wheel/FFB validation**: run the CAMMUS C5 checklist, tune the feel mixer, and
    decide whether the main-thread adapter stays or moves into the HID worker.
-3. **Upstream `webhid-wheel`**: multi-device rig, worker compatibility, profiles, and
-   hardware fixtures.
+3. **Vendored `webhid-wheel` validation**: run multi-device profile, pedal/button mapping,
+   and worker-compatibility checks; then complete the CAMMUS C5 hardware checklist.
 4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add
    per-car audio profiles / an optional sample layer, expand the hardware matrix, and run
    performance traces. The physics worker, input mailbox, snapshot ring, FFB mailbox, and

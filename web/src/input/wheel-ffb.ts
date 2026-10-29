@@ -1,5 +1,8 @@
 import { readFfb } from "../sim/sab.ts";
-import { WebHIDWheel } from "../vendor/webhid-wheel/webhid-wheel.js";
+import {
+  WheelManager,
+  type WheelManagerSession,
+} from "../vendor/webhid-wheel/webhid-wheel.js";
 import {
   computeFfbOutput,
   DEFAULT_FEEL,
@@ -14,6 +17,11 @@ const STEERING_STALE_MS = 250;
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 
+const numberChannel = (channels: Record<string, number>, name: string) => {
+  const value = channels[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+};
+
 export interface WheelFfbStatus {
   available: boolean;
   connected: boolean;
@@ -26,13 +34,12 @@ export interface WheelFfbStatus {
   output: number;
   frontSlip: number;
   rearSlip: number;
+  devices: number;
 }
 
 export class WheelFfb {
-  readonly wheel: WebHIDWheel;
+  readonly manager: WheelManager;
   private loop: number | null = null;
-  private steeringValue = 0;
-  private steeringAt = 0;
   private baseTorque = 0;
   private torqueAt = 0;
   private feel: WheelFeelSettings = { ...DEFAULT_FEEL };
@@ -44,36 +51,64 @@ export class WheelFfb {
   private lastOutput = 0;
   private lastSent = Number.NaN;
   private lastSentAt = 0;
-  private testTorque = 0;
-  private testUntil = 0;
+  private lastFfbTarget: string | null = null;
   private stopped = true;
-  private invertSteering = false;
   private manualStop = false;
   private readonly ffbSab: SharedArrayBuffer | null;
   error = "";
 
   constructor(ffbSab?: SharedArrayBuffer) {
     this.ffbSab = ffbSab ?? null;
-    this.wheel = new WebHIDWheel({
+    this.manager = new WheelManager({
       maxRotation: 900,
       ffbStrength: 0.5,
       ffbInvert: false,
       deadzone: 0.02,
+      saturation: 1,
     });
-    this.wheel.on("input", (state) => {
-      const rotation = state.rotation ?? 0;
-      const half = this.wheel.maxRotation / 2;
-      const normalized = clamp(rotation / Math.max(1, half), -1, 1);
-      this.steeringValue = this.invertSteering ? -normalized : normalized;
-      this.steeringAt = performance.now();
+    this.manager.setCalibration({ deadzone: 0.02, maxRotation: 900, saturation: 1 });
+
+    const managerStop = this.manager.stop.bind(this.manager);
+    this.manager.stop = () => {
+      this.manualStop = true;
+      this.stopped = true;
+      this.lastSent = Number.NaN;
+      this.lastOutput = 0;
+      return managerStop();
+    };
+    const managerSetFfb = this.manager.setFfb.bind(this.manager);
+    this.manager.setFfb = (ffb = {}) => {
+      if (ffb.gain !== undefined || ffb.invert !== undefined) {
+        this.manualStop = false;
+      }
+      return managerSetFfb(ffb);
+    };
+
+    this.manager.on("connect", () => {
+      this.error = "";
+      this.stopped = true;
+      this.manualStop = false;
+      this.startLoop();
     });
-    this.wheel.on("disconnect", () => {
-      this.steeringValue = 0;
-      this.stop();
+    this.manager.on("disconnect", () => {
+      if (this.manager.isConnected) {
+        return;
+      }
+      this.stopLoop();
+      this.stopped = true;
+      this.lastOutput = 0;
+      this.lastBase = 0;
     });
-    this.wheel.on("error", (error) => {
+    this.manager.on("error", (error) => {
       this.error = error instanceof Error ? error.message : String(error);
     });
+    this.manager.on("setup-applied", () => {
+      this.manualStop = false;
+    });
+  }
+
+  get wheel() {
+    return this.manager.wheel;
   }
 
   get available(): boolean {
@@ -84,26 +119,45 @@ export class WheelFfb {
   }
 
   get connected(): boolean {
-    return this.wheel.isConnected;
+    return this.manager.isConnected;
+  }
+
+  get channels(): Record<string, number> {
+    return this.manager.channels;
+  }
+
+  get hasSteering(): boolean {
+    return this.steeringSession() !== null;
   }
 
   get steering(): number {
-    if (!this.connected || performance.now() - this.steeringAt > STEERING_STALE_MS) {
+    const entry = this.steeringSession();
+    if (!entry || !entry.session.isConnected) {
       return 0;
     }
-    return this.steeringValue;
+    const timestamp = (entry.session as any).timestamp;
+    if (typeof timestamp !== "number" || performance.now() - timestamp > STEERING_STALE_MS) {
+      return 0;
+    }
+    return clamp(numberChannel(this.manager.channels, "steering"), -1, 1);
   }
 
   get ffbAvailable(): boolean {
-    return this.wheel.ffbCaps?.constant === true;
+    const entry = this.ffbSession();
+    return !!(entry && entry.capabilities.ffb && entry.session.isConnected);
   }
 
   status(): WheelFfbStatus {
+    const connected = this.manager.sessionList.filter(
+      (entry) => entry.session && entry.session.isConnected,
+    );
+    const steering = this.steeringSession();
+    const primary = steering ?? connected[0] ?? null;
     return {
       available: this.available,
-      connected: this.connected,
-      name: this.wheel.name ?? "",
-      parser: this.wheel.parserName ?? "",
+      connected: connected.length > 0,
+      name: connected.map((entry) => entry.name).filter(Boolean).join(", "),
+      parser: primary ? primary.capabilities.profile || primary.driver : "",
       ffb: this.ffbAvailable,
       error: this.error,
       steering: this.steering,
@@ -111,18 +165,20 @@ export class WheelFfb {
       output: this.lastOutput,
       frontSlip: this.frontSlip,
       rearSlip: this.rearSlip,
+      devices: connected.length,
     };
   }
 
   async connect(): Promise<void> {
     this.error = "";
     try {
-      await this.wheel.connect();
-      if (this.connected) {
-        this.stopped = true;
-        this.manualStop = false;
-        this.startLoop();
+      const session = await this.manager.connect();
+      if (!session) {
+        return;
       }
+      this.stopped = true;
+      this.manualStop = false;
+      this.startLoop();
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
       throw error;
@@ -131,27 +187,31 @@ export class WheelFfb {
 
   async disconnect(): Promise<void> {
     this.stopLoop();
-    await this.wheel.disconnect();
-    this.steeringValue = 0;
-    this.torque = 0;
+    await this.manager.disconnectAll();
     this.manualStop = false;
+    this.lastFfbTarget = null;
+    this.lastOutput = 0;
+    this.lastBase = 0;
   }
 
   setStrength(strength: number): void {
-    this.wheel.ffbStrength = clamp(strength, 0, 1);
+    this.manager.setFfb({ gain: clamp(strength, 0, 1) });
   }
 
   setInvertForce(invert: boolean): void {
-    this.wheel.ffbInvert = invert;
+    this.manager.setFfb({ invert });
   }
 
   setInvertSteering(invert: boolean): void {
-    this.invertSteering = invert;
-    this.steeringValue = -this.steeringValue;
+    this.manager.setCalibration({ invert });
   }
 
   setDeadzone(deadzone: number): void {
-    this.wheel.deadzone = clamp(deadzone, 0, 0.5);
+    this.manager.setCalibration({ deadzone: clamp(deadzone, 0, 0.5) });
+  }
+
+  setSaturation(saturation: number): void {
+    this.manager.setCalibration({ saturation: clamp(saturation, 0.05, 1) });
   }
 
   setFeel(feel: WheelFeelSettings): void {
@@ -181,20 +241,11 @@ export class WheelFfb {
   }
 
   setTorque(torqueNm: number): void {
-    if (this.ffbSab || performance.now() < this.testUntil) {
+    if (this.ffbSab) {
       return;
     }
     this.baseTorque = clamp(torqueNm / TORQUE_REFERENCE_NM, -1, 1);
     this.torqueAt = performance.now();
-  }
-
-  testForce(value: number): void {
-    if (!this.wheel.ffb?.supported.constant) {
-      return;
-    }
-    this.manualStop = false;
-    this.testTorque = clamp(value, -1, 1);
-    this.testUntil = performance.now() + 1500;
   }
 
   stop(latch = false): void {
@@ -202,11 +253,41 @@ export class WheelFfb {
       this.manualStop = true;
     }
     this.stopped = true;
-    this.testUntil = 0;
     this.lastSent = Number.NaN;
     this.lastOutput = 0;
-    if (this.wheel.ffb) {
-      void this.wheel.setConstantForce(0).catch(() => undefined);
+    this.stopAllEffects();
+  }
+
+  private steeringSession(): WheelManagerSession | null {
+    const id = this.manager.getCalibration().device;
+    const entry = id ? this.manager.sessions.get(id) : null;
+    return entry && entry.capabilities.steering ? entry : null;
+  }
+
+  private ffbSession(): WheelManagerSession | null {
+    const id = this.manager.getFfb().device;
+    const entry = id ? this.manager.sessions.get(id) : null;
+    return entry && entry.capabilities.ffb ? entry : null;
+  }
+
+  private stopSession(id: string | null): void {
+    if (!id) {
+      return;
+    }
+    const entry = this.manager.sessions.get(id);
+    const session = entry?.session as any;
+    if (session && typeof session.stopEffects === "function") {
+      void session.stopEffects().catch(() => undefined);
+    }
+  }
+
+  private stopAllEffects(): void {
+    for (const entry of this.manager.sessionList) {
+      if (!entry.capabilities.ffb) continue;
+      const session = entry.session as any;
+      if (session && typeof session.stopEffects === "function") {
+        void session.stopEffects().catch(() => undefined);
+      }
     }
   }
 
@@ -223,53 +304,50 @@ export class WheelFfb {
   }
 
   private tick(): void {
-    if (
-      this.manualStop ||
-      !this.connected ||
-      !this.wheel.ffb?.supported.constant
-    ) {
+    if (this.manualStop || !this.connected) {
+      return;
+    }
+    const target = this.ffbSession();
+    if (this.lastFfbTarget !== (target?.id ?? null)) {
+      this.stopSession(this.lastFfbTarget);
+      this.lastFfbTarget = target?.id ?? null;
+    }
+    if (!target) {
       return;
     }
     const now = performance.now();
-    let output = 0;
-    if (now < this.testUntil) {
-      output = this.testTorque;
-      this.lastBase = output;
-      this.torqueAt = now;
-    } else {
-      let base = this.baseTorque;
-      if (this.ffbSab) {
-        const ffb = readFfb(this.ffbSab);
-        const ageSeconds = ffb ? Date.now() / 1000 - ffb.timestampSeconds : Infinity;
-        if (!ffb || !ffb.active || ageSeconds > FFB_STALE_MS / 1000) {
-          if (!this.stopped) {
-            this.stop();
-          }
-          return;
-        }
-        base = clamp(ffb.torque, -1, 1);
-        this.torqueAt = now;
-      }
-      if (now - this.torqueAt > FFB_STALE_MS) {
+    let base = this.baseTorque;
+    if (this.ffbSab) {
+      const ffb = readFfb(this.ffbSab);
+      const ageSeconds = ffb ? Date.now() / 1000 - ffb.timestampSeconds : Infinity;
+      if (!ffb || !ffb.active || ageSeconds > FFB_STALE_MS / 1000) {
         if (!this.stopped) {
           this.stop();
         }
         return;
       }
-      this.noise = this.noise * 0.65 + (Math.random() * 2 - 1) * 0.35;
-      this.lastBase = base;
-      output = computeFfbOutput(
-        base,
-        {
-          speedMps: this.speedMps,
-          frontSlip: this.frontSlip,
-          rearSlip: this.rearSlip,
-        },
-        this.feel,
-        now / 1000,
-        this.noise,
-      );
+      base = clamp(ffb.torque, -1, 1);
+      this.torqueAt = now;
     }
+    if (now - this.torqueAt > FFB_STALE_MS) {
+      if (!this.stopped) {
+        this.stop();
+      }
+      return;
+    }
+    this.noise = this.noise * 0.65 + (Math.random() * 2 - 1) * 0.35;
+    this.lastBase = base;
+    const output = computeFfbOutput(
+      base,
+      {
+        speedMps: this.speedMps,
+        frontSlip: this.frontSlip,
+        rearSlip: this.rearSlip,
+      },
+      this.feel,
+      now / 1000,
+      this.noise,
+    );
     this.stopped = false;
     this.lastOutput = output;
     if (output === this.lastSent && now - this.lastSentAt < 20) {
@@ -277,7 +355,7 @@ export class WheelFfb {
     }
     this.lastSent = output;
     this.lastSentAt = now;
-    void this.wheel.setConstantForceFast(output).catch((error) => {
+    void this.manager.constantFast(output).catch((error) => {
       this.error = error instanceof Error ? error.message : String(error);
     });
   }

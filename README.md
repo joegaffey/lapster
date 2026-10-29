@@ -72,13 +72,16 @@ isolation or worker startup fails.
 - Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
   publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
   Main-thread physics remains available with `?physics=main`.
-- **Wheel/FFB dev spike:** vendored `webhid-wheel` WebHID input, direct wheel steering,
-  front-axle self-aligning torque, and a main-thread fast constant-force path fed from the
-  SAB FFB mailbox at 200 Hz. Drive exposes the wheel controls under **Settings → Controls**
-  for connect, strength, inversions, deadzone, test force, and emergency stop. The same tab
-  has configurable feel controls for rear breakaway lightening, front-grip shudder, road
-  noise, roughness, and slip-driven looseness. Browsers without WebHID still boot normally
-  and hide the wheel controls.
+- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.34 WebHID input with
+  multi-device sessions, portable setup profiles, direct wheel steering, front-axle
+  self-aligning torque, and a main-thread fast constant-force path fed from the SAB FFB
+  mailbox at 200 Hz. Drive exposes the shared `<webhid-config-panel>` under
+  **Settings → Controls** for device management, steering/FFB calibration, pedal and
+  button mapping, profile import/export, and emergency stop. Lapster feel controls for rear
+  breakaway lightening, front-grip shudder, road noise, roughness, and slip-driven looseness
+  live in the panel's app slot. Mapped throttle, brake, clutch, handbrake, and gear buttons
+  feed the driving input alongside keyboard and touch fallbacks. Browsers without WebHID
+  still boot normally and hide the wheel controls.
 - **Cockpit dial cluster:** a generated cowl, runtime speedometer/RPM textures, a
   seven-segment sprite gear display for `N`, `1–6`, and `R`, and red needles calibrated to
   `7:30 → 4:30`; dial faces are recessed into their cylinders.

@@ -83,9 +83,11 @@ const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
 
 const keys = new Set<string>();
+const wheelButtons = new Map<string, boolean>();
 const STOP_SPEED_MPS = 0.3;
 let steer = 0;
 let gear = 1;
+let wheelGearUntil = 0;
 let lastSpeedMps = 0;
 let previousForward = false;
 let previousReverse = false;
@@ -223,6 +225,8 @@ function reset() {
   previousAutoThrottle = 0;
   previousForward = false;
   previousReverse = false;
+  wheelGearUntil = 0;
+  wheelButtons.clear();
   keys.clear();
   lastFrame = performance.now() / 1000;
 }
@@ -237,6 +241,20 @@ function telemetryRpm(): number {
   } catch {
     return lastRpm;
   }
+}
+
+function wheelChannel(name: string): number {
+  const value = wheel?.channels?.[name];
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : 0;
+}
+
+function wheelButtonPressed(name: string): boolean {
+  const pressed = wheelChannel(name) > 0.5;
+  const previous = wheelButtons.get(name) === true;
+  wheelButtons.set(name, pressed);
+  return pressed && !previous;
 }
 
 function updateAutoGear(delta: number, throttle: number, brake: number) {
@@ -820,7 +838,7 @@ async function boot() {
     const delta = Math.min(Math.max(now - lastFrame, 0), 0.05);
     lastFrame = now;
 
-    if (wheel?.connected) {
+    if (wheel?.hasSteering) {
       steer = wheel.steering;
     } else {
       const steerLeft = keys.has("a") || keys.has("arrowleft");
@@ -868,11 +886,60 @@ async function boot() {
       }
     }
 
-    if (stopped && throttle === 0 && gear !== 0) {
+    const clutch = wheelChannel("clutch");
+    throttle = Math.max(throttle, wheelChannel("throttle"));
+    brake = Math.max(brake, wheelChannel("brake"), wheelChannel("handbrake"));
+
+    const shiftUp = wheelButtonPressed("shiftUp");
+    const gearUp = wheelButtonPressed("gearUp");
+    const shiftDown = wheelButtonPressed("shiftDown");
+    const gearDown = wheelButtonPressed("gearDown");
+    const neutral = wheelButtonPressed("neutral");
+    const reverse = wheelButtonPressed("reverse");
+    let manualGear = false;
+
+    if (neutral) {
+      gear = 0;
+      manualGear = true;
+    }
+    if (reverse && stopped) {
+      gear = -1;
+      manualGear = true;
+    }
+    for (let index = 1; index <= 8; index += 1) {
+      if (wheelButtonPressed(`gear${index}`) && index <= maxGear) {
+        gear = index;
+        manualGear = true;
+      }
+    }
+    if (shiftUp || gearUp) {
+      if (gear > 0 && gear < maxGear) {
+        gear += 1;
+      } else if (gear <= 0) {
+        gear = 1;
+      }
+      manualGear = true;
+    }
+    if (shiftDown || gearDown) {
+      if (gear > 1) {
+        gear -= 1;
+      } else if (gear > -1) {
+        gear = 0;
+      }
+      manualGear = true;
+    }
+    if (manualGear) {
+      wheelGearUntil = now + 1.5;
+    }
+    const manualGearHold = now < wheelGearUntil;
+
+    if (stopped && throttle === 0 && gear !== 0 && !manualGearHold) {
       gear = 0;
       autoShiftCooldown = 0;
     }
-    updateAutoGear(delta, throttle, brake);
+    if (!manualGearHold) {
+      updateAutoGear(delta, throttle, brake);
+    }
 
     try {
       if (physicsWorker && physics && smoother) {
@@ -880,7 +947,7 @@ async function boot() {
           steering: steer,
           throttle,
           brake,
-          clutch: 0,
+          clutch,
           gear,
           buttons: 0,
         });

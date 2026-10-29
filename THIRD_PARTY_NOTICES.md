@@ -35,11 +35,12 @@ SOFTWARE.
 
 ## webhid-wheel
 
-- Source: https://github.com/joegaffey/webhid-wheel-dev
-- Vendored commit: `c072999` (`Add fast constant-force updates`)
+- Source: https://github.com/joegaffey/webhid-wheel
+- Vendored version: `0.4.34` (`b70798e`)
 - Used in: `web/src/vendor/webhid-wheel/`
 - License: MIT
-- Purpose: WebHID wheel input and constant-force FFB, including the fast effect-reuse path.
+- Purpose: WebHID wheel and generic HID input, multi-device mapping, setup profiles,
+  constant-force FFB, and the embeddable configuration panel.
 
 MIT License
 
