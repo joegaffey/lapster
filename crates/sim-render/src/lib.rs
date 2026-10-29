@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 use crate::camera::Camera;
 use crate::particles::ParticleSystem;
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
-use crate::scene::{CarRig, GarageBay, Scene};
+use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
 use crate::tuning::{GpuTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{Controls, PhysicsTuning, TrackCollider, Vehicle, FIXED_DT};
@@ -796,6 +796,18 @@ impl DriveViewer {
         steering: f32,
         gear: i32,
     ) -> Result<(), JsValue> {
+        self.update_with_clutch(time_seconds, throttle, brake, steering, gear, 0.0)
+    }
+
+    pub fn update_with_clutch(
+        &mut self,
+        time_seconds: f64,
+        throttle: f32,
+        brake: f32,
+        steering: f32,
+        gear: i32,
+        clutch: f32,
+    ) -> Result<(), JsValue> {
         let dt = match self.last_time {
             Some(last) => ((time_seconds - last).max(0.0) as f32).min(0.05),
             None => 0.0,
@@ -809,7 +821,7 @@ impl DriveViewer {
             steering,
             throttle,
             brake,
-            clutch: 0.0,
+            clutch,
             gear,
         };
 
@@ -843,6 +855,18 @@ impl DriveViewer {
         steering: f32,
         gear: i32,
     ) -> u32 {
+        self.simulate_with_clutch(seconds, throttle, brake, steering, gear, 0.0)
+    }
+
+    pub fn simulate_with_clutch(
+        &mut self,
+        seconds: f32,
+        throttle: f32,
+        brake: f32,
+        steering: f32,
+        gear: i32,
+        clutch: f32,
+    ) -> u32 {
         let steps = ((seconds.clamp(0.0, 120.0) / FIXED_DT) as u32).min(60_000);
         self.set_brake_lights(brake);
         self.set_reverse_lights(gear == -1);
@@ -850,7 +874,7 @@ impl DriveViewer {
             steering,
             throttle,
             brake,
-            clutch: 0.0,
+            clutch,
             gear,
         };
         for _ in 0..steps {
@@ -1070,7 +1094,30 @@ impl DriveViewer {
             CameraMode::Chase
         };
         self.apply_cockpit_glass_alpha();
+        self.update_dashboard_visibility();
         self.update_camera();
+    }
+
+    fn update_dashboard_visibility(&mut self) {
+        let visible = self.camera_mode == CameraMode::Cockpit;
+        if let Some(index) = self.rig.dashboard_mesh_index {
+            self.renderer.set_mesh_visible(index, visible);
+        }
+        if let Some(index) = self.rig.speedometer_face_mesh_index {
+            self.renderer.set_mesh_visible(index, visible);
+        }
+        if let Some(index) = self.rig.rpm_face_mesh_index {
+            self.renderer.set_mesh_visible(index, visible);
+        }
+        for needle in &self.rig.cockpit_needles {
+            self.renderer.set_mesh_visible(needle.mesh_index, visible);
+        }
+        for segment in &self.rig.gear_segments {
+            self.renderer.set_mesh_visible(
+                segment.mesh_index,
+                visible && self.vehicle.state.gear == segment.gear,
+            );
+        }
     }
 
     fn apply_cockpit_glass_alpha(&mut self) {
@@ -1150,6 +1197,69 @@ impl DriveViewer {
         self.vehicle.reset_setup();
         self.update_visuals();
         self.update_camera();
+        self.renderer.render()
+    }
+
+    pub fn set_speedometer_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), JsValue> {
+        let index = self.rig.speedometer_face_mesh_index;
+        self.set_dial_face_texture(index, width, height, rgba)
+    }
+
+    pub fn set_rpm_texture(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), JsValue> {
+        let index = self.rig.rpm_face_mesh_index;
+        self.set_dial_face_texture(index, width, height, rgba)
+    }
+
+    fn set_dial_face_texture(
+        &mut self,
+        index: Option<usize>,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), JsValue> {
+        if width == 0 || height == 0 || rgba.len() != (width * height * 4) as usize {
+            return Err(JsValue::from_str("invalid dial texture"));
+        }
+        if let Some(index) = index {
+            let texture = SceneTexture {
+                width,
+                height,
+                rgba8: rgba.to_vec(),
+            };
+            self.renderer.set_mesh_texture(index, &texture);
+            self.renderer.render()?;
+        }
+        Ok(())
+    }
+
+    pub fn set_gear_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), JsValue> {
+        if width == 0 || height == 0 || rgba.len() != (width * height * 4) as usize {
+            return Err(JsValue::from_str("invalid gear texture"));
+        }
+        let texture = SceneTexture {
+            width,
+            height,
+            rgba8: rgba.to_vec(),
+        };
+        let indexes: Vec<usize> = self
+            .rig
+            .gear_segments
+            .iter()
+            .map(|segment| segment.mesh_index)
+            .collect();
+        for index in indexes {
+            self.renderer.set_mesh_texture(index, &texture);
+        }
         self.renderer.render()
     }
 
@@ -1275,6 +1385,44 @@ impl DriveViewer {
         self.renderer.set_shadow_focus(focus.to_array(), extent);
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
+        if let Some(index) = self.rig.dashboard_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        }
+        if let Some(index) = self.rig.speedometer_face_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        }
+        if let Some(index) = self.rig.rpm_face_mesh_index {
+            self.renderer
+                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        }
+        let speed_kph = state.velocity.length() * 3.6;
+        let gear_fraction = ((state.gear.max(1) - 1) as f32 / 5.0).clamp(0.0, 1.0);
+        for needle in &self.rig.cockpit_needles {
+            let fraction = match needle.source {
+                CockpitNeedleSource::Speed => (speed_kph / 330.0).clamp(0.0, 1.0),
+                CockpitNeedleSource::Rpm => (state.engine_rpm / 10_000.0).clamp(0.0, 1.0),
+                CockpitNeedleSource::Gear => gear_fraction,
+            };
+            let start = 135.0_f32.to_radians();
+            let sweep = 270.0_f32.to_radians();
+            let angle = start - fraction * sweep;
+            let model = car_world
+                * self.rig.dashboard_local
+                * Mat4::from_translation(needle.center)
+                * Mat4::from_rotation_z(angle);
+            self.renderer.set_mesh_model(needle.mesh_index, model);
+        }
+        for segment in &self.rig.gear_segments {
+            let model =
+                car_world * self.rig.dashboard_local * Mat4::from_translation(segment.center);
+            self.renderer.set_mesh_model(segment.mesh_index, model);
+            self.renderer.set_mesh_visible(
+                segment.mesh_index,
+                self.camera_mode == CameraMode::Cockpit && state.gear == segment.gear,
+            );
+        }
         if let Some(index) = self.rig.glass_mesh_index {
             self.renderer
                 .set_mesh_model(index, car_world * self.rig.body_local);

@@ -346,22 +346,30 @@ as the first acceptance device.
 | CAMMUS C5 | steering/buttons/axes | constant force (USB-PID) | Primary hardware test |
 | CAMMUS C12 | steering/buttons/axes | constant force (USB-PID) | Profile present, verify |
 | FFBeast | steering | constant force (vendor) | Profile present, verify |
-| Thrustmaster T248 / T300RS | steering/buttons | none | Input-only fallback |
-| Logitech Driving Force GT | steering/buttons | none | Input-only fallback |
+| Logitech G29 | steering/buttons/axes | constant force (classic Logitech) | Profile present, verify |
+| Thrustmaster T248 / T300RS | steering/buttons | none (T248 needs the PadForge bridge) | Input-only fallback |
+| Logitech Driving Force GT | steering/buttons | constant force (classic Logitech) | Profile present, verify |
 | Generic USB-PID wheel | generic HID | constant force (auto-detect) | Best effort |
 | Logitech / Fanatec (other) | generic/vendor | not yet supported | Future vendor profiles |
 
 Chromium-only for WebHID. Firefox and Safari fall back to Gamepad API or keyboard; no WebHID
-FFB. Multi-device rigs (wheel + pedals + shifter) depend on the upstream `WebHIDRig` work.
+FFB. Multi-device sessions use the upstream `WebHIDDevice` + `mapChannels` APIs; the earlier
+`WebHIDRig` proposal is dropped. Setup profiles and the optional config panel are specified
+in the [upstream integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
 **Upstream `webhid-wheel` requirements:** these are tracked in the library repository and
-must not be reimplemented here.
+must not be reimplemented here. Vendored as 0.4.42 (`9fbfb6f`) in
+`web/src/vendor/webhid-wheel/`.
 
-- Optional `WebHIDRig` for wheel + pedals + shifter with stable device identity and hot-plug.
+- Generic multi-device sessions with stable device identity and hot-plug. Implemented.
+- A dual-entry package: headless core plus optional `webhid-wheel/ui` custom elements,
+  including `<webhid-config-panel>`. Implemented.
+- Portable setup profiles with hardware matching, validation and lazy reconnect. Implemented.
 - A fast constant-force path that supports 100-250 Hz updates with coalescing/backpressure.
-- Worker-compatible device acquisition and reconnect.
-- CAMMUS C5 primary verification, then C12/FFBeast; input-only profiles for Thrustmaster and
-  Logitech; vendor FFB profiles remain future work.
+  Implemented.
+- Worker-compatible device acquisition and reconnect. Core remains DOM-free for CP7.
+- CAMMUS C5 primary verification, then C12/FFBeast; input-only profiles for Thrustmaster;
+  vendor FFB profiles remain future work.
 - Recorded report fixtures and a manual hardware checklist.
 
 **Licensing and clean-room note:** `webhid-wheel` is MIT-licensed and may be used directly
@@ -380,7 +388,8 @@ vendor profiles.
 - Consume versioned asset packs and flat vertex/index buffers from the asset compiler.
 - Forward-rendered toon/flat-shaded materials. PBR is not required. Vertex colors are the
   default; textures are allowed where practical (dashboard gauges, signs, decals, sprites,
-  liveries) but not as full PBR sets. See `docs/art-style.md`.
+  liveries) but not as full PBR sets. Runtime browser-decoded textures may update individual
+  cockpit meshes; sprite-sheet UVs are used for gear characters. See `docs/art-style.md`.
 - Object-space inverted-hull outlines and procedural grid shaders. No screen-space edge
   filters or post-processing that would break stereo depth.
 - Instanced track-side objects, frustum culling, and LOD selection.

@@ -111,6 +111,90 @@ test("automatic gearbox upshifts from a standstill", async ({ page }) => {
   await page.keyboard.up("w");
 });
 
+test("manual gearbox option keeps the selected gear", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=manual-gears");
+  await page.bringToFront();
+  await waitForReady(page);
+
+  await page.locator("#assists-open").click();
+  const autoGears = page.locator("#auto-gears-toggle");
+  await expect(autoGears).toHaveText("Auto gears: On");
+  await autoGears.click();
+  await expect(autoGears).toHaveText("Auto gears: Off");
+  await page.locator("#assists-close").click();
+
+  await expect(page.locator("#gear")).toHaveText("N");
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.waitForTimeout(150);
+  await page.keyboard.press("e", { delay: 150 });
+  await expect(page.locator("#gear")).toHaveText("1");
+  await page.waitForTimeout(100);
+  await page.keyboard.press("e", { delay: 150 });
+  await expect(page.locator("#gear")).toHaveText("2");
+
+  await page.keyboard.down("w");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 10,
+    undefined,
+    { timeout: 15_000 },
+  );
+  await expect(page.locator("#gear")).toHaveText("2");
+  await page.keyboard.up("w");
+});
+
+test("manual clutch disengages drive torque", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=manual-clutch");
+  await page.bringToFront();
+  await waitForReady(page);
+
+  await page.locator("#assists-open").click();
+  await page.locator("#auto-gears-toggle").click();
+  await page.locator("#auto-clutch-toggle").click();
+  await page.locator("#assists-close").click();
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.waitForTimeout(150);
+  await page.keyboard.press("e", { delay: 150 });
+  await expect(page.locator("#gear")).toHaveText("1");
+
+  await page.keyboard.down("Shift");
+  await page.keyboard.down("w");
+  await page.waitForTimeout(1200);
+  let telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.speedKph).toBeLessThan(1);
+  expect(telemetry.rpm).toBeGreaterThan(5000);
+
+  await page.keyboard.up("Shift");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 2,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("w");
+});
+
+test("neutral revs the engine to the limiter", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=neutral-rev");
+  await page.bringToFront();
+  await waitForReady(page);
+
+  await page.locator("#assists-open").click();
+  await page.locator("#auto-gears-toggle").click();
+  await page.locator("#assists-close").click();
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await expect(page.locator("#gear")).toHaveText("N");
+
+  await page.keyboard.down("w");
+  await page.waitForTimeout(1000);
+  const telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.speedKph).toBeLessThan(1);
+  expect(telemetry.rpm).toBeGreaterThan(5000);
+  await page.keyboard.up("w");
+});
+
 test("main-thread physics remains available as a fallback", async ({ page }) => {
   await page.goto("/web/drive/?physics=main&track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await waitForReady(page);
@@ -179,6 +263,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   const tc = page.locator("#tc-toggle");
   const abs = page.locator("#abs-toggle");
   const esc = page.locator("#esc-toggle");
+  const autoGears = page.locator("#auto-gears-toggle");
+  const autoClutch = page.locator("#auto-clutch-toggle");
   const debug = page.locator("#debug-lines-toggle");
   const fpsToggle = page.locator("#fps-counter-toggle");
   const fpsCounter = page.locator("#fps-counter");
@@ -265,9 +351,13 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(tc).toHaveText("TC: On");
   await expect(abs).toHaveText("ABS: On");
   await expect(esc).toHaveText("ESC: On");
+  await expect(autoGears).toHaveText("Auto gears: On");
+  await expect(autoClutch).toHaveText("Auto clutch: On");
   await expect(tc).toHaveAttribute("aria-pressed", "true");
   await expect(abs).toHaveAttribute("aria-pressed", "true");
   await expect(esc).toHaveAttribute("aria-pressed", "true");
+  await expect(autoGears).toHaveAttribute("aria-pressed", "true");
+  await expect(autoClutch).toHaveAttribute("aria-pressed", "true");
 
   await msaa.selectOption("off");
   let msaaTelemetry = await page.evaluate(() =>
@@ -309,6 +399,13 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.absControl).toBe(false);
   expect(telemetry.stabilityControl).toBe(false);
 
+  await autoGears.click();
+  await expect(autoGears).toHaveText("Auto gears: Off");
+  await expect(autoGears).toHaveAttribute("aria-pressed", "false");
+  await autoClutch.click();
+  await expect(autoClutch).toHaveText("Auto clutch: Off");
+  await expect(autoClutch).toHaveAttribute("aria-pressed", "false");
+
   const setRange = async (id: string, value: string) => {
     await page.locator(id).evaluate((element, next) => {
       const input = element as HTMLInputElement;
@@ -347,6 +444,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.tractionControl).toBe(true);
   expect(telemetry.absControl).toBe(true);
   expect(telemetry.stabilityControl).toBe(true);
+  await expect(autoGears).toHaveText("Auto gears: On");
+  await expect(autoClutch).toHaveText("Auto clutch: On");
   expect(telemetry.tractionStrength).toBe(0.5);
   expect(telemetry.stabilityStrength).toBe(0.5);
   expect(telemetry.steeringSensitivity).toBe(1);
@@ -561,8 +660,13 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
     { timeout: 10_000 },
   );
   await page.keyboard.up("ArrowUp");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 0,
+    undefined,
+    { timeout: 10_000 },
+  );
   const stoppedFromReverse = await telemetry(page);
-  expect(stoppedFromReverse.gear).toBe(-1);
+  expect(stoppedFromReverse.gear).toBe(0);
 
   await page.waitForFunction(
     (tick) => JSON.parse((window as any).__driveViewer.telemetry()).tick > tick + 5,
@@ -602,6 +706,38 @@ test("arrow throttle, brake, and auto reverse", async ({ page }) => {
   ).toBeGreaterThan(0.1);
 });
 
+test("automatic gearbox selects neutral when stopped", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=neutral");
+  await page.bringToFront();
+  await waitForReady(page);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 0,
+    undefined,
+    { timeout: 10_000 },
+  );
+  const neutral = await telemetry(page);
+  expect(neutral.gear).toBe(0);
+  await expect(page.locator("#gear")).toHaveText("N");
+
+  await page.keyboard.down("ArrowUp");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 1,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("ArrowUp");
+});
+
+test("drive viewer boots without WebHID", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "hid", { value: undefined, configurable: true });
+  });
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=no-hid");
+  await page.bringToFront();
+  await waitForReady(page);
+  expect(await page.evaluate(() => (window as any).__driveViewerError)).toBeUndefined();
+});
+
 test("reverse requires a second brake press after stopping", async ({ page }) => {
   await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
   await page.bringToFront();
@@ -622,9 +758,13 @@ test("reverse requires a second brake press after stopping", async ({ page }) =>
     undefined,
     { timeout: 10_000 },
   );
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).gear === 0,
+    undefined,
+    { timeout: 10_000 },
+  );
   const held = await telemetry(page);
-  expect(held.gear).toBe(1);
+  expect(held.gear).toBe(0);
   expect(held.speedKph).toBeLessThan(0.05);
 
   await page.keyboard.up("ArrowDown");

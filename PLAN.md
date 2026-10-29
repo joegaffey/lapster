@@ -377,10 +377,13 @@ wheelbase supported by `webhid-wheel`. This checkpoint runs on the main thread.
 - Replace the placeholder rack torque with front-axle self-aligning torque from tire lateral
   force, pneumatic trail, caster, and column damping. Expose steering angle and normalized
   FFB torque in telemetry.
-- Add a main-thread FFB adapter: coalesce to 100-250 Hz, clamp, apply strength/invert, and
+- Add the main-thread FFB adapter: coalesce to 100-250 Hz, clamp, apply strength/invert, and
   send constant force. Stop on hide, pause, disconnect, and a 50 ms stale-torque watchdog.
-- Add a device/FFB panel in the detached toolbar: Connect, Disconnect, strength, invert,
-  deadzone, test force, and emergency stop.
+- Mount the shared `<webhid-config-panel>` in the controls tab for device management,
+  steering/FFB calibration, pedal and button mapping, profile import/export, and emergency
+  stop. Keep Lapster's feel mixer in its `extra-settings` slot.
+- Feed mapped steering, throttle, brake, clutch, handbrake, and gear buttons into the drive
+  input while preserving keyboard and touch fallbacks.
 - Add a **Settings** dialog with TC/ESC enables, independent strengths, and steering
   sensitivity. Keep Reset and Camera at the top level.
 - Add unit tests for input normalization and FFB safety, Rust tests for steering torque, and
@@ -412,11 +415,11 @@ and complete the audio/device matrix integration.
 
 - Add the SAB input and FFB mailboxes and move physics to the physics worker.
 - Move the tested `webhid-wheel` adapter into the HID worker with watchdog and stop behavior.
-- Integrate upstream `webhid-wheel` work: optional multi-device rig, fast constant-force
-  updates, worker-compatible device acquisition, and expanded wheel profiles.
+- Carry the vendored 0.4.42 `WheelManager` sessions and setup profiles into the worker path;
+  keep the core DOM-free and use the main thread only for `requestDevice()`.
 - Add audio driven from shared snapshots.
 - Expand the hardware matrix beyond CAMMUS C5: CAMMUS C12, FFBeast, generic USB-PID wheels,
-  and input-only Logitech/Fanatec until vendor FFB profiles exist.
+  and Logitech G29/DFGT constant force; other Logitech/Fanatec wheels remain future profiles.
 - Add a loading screen with progress, cancellation, retry, and typed error messages.
 - Add IndexedDB caching, cache invalidation, and offline behavior.
 - Add memory disposal and context-loss recovery.
@@ -433,13 +436,20 @@ and complete the audio/device matrix integration.
 
 ### Upstream `webhid-wheel` dependencies
 
-These are tracked in the library repository, not reimplemented in Lapster:
+Vendored as 0.4.42 (`9fbfb6f`) from the library repository. See the
+[Package, setup profiles and Lapster integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
-- Optional `WebHIDRig` for wheel + pedals + shifter with stable device identity and hot-plug.
+- Generic multi-device sessions (`WebHIDDevice` + `mapChannels`) for wheel, pedals, buttons
+  and shifters. Implemented; the earlier `WebHIDRig` proposal is dropped.
+- A dual-entry package: headless core at `webhid-wheel` and optional custom elements at
+  `webhid-wheel/ui`, including `<webhid-config-panel>`. Implemented and mounted in Drive.
+- Portable setup profiles with hardware matching, validation, migration and lazy reconnect.
+  Implemented with Lapster's `lapster.wheel.v3` store and `metadata.lapster`.
 - Fast constant-force path that avoids multiple reports per update and supports a configurable
-  100-250 Hz rate with backpressure.
-- Worker-compatible device acquisition and reconnect behavior.
-- CAMMUS C5 primary verification, then C12/FFBeast; input-only profiles for Logitech/Fanatec.
+  100-250 Hz rate with backpressure. Implemented.
+- Worker-compatible device acquisition and reconnect behavior. Core remains DOM-free for CP7.
+- CAMMUS C5 primary verification, then C12/FFBeast; Logitech G29/DFGT constant force;
+  T248/T300 input-only; vendor profiles remain future work.
 - Recorded report fixtures and a manual hardware checklist for each supported device.
 
 ### CP8: Hardening and release

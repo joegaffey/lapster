@@ -199,8 +199,8 @@ impl Default for CameraTuning {
     fn default() -> Self {
         Self {
             bonnet: CameraShot {
-                eye: [-0.35, 1.25, -0.1],
-                target: [-0.35, 1.05, -20.0],
+                eye: [0.0, 1.25, -0.1],
+                target: [0.0, 1.05, -20.0],
                 fov_y: 1.0,
             },
             cockpit: CameraShot {
@@ -210,7 +210,7 @@ impl Default for CameraTuning {
             },
             isometric: IsometricTuning::default(),
             chase: ChaseTuning::default(),
-            cockpit_glass_alpha: 0.32,
+            cockpit_glass_alpha: 0.06,
         }
     }
 }

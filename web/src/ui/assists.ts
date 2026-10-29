@@ -1,5 +1,7 @@
 import { BUILD_CHANNEL } from "../version.generated.ts";
 import { setFpsCounterVisible } from "./fps.ts";
+import { setupWheelControls } from "./wheel-panel.ts";
+import type { WheelFfb } from "../input/wheel-ffb.ts";
 
 export interface SettingsViewer {
   set_traction_control?(enabled: boolean): void;
@@ -29,6 +31,8 @@ export interface AssistSettings {
   abs: boolean;
   esc: boolean;
   escStrength: number;
+  autoGears: boolean;
+  autoClutch: boolean;
   steeringSensitivity: number;
   debugLines: boolean;
   environmentShadows: EnvironmentShadows;
@@ -41,6 +45,8 @@ export interface AssistSettings {
 
 interface SettingsOptions {
   gameplay?: boolean;
+  wheel?: WheelFfb;
+  onChange?: (settings: AssistSettings) => void;
   onRenderScale?: (scale: number) => void;
 }
 
@@ -63,6 +69,8 @@ const DEFAULTS: AssistSettings = {
   abs: true,
   esc: true,
   escStrength: 0.5,
+  autoGears: true,
+  autoClutch: true,
   steeringSensitivity: 1,
   debugLines: false,
   environmentShadows: "hybrid",
@@ -179,6 +187,7 @@ function settingsDialogHtml(): string {
   </header>
   <div class="settings-tabs" role="tablist" aria-label="Settings sections">
     <button id="tab-gameplay" class="settings-tab" role="tab" aria-selected="true" aria-controls="settings-gameplay" data-tab="gameplay" type="button">Gameplay</button>
+    <button id="tab-controls" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-controls" data-tab="controls" type="button">Controls</button>
     <button id="tab-graphics" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-graphics" data-tab="graphics" type="button">Graphics</button>
   </div>
   <section id="settings-gameplay" class="settings-panel" role="tabpanel" aria-labelledby="tab-gameplay">
@@ -205,11 +214,24 @@ function settingsDialogHtml(): string {
         <output id="esc-strength-value">50%</output>
         <input id="esc-strength" type="range" min="0" max="1" step="0.05" value="0.5" />
       </label>
+      <div class="assist-row">
+        <span>Automatic gearbox</span>
+        <button id="auto-gears-toggle" data-testid="auto-gears-toggle" aria-pressed="true" type="button">Auto gears: On</button>
+      </div>
+      <div class="assist-row">
+        <span>Automatic clutch</span>
+        <button id="auto-clutch-toggle" data-testid="auto-clutch-toggle" aria-pressed="true" type="button">Auto clutch: On</button>
+      </div>
       <label class="assist-slider">
         <span>Steering sensitivity</span>
         <output id="steering-sensitivity-value">100%</output>
         <input id="steering-sensitivity" type="range" min="0.25" max="2" step="0.05" value="1" />
       </label>
+    </div>
+  </section>
+  <section id="settings-controls" class="settings-panel" role="tabpanel" aria-labelledby="tab-controls" hidden>
+    <div class="assist-body">
+      <div id="wheel-controls"></div>
     </div>
   </section>
   <section id="settings-graphics" class="settings-panel" role="tabpanel" aria-labelledby="tab-graphics" hidden>
@@ -281,7 +303,7 @@ function settingsDialogHtml(): string {
 </dialog>`;
 }
 
-function ensureSettingsUi(gameplay: boolean): void {
+function ensureSettingsUi(gameplay: boolean, hasWheel: boolean): void {
   if (!document.querySelector(`#${SETTINGS_STYLE_ID}`)) {
     const style = document.createElement("style");
     style.id = SETTINGS_STYLE_ID;
@@ -304,9 +326,19 @@ function ensureSettingsUi(gameplay: boolean): void {
   if (!gameplay) {
     document.querySelector("#tab-gameplay")?.remove();
     document.querySelector("#settings-gameplay")?.remove();
-    const graphicsTab = document.querySelector<HTMLButtonElement>("#tab-graphics");
-    graphicsTab?.setAttribute("aria-selected", "true");
-    document.querySelector("#settings-graphics")?.removeAttribute("hidden");
+  }
+  if (!hasWheel) {
+    document.querySelector("#tab-controls")?.remove();
+    document.querySelector("#settings-controls")?.remove();
+  }
+  const selected = document.querySelector<HTMLButtonElement>(
+    ".settings-tab[aria-selected='true']",
+  );
+  if (!selected) {
+    const first = document.querySelector<HTMLButtonElement>(".settings-tab");
+    first?.setAttribute("aria-selected", "true");
+    const panel = first?.dataset.tab ? `#settings-${first.dataset.tab}` : null;
+    if (panel) document.querySelector(panel)?.removeAttribute("hidden");
   }
 }
 
@@ -334,6 +366,8 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     abs: value?.abs !== false,
     esc: value?.esc !== false,
     escStrength: clamp(value?.escStrength ?? 0.5, 0, 1, 1),
+    autoGears: value?.autoGears !== false,
+    autoClutch: value?.autoClutch !== false,
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
     debugLines: value?.debugLines === true,
     environmentShadows,
@@ -411,7 +445,8 @@ export function setupAssistsDialog(
   options: SettingsOptions = {},
 ): SettingsController | null {
   const gameplay = options.gameplay !== false;
-  ensureSettingsUi(gameplay);
+  const hasWheel = Boolean(options.wheel);
+  ensureSettingsUi(gameplay, hasWheel);
 
   const dialog = document.querySelector<HTMLDialogElement>("#assists-dialog");
   const openButton = document.querySelector<HTMLButtonElement>("#assists-open");
@@ -420,6 +455,8 @@ export function setupAssistsDialog(
   const tcToggle = document.querySelector<HTMLButtonElement>("#tc-toggle");
   const absToggle = document.querySelector<HTMLButtonElement>("#abs-toggle");
   const escToggle = document.querySelector<HTMLButtonElement>("#esc-toggle");
+  const autoGearsToggle = document.querySelector<HTMLButtonElement>("#auto-gears-toggle");
+  const autoClutchToggle = document.querySelector<HTMLButtonElement>("#auto-clutch-toggle");
   const tcStrength = document.querySelector<HTMLInputElement>("#tc-strength");
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
@@ -463,6 +500,8 @@ export function setupAssistsDialog(
     (!tcToggle ||
       !absToggle ||
       !escToggle ||
+      !autoGearsToggle ||
+      !autoClutchToggle ||
       !tcStrength ||
       !escStrength ||
       !steering ||
@@ -476,6 +515,13 @@ export function setupAssistsDialog(
   let settings = load();
   let actualMsaa = 1;
   let appliedEnvironment: "high" | "hybrid" | "baked" | "off" = "high";
+
+  if (options.wheel) {
+    const wheelHost = document.querySelector<HTMLElement>("#wheel-controls");
+    if (wheelHost) {
+      setupWheelControls(options.wheel, wheelHost);
+    }
+  }
 
   const applyAssists = () => {
     if (!gameplay) return;
@@ -500,17 +546,22 @@ export function setupAssistsDialog(
     setFpsCounterVisible(settings.fpsCounter);
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     options.onRenderScale?.(settings.renderScale);
+    options.onChange?.({ ...settings });
     save(settings);
   };
 
   const refresh = () => {
-    if (gameplay && tcToggle && absToggle && escToggle && tcStrength && escStrength && steering && tcValue && escValue && steeringValue) {
+    if (gameplay && tcToggle && absToggle && escToggle && autoGearsToggle && autoClutchToggle && tcStrength && escStrength && steering && tcValue && escValue && steeringValue) {
       tcToggle.textContent = settings.tc ? "TC: On" : "TC: Off";
       tcToggle.setAttribute("aria-pressed", String(settings.tc));
       absToggle.textContent = settings.abs ? "ABS: On" : "ABS: Off";
       absToggle.setAttribute("aria-pressed", String(settings.abs));
       escToggle.textContent = settings.esc ? "ESC: On" : "ESC: Off";
       escToggle.setAttribute("aria-pressed", String(settings.esc));
+      autoGearsToggle.textContent = settings.autoGears ? "Auto gears: On" : "Auto gears: Off";
+      autoGearsToggle.setAttribute("aria-pressed", String(settings.autoGears));
+      autoClutchToggle.textContent = settings.autoClutch ? "Auto clutch: On" : "Auto clutch: Off";
+      autoClutchToggle.setAttribute("aria-pressed", String(settings.autoClutch));
       tcStrength.value = String(settings.tcStrength);
       escStrength.value = String(settings.escStrength);
       steering.value = String(settings.steeringSensitivity);
@@ -578,9 +629,11 @@ export function setupAssistsDialog(
     for (const button of dialog.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
       const selected = button.dataset.tab === tab;
       button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
     }
-    document.querySelector("#settings-gameplay")?.toggleAttribute("hidden", tab !== "gameplay");
-    document.querySelector("#settings-graphics")?.toggleAttribute("hidden", tab !== "graphics");
+    for (const panel of dialog.querySelectorAll<HTMLElement>(".settings-panel")) {
+      panel.toggleAttribute("hidden", panel.id !== `settings-${tab}`);
+    }
   };
   for (const button of dialog.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
     button.addEventListener("click", () => setTab(button.dataset.tab ?? "gameplay"));
@@ -589,15 +642,15 @@ export function setupAssistsDialog(
     const keyboard = event as KeyboardEvent;
     if (keyboard.key !== "ArrowLeft" && keyboard.key !== "ArrowRight") return;
     keyboard.preventDefault();
-    setTab(
-      document
-        .querySelector<HTMLButtonElement>(".settings-tab[aria-selected='true']")
-        ?.dataset.tab === "gameplay"
-        ? "graphics"
-        : "gameplay",
-    );
+    const tabs = [...dialog.querySelectorAll<HTMLButtonElement>(".settings-tab")];
+    if (tabs.length === 0) return;
+    const current = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    const delta = keyboard.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(current + delta + tabs.length) % tabs.length];
+    setTab(next.dataset.tab ?? tabs[0].dataset.tab ?? "graphics");
+    next.focus();
   });
-  setTab(gameplay ? "gameplay" : "graphics");
+  setTab(gameplay ? "gameplay" : hasWheel ? "controls" : "graphics");
 
   if (gameplay) {
     tcToggle!.addEventListener("click", () => {
@@ -614,6 +667,18 @@ export function setupAssistsDialog(
     });
     escToggle!.addEventListener("click", () => {
       settings.esc = !settings.esc;
+      apply();
+      refresh();
+      status.textContent = "Saved";
+    });
+    autoGearsToggle!.addEventListener("click", () => {
+      settings.autoGears = !settings.autoGears;
+      apply();
+      refresh();
+      status.textContent = "Saved";
+    });
+    autoClutchToggle!.addEventListener("click", () => {
+      settings.autoClutch = !settings.autoClutch;
       apply();
       refresh();
       status.textContent = "Saved";

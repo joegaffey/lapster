@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test src/types/asset-layout.test.ts tests/fixtures.test.ts tests/pack-loader.test.ts tests/sab.test.ts",
+    "test": "node --test src/types/asset-layout.test.ts tests/fixtures.test.ts tests/pack-loader.test.ts tests/sab.test.ts tests/wheel-feel.test.ts tests/webhid-generic.test.ts",
     "build:viewer": "bash scripts/build-viewer.sh",
     "test:viewer": "npm run build:viewer && bash scripts/test-viewer.sh",
     "test:all": "npm test && npm run test:viewer",

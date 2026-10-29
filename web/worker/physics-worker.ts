@@ -137,6 +137,7 @@ function runSlice(generation: number): void {
       lastInput.brake,
       lastInput.steering,
       lastInput.gear,
+      lastInput.clutch,
     );
     stepTimes.push(performance.now() - started);
     if (stepTimes.length > 250) {
@@ -151,7 +152,7 @@ function runSlice(generation: number): void {
       Date.now() / 1000,
       new Float32Array(state),
     );
-    writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 10)), true);
+    writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 20)), true);
   }
 
   if (steps > 1) {

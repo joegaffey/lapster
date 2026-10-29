@@ -1,8 +1,8 @@
 # Project Progress
 
-Last updated: 2026-10-26
+Last updated: 2026-10-29
 Repository root: the directory containing this file
-Current phase: **Audio spike — SAB worker default and Engine_Sim rotary2 AudioWorklet**
+Current phase: **WebHID wheel/FFB feel spike and cockpit dial presentation (dev branch)**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -51,6 +51,7 @@ Deployment:
 - CI: `.github/workflows/ci.yml`
 - Pages: `.github/workflows/pages.yml`
 - Live site: https://joegaffey.com/lapster/
+- Dev preview: https://joegaffey.com/lapster-dev/ (`workflow_dispatch` with `ref=feature/wheel-ffb`)
 
 ## Environment
 
@@ -88,8 +89,10 @@ Toolchain setup scripts:
 | Default demo assets | Done | RX-7 and Skidpad 0.5 checked in; no query parameters required; custom `?car=`/`?track=` still supported |
 | Renderer upgrade | Done | wgpu 30.0.1, WebGPU (`BrowserWebGpu`), WebGL2 fallback, sRGB output fix, wasm-opt/LTO pipeline |
 | GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
-| GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/` |
+| GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/`; dev preview deploys branch builds separately |
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
+| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.42, multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
+| Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
 
 ## Current capabilities
 
@@ -130,14 +133,21 @@ Toolchain setup scripts:
   button is used; the enabled/muted preference is remembered across reloads and resumes on the
   first gesture. EngineSim's transmission mesh whine is disabled for now (`mix.transmission = 0`).
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
-  car setup; reverse remains the edge-triggered brake action. Manual gear keys are removed for
-  the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it into
-  `sim-core` once the behaviour is accepted.
+  car setup; reverse remains the edge-triggered brake action. The box selects neutral (`N`)
+  at rest and re-engages first or reverse when throttle/brake is applied. Gameplay settings
+  can disable auto gears for manual shifting and disable auto clutch for the mapped clutch
+  axis or the Shift key. Numbered gear buttons are momentary: holding one selects that gear
+  and releasing it returns to neutral. `sim-core` models clutch disengagement for drive torque
+  and engine RPM, and neutral or a disengaged clutch allows free revving to redline. Generic
+  HID layout parsing now splits multi-axis report items, covering Arduino handbrakes that send
+  several axes in one report. Shift scheduling still lives in `web/drive/main.ts`.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
   - `A` / `D` or `←` / `→` steer; left/right direction is verified,
   - `W` / `↑` brakes while reversing,
+  - `E` / `Q` shift up/down, `N` neutral, `Z` reverse when stopped,
+  - `Shift` clutch when auto clutch is disabled,
   - automatic forward gearbox (upshift/downshift with 0.35 s anti-hunt), `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
 - Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
@@ -170,12 +180,17 @@ Toolchain setup scripts:
   demo both use it.
 - Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
 - Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
-  cockpit mode switches it to 32% alpha in a transparent forward pass; bonnet and external
+  cockpit mode switches it to 6% alpha in a transparent forward pass; bonnet and external
   views keep it opaque. Body and glass hide together; wheels remain visible.
-- Drive camera: chase → bonnet → cockpit → isometric (`C` / button). The isometric view is a
-  fixed-world-orientation, high-angle follow camera. Bonnet eye height is 1.25 m; cockpit
-  eye is 1.10 m and 0.25 m rearward. Body defaults visible; `Body: Visible/Hidden` toggles body
-  and glass. A real cockpit still needs an interior model.
+- Drive camera: chase → bonnet → cockpit → isometric (`C` / button), persisted across reloads.
+  The isometric view is a fixed-world-orientation, high-angle follow camera. The bonnet camera is centered on the
+  car's longitudinal axis at 1.25 m; cockpit eye is 1.10 m and 0.25 m rearward. Body defaults
+  visible; `Body: Visible/Hidden` toggles body and glass.
+- Cockpit dial cluster: a three-dial cowl is generated from the glass lower edge. The
+  speedometer and RPM faces use browser-decoded runtime textures, the gear display samples a
+  4×3 seven-segment sprite atlas for `N`, `1–6`, and `R`, and red needles follow calibrated
+  `7:30 → 4:30` scales. Dial faces, needles, and gear textures are recessed into their
+  cylinders. A full interior model is still required.
 - Renderer reports backend and surface format in telemetry:
   - backend: `BrowserWebGpu` in Chromium,
   - format: `Bgra8Unorm`,
@@ -252,15 +267,23 @@ Toolchain setup scripts:
 
 ## Wheel and FFB workstream
 
-**Status:** planned, not implemented. No HID or FFB dependency is wired into the app yet.
+**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.42 (`9fbfb6f`) with
+multi-device `WheelManager` sessions, portable setup profiles, and the shared
+`<webhid-config-panel>`. Drive mounts the panel under Settings → Controls and keeps the
+main-thread feel mixer in its `extra-settings` slot. Mapped steering, throttle, brake,
+clutch, handbrake, and gear buttons feed the drive input alongside keyboard and touch. The
+physics worker publishes normalized FFB torque through the SAB mailbox, and the adapter keeps
+the 200 Hz constant-force path with its watchdog. Browsers without WebHID boot normally and
+hide the wheel controls. Hardware acceptance, surface-specific dirt/grass mapping, and
+worker-side HID acquisition remain.
 
 **Decisions:**
 
 - Target every wheelbase supported by [`webhid-wheel`](https://github.com/joegaffey/webhid-wheel),
   not a CAMMUS-only path.
 - Test CAMMUS C5 first, then CAMMUS C12 and FFBeast; generic USB-PID wheels are best effort.
-- Logitech/Fanatec initially get input only; their vendor FFB protocols are not in scope until
-  the upstream library adds profiles.
+- Logitech G29/DFGT constant force is supported by the vendored profiles; T248/T300 remain
+  input-only, and other Fanatec/Logitech vendor protocols remain future work.
 - CP6.5 runs the FFB adapter on the **main thread**. Move it to the HID worker later as an
   optimization if measurements show frame-pacing or `sendReport` jitter problems.
 - Keep `webhid-wheel` behind an input/FFB adapter so the worker migration does not change the
@@ -280,12 +303,18 @@ Toolchain setup scripts:
    strength and steering sensitivity.
 6. Unit, Rust, and Playwright coverage; manual CAMMUS C5 hardware checklist.
 
-**Upstream `webhid-wheel` work tracked separately:**
+**Upstream `webhid-wheel` work tracked separately:** see the
+[package, setup profiles and Lapster integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
-- Optional multi-device rig for wheel + pedals + shifter.
-- High-frequency constant-force path with coalescing and backpressure.
-- Worker-compatible acquisition and reconnect.
-- Expanded profiles and recorded report fixtures.
+- Generic multi-device sessions (`WebHIDDevice` + `mapChannels`); the `WebHIDRig` proposal is
+  dropped. Implemented and wired into Drive.
+- Dual-entry package with optional `webhid-wheel/ui` custom elements and
+  `<webhid-config-panel>`. Implemented and mounted in Settings → Controls.
+- Portable setup profiles with hardware matching and lazy reconnect. Implemented with the
+  `lapster.wheel.v3` store and `metadata.lapster` feel round-trip.
+- High-frequency constant-force path with coalescing and backpressure. Implemented.
+- Worker-compatible acquisition and reconnect. Core remains DOM-free for CP7.
+- Expanded profiles and recorded report fixtures. CAMMUS C5/C12, FFBeast, G29/DFGT.
 - CAMMUS C5 primary verification, then C12/FFBeast.
 
 **Hardware acceptance:** CAMMUS C5 steering and FFB, with watchdog/stop behavior. The device
@@ -328,9 +357,9 @@ matrix then expands to the other supported wheelbases.
 - Keep the worker opt-in until CPU-throttled results are reproduced on the target hardware.
 - EngineSim's transmission mesh whine is muted pending retuning; gear changes use the
   click/thump cue instead.
-- The auto gearbox is currently a UI-layer spike. `sim-core` still takes an explicit gear, so
-  `simulate()` tests and any future AI must supply gears themselves until the logic moves into
-  Rust.
+- Gear selection is still a UI-layer spike. `sim-core` takes an explicit gear, so `simulate()`
+  tests and any future AI must supply gears themselves until the shift scheduler moves into
+  Rust. Clutch torque and RPM blending are implemented in `sim-core`.
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
 - Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
@@ -351,7 +380,10 @@ matrix then expands to the other supported wheelbases.
   build versions the Wasm package directory. Explicit custom pack URLs still need a
   cache-busting query after changing the asset.
 - `.ini` physics mapping and full texture decoding remain; GLB/AC importers are first-pass.
-- No audio or HID/FFB integration yet; wheel/FFB is planned as CP6.5.
+- Wheel/FFB currently runs on the main thread during the CP6.5 spike; move it to the HID
+  worker after hardware validation if frame pacing or report jitter requires it.
+- The speedometer, RPM, and seven-segment gear images in `web/assets` are user-supplied.
+  Confirm redistribution rights or replace them before a public/commercial release.
 - `web/pkg`, generated page JS, `web/.cache`, `web/test-results`, and `web/node_modules` are generated/ignored.
 - Temporary caches and local server processes are not part of the repository and do not survive a machine/session restart.
 - Playwright screenshot baselines are Linux/Chromium-specific and are skipped in CI.
@@ -368,10 +400,10 @@ matrix then expands to the other supported wheelbases.
    If the drivetrain transients are missed, restore selected EngineSim shift/launch events
    rather than returning to its independent drivetrain. Decide separately whether to smooth
    engine RPM in `sim-core` and retune TC.
-2. **CP6.5 — wheel/FFB feel spike**: add the input abstraction, direct-wheel steering,
-   self-aligning torque, main-thread FFB, toolbar device panel, and CAMMUS C5 hardware test.
-3. **Upstream `webhid-wheel`**: multi-device rig, high-frequency constant force, worker
-   compatibility, profiles, and hardware fixtures.
+2. **CP6.5 — wheel/FFB validation**: run the CAMMUS C5 checklist, tune the feel mixer, and
+   decide whether the main-thread adapter stays or moves into the HID worker.
+3. **Vendored `webhid-wheel` validation**: run multi-device profile, pedal/button mapping,
+   and worker-compatibility checks; then complete the CAMMUS C5 hardware checklist.
 4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add
    per-car audio profiles / an optional sample layer, expand the hardware matrix, and run
    performance traces. The physics worker, input mailbox, snapshot ring, FFB mailbox, and

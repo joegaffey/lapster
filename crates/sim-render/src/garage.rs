@@ -4,11 +4,13 @@ use sim_types::{
     Aabb, AssetManifest, CarPhysics, CarVisual, MeshBuffers, MeshRef, NodeTransform,
     TrackCollision, TrackMetadata, TrackVisual,
 };
+use std::collections::{HashMap, HashSet};
 
 use crate::camera::Camera;
 use crate::scene::{
-    build_outline, build_vertices, push_line, scene_texture, CarRig, GarageBay, LineVertex,
-    MeshData, MeshVertex, RigWheel, Scene, SceneTexture, SceneWheel,
+    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitGearSegment,
+    CockpitNeedle, CockpitNeedleSource, GarageBay, LineVertex, MeshData, MeshVertex, RigWheel,
+    Scene, SceneTexture, SceneWheel,
 };
 use crate::shadow_decal_yaw;
 
@@ -453,6 +455,27 @@ const BAY_COLORS: [[f32; 3]; 10] = [
     [0.02, 0.56, 0.55],
 ];
 
+const COCKPIT_DIALS: [(CockpitNeedleSource, [f32; 3], f32, f32); 3] = [
+    (
+        CockpitNeedleSource::Speed,
+        [-0.442, 0.935, -0.22],
+        0.044,
+        0.035,
+    ),
+    (
+        CockpitNeedleSource::Rpm,
+        [-0.35, 0.935, -0.22],
+        0.050,
+        0.045,
+    ),
+    (
+        CockpitNeedleSource::Gear,
+        [-0.258, 0.935, -0.22],
+        0.044,
+        0.035,
+    ),
+];
+
 fn build_car(
     scene: &mut Scene,
     car_visual: &CarVisual,
@@ -548,6 +571,178 @@ fn build_car(
         None
     };
 
+    let dashboard_mesh_index = if brake_lights {
+        let dashboard = mesh_index_by_name(car_visual, "body_glass")
+            .and_then(|index| car_visual.mesh_buffers.get(index))
+            .and_then(cockpit_cowl_buffers);
+        if let Some(buffers) = dashboard {
+            let mut min = [f32::INFINITY; 3];
+            let mut max = [f32::NEG_INFINITY; 3];
+            for position in &buffers.positions {
+                for axis in 0..3 {
+                    min[axis] = min[axis].min(position[axis]);
+                    max[axis] = max[axis].max(position[axis]);
+                }
+            }
+            let mesh_ref = MeshRef {
+                name: "dashboard".to_string(),
+                vertex_offset: 0,
+                vertex_count: buffers.positions.len() as u32,
+                index_offset: 0,
+                index_count: buffers.indices.len() as u32,
+                material: 0,
+                bounds: Aabb { min, max },
+                lod: 0,
+            };
+            let index = push_car_mesh(
+                scene,
+                format!("{}_dashboard", prefix).as_str(),
+                &mesh_ref,
+                &buffers,
+                [0.0, 0.0, 0.0],
+                body_model,
+                CarMeshStyle {
+                    texture: None,
+                    outline: false,
+                    alpha: 1.0,
+                },
+            )?;
+            scene.meshes[index].casts_static_shadow = false;
+            scene.meshes[index].casts_dynamic_shadow = false;
+            Some(index)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let has_dashboard_faces = brake_lights && dashboard_mesh_index.is_some();
+    let speedometer_face_mesh_index = if has_dashboard_faces {
+        push_dial_face(scene, prefix, CockpitNeedleSource::Speed, body_model)?
+    } else {
+        None
+    };
+    let rpm_face_mesh_index = if has_dashboard_faces {
+        push_dial_face(scene, prefix, CockpitNeedleSource::Rpm, body_model)?
+    } else {
+        None
+    };
+
+    let mut cockpit_needles = Vec::new();
+    if brake_lights && dashboard_mesh_index.is_some() {
+        for (source, center, radius, depth) in COCKPIT_DIALS {
+            if source == CockpitNeedleSource::Gear {
+                continue;
+            }
+            let buffers = needle_buffers(radius);
+            let center = Vec3::new(center[0], center[1], center[2] + depth * 0.5 - 0.0035);
+            let mesh_ref = MeshRef {
+                name: format!("dashboard_needle_{}", source as u8),
+                vertex_offset: 0,
+                vertex_count: buffers.positions.len() as u32,
+                index_offset: 0,
+                index_count: buffers.indices.len() as u32,
+                material: 0,
+                bounds: Aabb {
+                    min: [-radius * 0.025, 0.0, 0.0],
+                    max: [radius * 0.025, radius * 0.55, 0.0],
+                },
+                lod: 0,
+            };
+            let mesh_index = push_car_mesh(
+                scene,
+                &format!("{}_needle_{}", prefix, source as u8),
+                &mesh_ref,
+                &buffers,
+                [1.0, 0.02, 0.01],
+                body_model * Mat4::from_translation(center),
+                CarMeshStyle {
+                    texture: None,
+                    outline: false,
+                    alpha: 1.0,
+                },
+            )?;
+            scene.meshes[mesh_index].emissive = [1.0, 0.0, 0.0];
+            scene.meshes[mesh_index].casts_static_shadow = false;
+            scene.meshes[mesh_index].casts_dynamic_shadow = false;
+            cockpit_needles.push(CockpitNeedle {
+                mesh_index,
+                center,
+                source,
+            });
+        }
+    }
+
+    let mut gear_segments = Vec::new();
+    if brake_lights && dashboard_mesh_index.is_some() {
+        if let Some((_, center, radius, depth)) = COCKPIT_DIALS
+            .iter()
+            .find(|(source, _, _, _)| *source == CockpitNeedleSource::Gear)
+        {
+            let z = center[2] + depth * 0.5 - 0.003;
+            let half_width = radius * 0.75;
+            let half_height = half_width * (512.0 / 3.0) / (844.0 / 4.0);
+            let gear_cells = [
+                (0, 1, 2),
+                (-1, 2, 2),
+                (1, 0, 0),
+                (2, 1, 0),
+                (3, 2, 0),
+                (4, 3, 0),
+                (5, 0, 1),
+                (6, 1, 1),
+            ];
+            for (gear, column, row) in gear_cells {
+                let u0 = column as f32 / 4.0;
+                let v0 = row as f32 / 3.0;
+                let segment_center = Vec3::new(center[0], center[1], z);
+                let buffers = sprite_quad_buffers(
+                    half_width,
+                    half_height,
+                    [1.0, 1.0, 1.0],
+                    u0,
+                    v0,
+                    u0 + 0.25,
+                    v0 + 1.0 / 3.0,
+                );
+                let mesh_ref = MeshRef {
+                    name: format!("gear_digit_{}", gear),
+                    vertex_offset: 0,
+                    vertex_count: 4,
+                    index_offset: 0,
+                    index_count: 6,
+                    material: 0,
+                    bounds: Aabb {
+                        min: [-half_width, -half_height, 0.0],
+                        max: [half_width, half_height, 0.0],
+                    },
+                    lod: 0,
+                };
+                let mesh_index = push_car_mesh(
+                    scene,
+                    &format!("{}_gear_{}", prefix, gear),
+                    &mesh_ref,
+                    &buffers,
+                    [1.0, 1.0, 1.0],
+                    body_model * Mat4::from_translation(segment_center),
+                    CarMeshStyle {
+                        texture: None,
+                        outline: false,
+                        alpha: 1.0,
+                    },
+                )?;
+                scene.meshes[mesh_index].casts_static_shadow = false;
+                scene.meshes[mesh_index].casts_dynamic_shadow = false;
+                gear_segments.push(CockpitGearSegment {
+                    mesh_index,
+                    center: segment_center,
+                    gear,
+                });
+            }
+        }
+    }
+
     let mut wheels = Vec::with_capacity(car_visual.wheels.len());
     let mut rig_wheels = Vec::with_capacity(car_visual.wheels.len());
     for wheel in &car_visual.wheels {
@@ -634,6 +829,12 @@ fn build_car(
         glass_mesh_index,
         brake_light_mesh_index,
         reverse_light_mesh_index,
+        dashboard_mesh_index,
+        dashboard_local: body_local,
+        speedometer_face_mesh_index,
+        rpm_face_mesh_index,
+        cockpit_needles,
+        gear_segments,
         wheels: rig_wheels,
         steering_mesh_index,
         steering_local,
@@ -655,6 +856,489 @@ fn build_car(
         bounds: body_bounds,
         ground_y,
     })
+}
+
+fn cockpit_cowl_buffers(glass: &MeshBuffers) -> Option<MeshBuffers> {
+    let mut edge_counts: HashMap<(u32, u32), u32> = HashMap::new();
+    for triangle in glass.indices.as_chunks::<3>().0 {
+        for (a, b) in [
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ] {
+            let key = if a < b { (a, b) } else { (b, a) };
+            *edge_counts.entry(key).or_default() += 1;
+        }
+    }
+
+    let mut adjacency: HashMap<u32, Vec<u32>> = HashMap::new();
+    for ((a, b), count) in edge_counts {
+        if count != 1 {
+            continue;
+        }
+        adjacency.entry(a).or_default().push(b);
+        adjacency.entry(b).or_default().push(a);
+    }
+
+    let mut unvisited: HashSet<u32> = adjacency.keys().copied().collect();
+    let mut front_loop: Option<Vec<u32>> = None;
+    let mut front_z = f32::INFINITY;
+    while let Some(start) = unvisited.iter().next().copied() {
+        let mut component = Vec::new();
+        let mut stack = vec![start];
+        unvisited.remove(&start);
+        while let Some(vertex) = stack.pop() {
+            component.push(vertex);
+            if let Some(neighbors) = adjacency.get(&vertex) {
+                for neighbor in neighbors {
+                    if unvisited.remove(neighbor) {
+                        stack.push(*neighbor);
+                    }
+                }
+            }
+        }
+        if component.len() < 3 {
+            continue;
+        }
+        let min_z = component
+            .iter()
+            .filter_map(|index| glass.positions.get(*index as usize))
+            .map(|position| position[2])
+            .fold(f32::INFINITY, f32::min);
+        if min_z < front_z {
+            front_z = min_z;
+            front_loop = Some(component);
+        }
+    }
+
+    let component = front_loop?;
+    let y_of = |index: u32| {
+        glass
+            .positions
+            .get(index as usize)
+            .map(|position| position[1])
+            .unwrap_or(f32::INFINITY)
+    };
+    let start = *component.iter().min_by(|a, b| {
+        y_of(**a)
+            .partial_cmp(&y_of(**b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })?;
+
+    let mut order = vec![start];
+    let mut previous = None;
+    let mut current = start;
+    loop {
+        let next = adjacency
+            .get(&current)?
+            .iter()
+            .copied()
+            .find(|vertex| Some(*vertex) != previous)?;
+        if next == start {
+            break;
+        }
+        order.push(next);
+        previous = Some(current);
+        current = next;
+        if order.len() > component.len() {
+            return None;
+        }
+    }
+
+    let min_y = order
+        .iter()
+        .map(|index| y_of(*index))
+        .fold(f32::INFINITY, f32::min);
+    let threshold = min_y + 0.05;
+    let mut best_start = 0;
+    let mut best_len = 0;
+    for candidate in 0..order.len() {
+        if y_of(order[candidate]) > threshold {
+            continue;
+        }
+        let mut length = 0;
+        while length < order.len() && y_of(order[(candidate + length) % order.len()]) <= threshold {
+            length += 1;
+        }
+        if length > best_len {
+            best_len = length;
+            best_start = candidate;
+        }
+    }
+    if best_len < 3 {
+        return None;
+    }
+    let arc: Vec<u32> = (0..best_len)
+        .map(|offset| order[(best_start + offset) % order.len()])
+        .collect();
+
+    let max_y = arc
+        .iter()
+        .map(|index| y_of(*index))
+        .fold(f32::NEG_INFINITY, f32::max);
+    let top_color = [0.0, 0.0, 0.0];
+    let bulkhead_color = [0.0, 0.0, 0.0];
+    let mut positions = Vec::with_capacity(arc.len() * 3);
+    let mut normals = Vec::with_capacity(arc.len() * 3);
+    let mut uvs = Vec::with_capacity(arc.len() * 3);
+    let mut colors = Vec::with_capacity(arc.len() * 3);
+    for index in &arc {
+        let position = Vec3::from_array(*glass.positions.get(*index as usize)?);
+        positions.push(position.to_array());
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.0, 0.0]);
+        colors.push(top_color);
+
+        positions.push([position.x * 0.92, max_y, position.z + 0.38]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([1.0, 0.0]);
+        colors.push(top_color);
+    }
+    for index in &arc {
+        let position = Vec3::from_array(*glass.positions.get(*index as usize)?);
+        positions.push([position.x * 0.92, max_y - 0.28, position.z + 0.38]);
+        normals.push([0.0, 0.0, 1.0]);
+        uvs.push([1.0, 1.0]);
+        colors.push(bulkhead_color);
+    }
+
+    let mut indices = Vec::with_capacity((arc.len() - 1) * 12);
+    for index in 0..arc.len() - 1 {
+        let front = (index * 2) as u32;
+        let next_front = ((index + 1) * 2) as u32;
+        let inner = front + 1;
+        let next_inner = next_front + 1;
+        indices.extend_from_slice(&[front, next_front, next_inner, front, next_inner, inner]);
+        let bottom = (arc.len() * 2 + index) as u32;
+        let next_bottom = (arc.len() * 2 + index + 1) as u32;
+        indices.extend_from_slice(&[inner, next_inner, next_bottom, inner, next_bottom, bottom]);
+    }
+
+    let mut buffers = MeshBuffers {
+        positions,
+        normals,
+        uvs,
+        colors,
+        indices,
+    };
+    for (source, center, radius, depth) in COCKPIT_DIALS {
+        append_dial(&mut buffers, center, radius, depth);
+        if source == CockpitNeedleSource::Gear {
+            append_gear_face(&mut buffers, center, radius, depth);
+        }
+    }
+    Some(buffers)
+}
+
+fn push_dial_face(
+    scene: &mut Scene,
+    prefix: &str,
+    source: CockpitNeedleSource,
+    body_model: Mat4,
+) -> Result<Option<usize>, String> {
+    let Some((_, center, radius, depth)) =
+        COCKPIT_DIALS.iter().find(|(dial, _, _, _)| *dial == source)
+    else {
+        return Ok(None);
+    };
+    let buffers = dial_face_buffers(*center, *radius, *depth);
+    let mesh_ref = MeshRef {
+        name: format!("{}_face_{}", prefix, source as u8),
+        vertex_offset: 0,
+        vertex_count: buffers.positions.len() as u32,
+        index_offset: 0,
+        index_count: buffers.indices.len() as u32,
+        material: 0,
+        bounds: Aabb {
+            min: [center[0] - radius, center[1] - radius, center[2]],
+            max: [center[0] + radius, center[1] + radius, center[2]],
+        },
+        lod: 0,
+    };
+    let index = push_car_mesh(
+        scene,
+        &format!("{}_face_{}", prefix, source as u8),
+        &mesh_ref,
+        &buffers,
+        [1.0, 1.0, 1.0],
+        body_model,
+        CarMeshStyle {
+            texture: None,
+            outline: false,
+            alpha: 1.0,
+        },
+    )?;
+    scene.meshes[index].casts_static_shadow = false;
+    scene.meshes[index].casts_dynamic_shadow = false;
+    Ok(Some(index))
+}
+
+fn append_dial(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: f32) {
+    let segments = 24;
+    let z_front = center[2] + depth * 0.5;
+    let z_back = center[2] - depth * 0.5;
+    let outer = [0.0, 0.0, 0.0];
+    let face = [0.0, 0.0, 0.0];
+    let white = [0.82, 0.84, 0.79];
+    let tau = std::f32::consts::TAU;
+
+    for index in 0..segments {
+        let a = tau * index as f32 / segments as f32;
+        let b = tau * (index + 1) as f32 / segments as f32;
+        let (sa, ca) = a.sin_cos();
+        let (sb, cb) = b.sin_cos();
+        let quad = [
+            (
+                [center[0] + ca * radius, center[1] + sa * radius, z_front],
+                [ca, sa, 0.0],
+            ),
+            (
+                [center[0] + cb * radius, center[1] + sb * radius, z_front],
+                [cb, sb, 0.0],
+            ),
+            (
+                [center[0] + cb * radius, center[1] + sb * radius, z_back],
+                [cb, sb, 0.0],
+            ),
+            (
+                [center[0] + ca * radius, center[1] + sa * radius, z_back],
+                [ca, sa, 0.0],
+            ),
+        ];
+        let base = buffers.positions.len() as u32;
+        for (position, normal) in quad {
+            buffers.positions.push(position);
+            buffers.normals.push(normal);
+            buffers.uvs.push([0.0, 0.0]);
+            buffers.colors.push(outer);
+        }
+        buffers
+            .indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    let inner_radius = radius * 0.84;
+    let white_z = z_front - 0.006;
+    for index in 0..segments {
+        let a = tau * index as f32 / segments as f32;
+        let b = tau * (index + 1) as f32 / segments as f32;
+        let (sa, ca) = a.sin_cos();
+        let (sb, cb) = b.sin_cos();
+        let quad = [
+            (
+                [center[0] + ca * radius, center[1] + sa * radius, z_front],
+                [0.0, 0.0, 1.0],
+            ),
+            (
+                [center[0] + cb * radius, center[1] + sb * radius, z_front],
+                [0.0, 0.0, 1.0],
+            ),
+            (
+                [
+                    center[0] + cb * inner_radius,
+                    center[1] + sb * inner_radius,
+                    z_front,
+                ],
+                [0.0, 0.0, 1.0],
+            ),
+            (
+                [
+                    center[0] + ca * inner_radius,
+                    center[1] + sa * inner_radius,
+                    z_front,
+                ],
+                [0.0, 0.0, 1.0],
+            ),
+        ];
+        let base = buffers.positions.len() as u32;
+        for (position, normal) in quad {
+            buffers.positions.push(position);
+            buffers.normals.push(normal);
+            buffers.uvs.push([0.0, 0.0]);
+            buffers.colors.push(face);
+        }
+        buffers
+            .indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    for index in 0..segments {
+        let a = tau * index as f32 / segments as f32;
+        let b = tau * (index + 1) as f32 / segments as f32;
+        let (sa, ca) = a.sin_cos();
+        let (sb, cb) = b.sin_cos();
+        let quad = [
+            (
+                [
+                    center[0] + ca * inner_radius,
+                    center[1] + sa * inner_radius,
+                    z_front,
+                ],
+                [-ca, -sa, 0.0],
+            ),
+            (
+                [
+                    center[0] + cb * inner_radius,
+                    center[1] + sb * inner_radius,
+                    z_front,
+                ],
+                [-cb, -sb, 0.0],
+            ),
+            (
+                [
+                    center[0] + cb * inner_radius,
+                    center[1] + sb * inner_radius,
+                    white_z,
+                ],
+                [-cb, -sb, 0.0],
+            ),
+            (
+                [
+                    center[0] + ca * inner_radius,
+                    center[1] + sa * inner_radius,
+                    white_z,
+                ],
+                [-ca, -sa, 0.0],
+            ),
+        ];
+        let base = buffers.positions.len() as u32;
+        for (position, normal) in quad {
+            buffers.positions.push(position);
+            buffers.normals.push(normal);
+            buffers.uvs.push([0.0, 0.0]);
+            buffers.colors.push(face);
+        }
+        buffers
+            .indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    let white_center = buffers.positions.len() as u32;
+    buffers.positions.push([center[0], center[1], white_z]);
+    buffers.normals.push([0.0, 0.0, 1.0]);
+    buffers.uvs.push([0.5, 0.5]);
+    buffers.colors.push(white);
+    let white_base = buffers.positions.len() as u32;
+    for index in 0..segments {
+        let angle = tau * index as f32 / segments as f32;
+        let (sin, cos) = angle.sin_cos();
+        buffers.positions.push([
+            center[0] + cos * inner_radius,
+            center[1] + sin * inner_radius,
+            white_z,
+        ]);
+        buffers.normals.push([0.0, 0.0, 1.0]);
+        buffers.uvs.push([0.5 + cos * 0.5, 0.5 + sin * 0.5]);
+        buffers.colors.push(white);
+    }
+    for index in 0..segments {
+        let next = (index + 1) % segments;
+        buffers.indices.extend_from_slice(&[
+            white_center,
+            white_base + index as u32,
+            white_base + next as u32,
+        ]);
+    }
+}
+
+fn dial_face_buffers(center: [f32; 3], radius: f32, depth: f32) -> MeshBuffers {
+    let segments = 48;
+    let z = center[2] + depth * 0.5 - 0.0045;
+    let radius = radius * 0.94;
+    let tau = std::f32::consts::TAU;
+    let mut positions = Vec::with_capacity(segments + 1);
+    let mut normals = Vec::with_capacity(segments + 1);
+    let mut uvs = Vec::with_capacity(segments + 1);
+    let mut colors = Vec::with_capacity(segments + 1);
+    let mut indices = Vec::with_capacity(segments * 3);
+    positions.push([center[0], center[1], z]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([0.5, 0.5]);
+    colors.push([1.0, 1.0, 1.0]);
+    for index in 0..segments {
+        let angle = tau * index as f32 / segments as f32;
+        let (sin, cos) = angle.sin_cos();
+        positions.push([center[0] + cos * radius, center[1] + sin * radius, z]);
+        normals.push([0.0, 0.0, 1.0]);
+        uvs.push([0.5 + cos * 0.5, 0.5 - sin * 0.5]);
+        colors.push([1.0, 1.0, 1.0]);
+    }
+    for index in 0..segments {
+        let next = (index + 1) % segments;
+        indices.extend_from_slice(&[0, index as u32 + 1, next as u32 + 1]);
+    }
+    MeshBuffers {
+        positions,
+        normals,
+        uvs,
+        colors,
+        indices,
+    }
+}
+
+fn append_gear_face(buffers: &mut MeshBuffers, center: [f32; 3], radius: f32, depth: f32) {
+    let segments = 24;
+    let z = center[2] + depth * 0.5 - 0.004;
+    let radius = radius * 0.85;
+    let color = [0.004, 0.005, 0.006];
+    let tau = std::f32::consts::TAU;
+    let center_index = buffers.positions.len() as u32;
+    buffers.positions.push([center[0], center[1], z]);
+    buffers.normals.push([0.0, 0.0, 1.0]);
+    buffers.uvs.push([0.5, 0.5]);
+    buffers.colors.push(color);
+    let ring = buffers.positions.len() as u32;
+    for index in 0..segments {
+        let angle = tau * index as f32 / segments as f32;
+        let (sin, cos) = angle.sin_cos();
+        buffers
+            .positions
+            .push([center[0] + cos * radius, center[1] + sin * radius, z]);
+        buffers.normals.push([0.0, 0.0, 1.0]);
+        buffers.uvs.push([0.5 + cos * 0.5, 0.5 + sin * 0.5]);
+        buffers.colors.push(color);
+    }
+    for index in 0..segments {
+        let next = (index + 1) % segments;
+        buffers
+            .indices
+            .extend_from_slice(&[center_index, ring + index as u32, ring + next as u32]);
+    }
+}
+
+fn sprite_quad_buffers(
+    half_width: f32,
+    half_height: f32,
+    color: [f32; 3],
+    u0: f32,
+    v0: f32,
+    u1: f32,
+    v1: f32,
+) -> MeshBuffers {
+    MeshBuffers {
+        positions: vec![
+            [-half_width, -half_height, 0.0],
+            [half_width, -half_height, 0.0],
+            [half_width, half_height, 0.0],
+            [-half_width, half_height, 0.0],
+        ],
+        normals: vec![[0.0, 0.0, 1.0]; 4],
+        uvs: vec![[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
+        colors: vec![color; 4],
+        indices: vec![0, 1, 2, 0, 2, 3],
+    }
+}
+
+fn needle_buffers(radius: f32) -> MeshBuffers {
+    let width = radius * 0.02;
+    let length = radius * 0.55;
+    MeshBuffers {
+        positions: vec![[-width, 0.0, 0.0], [width, 0.0, 0.0], [0.0, length, 0.0]],
+        normals: vec![[0.0, 0.0, 1.0]; 3],
+        uvs: vec![[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        colors: vec![[1.0, 0.02, 0.01]; 3],
+        indices: vec![0, 1, 2],
+    }
 }
 
 struct CarMeshStyle {

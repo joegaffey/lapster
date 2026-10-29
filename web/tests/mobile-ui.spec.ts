@@ -90,6 +90,7 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
   await waitFor(() => (window as any).__garageViewerReady === true || (window as any).__garageViewerError);
   await page.locator("#assists-open").click();
   await expect(page.locator("#tab-gameplay")).toHaveCount(0);
+  await expect(page.locator("#tab-controls")).toHaveCount(0);
   await expect(page.locator("#tab-graphics")).toHaveAttribute("aria-selected", "true");
   const environment = page.locator("#environment-shadows");
   const carShadow = page.locator("#car-shadow");
@@ -116,6 +117,7 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
   await waitFor(() => (window as any).__trackViewerReady === true || (window as any).__trackViewerError);
   await page.locator("#assists-open").click();
   await expect(page.locator("#tab-gameplay")).toHaveCount(0);
+  await expect(page.locator("#tab-controls")).toHaveCount(0);
   await expect(page.locator("#settings-graphics")).toBeVisible();
   await page.locator("#environment-shadows").selectOption("baked");
   state = await page.evaluate(() => ({

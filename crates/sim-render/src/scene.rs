@@ -76,6 +76,27 @@ pub struct RigWheel {
     pub width: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CockpitNeedleSource {
+    Speed,
+    Rpm,
+    Gear,
+}
+
+#[derive(Debug, Clone)]
+pub struct CockpitNeedle {
+    pub mesh_index: usize,
+    pub center: Vec3,
+    pub source: CockpitNeedleSource,
+}
+
+#[derive(Debug, Clone)]
+pub struct CockpitGearSegment {
+    pub mesh_index: usize,
+    pub center: Vec3,
+    pub gear: i32,
+}
+
 #[derive(Debug, Clone)]
 pub struct CarRig {
     pub body_mesh_index: usize,
@@ -83,6 +104,12 @@ pub struct CarRig {
     pub glass_mesh_index: Option<usize>,
     pub brake_light_mesh_index: Option<usize>,
     pub reverse_light_mesh_index: Option<usize>,
+    pub dashboard_mesh_index: Option<usize>,
+    pub dashboard_local: Mat4,
+    pub speedometer_face_mesh_index: Option<usize>,
+    pub rpm_face_mesh_index: Option<usize>,
+    pub cockpit_needles: Vec<CockpitNeedle>,
+    pub gear_segments: Vec<CockpitGearSegment>,
     pub wheels: Vec<RigWheel>,
     pub steering_mesh_index: Option<usize>,
     pub steering_local: Mat4,

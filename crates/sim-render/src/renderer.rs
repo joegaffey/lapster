@@ -121,6 +121,8 @@ pub struct Renderer {
     outline_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    mesh_texture_layout: wgpu::BindGroupLayout,
+    mesh_sampler: wgpu::Sampler,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     bake_camera_buffer: wgpu::Buffer,
@@ -604,6 +606,8 @@ impl Renderer {
             outline_pipeline: pipelines.outline,
             line_pipeline: pipelines.line,
             camera_bind_group_layout: camera_bind_group_layout.clone(),
+            mesh_texture_layout: texture_bind_group_layout,
+            mesh_sampler: sampler,
             camera_buffer,
             camera_bind_group,
             bake_camera_buffer,
@@ -1427,6 +1431,33 @@ impl Renderer {
             self.bake_environment();
         } else {
             self.write_camera();
+        }
+    }
+
+    pub fn set_mesh_texture(&mut self, index: usize, texture: &SceneTexture) {
+        if texture.width == 0 || texture.height == 0 {
+            return;
+        }
+        if texture.rgba8.len() != (texture.width * texture.height * 4) as usize {
+            return;
+        }
+        let view = create_scene_texture(&self.device, &self.queue, texture, "runtime");
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("runtime mesh texture bind group"),
+            layout: &self.mesh_texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.mesh_sampler),
+                },
+            ],
+        });
+        if let Some(mesh) = self.meshes.get_mut(index) {
+            mesh.texture_bind_group = bind_group;
         }
     }
 

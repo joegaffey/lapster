@@ -15,7 +15,8 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
-  steering, automatic gearbox, chase/cockpit cameras, wheel loads, 500 Hz physics, and a
+  steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
+  500 Hz physics, and a
   shareable tuning dialog.
 - **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
   opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
@@ -35,7 +36,8 @@ emission/spawn/fade/render settings for every surface, shadow strength/bias/exte
 globals, GPU texture sizes, and every car-tuning field as sliders or JSON inputs. It starts
 closed; use the auto-hiding `DEV` tab at the left edge or the backslash key to toggle it.
 Physics changes use `Apply physics`, audio can be restarted in place, and GPU texture changes
-use `Apply GPU & reload` with the tuning persisted across the reload. Every 3D viewer shows a
+use `Apply GPU & reload` with the tuning persisted across the reload. Drive exposes WebHID
+wheel and constant-force FFB controls under **Settings → Controls**. Every 3D viewer shows a
 full-screen loading
 indicator until its first rendered frame; the info HUD starts collapsed in markup on
 every demo, so it cannot flash before boot; drive actions live in a detached top toolbar,
@@ -64,12 +66,29 @@ isolation or worker startup fails.
     slip and combined-slip limiting,
   - CG-based load transfer, engine, gearbox, brakes, optional ABS, shared rear traction
     control, stability control, and speed-sensitive steering for keyboard input,
+  - automatic gearbox with configurable auto gears and auto clutch; the box selects neutral
+    at rest and re-engages on throttle or brake when auto gears are enabled,
+  - momentary numbered-gear buttons that return to neutral on release, and free revving to
+    redline in neutral or with the clutch disengaged,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
 - Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
   publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
   Main-thread physics remains available with `?physics=main`.
+- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.42 WebHID input with
+  multi-device sessions, portable setup profiles, direct wheel steering, front-axle
+  self-aligning torque, and a main-thread fast constant-force path fed from the SAB FFB
+  mailbox at 200 Hz. Drive exposes the shared `<webhid-config-panel>` under
+  **Settings → Controls** for device management, steering/FFB calibration, pedal and
+  button mapping, profile import/export, and emergency stop. Lapster feel controls for rear
+  breakaway lightening, front-grip shudder, road noise, roughness, and slip-driven looseness
+  live in the panel's app slot. Mapped throttle, brake, clutch, handbrake, and gear buttons
+  feed the driving input alongside keyboard and touch fallbacks. Browsers without WebHID
+  still boot normally and hide the wheel controls.
+- **Cockpit dial cluster:** a generated cowl, runtime speedometer/RPM textures, a
+  seven-segment sprite gear display for `N`, `1–6`, and `R`, and red needles calibrated to
+  `7:30 → 4:30`; dial faces are recessed into their cylinders.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
   `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
   audio. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,
@@ -103,7 +122,7 @@ isolation or worker startup fails.
 | `W` / `↑` | Throttle; brakes while reversing |
 | `S` / `↓` | Brake; release and press again at rest to engage reverse |
 | `A` / `D` or `←` / `→` | Steer |
-| `C` | Cycle chase / bonnet / cockpit / isometric camera |
+| `C` | Cycle chase / bonnet / cockpit / isometric camera (remembered across reloads) |
 | `R` | Reset |
 
 **Reset** and **Camera** remain top-level toolbar actions. The **Audio** button starts audio
@@ -118,10 +137,10 @@ The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 27
 estimates until a licensed AC `.ini` source is available.
 
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
-opaque glass; cockpit mode renders it at 32% alpha. The body is visible by default, wheels
-always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. Bonnet eye
-height is 1.25 m; cockpit eye is 1.10 m, pushed 0.25 m rearward. A real cockpit still requires
-an interior model.
+opaque glass; cockpit mode renders it at 6% alpha. The body is visible by default, wheels
+always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. The bonnet
+camera is centered on the car's longitudinal axis at 1.25 m; cockpit eye is 1.10 m, pushed
+0.25 m rearward. The generated dial cowl is not yet a full interior model.
 
 ## Build and run
 

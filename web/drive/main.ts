@@ -17,6 +17,7 @@ import { SnapshotSmoother } from "../src/sim/interpolate.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
+import { WheelFfb } from "../src/input/wheel-ffb.ts";
 
 declare global {
   interface Window {
@@ -24,6 +25,7 @@ declare global {
     __driveViewerError?: string;
     __driveViewer?: DriveViewer;
     __driveAudio?: EngineSimAudio;
+    __wheelFfb?: WheelFfb;
   }
 }
 
@@ -42,6 +44,14 @@ if (devMode) {
   try {
     storedDevTuning = localStorage.getItem(DEV_TUNING_KEY);
     storedTuning = storedDevTuning ? JSON.parse(storedDevTuning) : null;
+    if (
+      storedTuning?.camera &&
+      (storedTuning.camera.cockpitGlassAlpha === 0.12 ||
+        storedTuning.camera.cockpitGlassAlpha === 0.32)
+    ) {
+      storedTuning.camera.cockpitGlassAlpha = 0.06;
+      storedDevTuning = JSON.stringify(storedTuning);
+    }
   } catch {
     storedDevTuning = null;
     storedTuning = null;
@@ -72,14 +82,25 @@ const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
 
+const CAMERA_STORAGE_KEY = BUILD_CHANNEL === "dev" ? "lapster.camera.dev.v1" : "lapster.camera.v1";
 const keys = new Set<string>();
+const wheelButtons = new Map<string, boolean>();
 const STOP_SPEED_MPS = 0.3;
 let steer = 0;
 let gear = 1;
+let autoGears = true;
+let autoClutch = true;
+let shiftTimer = 0;
+let wheelGearUntil = 0;
+let queuedShift = 0;
+let queuedNeutral = false;
+let queuedReverse = false;
+let heldNumberedGear = 0;
 let lastSpeedMps = 0;
 let previousForward = false;
 let previousReverse = false;
-let cameraMode: "chase" | "bonnet" | "cockpit" | "isometric" = "chase";
+type CameraMode = "chase" | "bonnet" | "cockpit" | "isometric";
+let cameraMode: CameraMode = "chase";
 let bodyVisible = true;
 let lastFrame = performance.now() / 1000;
 let frames = 0;
@@ -88,6 +109,8 @@ let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
 let audio: EngineSimAudio | null = null;
+let wheel: WheelFfb | null = null;
+let ffbSab: SharedArrayBuffer | null = null;
 const storedAudioPreference = loadAudioPreference();
 let audioEnabled = storedAudioPreference.enabled;
 let audioMuted = storedAudioPreference.muted;
@@ -130,7 +153,14 @@ function resizeCanvas() {
 function updateHud(telemetry: any) {
   speedLabel.textContent = telemetry.speedKph.toFixed(1);
   rpmLabel.textContent = String(Math.round(telemetry.rpm));
-  gearLabel.textContent = telemetry.gear < 0 ? "R" : `A${telemetry.gear}`;
+  gearLabel.textContent =
+    telemetry.gear < 0
+      ? "R"
+      : telemetry.gear === 0
+        ? "N"
+        : autoGears
+          ? `A${telemetry.gear}`
+          : `${telemetry.gear}`;
   contactsLabel.textContent = `${telemetry.contacts}/4`;
   rackTorqueLabel.textContent = `${telemetry.steeringRackTorque.toFixed(1)} Nm`;
   const surfaces = Array.from(
@@ -170,9 +200,31 @@ function setBodyVisible(visible: boolean) {
   bodyToggle.textContent = visible ? "Body: Visible" : "Body: Hidden";
 }
 
-function setCameraMode(mode: "chase" | "bonnet" | "cockpit" | "isometric") {
+function isCameraMode(value: string | null): value is CameraMode {
+  return value === "chase" || value === "bonnet" || value === "cockpit" || value === "isometric";
+}
+
+function loadCameraMode(): CameraMode {
+  try {
+    const stored = localStorage.getItem(CAMERA_STORAGE_KEY);
+    return isCameraMode(stored) ? stored : "chase";
+  } catch {
+    return "chase";
+  }
+}
+
+function saveCameraMode(mode: CameraMode): void {
+  try {
+    localStorage.setItem(CAMERA_STORAGE_KEY, mode);
+  } catch {
+    // Storage may be unavailable in private or embedded contexts.
+  }
+}
+
+function setCameraMode(mode: CameraMode) {
   cameraMode = mode;
   window.__driveViewer?.set_camera_mode(mode);
+  saveCameraMode(mode);
   cameraButton.textContent =
     mode === "isometric"
       ? "Camera: Isometric"
@@ -210,6 +262,13 @@ function reset() {
   previousAutoThrottle = 0;
   previousForward = false;
   previousReverse = false;
+  wheelGearUntil = 0;
+  shiftTimer = 0;
+  queuedShift = 0;
+  queuedNeutral = false;
+  queuedReverse = false;
+  heldNumberedGear = 0;
+  wheelButtons.clear();
   keys.clear();
   lastFrame = performance.now() / 1000;
 }
@@ -224,6 +283,20 @@ function telemetryRpm(): number {
   } catch {
     return lastRpm;
   }
+}
+
+function wheelChannel(name: string): number {
+  const value = wheel?.channels?.[name];
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : 0;
+}
+
+function wheelButtonPressed(name: string): boolean {
+  const pressed = wheelChannel(name) > 0.5;
+  const previous = wheelButtons.get(name) === true;
+  wheelButtons.set(name, pressed);
+  return pressed && !previous;
 }
 
 function updateAutoGear(delta: number, throttle: number, brake: number) {
@@ -551,6 +624,33 @@ function toggleAudioMute(): void {
   updateAudioButton();
 }
 
+async function loadDialTexture(
+  file: string,
+  apply: (width: number, height: number, rgba: Uint8Array) => void,
+): Promise<void> {
+  try {
+    const url = new URL(`../assets/${file}`, import.meta.url);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`${file} returned ${response.status}`);
+    }
+    const bitmap = await createImageBitmap(await response.blob());
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error(`could not create ${file} texture context`);
+    }
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    apply(canvas.width, canvas.height, new Uint8Array(pixels.buffer));
+  } catch (error) {
+    console.warn(`${file} texture unavailable`, error);
+  }
+}
+
 async function boot() {
   status.textContent = "starting";
   if (await setupPwa()) {
@@ -590,6 +690,7 @@ async function boot() {
       const sab = new SharedArrayBuffer(SAB_TOTAL_SIZE);
       initializeSab(sab);
       validateSab(sab);
+      ffbSab = sab;
       const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
       physics = client;
       smoother = new SnapshotSmoother(client.reader);
@@ -626,6 +727,7 @@ async function boot() {
       console.warn("SAB physics unavailable; using main thread", error);
       physics?.dispose();
       physics = null;
+      ffbSab = null;
       smoother = null;
       physicsWorker = false;
       driver = viewer;
@@ -669,6 +771,11 @@ async function boot() {
       "s",
       "d",
       "r",
+      "e",
+      "q",
+      "n",
+      "z",
+      " ",
       "arrowleft",
       "arrowright",
       "arrowup",
@@ -677,6 +784,12 @@ async function boot() {
       event.preventDefault();
     }
     keys.add(key);
+    if (!event.repeat) {
+      if (key === "e") queuedShift = 1;
+      if (key === "q") queuedShift = -1;
+      if (key === "n") queuedNeutral = true;
+      if (key === "z") queuedReverse = true;
+    }
     if (key === "r") {
       reset();
     }
@@ -694,9 +807,24 @@ async function boot() {
   resetButton.addEventListener("click", reset);
   cameraButton.addEventListener("click", toggleCameraMode);
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
-  setCameraMode("chase");
+  setCameraMode(loadCameraMode());
   setupCarSetupDialog(driver, info.car.id, info.asset.id);
+  if (typeof (navigator as any).hid?.requestDevice === "function") {
+    wheel = new WheelFfb(ffbSab ?? undefined);
+    window.__wheelFfb = wheel;
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      wheel?.stop();
+    }
+  });
+  window.addEventListener("pagehide", () => wheel?.stop());
   const settings = setupAssistsDialog(driver, {
+    wheel: wheel ?? undefined,
+    onChange: (next) => {
+      autoGears = next.autoGears;
+      autoClutch = next.autoClutch;
+    },
     onRenderScale: (scale) => {
       renderScale = scale;
       if (resizeCanvas()) {
@@ -704,6 +832,17 @@ async function boot() {
       }
     },
   });
+  await Promise.all([
+    loadDialTexture("speedometer.png", (width, height, rgba) =>
+      viewer.set_speedometer_texture(width, height, rgba),
+    ),
+    loadDialTexture("rpms.png", (width, height, rgba) =>
+      viewer.set_rpm_texture(width, height, rgba),
+    ),
+    loadDialTexture("7seg.png", (width, height, rgba) =>
+      viewer.set_gear_texture(width, height, rgba),
+    ),
+  ]);
   if (devMode && settings) {
     setupDevMenu(driver, {
       carId: info.car.id,
@@ -755,17 +894,30 @@ async function boot() {
     const now = nowMs / 1000;
     const delta = Math.min(Math.max(now - lastFrame, 0), 0.05);
     lastFrame = now;
+    shiftTimer = Math.max(0, shiftTimer - delta);
 
-    const steerLeft = keys.has("a") || keys.has("arrowleft");
-    const steerRight = keys.has("d") || keys.has("arrowright");
-    const targetSteer = (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
-    steer += (targetSteer - steer) * Math.min(1, delta * 8);
+    if (wheel?.hasSteering) {
+      steer = wheel.steering;
+    } else {
+      const steerLeft = keys.has("a") || keys.has("arrowleft");
+      const steerRight = keys.has("d") || keys.has("arrowright");
+      const targetSteer = (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
+      steer += (targetSteer - steer) * Math.min(1, delta * 8);
+    }
 
     const forwardKey = keys.has("w") || keys.has("arrowup");
     const reverseKey = keys.has("s") || keys.has("arrowdown");
     const forwardPressed = forwardKey && !previousForward;
     const reversePressed = reverseKey && !previousReverse;
     const stopped = Math.abs(lastSpeedMps) < STOP_SPEED_MPS;
+    const gearBefore = gear;
+    if (autoGears && stopped && gear === 0) {
+      if (forwardPressed && !reverseKey) {
+        gear = 1;
+      } else if (reversePressed && !forwardKey) {
+        gear = -1;
+      }
+    }
     previousForward = forwardKey;
     previousReverse = reverseKey;
     let throttle = 0;
@@ -776,7 +928,7 @@ async function boot() {
     } else if (forwardKey) {
       if (gear < 0) {
         brake = 1;
-        if (stopped && forwardPressed) {
+        if (autoGears && stopped && forwardPressed) {
           gear = 1;
         }
       } else {
@@ -785,16 +937,104 @@ async function boot() {
     } else if (reverseKey) {
       if (gear > 0) {
         brake = 1;
-        if (stopped && reversePressed) {
+        if (autoGears && stopped && reversePressed) {
           gear = -1;
         }
-      } else {
-        gear = -1;
+      } else if (gear < 0) {
         throttle = 1;
       }
     }
 
-    updateAutoGear(delta, throttle, brake);
+    throttle = Math.max(throttle, wheelChannel("throttle"));
+    brake = Math.max(brake, wheelChannel("brake"), wheelChannel("handbrake"));
+
+    const keyShiftUp = queuedShift > 0;
+    const keyShiftDown = queuedShift < 0;
+    const keyNeutral = queuedNeutral;
+    const keyReverse = queuedReverse;
+    queuedShift = 0;
+    queuedNeutral = false;
+    queuedReverse = false;
+
+    const shiftUp = wheelButtonPressed("shiftUp");
+    const gearUp = wheelButtonPressed("gearUp");
+    const shiftDown = wheelButtonPressed("shiftDown");
+    const gearDown = wheelButtonPressed("gearDown");
+    const neutral = wheelButtonPressed("neutral");
+    const reverse = wheelButtonPressed("reverse");
+    let manualGear = false;
+
+    if (neutral || keyNeutral) {
+      gear = 0;
+      manualGear = true;
+    }
+    if ((reverse || keyReverse) && stopped) {
+      gear = -1;
+      manualGear = true;
+    }
+    let numberedGear = 0;
+    for (let index = 1; index <= 8; index += 1) {
+      if (index <= maxGear && wheelChannel(`gear${index}`) > 0.5) {
+        numberedGear = index;
+        break;
+      }
+    }
+    if (numberedGear > 0) {
+      if (gear !== numberedGear) {
+        gear = numberedGear;
+      }
+      heldNumberedGear = numberedGear;
+      manualGear = true;
+    } else if (heldNumberedGear > 0) {
+      heldNumberedGear = 0;
+      gear = 0;
+      manualGear = true;
+    }
+    if (shiftUp || gearUp || keyShiftUp) {
+      if (gear > 0 && gear < maxGear) {
+        gear += 1;
+      } else if (gear <= 0) {
+        gear = 1;
+      }
+      manualGear = true;
+    }
+    if (shiftDown || gearDown || keyShiftDown) {
+      if (gear > 1) {
+        gear -= 1;
+      } else if (gear > -1) {
+        gear = 0;
+      }
+      manualGear = true;
+    }
+    if (manualGear) {
+      wheelGearUntil = now + 1.5;
+    }
+    const manualGearHold = now < wheelGearUntil;
+
+    if (autoGears && stopped && throttle === 0 && gear !== 0 && !manualGearHold) {
+      gear = 0;
+      autoShiftCooldown = 0;
+    }
+    if (autoGears && !manualGearHold && shiftTimer <= 0 && gear === gearBefore) {
+      updateAutoGear(delta, throttle, brake);
+    }
+    if (gear !== gearBefore) {
+      shiftTimer = 0.2;
+      autoShiftCooldown = Math.max(autoShiftCooldown, 0.35);
+    }
+
+    const manualClutch = keys.has("shift") || wheelChannel("clutch");
+    let clutch = manualClutch;
+    if (autoClutch) {
+      if (shiftTimer > 0) {
+        clutch = 1;
+      } else if (stopped && throttle < 0.02) {
+        clutch = 1;
+      } else {
+        clutch = 0;
+      }
+    }
+    clutch = Math.min(1, Math.max(0, clutch));
 
     try {
       if (physicsWorker && physics && smoother) {
@@ -802,7 +1042,7 @@ async function boot() {
           steering: steer,
           throttle,
           brake,
-          clutch: 0,
+          clutch,
           gear,
           buttons: 0,
         });
@@ -823,10 +1063,11 @@ async function boot() {
             telemetry.speedMps,
             telemetry.wheels,
           );
+          wheel?.updateTelemetry(telemetry);
           updateHud(telemetry);
         }
       } else {
-        driver.update(now, throttle, brake, steer, gear);
+        driver.update_with_clutch(now, throttle, brake, steer, gear, clutch);
         const telemetry = JSON.parse(driver.telemetry());
         lastSpeedMps = telemetry.speedMps;
         lastRpm = telemetry.rpm;
@@ -839,6 +1080,7 @@ async function boot() {
           telemetry.speedMps,
           telemetry.wheels,
         );
+        wheel?.updateTelemetry(telemetry);
         updateHud(telemetry);
       }
 
@@ -861,6 +1103,7 @@ async function boot() {
 }
 
 function fail(error: unknown) {
+  wheel?.stop();
   showLoadingFailure(error);
   const message = error instanceof Error ? error.message : String(error);
   window.__driveViewerError = message;
