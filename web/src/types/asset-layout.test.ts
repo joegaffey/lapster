@@ -89,9 +89,10 @@ test("mailbox fields match the Rust ABI", () => {
     brake: 24,
     clutch: 28,
     gear: 32,
-    reserved: 36,
+    handbrake: 36,
+    reserved: 40,
   });
-  assert.equal(INPUT_MAILBOX_FIELDS.reserved + 28, INPUT_MAILBOX_SIZE);
+  assert.equal(INPUT_MAILBOX_FIELDS.reserved + 24, INPUT_MAILBOX_SIZE);
 
   assert.deepEqual(FFB_MAILBOX_FIELDS, {
     seq: 0,

@@ -796,7 +796,7 @@ impl DriveViewer {
         steering: f32,
         gear: i32,
     ) -> Result<(), JsValue> {
-        self.update_with_clutch(time_seconds, throttle, brake, steering, gear, 0.0)
+        self.update_with_clutch(time_seconds, throttle, brake, steering, gear, 0.0, 0.0)
     }
 
     pub fn update_with_clutch(
@@ -807,6 +807,7 @@ impl DriveViewer {
         steering: f32,
         gear: i32,
         clutch: f32,
+        handbrake: f32,
     ) -> Result<(), JsValue> {
         let dt = match self.last_time {
             Some(last) => ((time_seconds - last).max(0.0) as f32).min(0.05),
@@ -814,7 +815,7 @@ impl DriveViewer {
         };
         self.last_time = Some(time_seconds);
         self.accumulator += dt;
-        self.set_brake_lights(brake);
+        self.set_brake_lights(brake.max(handbrake));
         self.set_reverse_lights(gear == -1);
 
         let controls = Controls {
@@ -823,6 +824,7 @@ impl DriveViewer {
             brake,
             clutch,
             gear,
+            handbrake,
         };
 
         let mut steps = 0;
@@ -855,7 +857,7 @@ impl DriveViewer {
         steering: f32,
         gear: i32,
     ) -> u32 {
-        self.simulate_with_clutch(seconds, throttle, brake, steering, gear, 0.0)
+        self.simulate_with_clutch(seconds, throttle, brake, steering, gear, 0.0, 0.0)
     }
 
     pub fn simulate_with_clutch(
@@ -866,9 +868,10 @@ impl DriveViewer {
         steering: f32,
         gear: i32,
         clutch: f32,
+        handbrake: f32,
     ) -> u32 {
         let steps = ((seconds.clamp(0.0, 120.0) / FIXED_DT) as u32).min(60_000);
-        self.set_brake_lights(brake);
+        self.set_brake_lights(brake.max(handbrake));
         self.set_reverse_lights(gear == -1);
         let controls = Controls {
             steering,
@@ -876,6 +879,7 @@ impl DriveViewer {
             brake,
             clutch,
             gear,
+            handbrake,
         };
         for _ in 0..steps {
             self.vehicle.step(controls);

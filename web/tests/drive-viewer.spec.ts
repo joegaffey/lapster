@@ -856,3 +856,44 @@ test("wheels do not idle-spin when stopped", async ({ page }) => {
     expect(Math.abs(wheel.angularVelocity)).toBeLessThan(0.01);
   }
 });
+
+test("handbrake locks the rear wheels only", async ({ page }) => {
+  await page.goto(
+    "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=handbrake",
+  );
+  await page.bringToFront();
+  await waitForReady(page);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+  });
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 20,
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
+  });
+  await page.waitForFunction(
+    () => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      return (
+        Math.abs(state.wheels[2].angularVelocity) <
+        Math.abs(state.wheels[0].angularVelocity) * 0.5
+      );
+    },
+    undefined,
+    { timeout: 5_000 },
+  );
+  const state = await telemetry(page);
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: " " }));
+  });
+
+  const front = Math.abs(state.wheels[0].angularVelocity);
+  const rear = Math.abs(state.wheels[2].angularVelocity);
+  expect(front).toBeGreaterThan(1);
+  expect(rear).toBeLessThan(front * 0.5);
+});

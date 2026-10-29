@@ -27,6 +27,7 @@ let lastInput: InputState = {
   brake: 0,
   clutch: 0,
   gear: 1,
+  handbrake: 0,
   buttons: 0,
   timestampSeconds: 0,
 };
@@ -138,6 +139,7 @@ function runSlice(generation: number): void {
       lastInput.steering,
       lastInput.gear,
       lastInput.clutch,
+      lastInput.handbrake,
     );
     stepTimes.push(performance.now() - started);
     if (stepTimes.length > 250) {
