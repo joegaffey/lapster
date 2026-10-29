@@ -36,7 +36,7 @@ SOFTWARE.
 ## webhid-wheel
 
 - Source: https://github.com/joegaffey/webhid-wheel
-- Vendored version: `0.4.40` (`0cb80dd`)
+- Vendored version: `0.4.42` (`9fbfb6f`)
 - Used in: `web/src/vendor/webhid-wheel/`
 - Local patch: split multi-axis report items so Arduino handbrakes and similar generic HID axes update.
 - License: MIT

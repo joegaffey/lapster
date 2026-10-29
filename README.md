@@ -76,7 +76,7 @@ isolation or worker startup fails.
 - Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
   publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
   Main-thread physics remains available with `?physics=main`.
-- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.40 WebHID input with
+- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.42 WebHID input with
   multi-device sessions, portable setup profiles, direct wheel steering, front-axle
   self-aligning torque, and a main-thread fast constant-force path fed from the SAB FFB
   mailbox at 200 Hz. Drive exposes the shared `<webhid-config-panel>` under
