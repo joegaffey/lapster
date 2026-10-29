@@ -415,7 +415,7 @@ and complete the audio/device matrix integration.
 
 - Add the SAB input and FFB mailboxes and move physics to the physics worker.
 - Move the tested `webhid-wheel` adapter into the HID worker with watchdog and stop behavior.
-- Carry the vendored 0.4.38 `WheelManager` sessions and setup profiles into the worker path;
+- Carry the vendored 0.4.40 `WheelManager` sessions and setup profiles into the worker path;
   keep the core DOM-free and use the main thread only for `requestDevice()`.
 - Add audio driven from shared snapshots.
 - Expand the hardware matrix beyond CAMMUS C5: CAMMUS C12, FFBeast, generic USB-PID wheels,
@@ -436,7 +436,7 @@ and complete the audio/device matrix integration.
 
 ### Upstream `webhid-wheel` dependencies
 
-Vendored as 0.4.38 (`496e1f1`) from the library repository. See the
+Vendored as 0.4.40 (`0cb80dd`) from the library repository. See the
 [Package, setup profiles and Lapster integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
 - Generic multi-device sessions (`WebHIDDevice` + `mapChannels`) for wheel, pedals, buttons

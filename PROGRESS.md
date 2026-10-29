@@ -91,7 +91,7 @@ Toolchain setup scripts:
 | GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
 | GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/`; dev preview deploys branch builds separately |
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
-| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.38, multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
+| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.40, multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
 
 ## Current capabilities
@@ -138,8 +138,9 @@ Toolchain setup scripts:
   can disable auto gears for manual shifting and disable auto clutch for the mapped clutch
   axis or the Shift key. Numbered gear buttons are momentary: holding one selects that gear
   and releasing it returns to neutral. `sim-core` models clutch disengagement for drive torque
-  and engine RPM, and neutral or a disengaged clutch allows free revving to redline. Shift
-  scheduling still lives in `web/drive/main.ts`.
+  and engine RPM, and neutral or a disengaged clutch allows free revving to redline. Generic
+  HID layout parsing now splits multi-axis report items, covering Arduino handbrakes that send
+  several axes in one report. Shift scheduling still lives in `web/drive/main.ts`.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -181,8 +182,8 @@ Toolchain setup scripts:
 - Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
   cockpit mode switches it to 6% alpha in a transparent forward pass; bonnet and external
   views keep it opaque. Body and glass hide together; wheels remain visible.
-- Drive camera: chase → bonnet → cockpit → isometric (`C` / button). The isometric view is a
-  fixed-world-orientation, high-angle follow camera. The bonnet camera is centered on the
+- Drive camera: chase → bonnet → cockpit → isometric (`C` / button), persisted across reloads.
+  The isometric view is a fixed-world-orientation, high-angle follow camera. The bonnet camera is centered on the
   car's longitudinal axis at 1.25 m; cockpit eye is 1.10 m and 0.25 m rearward. Body defaults
   visible; `Body: Visible/Hidden` toggles body and glass.
 - Cockpit dial cluster: a three-dial cowl is generated from the glass lower edge. The
@@ -266,7 +267,7 @@ Toolchain setup scripts:
 
 ## Wheel and FFB workstream
 
-**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.38 (`496e1f1`) with
+**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.40 (`0cb80dd`) with
 multi-device `WheelManager` sessions, portable setup profiles, and the shared
 `<webhid-config-panel>`. Drive mounts the panel under Settings → Controls and keeps the
 main-thread feel mixer in its `extra-settings` slot. Mapped steering, throttle, brake,

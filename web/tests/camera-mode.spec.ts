@@ -49,3 +49,30 @@ test("drive camera cycles through chase, bonnet, cockpit, and isometric", async 
     await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
   ).toBe("chase");
 });
+
+test("drive camera mode persists across reloads", async ({ page }) => {
+  const url =
+    "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=camera-persist";
+  const waitForReady = () =>
+    page.waitForFunction(
+      () => (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
+      undefined,
+      { timeout: 30_000 },
+    );
+
+  await page.goto(url);
+  await waitForReady();
+
+  const camera = page.locator("#camera-mode");
+  await camera.click();
+  await camera.click();
+  await expect(camera).toHaveText("Camera: Cockpit");
+
+  await page.reload();
+  await waitForReady();
+
+  await expect(page.locator("#camera-mode")).toHaveText("Camera: Cockpit");
+  expect(
+    await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
+  ).toBe("cockpit");
+});

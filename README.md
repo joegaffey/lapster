@@ -76,7 +76,7 @@ isolation or worker startup fails.
 - Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
   publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
   Main-thread physics remains available with `?physics=main`.
-- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.38 WebHID input with
+- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.40 WebHID input with
   multi-device sessions, portable setup profiles, direct wheel steering, front-axle
   self-aligning torque, and a main-thread fast constant-force path fed from the SAB FFB
   mailbox at 200 Hz. Drive exposes the shared `<webhid-config-panel>` under
@@ -122,7 +122,7 @@ isolation or worker startup fails.
 | `W` / `↑` | Throttle; brakes while reversing |
 | `S` / `↓` | Brake; release and press again at rest to engage reverse |
 | `A` / `D` or `←` / `→` | Steer |
-| `C` | Cycle chase / bonnet / cockpit / isometric camera |
+| `C` | Cycle chase / bonnet / cockpit / isometric camera (remembered across reloads) |
 | `R` | Reset |
 
 **Reset** and **Camera** remain top-level toolbar actions. The **Audio** button starts audio

@@ -82,6 +82,7 @@ const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
 
+const CAMERA_STORAGE_KEY = BUILD_CHANNEL === "dev" ? "lapster.camera.dev.v1" : "lapster.camera.v1";
 const keys = new Set<string>();
 const wheelButtons = new Map<string, boolean>();
 const STOP_SPEED_MPS = 0.3;
@@ -98,7 +99,8 @@ let heldNumberedGear = 0;
 let lastSpeedMps = 0;
 let previousForward = false;
 let previousReverse = false;
-let cameraMode: "chase" | "bonnet" | "cockpit" | "isometric" = "chase";
+type CameraMode = "chase" | "bonnet" | "cockpit" | "isometric";
+let cameraMode: CameraMode = "chase";
 let bodyVisible = true;
 let lastFrame = performance.now() / 1000;
 let frames = 0;
@@ -198,9 +200,31 @@ function setBodyVisible(visible: boolean) {
   bodyToggle.textContent = visible ? "Body: Visible" : "Body: Hidden";
 }
 
-function setCameraMode(mode: "chase" | "bonnet" | "cockpit" | "isometric") {
+function isCameraMode(value: string | null): value is CameraMode {
+  return value === "chase" || value === "bonnet" || value === "cockpit" || value === "isometric";
+}
+
+function loadCameraMode(): CameraMode {
+  try {
+    const stored = localStorage.getItem(CAMERA_STORAGE_KEY);
+    return isCameraMode(stored) ? stored : "chase";
+  } catch {
+    return "chase";
+  }
+}
+
+function saveCameraMode(mode: CameraMode): void {
+  try {
+    localStorage.setItem(CAMERA_STORAGE_KEY, mode);
+  } catch {
+    // Storage may be unavailable in private or embedded contexts.
+  }
+}
+
+function setCameraMode(mode: CameraMode) {
   cameraMode = mode;
   window.__driveViewer?.set_camera_mode(mode);
+  saveCameraMode(mode);
   cameraButton.textContent =
     mode === "isometric"
       ? "Camera: Isometric"
@@ -783,7 +807,7 @@ async function boot() {
   resetButton.addEventListener("click", reset);
   cameraButton.addEventListener("click", toggleCameraMode);
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
-  setCameraMode("chase");
+  setCameraMode(loadCameraMode());
   setupCarSetupDialog(driver, info.car.id, info.asset.id);
   if (typeof (navigator as any).hid?.requestDevice === "function") {
     wheel = new WheelFfb(ffbSab ?? undefined);
