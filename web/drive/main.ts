@@ -94,6 +94,7 @@ let wheelGearUntil = 0;
 let queuedShift = 0;
 let queuedNeutral = false;
 let queuedReverse = false;
+let heldNumberedGear = 0;
 let lastSpeedMps = 0;
 let previousForward = false;
 let previousReverse = false;
@@ -242,6 +243,7 @@ function reset() {
   queuedShift = 0;
   queuedNeutral = false;
   queuedReverse = false;
+  heldNumberedGear = 0;
   wheelButtons.clear();
   keys.clear();
   lastFrame = performance.now() / 1000;
@@ -905,7 +907,7 @@ async function boot() {
         if (autoGears && stopped && forwardPressed) {
           gear = 1;
         }
-      } else if (gear > 0) {
+      } else {
         throttle = 1;
       }
     } else if (reverseKey) {
@@ -946,11 +948,23 @@ async function boot() {
       gear = -1;
       manualGear = true;
     }
+    let numberedGear = 0;
     for (let index = 1; index <= 8; index += 1) {
-      if (wheelButtonPressed(`gear${index}`) && index <= maxGear) {
-        gear = index;
-        manualGear = true;
+      if (index <= maxGear && wheelChannel(`gear${index}`) > 0.5) {
+        numberedGear = index;
+        break;
       }
+    }
+    if (numberedGear > 0) {
+      if (gear !== numberedGear) {
+        gear = numberedGear;
+      }
+      heldNumberedGear = numberedGear;
+      manualGear = true;
+    } else if (heldNumberedGear > 0) {
+      heldNumberedGear = 0;
+      gear = 0;
+      manualGear = true;
     }
     if (shiftUp || gearUp || keyShiftUp) {
       if (gear > 0 && gear < maxGear) {
@@ -977,11 +991,12 @@ async function boot() {
       gear = 0;
       autoShiftCooldown = 0;
     }
-    if (autoGears && !manualGearHold) {
+    if (autoGears && !manualGearHold && shiftTimer <= 0 && gear === gearBefore) {
       updateAutoGear(delta, throttle, brake);
     }
     if (gear !== gearBefore) {
       shiftTimer = 0.2;
+      autoShiftCooldown = Math.max(autoShiftCooldown, 0.35);
     }
 
     const manualClutch = keys.has("shift") || wheelChannel("clutch");

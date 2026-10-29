@@ -68,13 +68,15 @@ isolation or worker startup fails.
     control, stability control, and speed-sensitive steering for keyboard input,
   - automatic gearbox with configurable auto gears and auto clutch; the box selects neutral
     at rest and re-engages on throttle or brake when auto gears are enabled,
+  - momentary numbered-gear buttons that return to neutral on release, and free revving to
+    redline in neutral or with the clutch disengaged,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.
 - Physics worker with a versioned SAB input mailbox, four-slot snapshot ring, seqlock
   publication, an `Atomics.wait` deadline loop, and interpolated main-thread rendering.
   Main-thread physics remains available with `?physics=main`.
-- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.34 WebHID input with
+- **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.38 WebHID input with
   multi-device sessions, portable setup profiles, direct wheel steering, front-axle
   self-aligning torque, and a main-thread fast constant-force path fed from the SAB FFB
   mailbox at 200 Hz. Drive exposes the shared `<webhid-config-panel>` under

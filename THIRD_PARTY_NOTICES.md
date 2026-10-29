@@ -36,7 +36,7 @@ SOFTWARE.
 ## webhid-wheel
 
 - Source: https://github.com/joegaffey/webhid-wheel
-- Vendored version: `0.4.34` (`b70798e`)
+- Vendored version: `0.4.38` (`496e1f1`)
 - Used in: `web/src/vendor/webhid-wheel/`
 - License: MIT
 - Purpose: WebHID wheel and generic HID input, multi-device mapping, setup profiles,

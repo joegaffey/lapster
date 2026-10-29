@@ -91,7 +91,7 @@ Toolchain setup scripts:
 | GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
 | GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/`; dev preview deploys branch builds separately |
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
-| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.34, multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
+| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.38, multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
 
 ## Current capabilities
@@ -136,8 +136,10 @@ Toolchain setup scripts:
   car setup; reverse remains the edge-triggered brake action. The box selects neutral (`N`)
   at rest and re-engages first or reverse when throttle/brake is applied. Gameplay settings
   can disable auto gears for manual shifting and disable auto clutch for the mapped clutch
-  axis or the Shift key. `sim-core` now models clutch disengagement for drive torque and
-  engine RPM; shift scheduling still lives in `web/drive/main.ts`.
+  axis or the Shift key. Numbered gear buttons are momentary: holding one selects that gear
+  and releasing it returns to neutral. `sim-core` models clutch disengagement for drive torque
+  and engine RPM, and neutral or a disengaged clutch allows free revving to redline. Shift
+  scheduling still lives in `web/drive/main.ts`.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
@@ -264,7 +266,7 @@ Toolchain setup scripts:
 
 ## Wheel and FFB workstream
 
-**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.34 (`b70798e`) with
+**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.38 (`496e1f1`) with
 multi-device `WheelManager` sessions, portable setup profiles, and the shared
 `<webhid-config-panel>`. Drive mounts the panel under Settings → Controls and keeps the
 main-thread feel mixer in its `extra-settings` slot. Mapped steering, throttle, brake,

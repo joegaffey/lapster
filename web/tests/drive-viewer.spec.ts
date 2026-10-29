@@ -163,7 +163,7 @@ test("manual clutch disengages drive torque", async ({ page }) => {
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.speedKph).toBeLessThan(1);
-  expect(telemetry.rpm).toBeGreaterThan(1500);
+  expect(telemetry.rpm).toBeGreaterThan(5000);
 
   await page.keyboard.up("Shift");
   await page.waitForFunction(
@@ -171,6 +171,27 @@ test("manual clutch disengages drive torque", async ({ page }) => {
     undefined,
     { timeout: 10_000 },
   );
+  await page.keyboard.up("w");
+});
+
+test("neutral revs the engine to the limiter", async ({ page }) => {
+  await page.goto("/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=neutral-rev");
+  await page.bringToFront();
+  await waitForReady(page);
+
+  await page.locator("#assists-open").click();
+  await page.locator("#auto-gears-toggle").click();
+  await page.locator("#assists-close").click();
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await expect(page.locator("#gear")).toHaveText("N");
+
+  await page.keyboard.down("w");
+  await page.waitForTimeout(1000);
+  const telemetry = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.telemetry()),
+  );
+  expect(telemetry.speedKph).toBeLessThan(1);
+  expect(telemetry.rpm).toBeGreaterThan(5000);
   await page.keyboard.up("w");
 });
 

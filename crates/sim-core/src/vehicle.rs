@@ -381,7 +381,13 @@ impl Vehicle {
             / driven_count as f32;
         let clutch = controls.clutch.clamp(0.0, 1.0);
         let throttle = controls.throttle.clamp(0.0, 1.0);
-        let rpm = self.engine_rpm(average_driven_omega, gear_ratio, clutch, throttle);
+        let rpm = self.engine_rpm(
+            average_driven_omega,
+            gear_ratio,
+            gear == 0,
+            clutch,
+            throttle,
+        );
         self.state.engine_rpm = rpm;
         let engine_torque = self.engine_torque(rpm) * throttle;
         let engine_brake_torque = if throttle < 0.02
@@ -816,6 +822,7 @@ impl Vehicle {
         &self,
         average_driven_omega: f32,
         gear_ratio: f32,
+        neutral: bool,
         clutch: f32,
         throttle: f32,
     ) -> f32 {
@@ -823,8 +830,9 @@ impl Vehicle {
         let driven_rpm = average_driven_omega.abs() * ratio * 60.0 / core::f32::consts::TAU;
         let driven_rpm = driven_rpm.max(self.physics.engine.idle_rpm);
         let free_rpm = self.physics.engine.idle_rpm
-            + throttle * (self.physics.engine.redline_rpm - self.physics.engine.idle_rpm) * 0.45;
-        let rpm = driven_rpm * (1.0 - clutch) + free_rpm * clutch;
+            + throttle * (self.physics.engine.redline_rpm - self.physics.engine.idle_rpm);
+        let disengagement = if neutral { 1.0 } else { clutch };
+        let rpm = driven_rpm * (1.0 - disengagement) + free_rpm * disengagement;
         rpm.clamp(
             self.physics.engine.idle_rpm,
             self.physics.engine.redline_rpm,
@@ -1219,6 +1227,33 @@ mod tests {
         }
         assert!(driven_rpm > 1500.0);
         assert!(disengaged.state.engine_rpm < driven_rpm * 0.5);
+    }
+
+    #[test]
+    fn neutral_and_disengaged_clutch_rev_to_redline() {
+        let rev = Controls {
+            throttle: 1.0,
+            gear: 0,
+            ..Controls::default()
+        };
+        let mut neutral = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..500 {
+            neutral.step(rev);
+        }
+        let redline = neutral.physics.engine.redline_rpm;
+        assert!((neutral.state.engine_rpm - redline).abs() < 1.0);
+
+        let clutched = Controls {
+            throttle: 1.0,
+            clutch: 1.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        let mut disengaged = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..500 {
+            disengaged.step(clutched);
+        }
+        assert!((disengaged.state.engine_rpm - redline).abs() < 1.0);
     }
 
     #[test]
