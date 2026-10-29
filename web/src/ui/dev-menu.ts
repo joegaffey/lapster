@@ -444,6 +444,8 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
     tcStrengthValue.textContent = `${Math.round(current.tcStrength * 100)}%`;
     abs.checked = current.abs;
     esc.checked = current.esc;
+    autoGears.checked = current.autoGears;
+    autoClutch.checked = current.autoClutch;
     escStrength.value = String(current.escStrength);
     escStrengthValue.textContent = `${Math.round(current.escStrength * 100)}%`;
     steering.value = String(current.steeringSensitivity);
@@ -497,6 +499,18 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
   esc.type = "checkbox";
   esc.addEventListener("change", () => updateSetting({ esc: esc.checked }));
   settingsBody.append(toggleRow("Stability control", esc));
+
+  const autoGears = document.createElement("input");
+  autoGears.id = "dev-auto-gears";
+  autoGears.type = "checkbox";
+  autoGears.addEventListener("change", () => updateSetting({ autoGears: autoGears.checked }));
+  settingsBody.append(toggleRow("Automatic gearbox", autoGears));
+
+  const autoClutch = document.createElement("input");
+  autoClutch.id = "dev-auto-clutch";
+  autoClutch.type = "checkbox";
+  autoClutch.addEventListener("change", () => updateSetting({ autoClutch: autoClutch.checked }));
+  settingsBody.append(toggleRow("Automatic clutch", autoClutch));
 
   const escStrengthValue = document.createElement("output");
   const escStrength = document.createElement("input");

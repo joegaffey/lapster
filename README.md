@@ -15,7 +15,8 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
 - **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
-  steering, automatic gearbox, chase/cockpit cameras, wheel loads, 500 Hz physics, and a
+  steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
+  500 Hz physics, and a
   shareable tuning dialog.
 - **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
   opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
@@ -65,7 +66,8 @@ isolation or worker startup fails.
     slip and combined-slip limiting,
   - CG-based load transfer, engine, gearbox, brakes, optional ABS, shared rear traction
     control, stability control, and speed-sensitive steering for keyboard input,
-  - automatic gearbox that selects neutral at rest and re-engages on throttle or brake,
+  - automatic gearbox with configurable auto gears and auto clutch; the box selects neutral
+    at rest and re-engages on throttle or brake when auto gears are enabled,
   - edge-triggered reverse,
   - wall contacts, deterministic stability tests, and finite-state reset,
   - interpolated visual pose.

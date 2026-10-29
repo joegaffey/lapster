@@ -61,14 +61,14 @@ impl Simulation {
         Ok(simulation)
     }
 
-    pub fn step(&mut self, throttle: f32, brake: f32, steering: f32, gear: i32) {
+    pub fn step(&mut self, throttle: f32, brake: f32, steering: f32, gear: i32, clutch: f32) {
         self.last_throttle = throttle;
         self.last_brake = brake;
         self.vehicle.step(Controls {
             steering,
             throttle,
             brake,
-            clutch: 0.0,
+            clutch,
             gear,
         });
     }

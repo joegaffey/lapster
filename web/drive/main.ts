@@ -87,7 +87,13 @@ const wheelButtons = new Map<string, boolean>();
 const STOP_SPEED_MPS = 0.3;
 let steer = 0;
 let gear = 1;
+let autoGears = true;
+let autoClutch = true;
+let shiftTimer = 0;
 let wheelGearUntil = 0;
+let queuedShift = 0;
+let queuedNeutral = false;
+let queuedReverse = false;
 let lastSpeedMps = 0;
 let previousForward = false;
 let previousReverse = false;
@@ -145,7 +151,13 @@ function updateHud(telemetry: any) {
   speedLabel.textContent = telemetry.speedKph.toFixed(1);
   rpmLabel.textContent = String(Math.round(telemetry.rpm));
   gearLabel.textContent =
-    telemetry.gear < 0 ? "R" : telemetry.gear === 0 ? "N" : `A${telemetry.gear}`;
+    telemetry.gear < 0
+      ? "R"
+      : telemetry.gear === 0
+        ? "N"
+        : autoGears
+          ? `A${telemetry.gear}`
+          : `${telemetry.gear}`;
   contactsLabel.textContent = `${telemetry.contacts}/4`;
   rackTorqueLabel.textContent = `${telemetry.steeringRackTorque.toFixed(1)} Nm`;
   const surfaces = Array.from(
@@ -226,6 +238,10 @@ function reset() {
   previousForward = false;
   previousReverse = false;
   wheelGearUntil = 0;
+  shiftTimer = 0;
+  queuedShift = 0;
+  queuedNeutral = false;
+  queuedReverse = false;
   wheelButtons.clear();
   keys.clear();
   lastFrame = performance.now() / 1000;
@@ -729,6 +745,11 @@ async function boot() {
       "s",
       "d",
       "r",
+      "e",
+      "q",
+      "n",
+      "z",
+      " ",
       "arrowleft",
       "arrowright",
       "arrowup",
@@ -737,6 +758,12 @@ async function boot() {
       event.preventDefault();
     }
     keys.add(key);
+    if (!event.repeat) {
+      if (key === "e") queuedShift = 1;
+      if (key === "q") queuedShift = -1;
+      if (key === "n") queuedNeutral = true;
+      if (key === "z") queuedReverse = true;
+    }
     if (key === "r") {
       reset();
     }
@@ -768,6 +795,10 @@ async function boot() {
   window.addEventListener("pagehide", () => wheel?.stop());
   const settings = setupAssistsDialog(driver, {
     wheel: wheel ?? undefined,
+    onChange: (next) => {
+      autoGears = next.autoGears;
+      autoClutch = next.autoClutch;
+    },
     onRenderScale: (scale) => {
       renderScale = scale;
       if (resizeCanvas()) {
@@ -837,6 +868,7 @@ async function boot() {
     const now = nowMs / 1000;
     const delta = Math.min(Math.max(now - lastFrame, 0), 0.05);
     lastFrame = now;
+    shiftTimer = Math.max(0, shiftTimer - delta);
 
     if (wheel?.hasSteering) {
       steer = wheel.steering;
@@ -852,7 +884,8 @@ async function boot() {
     const forwardPressed = forwardKey && !previousForward;
     const reversePressed = reverseKey && !previousReverse;
     const stopped = Math.abs(lastSpeedMps) < STOP_SPEED_MPS;
-    if (stopped && gear === 0) {
+    const gearBefore = gear;
+    if (autoGears && stopped && gear === 0) {
       if (forwardPressed && !reverseKey) {
         gear = 1;
       } else if (reversePressed && !forwardKey) {
@@ -869,7 +902,7 @@ async function boot() {
     } else if (forwardKey) {
       if (gear < 0) {
         brake = 1;
-        if (stopped && forwardPressed) {
+        if (autoGears && stopped && forwardPressed) {
           gear = 1;
         }
       } else if (gear > 0) {
@@ -878,7 +911,7 @@ async function boot() {
     } else if (reverseKey) {
       if (gear > 0) {
         brake = 1;
-        if (stopped && reversePressed) {
+        if (autoGears && stopped && reversePressed) {
           gear = -1;
         }
       } else if (gear < 0) {
@@ -886,9 +919,16 @@ async function boot() {
       }
     }
 
-    const clutch = wheelChannel("clutch");
     throttle = Math.max(throttle, wheelChannel("throttle"));
     brake = Math.max(brake, wheelChannel("brake"), wheelChannel("handbrake"));
+
+    const keyShiftUp = queuedShift > 0;
+    const keyShiftDown = queuedShift < 0;
+    const keyNeutral = queuedNeutral;
+    const keyReverse = queuedReverse;
+    queuedShift = 0;
+    queuedNeutral = false;
+    queuedReverse = false;
 
     const shiftUp = wheelButtonPressed("shiftUp");
     const gearUp = wheelButtonPressed("gearUp");
@@ -898,11 +938,11 @@ async function boot() {
     const reverse = wheelButtonPressed("reverse");
     let manualGear = false;
 
-    if (neutral) {
+    if (neutral || keyNeutral) {
       gear = 0;
       manualGear = true;
     }
-    if (reverse && stopped) {
+    if ((reverse || keyReverse) && stopped) {
       gear = -1;
       manualGear = true;
     }
@@ -912,7 +952,7 @@ async function boot() {
         manualGear = true;
       }
     }
-    if (shiftUp || gearUp) {
+    if (shiftUp || gearUp || keyShiftUp) {
       if (gear > 0 && gear < maxGear) {
         gear += 1;
       } else if (gear <= 0) {
@@ -920,7 +960,7 @@ async function boot() {
       }
       manualGear = true;
     }
-    if (shiftDown || gearDown) {
+    if (shiftDown || gearDown || keyShiftDown) {
       if (gear > 1) {
         gear -= 1;
       } else if (gear > -1) {
@@ -933,13 +973,29 @@ async function boot() {
     }
     const manualGearHold = now < wheelGearUntil;
 
-    if (stopped && throttle === 0 && gear !== 0 && !manualGearHold) {
+    if (autoGears && stopped && throttle === 0 && gear !== 0 && !manualGearHold) {
       gear = 0;
       autoShiftCooldown = 0;
     }
-    if (!manualGearHold) {
+    if (autoGears && !manualGearHold) {
       updateAutoGear(delta, throttle, brake);
     }
+    if (gear !== gearBefore) {
+      shiftTimer = 0.2;
+    }
+
+    const manualClutch = keys.has("shift") || wheelChannel("clutch");
+    let clutch = manualClutch;
+    if (autoClutch) {
+      if (shiftTimer > 0) {
+        clutch = 1;
+      } else if (stopped && throttle < 0.02) {
+        clutch = 1;
+      } else {
+        clutch = 0;
+      }
+    }
+    clutch = Math.min(1, Math.max(0, clutch));
 
     try {
       if (physicsWorker && physics && smoother) {
@@ -972,7 +1028,7 @@ async function boot() {
           updateHud(telemetry);
         }
       } else {
-        driver.update(now, throttle, brake, steer, gear);
+        driver.update_with_clutch(now, throttle, brake, steer, gear, clutch);
         const telemetry = JSON.parse(driver.telemetry());
         lastSpeedMps = telemetry.speedMps;
         lastRpm = telemetry.rpm;

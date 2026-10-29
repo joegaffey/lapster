@@ -379,9 +379,10 @@ impl Vehicle {
             .map(|(index, _)| self.state.wheels[index].angular_velocity)
             .sum::<f32>()
             / driven_count as f32;
-        let rpm = self.engine_rpm(average_driven_omega, gear_ratio);
-        self.state.engine_rpm = rpm;
+        let clutch = controls.clutch.clamp(0.0, 1.0);
         let throttle = controls.throttle.clamp(0.0, 1.0);
+        let rpm = self.engine_rpm(average_driven_omega, gear_ratio, clutch, throttle);
+        self.state.engine_rpm = rpm;
         let engine_torque = self.engine_torque(rpm) * throttle;
         let engine_brake_torque = if throttle < 0.02
             && gear != 0
@@ -395,7 +396,8 @@ impl Vehicle {
         let drive_torque = (engine_torque - engine_brake_torque)
             * gear_ratio
             * self.physics.drivetrain.final_drive
-            * 0.85;
+            * 0.85
+            * (1.0 - clutch);
 
         let car_transform =
             Mat4::from_rotation_translation(self.state.rotation, self.state.position);
@@ -810,11 +812,23 @@ impl Vehicle {
         }
     }
 
-    fn engine_rpm(&self, average_driven_omega: f32, gear_ratio: f32) -> f32 {
+    fn engine_rpm(
+        &self,
+        average_driven_omega: f32,
+        gear_ratio: f32,
+        clutch: f32,
+        throttle: f32,
+    ) -> f32 {
         let ratio = gear_ratio.abs() * self.physics.drivetrain.final_drive;
-        let rpm = average_driven_omega.abs() * ratio * 60.0 / core::f32::consts::TAU;
-        rpm.max(self.physics.engine.idle_rpm)
-            .min(self.physics.engine.redline_rpm)
+        let driven_rpm = average_driven_omega.abs() * ratio * 60.0 / core::f32::consts::TAU;
+        let driven_rpm = driven_rpm.max(self.physics.engine.idle_rpm);
+        let free_rpm = self.physics.engine.idle_rpm
+            + throttle * (self.physics.engine.redline_rpm - self.physics.engine.idle_rpm) * 0.45;
+        let rpm = driven_rpm * (1.0 - clutch) + free_rpm * clutch;
+        rpm.clamp(
+            self.physics.engine.idle_rpm,
+            self.physics.engine.redline_rpm,
+        )
     }
 
     fn engine_torque(&self, rpm: f32) -> f32 {
@@ -1153,6 +1167,58 @@ mod tests {
         assert!(vehicle.state.velocity.length() > 2.0);
         assert!(vehicle.state.position.z < -0.5);
         assert!(vehicle.state.engine_rpm > 900.0);
+    }
+
+    #[test]
+    fn engaged_clutch_transmits_drive_torque() {
+        let mut engaged = Vehicle::new(physics(), collider(), &spawn());
+        let mut disengaged = Vehicle::new(physics(), collider(), &spawn());
+        let engaged_controls = Controls {
+            throttle: 1.0,
+            clutch: 0.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        let disengaged_controls = Controls {
+            throttle: 1.0,
+            clutch: 1.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        for _ in 0..1000 {
+            engaged.step(engaged_controls);
+            disengaged.step(disengaged_controls);
+        }
+        assert!(engaged.state.velocity.length() > 2.0);
+        assert!(disengaged.state.velocity.length() < 0.5);
+        assert!(disengaged.state.engine_rpm > 900.0);
+    }
+
+    #[test]
+    fn disengaged_clutch_drops_engine_rpm_at_speed() {
+        let mut engaged = Vehicle::new(physics(), collider(), &spawn());
+        let mut disengaged = Vehicle::new(physics(), collider(), &spawn());
+        let drive = Controls {
+            throttle: 1.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        for _ in 0..1000 {
+            engaged.step(drive);
+            disengaged.step(drive);
+        }
+        let driven_rpm = engaged.state.engine_rpm;
+        let coast = Controls {
+            throttle: 0.0,
+            clutch: 1.0,
+            gear: 1,
+            ..Controls::default()
+        };
+        for _ in 0..250 {
+            disengaged.step(coast);
+        }
+        assert!(driven_rpm > 1500.0);
+        assert!(disengaged.state.engine_rpm < driven_rpm * 0.5);
     }
 
     #[test]

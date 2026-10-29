@@ -31,6 +31,8 @@ export interface AssistSettings {
   abs: boolean;
   esc: boolean;
   escStrength: number;
+  autoGears: boolean;
+  autoClutch: boolean;
   steeringSensitivity: number;
   debugLines: boolean;
   environmentShadows: EnvironmentShadows;
@@ -44,6 +46,7 @@ export interface AssistSettings {
 interface SettingsOptions {
   gameplay?: boolean;
   wheel?: WheelFfb;
+  onChange?: (settings: AssistSettings) => void;
   onRenderScale?: (scale: number) => void;
 }
 
@@ -66,6 +69,8 @@ const DEFAULTS: AssistSettings = {
   abs: true,
   esc: true,
   escStrength: 0.5,
+  autoGears: true,
+  autoClutch: true,
   steeringSensitivity: 1,
   debugLines: false,
   environmentShadows: "hybrid",
@@ -209,6 +214,14 @@ function settingsDialogHtml(): string {
         <output id="esc-strength-value">50%</output>
         <input id="esc-strength" type="range" min="0" max="1" step="0.05" value="0.5" />
       </label>
+      <div class="assist-row">
+        <span>Automatic gearbox</span>
+        <button id="auto-gears-toggle" data-testid="auto-gears-toggle" aria-pressed="true" type="button">Auto gears: On</button>
+      </div>
+      <div class="assist-row">
+        <span>Automatic clutch</span>
+        <button id="auto-clutch-toggle" data-testid="auto-clutch-toggle" aria-pressed="true" type="button">Auto clutch: On</button>
+      </div>
       <label class="assist-slider">
         <span>Steering sensitivity</span>
         <output id="steering-sensitivity-value">100%</output>
@@ -353,6 +366,8 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     abs: value?.abs !== false,
     esc: value?.esc !== false,
     escStrength: clamp(value?.escStrength ?? 0.5, 0, 1, 1),
+    autoGears: value?.autoGears !== false,
+    autoClutch: value?.autoClutch !== false,
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
     debugLines: value?.debugLines === true,
     environmentShadows,
@@ -440,6 +455,8 @@ export function setupAssistsDialog(
   const tcToggle = document.querySelector<HTMLButtonElement>("#tc-toggle");
   const absToggle = document.querySelector<HTMLButtonElement>("#abs-toggle");
   const escToggle = document.querySelector<HTMLButtonElement>("#esc-toggle");
+  const autoGearsToggle = document.querySelector<HTMLButtonElement>("#auto-gears-toggle");
+  const autoClutchToggle = document.querySelector<HTMLButtonElement>("#auto-clutch-toggle");
   const tcStrength = document.querySelector<HTMLInputElement>("#tc-strength");
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
@@ -483,6 +500,8 @@ export function setupAssistsDialog(
     (!tcToggle ||
       !absToggle ||
       !escToggle ||
+      !autoGearsToggle ||
+      !autoClutchToggle ||
       !tcStrength ||
       !escStrength ||
       !steering ||
@@ -527,17 +546,22 @@ export function setupAssistsDialog(
     setFpsCounterVisible(settings.fpsCounter);
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     options.onRenderScale?.(settings.renderScale);
+    options.onChange?.({ ...settings });
     save(settings);
   };
 
   const refresh = () => {
-    if (gameplay && tcToggle && absToggle && escToggle && tcStrength && escStrength && steering && tcValue && escValue && steeringValue) {
+    if (gameplay && tcToggle && absToggle && escToggle && autoGearsToggle && autoClutchToggle && tcStrength && escStrength && steering && tcValue && escValue && steeringValue) {
       tcToggle.textContent = settings.tc ? "TC: On" : "TC: Off";
       tcToggle.setAttribute("aria-pressed", String(settings.tc));
       absToggle.textContent = settings.abs ? "ABS: On" : "ABS: Off";
       absToggle.setAttribute("aria-pressed", String(settings.abs));
       escToggle.textContent = settings.esc ? "ESC: On" : "ESC: Off";
       escToggle.setAttribute("aria-pressed", String(settings.esc));
+      autoGearsToggle.textContent = settings.autoGears ? "Auto gears: On" : "Auto gears: Off";
+      autoGearsToggle.setAttribute("aria-pressed", String(settings.autoGears));
+      autoClutchToggle.textContent = settings.autoClutch ? "Auto clutch: On" : "Auto clutch: Off";
+      autoClutchToggle.setAttribute("aria-pressed", String(settings.autoClutch));
       tcStrength.value = String(settings.tcStrength);
       escStrength.value = String(settings.escStrength);
       steering.value = String(settings.steeringSensitivity);
@@ -643,6 +667,18 @@ export function setupAssistsDialog(
     });
     escToggle!.addEventListener("click", () => {
       settings.esc = !settings.esc;
+      apply();
+      refresh();
+      status.textContent = "Saved";
+    });
+    autoGearsToggle!.addEventListener("click", () => {
+      settings.autoGears = !settings.autoGears;
+      apply();
+      refresh();
+      status.textContent = "Saved";
+    });
+    autoClutchToggle!.addEventListener("click", () => {
+      settings.autoClutch = !settings.autoClutch;
       apply();
       refresh();
       status.textContent = "Saved";

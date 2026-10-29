@@ -137,6 +137,7 @@ function runSlice(generation: number): void {
       lastInput.brake,
       lastInput.steering,
       lastInput.gear,
+      lastInput.clutch,
     );
     stepTimes.push(performance.now() - started);
     if (stepTimes.length > 250) {

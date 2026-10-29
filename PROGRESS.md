@@ -134,14 +134,17 @@ Toolchain setup scripts:
   first gesture. EngineSim's transmission mesh whine is disabled for now (`mix.transmission = 0`).
 - Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
   car setup; reverse remains the edge-triggered brake action. The box selects neutral (`N`)
-  at rest and re-engages first or reverse when throttle/brake is applied. Manual gear keys are
-  removed for the auto-only spike. Shift logic currently lives in `web/drive/main.ts`; move it
-  into `sim-core` once the behaviour is accepted.
+  at rest and re-engages first or reverse when throttle/brake is applied. Gameplay settings
+  can disable auto gears for manual shifting and disable auto clutch for the mapped clutch
+  axis or the Shift key. `sim-core` now models clutch disengagement for drive torque and
+  engine RPM; shift scheduling still lives in `web/drive/main.ts`.
 - Keyboard controls:
   - `W` / `↑` throttle,
   - `S` / `↓` brake; release and press again at rest to engage reverse,
   - `A` / `D` or `←` / `→` steer; left/right direction is verified,
   - `W` / `↑` brakes while reversing,
+  - `E` / `Q` shift up/down, `N` neutral, `Z` reverse when stopped,
+  - `Shift` clutch when auto clutch is disabled,
   - automatic forward gearbox (upshift/downshift with 0.35 s anti-hunt), `R` reset.
 - HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
 - Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
@@ -351,9 +354,9 @@ matrix then expands to the other supported wheelbases.
 - Keep the worker opt-in until CPU-throttled results are reproduced on the target hardware.
 - EngineSim's transmission mesh whine is muted pending retuning; gear changes use the
   click/thump cue instead.
-- The auto gearbox is currently a UI-layer spike. `sim-core` still takes an explicit gear, so
-  `simulate()` tests and any future AI must supply gears themselves until the logic moves into
-  Rust.
+- Gear selection is still a UI-layer spike. `sim-core` takes an explicit gear, so `simulate()`
+  tests and any future AI must supply gears themselves until the shift scheduler moves into
+  Rust. Clutch torque and RPM blending are implemented in `sim-core`.
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
 - Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
