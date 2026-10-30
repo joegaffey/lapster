@@ -5,6 +5,7 @@ export default defineConfig({
   testMatch: /.*\.spec\.ts/,
   timeout: 60_000,
   workers: 1,
+  retries: process.env.CI ? 2 : 0,
   outputDir: "test-results",
   use: {
     baseURL: "http://127.0.0.1:8123",

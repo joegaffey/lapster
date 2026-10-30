@@ -3178,7 +3178,7 @@ mod tests {
     #[test]
     fn mip_chain_downsamples_in_linear_light() {
         let mut rgba8 = vec![0u8; 2 * 2 * 4];
-        for (index, pixel) in rgba8.chunks_exact_mut(4).enumerate() {
+        for (index, pixel) in rgba8.chunks_mut(4).enumerate() {
             let value = if index < 2 { 0 } else { 255 };
             pixel.fill(value);
             pixel[3] = 255;
