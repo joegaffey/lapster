@@ -241,8 +241,8 @@ Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md
 in [`PLAN.md`](PLAN.md). Drive uses the SAB physics worker by default and an external-state
 Engine_Sim rotary2 audio spike. Next is listening/tuning and deciding whether to restore more
 EngineSim drivetrain transients or move the audio DSP directly onto SAB snapshots. Remaining
-work includes the HID/FFB worker, AC `.ini` physics mapping, track texture decoding,
-collision/wall policy, and hardening.
+work includes the HID/FFB worker, AC `.ini` physics mapping, full texture decoding,
+KTX2/Basis texture compression, texture atlases, collision/wall policy, and hardening.
 
 ## License
 

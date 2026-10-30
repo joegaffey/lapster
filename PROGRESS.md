@@ -464,12 +464,19 @@ matrix then expands to the other supported wheelbases.
    - Add a simple steering-wheel/interior placeholder.
    - Add real image decoding/KTX2 only where textures are the right choice.
    - WebXR remains a later phase.
-6. **CP6 — real track**: finish the AC path with texture decoding (DDS/KTX2 where useful),
-   wall/fence collision policy, outer-ring collision or streaming, and performance measurement.
-7. Replace per-frame JSON telemetry with typed arrays/SAB.
-8. Add content-hash cache invalidation.
-9. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
-10. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
+6. **CP6 — real track**: finish the AC path with full texture decoding (PNG/JPEG/DDS/KTX2
+   where useful), wall/fence collision policy, outer-ring collision or streaming, and
+   performance measurement.
+7. **Texture pipeline**:
+   - Add full texture decoding to the GLB and AC importers instead of approximated material
+     colours.
+   - Add bake-time texture compression (KTX2/Basis with format fallbacks) where supported.
+   - Add texture atlases for compatible materials to reduce texture switches, bind groups,
+     and draw calls.
+8. Replace per-frame JSON telemetry with typed arrays/SAB.
+9. Add content-hash cache invalidation.
+10. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
+11. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
 
 ## Key files
 

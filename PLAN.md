@@ -291,7 +291,8 @@ converting real assets.
 - Implement clean-room `.kn5` (or glTF fallback) parsing for the car visual hierarchy.
 - Apply the toon/papercraft style from `docs/art-style.md`: flat normals, vertex colors,
   outline hull, and the limited texture policy for gauges/signs/decals.
-- Convert textures to KTX2/Basis where needed.
+- Add full texture decoding for imported car materials, then compress baked output to
+  KTX2/Basis and atlas compatible materials where supported.
 - Extract wheel nodes, steering wheel, materials, and LODs.
 - Run the real car on the synthetic track.
 - Compare key physics values against the source and document tolerances.
@@ -317,6 +318,8 @@ are stable. Do not combine car and track debugging.
 
 - Parse real track `.kn5` and `.ini`: visual hierarchy, materials, textures, collision mesh,
   surface types, spawn points, pit lane, cameras, sectors.
+- Decode full track textures at bake time, compress them to KTX2/Basis where supported, and
+  atlas compatible materials to reduce texture switches and draw calls.
 - Add a GLB track path with sidecar mesh selectors, surface mapping, spawn, and collision.
   First fixture: the CC BY 4.0 Drift Tracks course; keep Skidpad as the default for now.
 - Bake track chunks; add streaming/LOD only if the budget requires it.
@@ -495,7 +498,7 @@ Vendored as 0.4.42 (`9fbfb6f`) from the library repository. See the
 | Units or axes are wrong | CP0 axes fixture; compiler owns conversion; no runtime fixups |
 | Collision mesh does not match visuals | Bake surface IDs; add a collision debug overlay; compare road/wall alignment |
 | Missing or unsupported physics parameters | Validation report; documented defaults; fail loudly for required values |
-| Real asset size causes memory pressure | Chunking, compression, KTX2, LOD, streaming; track budgets at CP6 |
+| Real asset size causes memory pressure | Chunking, compression, KTX2, atlases, LOD, streaming; track budgets at CP6 |
 | Loader and compiler drift | Shared `sim-types` schema; manifest hash; golden manifests in CI |
 | Worker transfer copies too much data | Transferable `ArrayBuffer`s; aligned copies only when required |
 | COOP/COEP blocks assets | Test static hosting early; require CORP/CORS on all assets |
