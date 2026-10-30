@@ -24,6 +24,7 @@ struct ParticleIn {
     @location(2) center_scale: vec4<f32>,
     @location(3) rotation: vec4<f32>,
     @location(4) color_alpha: vec4<f32>,
+    @location(5) shape: vec4<f32>,
 };
 
 struct ParticleOut {
@@ -32,6 +33,7 @@ struct ParticleOut {
     @location(1) color: vec3<f32>,
     @location(2) alpha: f32,
     @location(3) world: vec3<f32>,
+    @location(4) shape: vec4<f32>,
 };
 
 fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
@@ -65,14 +67,31 @@ fn vs_particle(input: ParticleIn) -> ParticleOut {
     output.color = input.color_alpha.rgb;
     output.alpha = input.color_alpha.a;
     output.world = world;
+    output.shape = input.shape;
     return output;
 }
 
 @fragment
 fn fs_particle(input: ParticleOut) -> @location(0) vec4<f32> {
-    let radial = 1.0 - smoothstep(camera.particle_params.z, camera.particle_params.w, length(input.uv));
     let near = smoothstep(camera.particle_params.x, camera.particle_params.y, distance(camera.camera_pos.xyz, input.world));
+    let t = clamp((input.uv.y + 1.0) * 0.5, 0.0, 1.0);
+    let shade = camera.particle_shade.x + (camera.particle_shade.y - camera.particle_shade.x) * t;
+
+    if input.shape.x > 0.5 {
+        let variant = max(input.shape.y, 0.01);
+        let curve = (t * t - 0.35) * 0.12 * variant;
+        let x = input.uv.x - curve;
+        let half_width = 0.24 * pow(1.0 - t, 1.2) * variant;
+        let blade = 1.0 - smoothstep(half_width - 0.018, half_width, abs(x));
+        let tip = 1.0 - smoothstep(0.94, 1.0, t);
+        let alpha = input.alpha * blade * tip * near;
+        let grass_bottom = vec3<f32>(0.032, 0.074, 0.004);
+        let grass_top = vec3<f32>(0.076, 0.138, 0.015);
+        let blade_color = mix(grass_bottom, grass_top, pow(t, 1.25)) * input.color * shade;
+        return vec4<f32>(linear_to_srgb(blade_color), alpha);
+    }
+
+    let radial = 1.0 - smoothstep(camera.particle_params.z, camera.particle_params.w, length(input.uv));
     let alpha = input.alpha * radial * near;
-    let shade = camera.particle_shade.x + (camera.particle_shade.y - camera.particle_shade.x) * clamp(input.uv.y, 0.0, 1.0);
     return vec4<f32>(linear_to_srgb(input.color * shade), alpha);
 }

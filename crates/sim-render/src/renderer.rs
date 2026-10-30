@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
@@ -7,11 +8,13 @@ use wasm_bindgen::JsValue;
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
+use crate::grass::{GrassChunkKey, GrassField, GrassInstance, GRASS_CLUMPS_PER_FRAME};
 use crate::particles::{ParticleInstance, MAX_PARTICLES};
 use crate::scene::{LineVertex, MeshData, MeshVertex, OutlineVertex, Scene, SceneTexture};
 use crate::tuning::{GpuTuning, ParticleRenderTuning, ShadowTuning};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+const GRASS_CHUNK_FADE_MS: f64 = 450.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvironmentShadowMode {
@@ -36,8 +39,40 @@ static LINE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 static PARTICLE_MESH_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
-static PARTICLE_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4];
+static PARTICLE_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+    wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4];
+static GRASS_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 1] =
+    wgpu::vertex_attr_array![0 => Float32x3];
+static GRASS_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4];
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GrassVertex {
+    position: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GrassUniform {
+    time: f32,
+    wind_strength: f32,
+    wind_speed: f32,
+    wind_freq: f32,
+    brightness: f32,
+    translucency: f32,
+    pad0: f32,
+    pad1: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GrassChunkFade {
+    fade: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -80,6 +115,15 @@ struct MeshTextureResources<'a> {
     sampler: &'a wgpu::Sampler,
 }
 
+struct GpuGrassChunk {
+    buffer: Option<wgpu::Buffer>,
+    count: u32,
+    fade_buffer: Option<wgpu::Buffer>,
+    fade_bind_group: Option<wgpu::BindGroup>,
+    fade_start_ms: f64,
+    fade: f32,
+}
+
 struct GpuMesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -87,6 +131,7 @@ struct GpuMesh {
     model_buffer: wgpu::Buffer,
     model_bind_group: wgpu::BindGroup,
     texture_bind_group: wgpu::BindGroup,
+    grass_texture_bind_group: Option<wgpu::BindGroup>,
     outline: Option<GpuOutline>,
     visible: bool,
     alpha: f32,
@@ -120,6 +165,18 @@ pub struct Renderer {
     decal_pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
+    grass_pipeline: wgpu::RenderPipeline,
+    grass_vertex_buffer: wgpu::Buffer,
+    grass_index_buffer: wgpu::Buffer,
+    grass_index_count: u32,
+    grass_chunks: HashMap<GrassChunkKey, GpuGrassChunk>,
+    grass_field: GrassField,
+    grass_texture_enabled: bool,
+    grass_shader_enabled: bool,
+    grass_uniform_buffer: wgpu::Buffer,
+    grass_bind_group: wgpu::BindGroup,
+    grass_chunk_bind_group_layout: wgpu::BindGroupLayout,
+    grass_start_ms: f64,
     camera_bind_group_layout: wgpu::BindGroupLayout,
     mesh_texture_layout: wgpu::BindGroupLayout,
     mesh_sampler: wgpu::Sampler,
@@ -306,6 +363,10 @@ impl Renderer {
             label: Some("track shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("track.wgsl"))),
         });
+        let grass_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("grass shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("grass.wgsl"))),
+        });
 
         let camera_uniform = camera_uniform(
             &scene.camera,
@@ -466,6 +527,57 @@ impl Renderer {
             "car shadow bind group",
         );
 
+        let grass_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grass uniform"),
+            contents: bytemuck::bytes_of(&GrassUniform {
+                time: 0.0,
+                wind_strength: 0.16,
+                wind_speed: 1.2,
+                wind_freq: 0.35,
+                brightness: 1.0,
+                translucency: 0.65,
+                pad0: 0.0,
+                pad1: 0.0,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let grass_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("grass bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let grass_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("grass bind group"),
+            layout: &grass_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: grass_uniform_buffer.as_entire_binding(),
+            }],
+        });
+        let grass_chunk_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("grass chunk bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
         let mesh_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("track pipeline layout"),
             bind_group_layouts: &[
@@ -499,6 +611,17 @@ impl Renderer {
                 ],
                 immediate_size: 0,
             });
+        let grass_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("grass pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&camera_bind_group_layout),
+                    Some(&shadow_bind_group_layout),
+                    Some(&grass_bind_group_layout),
+                    Some(&grass_chunk_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
 
         let pipelines = create_pipelines(
             &device,
@@ -511,6 +634,13 @@ impl Renderer {
             sample_count,
         );
         let shadow_pipeline = create_shadow_pipeline(&device, &shader, &shadow_pipeline_layout);
+        let grass_pipeline = create_grass_pipeline(
+            &device,
+            &grass_shader,
+            &grass_pipeline_layout,
+            format,
+            sample_count,
+        );
         let decal_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("decal pipeline layout"),
@@ -573,6 +703,10 @@ impl Renderer {
             })
             .collect::<Vec<_>>();
 
+        let (grass_vertex_buffer, grass_index_buffer, grass_index_count) =
+            create_grass_mesh(&device);
+        let grass_field = scene.grass;
+
         let (line_buffer, line_count) = if scene.lines.is_empty() {
             (None, 0)
         } else {
@@ -584,7 +718,7 @@ impl Renderer {
             (Some(buffer), scene.lines.len() as u32)
         };
 
-        Ok(Self {
+        let mut renderer = Self {
             surface,
             device,
             queue,
@@ -605,6 +739,18 @@ impl Renderer {
             decal_pipeline,
             outline_pipeline: pipelines.outline,
             line_pipeline: pipelines.line,
+            grass_pipeline,
+            grass_vertex_buffer,
+            grass_index_buffer,
+            grass_index_count,
+            grass_chunks: HashMap::new(),
+            grass_field,
+            grass_texture_enabled: true,
+            grass_shader_enabled: false,
+            grass_uniform_buffer,
+            grass_bind_group,
+            grass_chunk_bind_group_layout,
+            grass_start_ms: performance_now(),
             camera_bind_group_layout: camera_bind_group_layout.clone(),
             mesh_texture_layout: texture_bind_group_layout,
             mesh_sampler: sampler,
@@ -677,7 +823,10 @@ impl Renderer {
             camera: scene.camera,
             backend,
             surface_format,
-        })
+        };
+        renderer.sync_grass_chunks();
+        renderer.set_grass_texture_enabled(true);
+        Ok(renderer)
     }
 
     pub fn set_particles(&mut self, instances: &[ParticleInstance]) {
@@ -690,6 +839,132 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&instances[..self.particle_count as usize]),
         );
+    }
+
+    pub fn set_grass_texture_enabled(&mut self, enabled: bool) {
+        self.grass_texture_enabled = enabled;
+        let value = if enabled { 1.0 } else { 0.0 };
+        for mesh in &self.meshes {
+            if mesh.grass_texture_bind_group.is_none() {
+                continue;
+            }
+            let offset = std::mem::offset_of!(ModelUniform, alpha) as u64 + 4;
+            self.queue
+                .write_buffer(&mesh.model_buffer, offset, bytemuck::bytes_of(&[value]));
+        }
+    }
+
+    pub fn set_grass_shader_enabled(&mut self, enabled: bool) {
+        self.grass_shader_enabled = enabled;
+    }
+
+    pub fn set_grass_center(&mut self, center: Vec3) {
+        self.grass_field.update(center);
+    }
+
+    fn sync_grass_chunks(&mut self) {
+        let stale = self
+            .grass_chunks
+            .keys()
+            .copied()
+            .filter(|key| !self.grass_field.chunks().contains_key(key))
+            .collect::<Vec<_>>();
+        for key in stale {
+            self.grass_chunks.remove(&key);
+        }
+
+        let missing = self
+            .grass_field
+            .chunks()
+            .keys()
+            .copied()
+            .filter(|key| !self.grass_chunks.contains_key(key))
+            .collect::<Vec<_>>();
+        for key in missing {
+            let Some(instances) = self.grass_field.chunks().get(&key) else {
+                continue;
+            };
+            let count = instances.len() as u32;
+            let buffer = if count == 0 {
+                None
+            } else {
+                Some(
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("grass chunk instances"),
+                            contents: bytemuck::cast_slice(instances),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        }),
+                )
+            };
+            let fade = GrassChunkFade {
+                fade: 0.0,
+                pad0: 0.0,
+                pad1: 0.0,
+                pad2: 0.0,
+            };
+            let fade_buffer = if count == 0 {
+                None
+            } else {
+                Some(
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("grass chunk fade"),
+                            contents: bytemuck::bytes_of(&fade),
+                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        }),
+                )
+            };
+            let fade_bind_group = fade_buffer.as_ref().map(|buffer| {
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("grass chunk fade bind group"),
+                    layout: &self.grass_chunk_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
+            });
+            self.grass_chunks.insert(
+                key,
+                GpuGrassChunk {
+                    buffer,
+                    count,
+                    fade_buffer,
+                    fade_bind_group,
+                    fade_start_ms: performance_now(),
+                    fade: if count == 0 { 1.0 } else { 0.0 },
+                },
+            );
+        }
+    }
+
+    fn update_grass_fades(&mut self) {
+        let now = performance_now();
+        for chunk in self.grass_chunks.values_mut() {
+            if chunk.fade >= 1.0 {
+                continue;
+            }
+            if chunk.count == 0 {
+                chunk.fade = 1.0;
+                continue;
+            }
+            let fade = ((now - chunk.fade_start_ms).max(0.0) / GRASS_CHUNK_FADE_MS).min(1.0) as f32;
+            if fade <= chunk.fade {
+                continue;
+            }
+            chunk.fade = fade;
+            if let Some(buffer) = &chunk.fade_buffer {
+                let data = GrassChunkFade {
+                    fade,
+                    pad0: 0.0,
+                    pad1: 0.0,
+                    pad2: 0.0,
+                };
+                self.queue
+                    .write_buffer(buffer, 0, bytemuck::bytes_of(&data));
+            }
+        }
     }
 
     pub fn set_lines_visible(&mut self, visible: bool) {
@@ -754,6 +1029,12 @@ impl Renderer {
     }
 
     pub fn render(&mut self) -> Result<(), JsValue> {
+        if self.grass_shader_enabled {
+            self.grass_field.process_pending(GRASS_CLUMPS_PER_FRAME);
+            self.sync_grass_chunks();
+            self.update_grass_fades();
+        }
+
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(output)
             | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
@@ -775,11 +1056,28 @@ impl Renderer {
             Some(msaa) => (msaa, Some(&view)),
             None => (&view, None),
         };
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("track encoder"),
             });
+
+        if self.grass_shader_enabled && !self.grass_chunks.is_empty() {
+            let time = ((performance_now() - self.grass_start_ms).max(0.0) / 1000.0) as f32;
+            let uniform = GrassUniform {
+                time,
+                wind_strength: 0.16,
+                wind_speed: 1.2,
+                wind_freq: 0.35,
+                brightness: 1.0,
+                translucency: 0.65,
+                pad0: 0.0,
+                pad1: 0.0,
+            };
+            self.queue
+                .write_buffer(&self.grass_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        }
 
         if self.high_shadow_active() && self.shadow_dirty {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -883,10 +1181,57 @@ impl Renderer {
                     continue;
                 }
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
-                pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
+                let texture_bind_group = if self.grass_texture_enabled {
+                    mesh.grass_texture_bind_group
+                        .as_ref()
+                        .unwrap_or(&mesh.texture_bind_group)
+                } else {
+                    &mesh.texture_bind_group
+                };
+                pass.set_bind_group(2, texture_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+
+            if self.grass_shader_enabled && !self.grass_chunks.is_empty() {
+                pass.set_pipeline(&self.grass_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(
+                    1,
+                    if self.car_dynamic_separate() {
+                        &self.car_shadow_bind_group
+                    } else {
+                        &self.shadow_bind_group
+                    },
+                    &[],
+                );
+                pass.set_bind_group(2, &self.grass_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.grass_vertex_buffer.slice(..));
+                pass.set_index_buffer(self.grass_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                for chunk in self.grass_chunks.values() {
+                    let Some(buffer) = &chunk.buffer else {
+                        continue;
+                    };
+                    let Some(fade_bind_group) = &chunk.fade_bind_group else {
+                        continue;
+                    };
+                    if chunk.count == 0 {
+                        continue;
+                    }
+                    pass.set_bind_group(3, fade_bind_group, &[]);
+                    pass.set_vertex_buffer(1, buffer.slice(..));
+                    pass.draw_indexed(0..self.grass_index_count, 0, 0..chunk.count);
+                }
+                pass.set_bind_group(
+                    3,
+                    if self.car_dynamic_separate() {
+                        &self.car_shadow_bind_group
+                    } else {
+                        &self.shadow_bind_group
+                    },
+                    &[],
+                );
             }
 
             pass.set_pipeline(&self.transparent_pipeline);
@@ -899,7 +1244,14 @@ impl Renderer {
                     continue;
                 }
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
-                pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
+                let texture_bind_group = if self.grass_texture_enabled {
+                    mesh.grass_texture_bind_group
+                        .as_ref()
+                        .unwrap_or(&mesh.texture_bind_group)
+                } else {
+                    &mesh.texture_bind_group
+                };
+                pass.set_bind_group(2, texture_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -913,7 +1265,14 @@ impl Renderer {
                         continue;
                     }
                     pass.set_bind_group(1, &mesh.model_bind_group, &[]);
-                    pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
+                    let texture_bind_group = if self.grass_texture_enabled {
+                        mesh.grass_texture_bind_group
+                            .as_ref()
+                            .unwrap_or(&mesh.texture_bind_group)
+                    } else {
+                        &mesh.texture_bind_group
+                    };
+                    pass.set_bind_group(2, texture_bind_group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1576,30 +1935,21 @@ fn create_mesh(
         }],
     });
 
-    let owned_texture;
-    let texture_view = if let Some(index) = mesh.texture {
-        if let Some(texture) = texture_resources.textures.get(index) {
-            owned_texture = create_scene_texture(device, queue, texture, &mesh.name);
-            &owned_texture
-        } else {
-            texture_resources.white_view
-        }
-    } else {
-        texture_resources.white_view
-    };
-    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(&format!("{} texture bind group", mesh.name)),
-        layout: texture_resources.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(texture_resources.sampler),
-            },
-        ],
+    let texture_bind_group = create_mesh_texture_bind_group(
+        device,
+        queue,
+        texture_resources,
+        &format!("{} texture bind group", mesh.name),
+        mesh.texture,
+    );
+    let grass_texture_bind_group = mesh.grass_texture.map(|index| {
+        create_mesh_texture_bind_group(
+            device,
+            queue,
+            texture_resources,
+            &format!("{} grass texture bind group", mesh.name),
+            Some(index),
+        )
     });
 
     let outline = mesh.outline.as_ref().map(|outline| {
@@ -1627,6 +1977,7 @@ fn create_mesh(
         model_buffer,
         model_bind_group,
         texture_bind_group,
+        grass_texture_bind_group,
         outline,
         visible: true,
         alpha: mesh.alpha,
@@ -1638,6 +1989,37 @@ fn create_mesh(
         is_decal: mesh.is_decal,
         model: mesh.model,
     }
+}
+
+fn create_mesh_texture_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    resources: &MeshTextureResources<'_>,
+    label: &str,
+    index: Option<usize>,
+) -> wgpu::BindGroup {
+    let owned_texture;
+    let texture_view = if let Some(texture) = index.and_then(|index| resources.textures.get(index))
+    {
+        owned_texture = create_scene_texture(device, queue, texture, label);
+        &owned_texture
+    } else {
+        resources.white_view
+    };
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout: resources.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(resources.sampler),
+            },
+        ],
+    })
 }
 
 fn create_white_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
@@ -2140,6 +2522,106 @@ fn create_particle_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn create_grass_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+    const SEGMENTS: usize = 3;
+    let mut vertices = Vec::with_capacity(SEGMENTS * 2 + 1);
+    for segment in 0..SEGMENTS {
+        let t = segment as f32 / SEGMENTS as f32;
+        let half_width = 0.5 * (1.0 - t).powf(1.2);
+        vertices.push(GrassVertex {
+            position: [-half_width, t, 0.0],
+        });
+        vertices.push(GrassVertex {
+            position: [half_width, t, 0.0],
+        });
+    }
+    vertices.push(GrassVertex {
+        position: [0.0, 1.0, 0.0],
+    });
+
+    let mut indices = Vec::with_capacity((SEGMENTS * 2 - 1) * 3);
+    for segment in 0..SEGMENTS - 1 {
+        let left = (segment * 2) as u32;
+        let right = left + 1;
+        let next_left = left + 2;
+        let next_right = left + 3;
+        indices.extend_from_slice(&[left, next_left, right, right, next_left, next_right]);
+    }
+    let last_left = ((SEGMENTS - 1) * 2) as u32;
+    indices.extend_from_slice(&[last_left, (SEGMENTS * 2) as u32, last_left + 1]);
+
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("grass blade vertices"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("grass blade indices"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    (vertex_buffer, index_buffer, indices.len() as u32)
+}
+
+fn create_grass_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("grass pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_grass"),
+            compilation_options: Default::default(),
+            buffers: &[
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<GrassVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &GRASS_VERTEX_ATTRIBUTES,
+                }),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<GrassInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &GRASS_INSTANCE_ATTRIBUTES,
+                }),
+            ],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_grass"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),

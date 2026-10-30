@@ -133,7 +133,8 @@ Start with a data-driven part system, not runtime mesh cutting.
 
 ## 9. Particles
 
-- Tire smoke: opaque or alpha-tested low-poly puffs, instanced.
+- Tire smoke: opaque or alpha-tested low-poly puffs, instanced. Grass surfaces emit a
+  tapered blade-shaped billboard instead of the puff.
 - Sparks: thin bright geometry, instanced, additive blending.
 - Use fixed-size instance buffers and hard caps.
 - Do not use large alpha-blended sprites. Instancing removes draw-call cost, not overdraw.
@@ -176,8 +177,9 @@ track is measured.
 ## 12. Phases
 
 1. **Style slice — done:** toon ramp/rim shading, flat vertex colors, inverted-hull outlines,
-   and a UV/base-color texture path with a generated gauge sign. The procedural grid and
-   particles remain future work.
+   and a UV/base-color texture path with a generated gauge sign. An instanced,
+   wind-animated toon grass pass now covers the Skidpad; the procedural grid and particles
+   remain future work.
 2. **Real car:** decimate/color-bake a simple LFS-like car, add cockpit gauges and signs.
 3. **Destruction:** part bitmask, shard pool, damage transitions.
 4. **WebXR:** runtime spike, per-eye budgets, worker physics.

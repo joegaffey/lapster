@@ -2,11 +2,11 @@
   "GrassMat": {
     "texture": "../drift-sketchfab/textures/grass.png",
     "uvMode": "worldXz",
-    "uvScale": 0.5
+    "uvScale": 0.25
   },
   "transition": {
     "texture": "../drift-sketchfab/textures/dirt.png",
     "uvMode": "worldXz",
-    "uvScale": 1.0
+    "uvScale": 0.2
   }
 }

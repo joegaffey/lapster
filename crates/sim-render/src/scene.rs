@@ -10,6 +10,8 @@ use sim_types::{
 
 use crate::camera::Camera;
 
+const BACKGROUND_TERRAIN_COLOR: [f32; 3] = [0.12, 0.16, 0.22];
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct MeshVertex {
@@ -52,6 +54,7 @@ pub struct MeshData {
     pub indices: Vec<u32>,
     pub model: Mat4,
     pub texture: Option<usize>,
+    pub grass_texture: Option<usize>,
     pub outline: Option<OutlineMesh>,
     pub alpha: f32,
     pub emissive: [f32; 3],
@@ -137,6 +140,7 @@ pub struct Scene {
     pub meshes: Vec<MeshData>,
     pub textures: Vec<SceneTexture>,
     pub lines: Vec<LineVertex>,
+    pub grass: crate::grass::GrassField,
     pub camera: Camera,
     pub debug_info: String,
     pub wheels: Vec<SceneWheel>,
@@ -190,10 +194,16 @@ impl Scene {
             }
             let material = visual.materials.get(mesh_ref.material as usize);
             let color = material_color(visual, mesh_ref.material as usize);
-            let texture = material
+            let is_background_terrain = mesh_ref.name.to_ascii_lowercase().contains("0grassext");
+            let is_grass = !is_background_terrain
+                && (mesh_ref.name.to_ascii_lowercase().contains("grass")
+                    || material.is_some_and(|material| {
+                        material.name.to_ascii_lowercase().contains("grass")
+                    }));
+            let material_texture = material
                 .and_then(|material| material.base_color_texture)
                 .map(|index| index as usize);
-            if let Some(index) = texture {
+            if let Some(index) = material_texture {
                 if index >= textures.len() {
                     return Err(format!(
                         "mesh {} references missing texture {}",
@@ -201,8 +211,19 @@ impl Scene {
                     ));
                 }
             }
+            let texture = if is_grass { None } else { material_texture };
+            let grass_texture = if is_grass { material_texture } else { None };
             let outline = material.map(|material| material.outline).unwrap_or(false);
-            let vertices = build_vertices(buffers, color);
+            let mut vertices = build_vertices(buffers, color);
+            if is_background_terrain {
+                for vertex in &mut vertices {
+                    vertex.color = BACKGROUND_TERRAIN_COLOR;
+                }
+            } else if is_grass {
+                for vertex in &mut vertices {
+                    vertex.color = crate::grass::GRASS_GROUND_COLOR;
+                }
+            }
             for index in &buffers.indices {
                 if *index as usize >= vertices.len() {
                     return Err(format!(
@@ -222,6 +243,7 @@ impl Scene {
                 indices: buffers.indices.clone(),
                 model: Mat4::IDENTITY,
                 texture,
+                grass_texture,
                 outline: if outline {
                     build_outline(buffers)
                 } else {
@@ -244,6 +266,7 @@ impl Scene {
         add_collision(&mut lines, collision);
 
         let camera = build_camera(metadata);
+        let grass = crate::grass::GrassField::new(collision, metadata);
         let debug_info = json!({
             "asset": { "id": manifest.id, "kind": "Track" },
             "stats": {
@@ -254,6 +277,8 @@ impl Scene {
                 "texturedMeshes": meshes.iter().filter(|mesh| mesh.texture.is_some()).count(),
                 "outlinedMeshes": meshes.iter().filter(|mesh| mesh.outline.is_some()).count(),
                 "collisionTriangles": stats.collision_triangles,
+                "grassBlades": grass.len(),
+                "grassChunks": grass.chunks().len(),
             },
             "bounds": { "min": manifest.bounds.min, "max": manifest.bounds.max },
             "surfaces": metadata.surfaces.iter().map(|surface| json!({
@@ -287,6 +312,7 @@ impl Scene {
             meshes,
             textures,
             lines,
+            grass,
             camera,
             debug_info,
             wheels: Vec::new(),

@@ -16,11 +16,13 @@ The raw `.kn5` files are not checked in. The baked pack contains:
 - Base-colour DDS textures are decoded and imported; normal and detail maps are ignored.
   The grass and dirt/transition materials use textures from the Drift Tracks fixture,
   configured by `texture-overrides.json`. Their UVs are projected from world X/Z (`uvMode:
-  "worldXz"`) to avoid stretching on the large ground meshes. Mountains/terrain, metal
+  "worldXz"`) to avoid stretching on the large ground meshes; the grass tile uses twice the
+  previous world size, and the dirt tile scale is tuned separately for the Skidpad's larger
+  ground surface. Mountains/terrain, metal
   barriers, and tent fabric keep approximated material colours instead of textures. The
   AC logo mesh is omitted. The multilayer `tarmac` material is approximated with
   `tracknew.DDS`, and terrain meshes are lowered 5 cm to avoid z-fighting with the banked
-  rings. Concrete apron UVs are scaled to 0.25 so the texture does not look excessively
+  rings. Distant background terrain uses a blue-grey color. Concrete apron UVs are scaled to 0.25 so the texture does not look excessively
   fine. Baked pack is about 11 MB.
 - No tree/fence meshes and no wall/fence collision; ground collision includes the outer ring
   and grass.

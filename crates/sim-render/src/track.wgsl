@@ -227,7 +227,10 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     if alpha < 0.01 {
         discard;
     }
-    let base = input.color * texel.rgb;
+    var base = input.color * texel.rgb;
+    if model.alpha.y > 0.5 {
+        base = texel.rgb;
+    }
     var environment_shadow = 1.0;
     if camera.shadow_modes.w > 0.5 {
         let dynamic = shadow_visibility(input.world_position, normal);

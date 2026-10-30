@@ -14,6 +14,7 @@ pub struct ParticleInstance {
     pub center_scale: [f32; 4],
     pub rotation: [f32; 4],
     pub color_alpha: [f32; 4],
+    pub shape: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -38,6 +39,8 @@ struct Particle {
     alpha: f32,
     rise: f32,
     drag: f32,
+    shape_kind: f32,
+    shape_variant: f32,
 }
 
 pub struct ParticleSystem {
@@ -77,7 +80,6 @@ impl ParticleSystem {
         &self.instances
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -155,7 +157,15 @@ impl ParticleSystem {
                 {
                     self.accumulators[index] -= 1.0;
                     spawned += 1;
-                    self.spawn(car_world, state, rig_wheel, wheel, surface, tuning);
+                    self.spawn(
+                        car_world,
+                        state,
+                        rig_wheel,
+                        wheel,
+                        surface,
+                        surface_kind,
+                        tuning,
+                    );
                 }
                 if self.particles.len() >= max_active {
                     self.accumulators[index] = 0.0;
@@ -186,6 +196,7 @@ impl ParticleSystem {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn(
         &mut self,
         car_world: Mat4,
@@ -193,6 +204,7 @@ impl ParticleSystem {
         rig_wheel: &crate::scene::RigWheel,
         wheel: &sim_core::WheelState,
         surface: &ParticleSurface,
+        surface_kind: SurfaceKind,
         tuning: &ParticleTuning,
     ) {
         let center = car_world.transform_point3(rig_wheel.local_model.w_axis.truncate());
@@ -236,6 +248,12 @@ impl ParticleSystem {
             0.0,
             self.range(tuning.spawn.spin_min, tuning.spawn.spin_max),
         );
+        let shape_kind = if matches!(surface_kind, SurfaceKind::Grass) {
+            1.0
+        } else {
+            0.0
+        };
+        let shape_variant = self.range(0.8, 1.2);
         self.particles.push(Particle {
             position: contact + jitter,
             velocity,
@@ -249,6 +267,8 @@ impl ParticleSystem {
             alpha,
             rise,
             drag,
+            shape_kind,
+            shape_variant,
         });
     }
 
@@ -277,6 +297,7 @@ impl ParticleSystem {
                     particle.rotation.w,
                 ],
                 color_alpha: [particle.color.x, particle.color.y, particle.color.z, alpha],
+                shape: [particle.shape_kind, particle.shape_variant, 0.0, 0.0],
             });
         }
     }
@@ -458,6 +479,7 @@ mod tests {
                 &rig.wheels[index],
                 &state.wheels[index],
                 &tuning.surfaces.asphalt,
+                SurfaceKind::Asphalt,
                 &tuning,
             );
             let particle = particles.particles.last().expect("particle");
@@ -485,6 +507,11 @@ mod tests {
                 );
             }
             assert!(particles.count() > 0, "{surface}");
+            let shape = if surface == "GRASS" { 1.0 } else { 0.0 };
+            assert!(
+                particles.instances().iter().all(|p| p.shape[0] == shape),
+                "{surface} particle shape"
+            );
         }
     }
 

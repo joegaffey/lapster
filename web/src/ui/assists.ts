@@ -11,6 +11,8 @@ export interface SettingsViewer {
   set_stability_strength?(strength: number): void;
   set_steering_sensitivity?(sensitivity: number): void;
   set_debug_lines_visible(visible: boolean): void;
+  set_grass_texture_enabled?(enabled: boolean): void;
+  set_grass_shader_enabled?(enabled: boolean): void;
   set_environment_shadow_mode(mode: string): void;
   set_car_shadow_mode(mode: string): void;
   set_time_of_day(hours: number): number;
@@ -37,6 +39,8 @@ export interface AssistSettings {
   debugLines: boolean;
   environmentShadows: EnvironmentShadows;
   carShadow: CarShadow;
+  grassTexture: boolean;
+  grassShader: boolean;
   timeOfDay: number;
   antiAliasing: AntiAliasing;
   fpsCounter: boolean;
@@ -75,6 +79,8 @@ const DEFAULTS: AssistSettings = {
   debugLines: false,
   environmentShadows: "hybrid",
   carShadow: "dynamic",
+  grassTexture: true,
+  grassShader: false,
   timeOfDay: 15,
   antiAliasing: "auto",
   fpsCounter: false,
@@ -274,6 +280,14 @@ function settingsDialogHtml(): string {
           <option value="off">Off</option>
         </select>
       </label>
+      <div class="assist-row">
+        <span>Grass texture</span>
+        <button id="grass-texture-toggle" data-testid="grass-texture-toggle" aria-pressed="true" type="button">Texture: On</button>
+      </div>
+      <div class="assist-row">
+        <span>Grass shader</span>
+        <button id="grass-shader-toggle" data-testid="grass-shader-toggle" aria-pressed="false" type="button">Shader: Off</button>
+      </div>
       <label class="assist-slider">
         <span>Time of day</span>
         <output id="time-of-day-value">15:00</output>
@@ -372,6 +386,8 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     debugLines: value?.debugLines === true,
     environmentShadows,
     carShadow,
+    grassTexture: value?.grassTexture === true,
+    grassShader: value?.grassShader !== false,
     timeOfDay: clamp(value?.timeOfDay ?? 15, 6, 20, 15),
     antiAliasing:
       value?.antiAliasing === "off" ||
@@ -462,6 +478,8 @@ export function setupAssistsDialog(
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
   const debugToggle = document.querySelector<HTMLButtonElement>("#debug-lines-toggle");
   const fpsToggle = document.querySelector<HTMLButtonElement>("#fps-counter-toggle");
+  const grassTextureToggle = document.querySelector<HTMLButtonElement>("#grass-texture-toggle");
+  const grassShaderToggle = document.querySelector<HTMLButtonElement>("#grass-shader-toggle");
   const environmentSelect = document.querySelector<HTMLSelectElement>("#environment-shadows");
   const carSelect = document.querySelector<HTMLSelectElement>("#car-shadow");
   const timeRange = document.querySelector<HTMLInputElement>("#time-of-day");
@@ -482,6 +500,8 @@ export function setupAssistsDialog(
     !resetButton ||
     !debugToggle ||
     !fpsToggle ||
+    !grassTextureToggle ||
+    !grassShaderToggle ||
     !environmentSelect ||
     !carSelect ||
     !timeRange ||
@@ -543,6 +563,8 @@ export function setupAssistsDialog(
     applyAssists();
     applyModes();
     viewer.set_debug_lines_visible(settings.debugLines);
+    viewer.set_grass_texture_enabled?.(settings.grassTexture);
+    viewer.set_grass_shader_enabled?.(settings.grassShader);
     setFpsCounterVisible(settings.fpsCounter);
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     options.onRenderScale?.(settings.renderScale);
@@ -573,6 +595,10 @@ export function setupAssistsDialog(
     debugToggle.setAttribute("aria-pressed", String(settings.debugLines));
     fpsToggle!.textContent = settings.fpsCounter ? "FPS: On" : "FPS: Off";
     fpsToggle!.setAttribute("aria-pressed", String(settings.fpsCounter));
+    grassTextureToggle!.textContent = settings.grassTexture ? "Texture: On" : "Texture: Off";
+    grassTextureToggle!.setAttribute("aria-pressed", String(settings.grassTexture));
+    grassShaderToggle!.textContent = settings.grassShader ? "Shader: On" : "Shader: Off";
+    grassShaderToggle!.setAttribute("aria-pressed", String(settings.grassShader));
     environmentSelect.value = settings.environmentShadows;
     carSelect.value = settings.carShadow;
     timeRange.value = String(settings.timeOfDay);
@@ -737,6 +763,20 @@ export function setupAssistsDialog(
   fpsToggle.addEventListener("click", () => {
     settings.fpsCounter = !settings.fpsCounter;
     setFpsCounterVisible(settings.fpsCounter);
+    save(settings);
+    refresh();
+    status.textContent = "Saved";
+  });
+  grassTextureToggle.addEventListener("click", () => {
+    settings.grassTexture = !settings.grassTexture;
+    viewer.set_grass_texture_enabled?.(settings.grassTexture);
+    save(settings);
+    refresh();
+    status.textContent = "Saved";
+  });
+  grassShaderToggle.addEventListener("click", () => {
+    settings.grassShader = !settings.grassShader;
+    viewer.set_grass_shader_enabled?.(settings.grassShader);
     save(settings);
     refresh();
     status.textContent = "Saved";

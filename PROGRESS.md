@@ -184,6 +184,29 @@ Toolchain setup scripts:
   Drive choices. The selection persists in `localStorage` (`lapster.track.v1`); Drive and the
   garage `Drive` button default to it and fall back to Skidpad when nothing is selected.
   Playwright coverage lives in `web/tests/track-launcher.spec.ts`.
+- Stylized grass: the Stylized Components GrassField shader was adapted to WGSL and a new
+  instanced render pass. Scenes grow up to 240,000 wind-animated blades in clumps on GRASS
+  collision within 90 m of the spawn, with toon shading, procedural dry patches, back-lit
+  translucency, and the existing environment shadows. The window follows the car in 16 m
+  chunks and recenters every 12 m; each chunk caches a 16×16 grass/height grid so blade placement does not raycast,
+  and newly exposed chunks are built within a fixed per-frame clump budget. Stale chunks are
+  evicted with hysteresis, so recentering never rebuilds the whole field at once. New chunks
+  grow in over 450 ms, and blades shrink and blend toward the blade-base ground color over
+  the last ~28 m to hide streaming pop-in. Grass meshes default to that flat background
+  color, while Graphics settings expose independent grass texture and grass shader toggles
+  (texture on, shader off by default; both can be enabled). The grass blade palette follows
+  the Drift grass texture, and enabling the texture drops the flat-color tint so the source
+  texture shows through. The flat background is darker, close to the blade base color. The
+  Skidpad grass tile is twice the previous world size. Blade tips use the texture-mean color
+  and reduced translucency so the grass has less internal contrast and fades more smoothly.
+  Covered by `web/tests/grass.spec.ts`; attribution is recorded in
+  `THIRD_PARTY_NOTICES.md`.
+- Skidpad backdrop: the distant `0GRASSext` terrain mesh uses a blue-grey color instead of
+  grass green, matching the mountain backdrop.
+- Grass-surface tire particles use a small, tapered blade-shaped billboard with the grass
+  shader's blade-base/tip palette instead of the round dust puff; asphalt/concrete/kerb keep
+  the puff shape. The particle shader branches on a per-instance shape flag, and the grass
+  particle tuning uses a much smaller size and shorter life.
 - Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
 - Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
   cockpit mode switches it to 6% alpha in a transparent forward pass; bonnet and external

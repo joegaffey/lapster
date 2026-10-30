@@ -404,6 +404,7 @@ fn add_car_decal(
         indices: vec![0, 1, 2, 0, 2, 3],
         model: Mat4::IDENTITY,
         texture: Some(texture),
+        grass_texture: None,
         outline: None,
         alpha: 0.20,
         emissive: [0.0; 3],
@@ -1376,6 +1377,7 @@ fn push_car_mesh(
         indices: buffers.indices.clone(),
         model,
         texture: style.texture,
+        grass_texture: None,
         outline: if style.outline {
             build_outline(buffers)
         } else {

@@ -2,6 +2,7 @@
 
 mod camera;
 mod garage;
+mod grass;
 mod particles;
 mod renderer;
 mod scene;
@@ -116,6 +117,14 @@ impl TrackViewer {
 
     pub fn set_debug_lines_visible(&mut self, visible: bool) {
         self.renderer.set_lines_visible(visible);
+    }
+
+    pub fn set_grass_texture_enabled(&mut self, enabled: bool) {
+        self.renderer.set_grass_texture_enabled(enabled);
+    }
+
+    pub fn set_grass_shader_enabled(&mut self, enabled: bool) {
+        self.renderer.set_grass_shader_enabled(enabled);
     }
 
     pub fn set_msaa_samples(&mut self, requested: u32) -> Result<u32, JsValue> {
@@ -389,6 +398,14 @@ impl GarageViewer {
 
     pub fn set_debug_lines_visible(&mut self, visible: bool) {
         self.renderer.set_lines_visible(visible);
+    }
+
+    pub fn set_grass_texture_enabled(&mut self, enabled: bool) {
+        self.renderer.set_grass_texture_enabled(enabled);
+    }
+
+    pub fn set_grass_shader_enabled(&mut self, enabled: bool) {
+        self.renderer.set_grass_shader_enabled(enabled);
     }
 
     pub fn set_msaa_samples(&mut self, requested: u32) -> Result<u32, JsValue> {
@@ -1165,6 +1182,14 @@ impl DriveViewer {
         self.renderer.set_lines_visible(visible);
     }
 
+    pub fn set_grass_texture_enabled(&mut self, enabled: bool) {
+        self.renderer.set_grass_texture_enabled(enabled);
+    }
+
+    pub fn set_grass_shader_enabled(&mut self, enabled: bool) {
+        self.renderer.set_grass_shader_enabled(enabled);
+    }
+
     pub fn set_shadows_enabled(&mut self, enabled: bool) {
         self.renderer.set_shadows_enabled(enabled);
     }
@@ -1512,6 +1537,7 @@ impl DriveViewer {
 
     fn update_camera(&mut self) {
         let (position, rotation) = self.visual_pose();
+        self.renderer.set_grass_center(position);
         if self.camera_mode == CameraMode::Bonnet {
             let shot = &self.tuning.camera.bonnet;
             let eye = position + rotation * Vec3::from_array(shot.eye);

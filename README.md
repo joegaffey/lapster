@@ -116,8 +116,9 @@ isolation or worker startup fails.
 - Runtime **Tuning** dialog for chassis, suspension, tires, engine, gearing, brakes, steering,
   and aero; settings persist per car and can be copied/pasted as `lapster/setup@1` JSON.
 - **Settings** dialog split into **Gameplay** and **Graphics** tabs, available in every
-  viewer. Graphics covers render scale, anti-aliasing, environment and car shadows, time
-  of day, the debug overlay, and an optional top-left FPS counter.
+  viewer. Graphics covers render scale, anti-aliasing, environment and car shadows, grass
+  texture and grass shader toggles, time of day, the debug overlay, and an optional top-left
+  FPS counter.
 - Rust, Node, and Playwright test suites.
 
 ## Controls
@@ -215,7 +216,8 @@ physics backend policy.
 
 The visual direction is a forward-rendered technical/papercraft toon style with simple
 geometry, vertex colors, object-space outlines, and textures only where they are the
-practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-style.md).
+practical choice (gauges, signs, decals). Grass on the Skidpad uses an instanced,
+wind-animated toon blade pass. See [`docs/art-style.md`](docs/art-style.md).
 
 ## Credits
 
@@ -230,6 +232,8 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
 - **Engine_Sim** by Yigit Salih Emecen, MIT, powers Drive engine audio. See
   [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
   [`docs/audio.md`](docs/audio.md). No upstream audio samples are included.
+- **Stylized Components** by Christian Ortiz, MIT, is the reference for the adapted WGSL
+  grass blade shader. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Status and roadmap
 
@@ -254,5 +258,7 @@ in this project by you shall be dual licensed as above, without any additional t
 conditions.
 
 Drive audio vendors [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim) under the MIT
+license. The grass shader is adapted from
+[Stylized Components](https://github.com/cortiz2894/stylized-components) under the MIT
 license. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md),
 `web/src/audio/engine-sim/NOTICE.md`, and `LICENSE`.
