@@ -12,6 +12,8 @@ safe to commit except where noted.
   sign, spawn point, cameras, surfaces, and labeled X/Y/Z axes.
 - `tracks/skidpad05/pack.sima`: temporary default demo track. The source archive had no
   license metadata; see its README before redistribution.
+- `tracks/drift-sketchfab/`: CC BY 4.0 drift course with GLB source, mesh selectors, collision,
+  and baked pack. See its README for attribution.
 
 ## Coordinate contract
 
@@ -29,6 +31,7 @@ demos. Re-bake them after changing a fixture:
 cargo run -p asset-compiler -- bake car fixtures/cars/minimal
 cargo run -p asset-compiler -- bake track fixtures/tracks/minimal
 cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb
+cargo run -p asset-compiler -- bake-glb-track fixtures/tracks/drift-sketchfab
 ```
 
 The Skidpad pack is baked from the raw AC mod under `fixtures/real/`:

@@ -223,16 +223,34 @@ Toolchain setup scripts:
   - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.
   - Supports custom `?car=`/`?track=` paths in the garage and drive viewers.
   - First local fixture: Mazda RX-7, 18,322 triangles after removing logo geometry.
+- GLB track import:
+  - `cargo run -p asset-compiler -- bake-glb-track <track-dir> [out]`
+  - `track.json` selects visual and collision meshes by node/material name with wildcard
+    patterns, maps materials to surfaces, and supplies spawn/camera metadata.
+  - First fixture: Drift Tracks, CC BY 4.0, 6,940 visual triangles, 5,160 collision
+    triangles, 12 draw calls, 10 GLB base-colour textures after pruning unused
+    checkpoint/metal-box materials, asphalt/kerb/grass/concrete surfaces.
+  - Kerbs are mountable: collision keeps their top faces but omits vertical faces so the
+    car can drive over them instead of hitting an invisible wall.
 - AC track import:
   - `cargo run -p asset-compiler -- bake-ac-track <track-dir> [out] [--scale <factor>]`
   - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
     drivable collision subset.
-  - First local fixture: Skidpad 0.5, 76,545 visual triangles, 43,885 collision triangles,
-    30 draw calls, at original scale (UI length 150 m).
+  - First local fixture: Skidpad 0.5, 76,543 visual triangles, 43,885 collision triangles,
+    29 draw calls, 10 base-colour textures at a maximum of 512 px, at original scale
+    (UI length 150 m). Grass and dirt/transition reuse the Drift Tracks grass/dirt textures
+    via `texture-overrides.json` with world X/Z UV projection to avoid stretching;
+    terrain/mountains, metal barriers, and tent fabric use approximated colours, and the
+    AC logo mesh is omitted.
   - Collision includes the central pad, ASP surfaces, banked outer asphalt ring, and grass;
     the tan `TRANSITION` concrete apron is tagged `ANELLO` so the concrete audio layer
-    engages. Grass friction is capped at 0.35. Textures are not imported and walls/fences
-    remain visual-only.
+    engages. Grass friction is capped at 0.35. Normal/detail maps are ignored. The
+    multilayer tarmac shader is approximated with the `tracknew.DDS` diffuse map, terrain
+    meshes are lowered 5 cm to avoid z-fighting with the banked rings, and concrete apron
+    UVs are scaled to 0.25 to keep the texture from looking too fine. AC track baking
+    accepts an optional `--texture-overrides <json>` file for external material textures;
+    overrides can use `uvMode: "worldXz"` with a per-metre `uvScale`. Walls/fences remain
+    visual-only.
   - Visual coplanar layers are offset: the concrete apron sits 1.5 cm below the tarmac, and
     thin road overlays sit 5 mm above it.
 - Build freshness: generated build version in default pack URLs, `version.json` checks on

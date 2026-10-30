@@ -1,4 +1,5 @@
-use asset_compiler::bake::{bake_car, bake_track};
+use asset_compiler::bake::{bake_car, bake_glb_track, bake_track};
+use glam::Vec3;
 use sim_asset::{Pack, PackError};
 use sim_types::{AssetKind, PACK_FORMAT_VERSION, PACK_HEADER_SIZE};
 use std::path::PathBuf;
@@ -66,6 +67,94 @@ fn track_bake_is_deterministic_and_round_trips() {
     assert_eq!(visual.textures[0].width, 64);
     assert_eq!(visual.textures[0].height, 64);
     assert_eq!(visual.textures[0].rgba8.len(), 64 * 64 * 4);
+}
+
+#[test]
+fn glb_track_bake_is_deterministic_and_round_trips() {
+    let dir = fixture_dir("fixtures/tracks/drift-sketchfab");
+    let first = bake_glb_track(&dir).expect("GLB track bake failed");
+    let second = bake_glb_track(&dir).expect("second GLB track bake failed");
+    assert_eq!(first, second);
+
+    let pack = Pack::from_bytes(&first).expect("GLB track pack failed validation");
+    assert_eq!(pack.kind(), AssetKind::Track);
+
+    let metadata = pack.track_metadata_owned().expect("metadata load failed");
+    assert_eq!(metadata.name, "Drift Tracks");
+    assert_eq!(metadata.spawns.len(), 1);
+    assert_eq!(metadata.surfaces.len(), 4);
+    assert_eq!(metadata.surfaces[0].name, "asphalt");
+
+    let collision = pack.track_collision_owned().expect("collision load failed");
+    assert_eq!(collision.surface_ids.len(), collision.indices.len() / 3);
+    assert!(collision.indices.len() / 3 > 1000);
+
+    let kerb = metadata
+        .surfaces
+        .iter()
+        .find(|surface| surface.name == "kerb")
+        .expect("kerb surface");
+    let mut kerb_triangles = 0;
+    for (index, triangle) in collision.indices.chunks(3).enumerate() {
+        if collision.surface_ids[index] != kerb.id {
+            continue;
+        }
+        let a = Vec3::from_array(collision.vertices[triangle[0] as usize]);
+        let b = Vec3::from_array(collision.vertices[triangle[1] as usize]);
+        let c = Vec3::from_array(collision.vertices[triangle[2] as usize]);
+        let normal = (b - a).cross(c - a).normalize();
+        assert!(
+            normal.y.abs() > 0.3,
+            "mountable kerb collision should not contain vertical walls"
+        );
+        kerb_triangles += 1;
+    }
+    assert!(kerb_triangles > 0);
+
+    let visual = pack.track_visual_owned().expect("visual load failed");
+    assert_eq!(visual.meshes.len(), 12);
+    assert_eq!(visual.mesh_buffers.len(), 12);
+    assert_eq!(visual.textures.len(), 10);
+    assert_eq!(visual.materials.len(), 10);
+    assert!(visual
+        .materials
+        .iter()
+        .any(|material| material.base_color_texture.is_some()));
+    for material in &visual.materials {
+        if let Some(index) = material.base_color_texture {
+            assert!((index as usize) < visual.textures.len());
+        }
+    }
+    for texture in &visual.textures {
+        assert_eq!(
+            texture.rgba8.len(),
+            texture.width as usize * texture.height as usize * 4
+        );
+    }
+}
+
+#[test]
+fn skidpad_fixture_has_baked_textures() {
+    let path = fixture_dir("fixtures/tracks/skidpad05/pack.sima");
+    let bytes = std::fs::read(&path).expect("skidpad pack");
+    let pack = Pack::from_bytes(&bytes).expect("skidpad pack failed validation");
+    let visual = pack.track_visual_owned().expect("visual load failed");
+    assert_eq!(visual.textures.len(), 10);
+    assert!(visual
+        .materials
+        .iter()
+        .any(|material| material.name == "GrassMat" && material.base_color_texture.is_some()));
+    assert!(visual
+        .materials
+        .iter()
+        .any(|material| material.name == "transition" && material.base_color_texture.is_some()));
+    for texture in &visual.textures {
+        assert!(texture.width <= 512 && texture.height <= 512);
+        assert_eq!(
+            texture.rgba8.len(),
+            texture.width as usize * texture.height as usize * 4
+        );
+    }
 }
 
 #[test]

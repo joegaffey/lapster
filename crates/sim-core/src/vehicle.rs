@@ -764,6 +764,7 @@ impl Vehicle {
             Vec3::new(0.8, 0.15, 1.4),
         ];
         let mut lift = Vec3::ZERO;
+        let mut contacts = Vec::new();
         for offset in offsets {
             let point = self.state.position + self.state.rotation * offset;
             let origin = point + Vec3::Y * self.physics_tuning.body_probe_height;
@@ -781,14 +782,14 @@ impl Vehicle {
                 if correction.length_squared() > lift.length_squared() {
                     lift = correction;
                 }
+                contacts.push((hit.point, hit.normal));
             }
+        }
+        for (point, normal) in contacts {
+            self.apply_contact_impulse(point, normal);
         }
         if lift.length_squared() > 0.0 {
             self.state.position += lift;
-            let into_surface = self.state.velocity.dot(lift.normalize_or_zero());
-            if into_surface < 0.0 {
-                self.state.velocity -= lift.normalize_or_zero() * into_surface;
-            }
         }
     }
 
@@ -798,14 +799,42 @@ impl Vehicle {
         for offset in offsets {
             let center = self.state.position + rotation * offset;
             for contact in self.collider.wall_contacts(center, 0.8) {
+                self.apply_contact_impulse(contact.point, contact.normal);
                 self.state.position += contact.normal * contact.penetration;
-                let normal_velocity = self.state.velocity.dot(contact.normal);
-                if normal_velocity < 0.0 {
-                    self.state.velocity -= contact.normal * normal_velocity * 1.1;
-                }
-                self.state.angular_velocity *= 0.97;
             }
         }
+    }
+
+    fn apply_contact_impulse(&mut self, point: Vec3, normal: Vec3) {
+        let normal = normal.normalize_or_zero();
+        if normal.length_squared() < 0.5 {
+            return;
+        }
+        let cg_world = self.state.position
+            + self.state.rotation * Vec3::from_array(self.physics.center_of_gravity);
+        let lever = point - cg_world;
+        let point_velocity = self.state.velocity + self.state.angular_velocity.cross(lever);
+        let normal_velocity = point_velocity.dot(normal);
+        if normal_velocity >= 0.0 {
+            return;
+        }
+
+        let inertia = Vec3::from_array(self.physics.inertia).max(Vec3::splat(1.0));
+        let inverse_inertia = Vec3::new(1.0 / inertia.x, 1.0 / inertia.y, 1.0 / inertia.z);
+        let lever_cross_normal = lever.cross(normal);
+        let local = self.state.rotation.inverse() * lever_cross_normal;
+        let angular_term = (self.state.rotation * (local * inverse_inertia)).cross(lever);
+        let inverse_mass = 1.0 / self.physics.mass.max(1.0);
+        let denominator = inverse_mass + normal.dot(angular_term);
+        if denominator <= 1e-6 {
+            return;
+        }
+
+        let impulse = -normal_velocity / denominator;
+        self.state.velocity += normal * (impulse * inverse_mass);
+        let angular_impulse = lever.cross(normal * impulse);
+        let local = self.state.rotation.inverse() * angular_impulse;
+        self.state.angular_velocity += self.state.rotation * (local * inverse_inertia);
     }
 
     fn gear_ratio(&self, gear: i32) -> f32 {
@@ -1301,6 +1330,22 @@ mod tests {
             rear < front * 0.5,
             "rear {rear} should be much slower than front {front}"
         );
+    }
+
+    #[test]
+    fn body_contact_impulse_pitches_the_vehicle() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..500 {
+            vehicle.step(Controls::default());
+        }
+        vehicle.state.rotation = Quat::from_rotation_x(-0.3);
+        vehicle.state.position = Vec3::new(0.0, 0.3, 0.0);
+        vehicle.state.velocity = Vec3::new(0.0, -2.0, 0.0);
+        vehicle.state.angular_velocity = Vec3::ZERO;
+
+        vehicle.resolve_body_contacts();
+
+        assert!(vehicle.state.angular_velocity.x > 0.01);
     }
 
     #[test]

@@ -9,11 +9,19 @@
 
 The raw `.kn5` files are not checked in. The baked pack contains:
 
-- 76,545 visual triangles, 30 draw calls.
+- 76,543 visual triangles, 29 draw calls, 10 base-colour textures at a maximum of 512 px.
 - 43,885 collision triangles from the central pad, ASP surfaces, outer banked asphalt ring,
   and grass.
 - One spawn derived from `AC_START_0`.
-- Approximated material colours; KN5 textures are not imported.
+- Base-colour DDS textures are decoded and imported; normal and detail maps are ignored.
+  The grass and dirt/transition materials use textures from the Drift Tracks fixture,
+  configured by `texture-overrides.json`. Their UVs are projected from world X/Z (`uvMode:
+  "worldXz"`) to avoid stretching on the large ground meshes. Mountains/terrain, metal
+  barriers, and tent fabric keep approximated material colours instead of textures. The
+  AC logo mesh is omitted. The multilayer `tarmac` material is approximated with
+  `tracknew.DDS`, and terrain meshes are lowered 5 cm to avoid z-fighting with the banked
+  rings. Concrete apron UVs are scaled to 0.25 so the texture does not look excessively
+  fine. Baked pack is about 11 MB.
 - No tree/fence meshes and no wall/fence collision; ground collision includes the outer ring
   and grass.
 - Grass friction is capped at 0.35 to keep it significantly lower-grip than asphalt.
@@ -21,3 +29,11 @@ The raw `.kn5` files are not checked in. The baked pack contains:
   to avoid coplanar z-fighting.
 
 The UI name is “Skidpad 0.5”.
+
+Re-bake with:
+
+```bash
+cargo run -p asset-compiler -- bake-ac-track fixtures/real/tracks/skidpad05 \
+  fixtures/tracks/skidpad05/pack.sima \
+  --texture-overrides fixtures/tracks/skidpad05/texture-overrides.json
+```

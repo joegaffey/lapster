@@ -799,6 +799,7 @@ impl DriveViewer {
         self.update_with_clutch(time_seconds, throttle, brake, steering, gear, 0.0, 0.0)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_with_clutch(
         &mut self,
         time_seconds: f64,
@@ -860,6 +861,7 @@ impl DriveViewer {
         self.simulate_with_clutch(seconds, throttle, brake, steering, gear, 0.0, 0.0)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn simulate_with_clutch(
         &mut self,
         seconds: f32,

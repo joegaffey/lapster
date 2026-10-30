@@ -43,6 +43,22 @@ supported. The first GLB pass bakes materials into vertex colours, derives wheel
 from node names, removes logo nodes, and uses generic vehicle physics; decimation and
 per-vehicle physics mapping are follow-up work.
 
+## GLB tracks
+
+For a GLB track plus a `track.json` selector file:
+
+```bash
+cargo run -p asset-compiler -- bake-glb-track fixtures/real/tracks/<name> \
+  fixtures/tracks/<name>/pack.sima
+cargo run -p asset-compiler -- inspect fixtures/tracks/<name>/pack.sima
+cargo run -p asset-compiler -- validate fixtures/tracks/<name>/pack.sima
+```
+
+The selector JSON uses `schema: "sim-track-glb-v1"` and defines visual/collision node
+patterns, surface/material mappings, spawn, and camera. GLB base-colour textures are
+imported into the pack and referenced by the baked materials. Confirm source attribution and
+redistribution rights before committing a fixture.
+
 ## AC tracks
 
 For an Assetto Corsa track folder containing `*.kn5` and `data/surfaces.ini`:
@@ -62,8 +78,9 @@ http://127.0.0.1:8123/web/garage/?track=../../fixtures/real/tracks/<name>/pack.s
 ```
 
 The first AC pass parses the KN5 node tree, vehicle/grid markers, `surfaces.ini`, and
-drivable geometry. Textures are not imported yet; material colours are approximated. The
-outer ANELLO ring is visual-only, trees/fences are skipped, and walls are not in collision.
+drivable geometry. Base-colour DDS textures are decoded and downscaled to a maximum of
+512 px; normal and detail maps are ignored. The outer ANELLO ring is visual-only,
+trees/fences are skipped, and walls are not in collision.
 
 ## Car checks
 

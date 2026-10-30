@@ -317,6 +317,8 @@ are stable. Do not combine car and track debugging.
 
 - Parse real track `.kn5` and `.ini`: visual hierarchy, materials, textures, collision mesh,
   surface types, spawn points, pit lane, cameras, sectors.
+- Add a GLB track path with sidecar mesh selectors, surface mapping, spawn, and collision.
+  First fixture: the CC BY 4.0 Drift Tracks course; keep Skidpad as the default for now.
 - Bake track chunks; add streaming/LOD only if the budget requires it.
 - Implement collision-surface mapping and validate wall/road boundaries.
 - Add a collision-mesh debug view.

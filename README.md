@@ -14,7 +14,9 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 
 Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
-- **Drive** — Mazda RX-7 on the Skidpad 0.5 track: throttle, brake, edge-triggered reverse,
+- **Drive** — Mazda RX-7 on the Skidpad 0.5 track by default; the Drift Tracks fixture can be
+  loaded with `?track=../../fixtures/tracks/drift-sketchfab/pack.sima`. Throttle, brake,
+  edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
   500 Hz physics, and a
   shareable tuning dialog.
@@ -217,6 +219,9 @@ practical choice (gauges, signs, decals). See [`docs/art-style.md`](docs/art-sty
 - **Mazda RX-7** by IvOfficial, CC BY 3.0, via
   [Poly Pizza](https://poly.pizza/m/SnIoWlh7S2). The import removes the source logo mesh;
   Mazda and RX-7 are trademarks of their respective owners.
+- **Drift Tracks** by The-Third-Dimension, CC BY 4.0, via
+  [Sketchfab](https://sketchfab.com/3d-models/drift-tracks-90a78772873b462aab3ed5fc5fc0c65e).
+  See `fixtures/tracks/drift-sketchfab/README.md` and `THIRD_PARTY_NOTICES.md`.
 - **Skidpad 0.5** is a temporary demo track. The source archive contained no license
   metadata; replace it or confirm redistribution rights before a public/commercial release.
 - **Engine_Sim** by Yigit Salih Emecen, MIT, powers Drive engine audio. See
