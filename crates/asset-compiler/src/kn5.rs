@@ -20,6 +20,12 @@ pub struct Kn5Material {
 }
 
 #[derive(Debug, Clone)]
+pub struct Kn5Texture {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Kn5Mesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
@@ -41,6 +47,7 @@ pub struct Kn5Node {
 #[derive(Debug)]
 pub struct Kn5 {
     pub version: u32,
+    pub textures: Vec<Kn5Texture>,
     pub materials: Vec<Kn5Material>,
     pub root: Kn5Node,
 }
@@ -63,11 +70,15 @@ impl Kn5 {
         }
 
         let texture_count = reader.u32()?;
+        let mut textures = Vec::with_capacity(texture_count as usize);
         for _ in 0..texture_count {
             reader.u32()?;
-            reader.string()?;
+            let name = reader.string()?;
             let len = reader.u32()? as usize;
-            reader.raw(len)?;
+            textures.push(Kn5Texture {
+                name,
+                bytes: reader.raw(len)?.to_vec(),
+            });
         }
 
         let material_count = reader.u32()?;
@@ -107,6 +118,7 @@ impl Kn5 {
         let root = read_node(&mut reader)?;
         Ok(Self {
             version,
+            textures,
             materials,
             root,
         })

@@ -1,0 +1,67 @@
+{
+  "schema": "sim-track-glb-v1",
+  "kind": "track",
+  "name": "Drift Tracks",
+  "length": 600.0,
+  "spawn": {
+    "position": [-39.6, 0.2, -2.2],
+    "rotation_xyzw": [0.0, -0.7071068, 0.0, 0.7071068]
+  },
+  "visual": {
+    "glb": "drift_tracks.glb",
+    "include": ["*"],
+    "exclude": [
+      "Plane_Tree wall*",
+      "*Check Points*",
+      "Object_62.003*"
+    ],
+    "scale": 1.0,
+    "yaw_degrees": 0.0,
+    "offset": [0.0, 0.0, 0.0]
+  },
+  "collision": {
+    "include": [
+      "Drift Track*",
+      "Kerbs*",
+      "player 1*",
+      "Ground.01*",
+      "Grass edge*",
+      "Ground 2*",
+      "Fence*",
+      "Pond Bench*"
+    ],
+    "exclude": []
+  },
+  "surfaces": [
+    {
+      "id": 0,
+      "name": "asphalt",
+      "friction": 1.0,
+      "roughness": 0.02,
+      "materials": ["Drift_Track_Albedo"]
+    },
+    {
+      "id": 1,
+      "name": "kerb",
+      "friction": 0.95,
+      "roughness": 0.05,
+      "materials": ["Kerb"],
+      "mountable": true
+    },
+    {
+      "id": 2,
+      "name": "grass",
+      "friction": 0.35,
+      "roughness": 0.8,
+      "materials": ["Grass Ground", "Grass edge", "Tree wall"]
+    },
+    {
+      "id": 3,
+      "name": "concrete",
+      "friction": 0.9,
+      "roughness": 0.05,
+      "materials": ["Centre Ground", "Concrete", "Fence"]
+    }
+  ],
+  "default_surface": 0
+}

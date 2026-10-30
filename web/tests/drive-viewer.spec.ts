@@ -897,3 +897,28 @@ test("handbrake locks the rear wheels only", async ({ page }) => {
   expect(front).toBeGreaterThan(1);
   expect(rear).toBeLessThan(front * 0.5);
 });
+
+test("drift track loads, spawns, and drives", async ({ page }) => {
+  await page.goto(
+    "/web/drive/?track=../../fixtures/tracks/drift-sketchfab/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=drift",
+  );
+  await page.bringToFront();
+  await waitForReady(page);
+
+  const initial = await telemetry(page);
+  expect(initial.track).toBe("drift-sketchfab");
+  expect(initial.contacts).toBe(4);
+  expect(initial.wheels.every((wheel: any) => wheel.surface === "asphalt")).toBe(true);
+
+  await page.locator("#view").click({ position: { x: 640, y: 360 } });
+  await page.keyboard.down("ArrowUp");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).speedKph > 5,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.up("ArrowUp");
+  const moving = await telemetry(page);
+  expect(moving.speedKph).toBeGreaterThan(5);
+  expect(moving.contacts).toBe(4);
+});

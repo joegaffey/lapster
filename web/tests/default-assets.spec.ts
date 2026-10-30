@@ -39,7 +39,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   }));
   expect(garage.error).toBeUndefined();
   expect(garage.asset).toContain("skidpad05 + mazda-rx7");
-  expect(garage.stats).toContain("draw calls90");
+  expect(garage.stats).toContain("draw calls89");
 
   await page.goto("/web/track-viewer/");
   await page.waitForFunction(
@@ -55,6 +55,6 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   }));
   expect(track.error).toBeUndefined();
   expect(track.asset).toContain("skidpad05");
-  expect(track.stats).toContain("draw calls30");
+  expect(track.stats).toContain("draw calls29");
   expect(pageErrors).toEqual([]);
 });

@@ -38,6 +38,7 @@ dependencies = [
  "anyhow",
  "glam",
  "gltf",
+ "image",
  "rkyv",
  "serde",
  "serde_json",

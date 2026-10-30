@@ -64,6 +64,7 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
                         &images,
                         car,
                         Some(center),
+                        None,
                     )?;
                 }
                 wheels.push(WheelImport {
@@ -77,9 +78,13 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
                 for primitive in mesh.primitives() {
                     let material = primitive.material();
                     if material.name() == Some("Glass") {
-                        append_primitive(&mut glass, &primitive, &buffers, &images, car, None)?;
+                        append_primitive(
+                            &mut glass, &primitive, &buffers, &images, car, None, None,
+                        )?;
                     } else {
-                        append_primitive(&mut body, &primitive, &buffers, &images, car, None)?;
+                        append_primitive(
+                            &mut body, &primitive, &buffers, &images, car, None, None,
+                        )?;
                     }
                 }
             }
@@ -234,7 +239,7 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
     })
 }
 
-fn empty_mesh() -> MeshBuffers {
+pub(crate) fn empty_mesh() -> MeshBuffers {
     MeshBuffers {
         positions: Vec::new(),
         normals: Vec::new(),
@@ -244,7 +249,7 @@ fn empty_mesh() -> MeshBuffers {
     }
 }
 
-fn mesh_ref(name: &str, mesh: &MeshBuffers, material: u16) -> MeshRef {
+pub(crate) fn mesh_ref(name: &str, mesh: &MeshBuffers, material: u16) -> MeshRef {
     MeshRef {
         name: name.to_string(),
         vertex_offset: 0,
@@ -257,13 +262,14 @@ fn mesh_ref(name: &str, mesh: &MeshBuffers, material: u16) -> MeshRef {
     }
 }
 
-fn append_primitive(
+pub(crate) fn append_primitive(
     output: &mut MeshBuffers,
     primitive: &gltf::Primitive<'_>,
     buffers: &[gltf::buffer::Data],
     images: &[gltf::image::Data],
     matrix: Mat4,
     center: Option<Vec3>,
+    vertex_color: Option<[f32; 3]>,
 ) -> Result<()> {
     if primitive.mode() != gltf::mesh::Mode::Triangles {
         bail!("only triangle primitives are supported");
@@ -307,9 +313,9 @@ fn append_primitive(
         output.positions.push(world.to_array());
         output.normals.push(normal.normalize_or_zero().to_array());
         output.uvs.push(uv);
-        output
-            .colors
-            .push(material_color(&primitive.material(), images, uv));
+        output.colors.push(
+            vertex_color.unwrap_or_else(|| material_color(&primitive.material(), images, uv)),
+        );
     }
     output
         .indices

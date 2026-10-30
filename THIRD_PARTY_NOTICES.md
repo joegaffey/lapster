@@ -64,3 +64,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Drift Tracks
+
+- Source: https://sketchfab.com/3d-models/drift-tracks-90a78772873b462aab3ed5fc5fc0c65e
+- Author: The-Third-Dimension (https://sketchfab.com/muneeb.changezi1)
+- Used in: `fixtures/tracks/drift-sketchfab/`
+- License: Creative Commons Attribution 4.0 (CC BY 4.0)
+  (https://creativecommons.org/licenses/by/4.0/)
+- Purpose: Drift course visual geometry, embedded textures, and collision source. The baked
+  pack selects the drivable meshes and barriers described in `track.json`.

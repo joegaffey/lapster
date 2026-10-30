@@ -144,7 +144,15 @@ pub fn bake_ac_track(dir: &Path) -> Result<Vec<u8>> {
 }
 
 pub fn bake_ac_track_scaled(dir: &Path, scale: f32) -> Result<Vec<u8>> {
-    let imported = crate::ac_track::import_track_scaled(dir, scale)?;
+    bake_ac_track_with_overrides(dir, scale, None)
+}
+
+pub fn bake_ac_track_with_overrides(
+    dir: &Path,
+    scale: f32,
+    overrides: Option<&Path>,
+) -> Result<Vec<u8>> {
+    let imported = crate::ac_track::import_track_scaled_with_overrides(dir, scale, overrides)?;
     let statistics = stats(
         &imported.visual.meshes,
         &imported.visual.materials,
@@ -172,6 +180,61 @@ pub fn bake_ac_track_scaled(dir: &Path, scale: f32) -> Result<Vec<u8>> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("ac-track")
+        .to_string();
+    let manifest = AssetManifest {
+        magic: MAGIC,
+        schema_version: SCHEMA_VERSION,
+        kind: AssetKind::Track,
+        id,
+        source_hash: tree_hash(dir)?,
+        units: ENGINE_UNITS,
+        frame: ENGINE_FRAME,
+        bounds: imported.bounds,
+        chunks: Vec::new(),
+        entrypoints: EntryPoints {
+            physics: None,
+            visual: Some(0),
+            collision: Some(1),
+            metadata: Some(2),
+            audio: None,
+            texture: None,
+        },
+        stats: statistics,
+        warnings: imported.warnings,
+    };
+
+    write_pack(manifest, chunks)
+}
+
+pub fn bake_glb_track(dir: &Path) -> Result<Vec<u8>> {
+    let imported = crate::glb_track::import_track(dir)?;
+    let statistics = stats(
+        &imported.visual.meshes,
+        &imported.visual.materials,
+        &imported.visual.textures,
+        &imported.visual.mesh_buffers,
+    );
+    let visual_bytes = archive(&imported.visual)?;
+    let collision_bytes = archive(&imported.collision)?;
+    let metadata_bytes = archive(&imported.metadata)?;
+    let chunks = vec![
+        ChunkSpec {
+            kind: ChunkKind::Visual,
+            bytes: visual_bytes,
+        },
+        ChunkSpec {
+            kind: ChunkKind::Collision,
+            bytes: collision_bytes,
+        },
+        ChunkSpec {
+            kind: ChunkKind::Metadata,
+            bytes: metadata_bytes,
+        },
+    ];
+    let id = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("glb-track")
         .to_string();
     let manifest = AssetManifest {
         magic: MAGIC,
