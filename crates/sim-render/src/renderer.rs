@@ -924,14 +924,15 @@ impl Renderer {
             let fade_buffer = if count == 0 {
                 None
             } else {
-                Some(
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("grass chunk fade"),
-                            contents: bytemuck::bytes_of(&fade),
-                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                        }),
-                )
+                let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("grass chunk fade"),
+                    size: std::mem::size_of::<GrassChunkFade>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.queue
+                    .write_buffer(&buffer, 0, bytemuck::bytes_of(&fade));
+                Some(buffer)
             };
             let fade_bind_group = fade_buffer.as_ref().map(|buffer| {
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
