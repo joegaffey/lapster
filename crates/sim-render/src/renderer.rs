@@ -905,14 +905,15 @@ impl Renderer {
             let buffer = if count == 0 {
                 None
             } else {
-                Some(
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("grass chunk instances"),
-                            contents: bytemuck::cast_slice(instances),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        }),
-                )
+                let contents = bytemuck::cast_slice(instances);
+                let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("grass chunk instances"),
+                    size: contents.len() as u64,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.queue.write_buffer(&buffer, 0, contents);
+                Some(buffer)
             };
             let fade = GrassChunkFade {
                 fade: 0.0,
