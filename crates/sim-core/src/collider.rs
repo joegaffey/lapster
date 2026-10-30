@@ -121,6 +121,7 @@ struct Triangle {
     centroid: Vec3,
     surface: u16,
     friction: f32,
+    wall: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -132,6 +133,12 @@ pub struct TrackCollider {
 
 impl TrackCollider {
     pub fn from_collision(collision: &TrackCollision, metadata: &TrackMetadata) -> Self {
+        let wall_surfaces = metadata
+            .surfaces
+            .iter()
+            .filter(|spec| spec.name.eq_ignore_ascii_case("wall"))
+            .map(|spec| spec.id)
+            .collect::<Vec<_>>();
         let mut triangles = Vec::with_capacity(collision.indices.len() / 3);
         for triangle_index in 0..collision.indices.len() / 3 {
             let base = triangle_index * 3;
@@ -172,6 +179,7 @@ impl TrackCollider {
                 centroid: (a + b + c) / 3.0,
                 surface,
                 friction,
+                wall: wall_surfaces.contains(&surface),
             });
         }
         let (nodes, order) = build_bvh(&triangles);
@@ -209,6 +217,9 @@ impl TrackCollider {
                 let end = start + node.count as usize;
                 for index in &self.order[start..end] {
                     let triangle = self.triangles[*index as usize];
+                    if triangle.wall {
+                        continue;
+                    }
                     if let Some(candidate) = ray_triangle(origin, direction, closest, &triangle) {
                         closest = candidate.distance;
                         hit = Some(candidate);
@@ -525,6 +536,59 @@ mod tests {
         let contacts = collider.wall_contacts(Vec3::new(-0.8, 1.0, 0.0), 0.5);
         assert!(!contacts.is_empty());
         assert!(contacts.iter().all(|contact| contact.normal.x > 0.9));
+    }
+
+    #[test]
+    fn detects_contact_along_wall() {
+        let collision = TrackCollision {
+            vertices: vec![
+                [-500.0, 0.0, -500.0],
+                [-500.0, 0.0, 500.0],
+                [500.0, 0.0, 500.0],
+                [500.0, 0.0, -500.0],
+                [-50.0, 0.0, -5.0],
+                [50.0, 0.0, -5.0],
+                [50.0, 2.0, -5.0],
+                [-50.0, 2.0, -5.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+            surface_ids: vec![0, 0, 1, 1],
+            bounds: Aabb {
+                min: [-500.0, 0.0, -500.0],
+                max: [500.0, 2.0, 500.0],
+            },
+        };
+        let collider = TrackCollider::from_collision(&collision, &metadata());
+        let contacts = collider.wall_contacts(Vec3::new(-9.595604, 0.34650669, -4.4141498), 0.8);
+        assert!(!contacts.is_empty(), "expected contact along wall");
+    }
+
+    #[test]
+    fn raycasts_ignore_wall_surfaces() {
+        let collision = TrackCollision {
+            vertices: vec![
+                [-10.0, 0.0, -10.0],
+                [-10.0, 0.0, 10.0],
+                [10.0, 0.0, 10.0],
+                [10.0, 0.0, -10.0],
+                [-2.0, 2.0, -2.0],
+                [-2.0, 2.0, 2.0],
+                [2.0, 2.0, 2.0],
+                [2.0, 2.0, -2.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+            surface_ids: vec![0, 0, 1, 1],
+            bounds: Aabb {
+                min: [-10.0, 0.0, -10.0],
+                max: [10.0, 2.0, 10.0],
+            },
+        };
+        let collider = TrackCollider::from_collision(&collision, &metadata());
+        let hit = collider
+            .raycast(Vec3::new(0.0, 5.0, 0.0), Vec3::NEG_Y, 10.0)
+            .expect("expected ground hit");
+        assert_eq!(hit.surface, 0);
+        assert!(hit.point.y.abs() < 1e-4);
     }
 
     #[test]

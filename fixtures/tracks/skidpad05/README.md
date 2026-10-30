@@ -10,8 +10,8 @@
 The raw `.kn5` files are not checked in. The baked pack contains:
 
 - 76,543 visual triangles, 29 draw calls, 10 base-colour textures at a maximum of 512 px.
-- 43,885 collision triangles from the central pad, ASP surfaces, outer banked asphalt ring,
-  and grass.
+- 72,393 collision triangles from the central pad, ASP surfaces, outer banked asphalt ring,
+  grass, and the solid `wall` mesh.
 - One spawn derived from `AC_START_0`.
 - Base-colour DDS textures are decoded and imported; normal and detail maps are ignored.
   The grass and dirt/transition materials use textures from the Drift Tracks fixture,
@@ -23,9 +23,9 @@ The raw `.kn5` files are not checked in. The baked pack contains:
   AC logo mesh is omitted. The multilayer `tarmac` material is approximated with
   `tracknew.DDS`, and terrain meshes are lowered 5 cm to avoid z-fighting with the banked
   rings. Distant background terrain uses a blue-grey color. Concrete apron UVs are scaled to 0.25 so the texture does not look excessively
-  fine. Baked pack is about 11 MB.
-- No tree/fence meshes and no wall/fence collision; ground collision includes the outer ring
-  and grass.
+  fine. Baked pack is about 12 MB.
+- Solid `wall` collision is included for the main perimeter wall; fences, tents, poles, and
+  trees remain visual-only or omitted.
 - Grass friction is capped at 0.35 to keep it significantly lower-grip than asphalt.
 - The concrete apron is offset 1.5 cm below the tarmac and thin road overlays 5 mm above it
   to avoid coplanar z-fighting.

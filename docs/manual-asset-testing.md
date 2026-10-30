@@ -80,7 +80,8 @@ http://127.0.0.1:8123/web/garage/?track=../../fixtures/real/tracks/<name>/pack.s
 The first AC pass parses the KN5 node tree, vehicle/grid markers, `surfaces.ini`, and
 drivable geometry. Base-colour DDS textures are decoded and downscaled to a maximum of
 512 px; normal and detail maps are ignored. The outer ANELLO ring is visual-only,
-trees/fences are skipped, and walls are not in collision.
+trees/fences are skipped, and solid `wall` material meshes are included in collision;
+fences, tents, and poles remain visual-only.
 
 ## Car checks
 

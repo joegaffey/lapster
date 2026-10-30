@@ -78,11 +78,11 @@ pub fn import_track_scaled_with_overrides(
         .as_deref()
         .and_then(|path| fs::read(path).ok())
         .and_then(|bytes| serde_json::from_slice::<UiTrack>(&bytes).ok());
-    let (surfaces, surface_ids) = parse_surfaces(&surfaces_path)?;
+    let (mut surfaces, mut surface_ids) = parse_surfaces(&surfaces_path)?;
     let mut warnings = vec![
         "KN5 base-colour DDS textures are imported at a maximum of 512px; normal and detail maps are ignored".to_string(),
         "alpha-tested trees and fences are skipped".to_string(),
-        "collision includes the central pad, outer ring, and grass; walls/fences remain visual-only"
+        "collision includes the central pad, outer ring, grass, and solid wall material; fences, tents, and poles remain visual-only"
             .to_string(),
     ];
     let mut texture_cache: HashMap<String, u32> = HashMap::new();
@@ -124,6 +124,7 @@ pub fn import_track_scaled_with_overrides(
     };
     let mut visual_bounds = None;
     let mut collision_bounds = None;
+    let mut wall_triangles = 0u32;
 
     for (path, model) in &models {
         let texture_bytes = model
@@ -257,15 +258,29 @@ pub fn import_track_scaled_with_overrides(
             ));
             visual.mesh_buffers.push(visual_buffers);
 
-            if let Some(key) = collision_surface_key(&node.name) {
-                let surface = surface_ids.get(key).copied().unwrap_or(0);
+            let collision_key = collision_surface_key(&node.name).or_else(|| {
+                material
+                    .name
+                    .eq_ignore_ascii_case(WALL_MATERIAL)
+                    .then_some(WALL_SURFACE)
+            });
+            if let Some(key) = collision_key {
+                let surface = if key == WALL_SURFACE {
+                    wall_surface_id(&mut surfaces, &mut surface_ids)
+                } else {
+                    surface_ids.get(key).copied().unwrap_or(0)
+                };
                 let base = collision.vertices.len() as u32;
                 collision.vertices.extend_from_slice(&buffers.positions);
                 collision
                     .indices
                     .extend(buffers.indices.iter().map(|index| base + index));
-                for _ in 0..buffers.indices.len() / 3 {
+                let triangles = buffers.indices.len() / 3;
+                for _ in 0..triangles {
                     collision.surface_ids.push(surface);
+                }
+                if key == WALL_SURFACE {
+                    wall_triangles += triangles as u32;
                 }
                 collision_bounds = Some(merge_bounds(collision_bounds, &mesh_bounds));
             }
@@ -317,6 +332,11 @@ pub fn import_track_scaled_with_overrides(
 
     warnings.push(format!("track scale {scale:.3}"));
     warnings.push(format!("spawn derived from {spawn_name}"));
+    if wall_triangles > 0 {
+        warnings.push(format!(
+            "solid wall collision includes {wall_triangles} triangles"
+        ));
+    }
     warnings.push(format!(
         "imported {} visual meshes and {} collision triangles",
         visual.meshes.len(),
@@ -431,6 +451,24 @@ fn mesh_ref(name: &str, mesh: &MeshBuffers, material: u16) -> MeshRef {
         bounds: bounds(mesh),
         lod: 0,
     }
+}
+
+const WALL_MATERIAL: &str = "wall";
+const WALL_SURFACE: &str = "WALL";
+
+fn wall_surface_id(surfaces: &mut Vec<SurfaceSpec>, surface_ids: &mut HashMap<String, u16>) -> u16 {
+    if let Some(id) = surface_ids.get(WALL_SURFACE).copied() {
+        return id;
+    }
+    let id = surfaces.len() as u16;
+    surfaces.push(SurfaceSpec {
+        id,
+        name: WALL_MATERIAL.to_string(),
+        friction: 0.45,
+        roughness: 0.5,
+    });
+    surface_ids.insert(WALL_SURFACE.to_string(), id);
+    id
 }
 
 fn collision_surface_key(name: &str) -> Option<&'static str> {

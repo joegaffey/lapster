@@ -44,6 +44,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sim-asset",
+ "sim-core",
  "sim-types",
 ]
 

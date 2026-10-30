@@ -84,7 +84,7 @@ Toolchain setup scripts:
 | CP4 — drivable slice | Done | `sim-core`, 500 Hz physics, collider, suspension, Pacejka tires, engine/brakes, `web/drive`, soak test |
 | CP4.5 — toon style slice | Done | Toon ramp/rim shader, welded inverted-hull outlines, UV/base-color texture path, generated gauge sign, WebGPU + WebGL2 verified |
 | CP5a — GLB car import | Working | `asset-compiler bake-glb`, node transform flattening, wheel extraction, palette-to-vertex-colour bake, generic physics, garage/drive query URLs |
-| CP6a — AC track import | Working | `asset-compiler bake-ac-track`, KN5 node/material parser, `surfaces.ini`, `AC_START_*` spawn, drivable collision subset, track/garage/drive query URLs |
+| CP6a — AC track import | Working | `asset-compiler bake-ac-track`, KN5 node/material parser, `surfaces.ini`, `AC_START_*` spawn, drivable collision subset, solid wall collision, track/garage/drive query URLs |
 | Collider BVH | Done | Median-split BVH over collision triangles; shared ray and sphere queries; Skidpad p99 4.5 ms → 0.2 ms |
 | Default demo assets | Done | RX-7 and Skidpad 0.5 checked in; no query parameters required; custom `?car=`/`?track=` still supported |
 | Renderer upgrade | Done | wgpu 30.0.1, WebGPU (`BrowserWebGpu`), WebGL2 fallback, sRGB output fix, wasm-opt/LTO pipeline |
@@ -267,21 +267,21 @@ Toolchain setup scripts:
   - `cargo run -p asset-compiler -- bake-ac-track <track-dir> [out] [--scale <factor>]`
   - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
     drivable collision subset.
-  - First local fixture: Skidpad 0.5, 76,543 visual triangles, 43,885 collision triangles,
+  - First local fixture: Skidpad 0.5, 76,543 visual triangles, 72,393 collision triangles,
     29 draw calls, 10 base-colour textures at a maximum of 512 px, at original scale
     (UI length 150 m). Grass and dirt/transition reuse the Drift Tracks grass/dirt textures
     via `texture-overrides.json` with world X/Z UV projection to avoid stretching;
     terrain/mountains, metal barriers, and tent fabric use approximated colours, and the
     AC logo mesh is omitted.
-  - Collision includes the central pad, ASP surfaces, banked outer asphalt ring, and grass;
-    the tan `TRANSITION` concrete apron is tagged `ANELLO` so the concrete audio layer
-    engages. Grass friction is capped at 0.35. Normal/detail maps are ignored. The
+  - Collision includes the central pad, ASP surfaces, banked outer asphalt ring, grass, and
+    the solid main `wall` mesh; the tan `TRANSITION` concrete apron is tagged `ANELLO` so
+    the concrete audio layer engages. Grass friction is capped at 0.35. Normal/detail maps are ignored. The
     multilayer tarmac shader is approximated with the `tracknew.DDS` diffuse map, terrain
     meshes are lowered 5 cm to avoid z-fighting with the banked rings, and concrete apron
     UVs are scaled to 0.25 to keep the texture from looking too fine. AC track baking
     accepts an optional `--texture-overrides <json>` file for external material textures;
-    overrides can use `uvMode: "worldXz"` with a per-metre `uvScale`. Walls/fences remain
-    visual-only.
+    overrides can use `uvMode: "worldXz"` with a per-metre `uvScale`. Solid `wall` material
+    is collidable; fences, tents, and poles remain visual-only.
   - Visual coplanar layers are offset: the concrete apron sits 1.5 cm below the tarmac, and
     thin road overlays sit 5 mm above it.
 - Build freshness: generated build version in default pack URLs, `version.json` checks on
@@ -420,8 +420,9 @@ matrix then expands to the other supported wheelbases.
 - Imported body paint is currently forced to a demo red; source material colours are baked
   for other parts.
 - AC track importer has no texture decoding, uses approximated material colours, skips
-  trees/fences, has no wall collision, and includes the central pad, ASP surfaces, outer
-  banked asphalt ring, and grass in collision.
+  trees/fences, includes solid `wall` material in collision, and includes the central pad,
+  ASP surfaces, outer banked asphalt ring, and grass in collision. Fences, tents, and poles
+  remain visual-only.
 - Car setup must be re-checked against the AC `.ini` importer when that lands; the current
   editable set is based on the GLB-derived physics model.
 - The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is
@@ -465,7 +466,7 @@ matrix then expands to the other supported wheelbases.
    - Add real image decoding/KTX2 only where textures are the right choice.
    - WebXR remains a later phase.
 6. **CP6 — real track**: finish the AC path with full texture decoding (PNG/JPEG/DDS/KTX2
-   where useful), wall/fence collision policy, outer-ring collision or streaming, and
+   where useful), fence/tent collision policy, outer-ring collision or streaming, and
    performance measurement.
 7. **Texture pipeline**:
    - Add full texture decoding to the GLB and AC importers instead of approximated material

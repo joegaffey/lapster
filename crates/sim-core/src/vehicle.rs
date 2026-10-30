@@ -794,15 +794,39 @@ impl Vehicle {
     }
 
     fn resolve_wall_collisions(&mut self) {
+        const RADIUS: f32 = 0.45;
+        const HALF_WIDTH: f32 = 0.45;
+        const HALF_LENGTH: f32 = 1.65;
         let rotation = self.state.rotation;
-        let offsets = [Vec3::new(0.0, 0.4, -1.3), Vec3::new(0.0, 0.4, 1.3)];
+        let cg_world =
+            self.state.position + rotation * Vec3::from_array(self.physics.center_of_gravity);
+        let offsets = [
+            Vec3::new(0.0, 0.4, -HALF_LENGTH),
+            Vec3::new(-HALF_WIDTH, 0.4, -HALF_LENGTH),
+            Vec3::new(HALF_WIDTH, 0.4, -HALF_LENGTH),
+            Vec3::new(-HALF_WIDTH, 0.4, 0.0),
+            Vec3::new(HALF_WIDTH, 0.4, 0.0),
+            Vec3::new(-HALF_WIDTH, 0.4, HALF_LENGTH),
+            Vec3::new(HALF_WIDTH, 0.4, HALF_LENGTH),
+            Vec3::new(0.0, 0.4, HALF_LENGTH),
+        ];
+        let mut correction = Vec3::ZERO;
         for offset in offsets {
             let center = self.state.position + rotation * offset;
-            for contact in self.collider.wall_contacts(center, 0.8) {
-                self.apply_contact_impulse(contact.point, contact.normal);
-                self.state.position += contact.normal * contact.penetration;
+            for contact in self.collider.wall_contacts(center, RADIUS) {
+                let normal = Vec3::new(contact.normal.x, 0.0, contact.normal.z).normalize_or_zero();
+                if normal.length_squared() < 0.5 {
+                    continue;
+                }
+                let point = Vec3::new(contact.point.x, cg_world.y, contact.point.z);
+                self.apply_contact_impulse(point, normal);
+                let candidate = normal * contact.penetration;
+                if candidate.length_squared() > correction.length_squared() {
+                    correction = candidate;
+                }
             }
         }
+        self.state.position += correction;
     }
 
     fn apply_contact_impulse(&mut self, point: Vec3, normal: Vec3) {
@@ -1100,6 +1124,50 @@ mod tests {
         TrackCollider::from_collision(&collision, &metadata)
     }
 
+    fn wall_collider() -> TrackCollider {
+        let collision = TrackCollision {
+            vertices: vec![
+                [-500.0, 0.0, -500.0],
+                [-500.0, 0.0, 500.0],
+                [500.0, 0.0, 500.0],
+                [500.0, 0.0, -500.0],
+                [-50.0, 0.0, -5.0],
+                [50.0, 0.0, -5.0],
+                [50.0, 2.0, -5.0],
+                [-50.0, 2.0, -5.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+            surface_ids: vec![0, 0, 1, 1],
+            bounds: Aabb {
+                min: [-500.0, 0.0, -500.0],
+                max: [500.0, 2.0, 500.0],
+            },
+        };
+        let metadata = TrackMetadata {
+            name: String::from("wall"),
+            length: 100.0,
+            spawns: Vec::new(),
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+            surfaces: vec![
+                SurfaceSpec {
+                    id: 0,
+                    name: String::from("asphalt"),
+                    friction: 1.0,
+                    roughness: 0.0,
+                },
+                SurfaceSpec {
+                    id: 1,
+                    name: String::from("wall"),
+                    friction: 0.45,
+                    roughness: 0.5,
+                },
+            ],
+        };
+        TrackCollider::from_collision(&collision, &metadata)
+    }
+
     fn slope_collider() -> TrackCollider {
         let slope = 0.3;
         let vertices = vec![
@@ -1329,6 +1397,74 @@ mod tests {
         assert!(
             rear < front * 0.5,
             "rear {rear} should be much slower than front {front}"
+        );
+    }
+
+    #[test]
+    fn wall_blocks_forward_travel_and_allows_reverse() {
+        let spawn = SpawnPoint {
+            name: String::from("wall-test"),
+            position: [0.0, 0.0, 5.0],
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        };
+        let mut vehicle = Vehicle::new(physics(), wall_collider(), &spawn);
+        for _ in 0..2500 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        assert!(vehicle.state.position.is_finite());
+        assert!(
+            vehicle.state.position.z > -3.2,
+            "car crossed the wall: pos={:?} up={:?}",
+            vehicle.state.position,
+            vehicle.state.rotation * Vec3::Y
+        );
+        let blocked_z = vehicle.state.position.z;
+        for _ in 0..800 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: -1,
+                ..Controls::default()
+            });
+        }
+        assert!(vehicle.state.position.is_finite());
+        assert!(
+            vehicle.state.position.z > blocked_z + 0.3,
+            "car could not reverse away: z={} blocked_at={blocked_z}",
+            vehicle.state.position.z
+        );
+    }
+
+    #[test]
+    fn shallow_wall_impact_does_not_tip_or_climb() {
+        let spawn = SpawnPoint {
+            name: String::from("wall-scrape"),
+            position: [0.0, 0.0, 5.0],
+            rotation_xyzw: Quat::from_rotation_y(0.25).to_array(),
+        };
+        let mut vehicle = Vehicle::new(physics(), wall_collider(), &spawn);
+        for _ in 0..1500 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                gear: 1,
+                ..Controls::default()
+            });
+        }
+        let up = vehicle.state.rotation * Vec3::Y;
+        assert!(up.y > 0.7, "car tipped during wall scrape: up={up:?}");
+        assert!(
+            vehicle.state.position.z > -4.2,
+            "car crossed the wall: pos={:?} up={:?}",
+            vehicle.state.position,
+            vehicle.state.rotation * Vec3::Y
+        );
+        assert!(
+            vehicle.state.position.y < 2.0,
+            "car climbed the wall: y={}",
+            vehicle.state.position.y
         );
     }
 

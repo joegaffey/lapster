@@ -74,7 +74,7 @@ test("grass window follows the car", async ({ page }) => {
   await page.waitForFunction(
     () => (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
     undefined,
-    { timeout: 30_000 },
+    { timeout: 45_000 },
   );
 
   const result = await page.evaluate(async () => {

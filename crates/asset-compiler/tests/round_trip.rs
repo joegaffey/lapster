@@ -158,6 +158,30 @@ fn skidpad_fixture_has_baked_textures() {
 }
 
 #[test]
+fn skidpad_fixture_includes_solid_wall_collision() {
+    let path = fixture_dir("fixtures/tracks/skidpad05/pack.sima");
+    let bytes = std::fs::read(&path).expect("skidpad pack");
+    let pack = Pack::from_bytes(&bytes).expect("skidpad pack failed validation");
+    let metadata = pack.track_metadata_owned().expect("metadata load failed");
+    let wall_id = metadata
+        .surfaces
+        .iter()
+        .find(|surface| surface.name.eq_ignore_ascii_case("wall"))
+        .map(|surface| surface.id)
+        .expect("skidpad wall surface");
+    let collision = pack.track_collision_owned().expect("collision load failed");
+    let wall_triangles = collision
+        .surface_ids
+        .iter()
+        .filter(|surface| **surface == wall_id)
+        .count();
+    assert!(
+        wall_triangles > 20_000,
+        "expected solid wall triangles, found {wall_triangles}"
+    );
+}
+
+#[test]
 fn rejects_bad_pack_header() {
     let bytes = bake_car(&fixture_dir("fixtures/cars/minimal")).expect("car bake failed");
 
