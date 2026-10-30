@@ -14,8 +14,10 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 
 Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
-- **Drive** — Mazda RX-7 on the Skidpad 0.5 track by default; the Drift Tracks fixture can be
-  loaded with `?track=../../fixtures/tracks/drift-sketchfab/pack.sima`. Throttle, brake,
+- **Drive** — Mazda RX-7 on the Skidpad 0.5 track by default. The launcher also offers the
+  Drift Tracks fixture; the last track chosen there becomes the default for Drive and the
+  garage's `Drive` button. Custom tracks can still be loaded with
+  `?track=../../fixtures/tracks/drift-sketchfab/pack.sima`. Throttle, brake,
   edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
   500 Hz physics, and a
@@ -26,7 +28,8 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
   The chevrons start hidden, fade in on mouse movement or touch, and fade out when idle.
   Wheel steering/spin controls and an orbit/zoom camera follow the selection. The selected
   car is remembered and drives with its showroom paint; the garage `Drive` button opens it
-  directly, and the menu's Drive demo uses the same selection.
+  with the launcher's selected track (Skidpad by default), and the menu's Drive demo uses the
+  same car selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation. Camera height is capped at 60 m to avoid high-angle
   model artifacts.

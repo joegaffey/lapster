@@ -88,6 +88,47 @@
         font-size: 12px;
         line-height: 1.5;
       }
+      .drive-card {
+        display: block;
+        padding: 18px;
+        border: 1px solid #2a303a;
+        background: rgba(15, 19, 25, 0.9);
+        color: #e6e8eb;
+      }
+      .drive-card strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 15px;
+      }
+      .drive-card > span {
+        color: #8f9bab;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .track-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 12px;
+      }
+      .track-link {
+        padding: 6px 9px;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        font-size: 11px;
+        text-decoration: none;
+      }
+      .track-link:hover {
+        border-color: #38bdf8;
+        background: #111821;
+      }
+      .track-link[aria-current="true"] {
+        border-color: #38bdf8;
+        background: #38bdf8;
+        color: #081018;
+      }
       footer {
         margin-top: 24px;
         color: #667080;
@@ -118,10 +159,19 @@
         deterministic asset packs, and a wgpu renderer with WebGPU and WebGL2.
       </p>
       <nav>
-        <a class="card" href="./web/drive/">
+        <div class="drive-card">
           <strong>Drive</strong>
           <span>500 Hz physics, chase camera, wheel loads, auto reverse.</span>
-        </a>
+          <div class="track-links" role="group" aria-label="Choose a track">
+            <a class="track-link" href="./web/drive/" data-track-id="skidpad05">Skidpad 0.5</a>
+            <a
+              class="track-link"
+              href="./web/drive/?track=../../fixtures/tracks/drift-sketchfab/pack.sima"
+              data-track-id="drift-sketchfab"
+              >Drift Tracks</a
+            >
+          </div>
+        </div>
         <a class="card" href="./web/garage/">
           <strong>Garage</strong>
           <span>Choose the car you drive; wheel controls and orbit camera.</span>
@@ -142,13 +192,39 @@
         <br />
         <a href="https://github.com/joegaffey/lapster">Source on GitHub</a>
         <br />
-        Car: Mazda RX-7 by IvOfficial, CC BY 3.0, via Poly Pizza. Track: Skidpad 0.5
-        (temporary demo). Audio: Engine_Sim by Yigit Salih Emecen, MIT.
+        Car: Mazda RX-7 by IvOfficial, CC BY 3.0, via Poly Pizza. Tracks: Skidpad 0.5
+        (temporary demo) and Drift Tracks by The-Third-Dimension, CC BY 4.0. Audio:
+        Engine_Sim by Yigit Salih Emecen, MIT.
         <br />
         Drive audio starts off; use the <strong>Audio</strong> button to enable it.
       </footer>
     </main>
     <script>
+      (() => {
+        const TRACK_STORAGE_KEY = "lapster.track.v1";
+        const trackLinks = Array.from(document.querySelectorAll("[data-track-id]"));
+        const trackIds = new Set(trackLinks.map((link) => link.dataset.trackId));
+        let selectedTrack = "skidpad05";
+        try {
+          const stored = localStorage.getItem(TRACK_STORAGE_KEY);
+          if (stored && trackIds.has(stored)) selectedTrack = stored;
+        } catch {
+          // Keep the default track when storage is unavailable.
+        }
+        for (const link of trackLinks) {
+          link.setAttribute("aria-current", String(link.dataset.trackId === selectedTrack));
+          link.addEventListener("click", () => {
+            try {
+              localStorage.setItem(TRACK_STORAGE_KEY, link.dataset.trackId);
+            } catch {
+              // Navigation still works without storage.
+            }
+            for (const other of trackLinks) {
+              other.setAttribute("aria-current", String(other === link));
+            }
+          });
+        }
+      })();
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.register("./web/sw.js", {
           scope: "./web/",

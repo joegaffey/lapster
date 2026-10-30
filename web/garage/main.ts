@@ -6,6 +6,7 @@ import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { saveSelectedBay, selectedBay as getSelectedBay } from "../src/ui/car-selection.ts";
+import { loadSelectedTrack } from "../src/ui/track-selection.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
 import { recordFrame } from "../src/ui/fps.ts";
@@ -74,9 +75,10 @@ setupHud();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
+const defaultTrack = loadSelectedTrack();
 const TRACK_URL =
   params.get("track") ??
-  `../../fixtures/tracks/skidpad05/pack.sima?v=${encodeURIComponent(APP_VERSION)}`;
+  `${defaultTrack.url}?v=${encodeURIComponent(APP_VERSION)}`;
 const CAR_URL =
   params.get("car") ??
   `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${encodeURIComponent(APP_VERSION)}`;
@@ -239,6 +241,9 @@ async function boot() {
     driveCar.title = `Drive the ${info.colorName} car`;
     const driveUrl = new URL("../drive/", window.location.href);
     const driveParams = new URLSearchParams(params);
+    if (!driveParams.has("track")) {
+      driveParams.set("track", `${defaultTrack.url}?v=${encodeURIComponent(APP_VERSION)}`);
+    }
     driveParams.set("bay", String(selectedBay + 1));
     driveUrl.search = driveParams.toString();
     driveCar.href = driveUrl.href;

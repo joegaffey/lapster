@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-10-29
+Last updated: 2026-10-30
 Repository root: the directory containing this file
 Current phase: **WebHID wheel/FFB feel spike and cockpit dial presentation (dev branch)**
 
@@ -180,6 +180,10 @@ Toolchain setup scripts:
   touch, and fade out when idle. The selected car persists in `localStorage` and becomes the
   driving car, including its showroom paint; the garage `Drive` button and the menu Drive
   demo both use it.
+- Track launcher: the app menu and public landing page offer Skidpad 0.5 and Drift Tracks as
+  Drive choices. The selection persists in `localStorage` (`lapster.track.v1`); Drive and the
+  garage `Drive` button default to it and fall back to Skidpad when nothing is selected.
+  Playwright coverage lives in `web/tests/track-launcher.spec.ts`.
 - Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
 - Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
   cockpit mode switches it to 6% alpha in a transparent forward pass; bonnet and external

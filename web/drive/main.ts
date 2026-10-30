@@ -12,6 +12,7 @@ import { setupDevMenu } from "../src/ui/dev-menu.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import { saveSelectedBay, selectedBay } from "../src/ui/car-selection.ts";
+import { loadSelectedTrack } from "../src/ui/track-selection.ts";
 import { PhysicsClient } from "../src/sim/physics.ts";
 import { SnapshotSmoother } from "../src/sim/interpolate.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
@@ -57,8 +58,8 @@ if (devMode) {
     storedTuning = null;
   }
 }
-const TRACK_URL =
-  params.get("track") ?? `../../fixtures/tracks/skidpad05/pack.sima?v=${PACK_VERSION}`;
+const defaultTrack = loadSelectedTrack();
+const TRACK_URL = params.get("track") ?? `${defaultTrack.url}?v=${PACK_VERSION}`;
 const CAR_URL =
   params.get("car") ?? `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${PACK_VERSION}`;
 const carBay = selectedBay();
