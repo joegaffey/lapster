@@ -79,11 +79,14 @@ test("grass window follows the car", async ({ page }) => {
 
   const result = await page.evaluate(async () => {
     const viewer = (window as any).__driveViewer;
-    viewer.reset();
+    await viewer.reset();
     const start = JSON.parse(viewer.telemetry()).position;
     await viewer.simulate(4.0, 1.0, 0.0, 0.0, 1);
     const end = JSON.parse(viewer.telemetry()).position;
     return Math.hypot(end[0] - start[0], end[2] - start[2]);
+  }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}\n${pageErrors.join("\n")}`);
   });
 
   expect(result).toBeGreaterThan(20);
