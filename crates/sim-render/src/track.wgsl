@@ -228,8 +228,12 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         discard;
     }
     var base = input.color * texel.rgb;
-    if model.alpha.y > 0.5 {
-        base = texel.rgb;
+    if model.alpha.z > 0.5 {
+        if model.alpha.y > 0.5 {
+            base = texel.rgb * 1.5;
+        } else {
+            base = input.color;
+        }
     }
     var environment_shadow = 1.0;
     if camera.shadow_modes.w > 0.5 {

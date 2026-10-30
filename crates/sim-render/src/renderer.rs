@@ -131,7 +131,7 @@ struct GpuMesh {
     model_buffer: wgpu::Buffer,
     model_bind_group: wgpu::BindGroup,
     texture_bind_group: wgpu::BindGroup,
-    grass_texture_bind_group: Option<wgpu::BindGroup>,
+    is_grass: bool,
     outline: Option<GpuOutline>,
     visible: bool,
     alpha: f32,
@@ -845,12 +845,15 @@ impl Renderer {
         self.grass_texture_enabled = enabled;
         let value = if enabled { 1.0 } else { 0.0 };
         for mesh in &self.meshes {
-            if mesh.grass_texture_bind_group.is_none() {
+            if !mesh.is_grass {
                 continue;
             }
-            let offset = std::mem::offset_of!(ModelUniform, alpha) as u64 + 4;
-            self.queue
-                .write_buffer(&mesh.model_buffer, offset, bytemuck::bytes_of(&[value]));
+            let offset = std::mem::offset_of!(ModelUniform, alpha) as u64;
+            self.queue.write_buffer(
+                &mesh.model_buffer,
+                offset,
+                bytemuck::bytes_of(&[mesh.alpha, value, 1.0, 0.0]),
+            );
         }
     }
 
@@ -1181,14 +1184,7 @@ impl Renderer {
                     continue;
                 }
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
-                let texture_bind_group = if self.grass_texture_enabled {
-                    mesh.grass_texture_bind_group
-                        .as_ref()
-                        .unwrap_or(&mesh.texture_bind_group)
-                } else {
-                    &mesh.texture_bind_group
-                };
-                pass.set_bind_group(2, texture_bind_group, &[]);
+                pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1244,14 +1240,7 @@ impl Renderer {
                     continue;
                 }
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
-                let texture_bind_group = if self.grass_texture_enabled {
-                    mesh.grass_texture_bind_group
-                        .as_ref()
-                        .unwrap_or(&mesh.texture_bind_group)
-                } else {
-                    &mesh.texture_bind_group
-                };
-                pass.set_bind_group(2, texture_bind_group, &[]);
+                pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1265,14 +1254,7 @@ impl Renderer {
                         continue;
                     }
                     pass.set_bind_group(1, &mesh.model_bind_group, &[]);
-                    let texture_bind_group = if self.grass_texture_enabled {
-                        mesh.grass_texture_bind_group
-                            .as_ref()
-                            .unwrap_or(&mesh.texture_bind_group)
-                    } else {
-                        &mesh.texture_bind_group
-                    };
-                    pass.set_bind_group(2, texture_bind_group, &[]);
+                    pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1916,9 +1898,15 @@ fn create_mesh(
         contents: bytemuck::cast_slice(&mesh.indices),
         usage: wgpu::BufferUsages::INDEX,
     });
+    let is_grass = mesh.grass_texture.is_some();
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
-        alpha: [mesh.alpha, 0.0, 0.0, 0.0],
+        alpha: [
+            mesh.alpha,
+            if is_grass { 1.0 } else { 0.0 },
+            if is_grass { 1.0 } else { 0.0 },
+            0.0,
+        ],
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
     };
     let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1942,15 +1930,6 @@ fn create_mesh(
         &format!("{} texture bind group", mesh.name),
         mesh.texture,
     );
-    let grass_texture_bind_group = mesh.grass_texture.map(|index| {
-        create_mesh_texture_bind_group(
-            device,
-            queue,
-            texture_resources,
-            &format!("{} grass texture bind group", mesh.name),
-            Some(index),
-        )
-    });
 
     let outline = mesh.outline.as_ref().map(|outline| {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1977,7 +1956,7 @@ fn create_mesh(
         model_buffer,
         model_bind_group,
         texture_bind_group,
-        grass_texture_bind_group,
+        is_grass,
         outline,
         visible: true,
         alpha: mesh.alpha,

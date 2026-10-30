@@ -196,7 +196,8 @@ Toolchain setup scripts:
   color, while Graphics settings expose independent grass texture and grass shader toggles
   (texture on, shader off by default; both can be enabled). The grass blade palette follows
   the Drift grass texture, and enabling the texture drops the flat-color tint so the source
-  texture shows through. The flat background is darker, close to the blade base color. The
+  texture shows through. The active grass texture uses a 1.5× gain so the dev build matches
+  the lighter prod grass. The flat background is darker, close to the blade base color. The
   Skidpad grass tile is twice the previous world size. Blade tips use the texture-mean color
   and reduced translucency so the grass has less internal contrast and fades more smoothly.
   Covered by `web/tests/grass.spec.ts`; attribution is recorded in
