@@ -85,8 +85,8 @@ fn fs_particle(input: ParticleOut) -> @location(0) vec4<f32> {
         let blade = 1.0 - smoothstep(half_width - 0.018, half_width, abs(x));
         let tip = 1.0 - smoothstep(0.94, 1.0, t);
         let alpha = input.alpha * blade * tip * near;
-        let grass_bottom = vec3<f32>(0.032, 0.074, 0.004);
-        let grass_top = vec3<f32>(0.076, 0.138, 0.015);
+        let grass_bottom = vec3<f32>(0.048, 0.111, 0.006);
+        let grass_top = vec3<f32>(0.114, 0.207, 0.023);
         let blade_color = mix(grass_bottom, grass_top, pow(t, 1.25)) * input.color * shade;
         return vec4<f32>(linear_to_srgb(blade_color), alpha);
     }

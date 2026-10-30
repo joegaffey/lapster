@@ -386,8 +386,8 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     debugLines: value?.debugLines === true,
     environmentShadows,
     carShadow,
-    grassTexture: value?.grassTexture === true,
-    grassShader: value?.grassShader !== false,
+    grassTexture: value?.grassTexture !== false,
+    grassShader: value?.grassShader === true,
     timeOfDay: clamp(value?.timeOfDay ?? 15, 6, 20, 15),
     antiAliasing:
       value?.antiAliasing === "off" ||

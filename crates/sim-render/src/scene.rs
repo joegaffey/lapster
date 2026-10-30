@@ -211,7 +211,7 @@ impl Scene {
                     ));
                 }
             }
-            let texture = material_texture;
+            let texture = if is_grass { None } else { material_texture };
             let grass_texture = if is_grass { material_texture } else { None };
             let outline = material.map(|material| material.outline).unwrap_or(false);
             let mut vertices = build_vertices(buffers, color);

@@ -20,7 +20,7 @@ const GRASS_MIN_NORMAL_Y: f32 = 0.6;
 const GRASS_MOVE_THRESHOLD: f32 = 12.0;
 const GRASS_GRID_RES: usize = 16;
 
-pub const GRASS_GROUND_COLOR: [f32; 3] = [0.032, 0.074, 0.004];
+pub const GRASS_GROUND_COLOR: [f32; 3] = [0.048, 0.111, 0.006];
 pub const GRASS_CLUMPS_PER_FRAME: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

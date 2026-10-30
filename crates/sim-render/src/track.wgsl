@@ -20,6 +20,8 @@ struct Model {
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var<uniform> model: Model;
+const GRASS_TEXTURE_GAIN: f32 = 0.75;
+const GRASS_TEXTURE_LIFT: f32 = 1.0;
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var base_sampler: sampler;
 @group(3) @binding(0) var shadow_map: texture_depth_2d;
@@ -228,12 +230,8 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         discard;
     }
     var base = input.color * texel.rgb;
-    if model.alpha.z > 0.5 {
-        if model.alpha.y > 0.5 {
-            base = texel.rgb * 1.5;
-        } else {
-            base = input.color;
-        }
+    if model.alpha.y > 0.5 {
+        base = texel.rgb * GRASS_TEXTURE_GAIN;
     }
     var environment_shadow = 1.0;
     if camera.shadow_modes.w > 0.5 {
@@ -254,10 +252,13 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     let view_dir = normalize(camera.camera_pos.xyz - input.world_position);
     let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 3.0);
     let rim_tint = vec3<f32>(0.55, 0.72, 0.95);
-    let color =
+    var color =
         base * (0.30 + 0.70 * ramp * shadow)
         + rim_tint * rim * 0.16
         + model.emissive.xyz;
+    if model.alpha.y > 0.5 {
+        color = color * GRASS_TEXTURE_LIFT + vec3<f32>(0.008, 0.008, 0.015);
+    }
     return vec4<f32>(linear_to_srgb(color), alpha);
 }
 

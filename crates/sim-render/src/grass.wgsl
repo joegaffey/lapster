@@ -219,9 +219,9 @@ fn fs_grass(input: BladeOut) -> @location(0) vec4<f32> {
     let ramp = toon_ramp(ndl);
     let shadow = grass_shadow(input.world_position, normal);
 
-    let bottom = vec3<f32>(0.032, 0.074, 0.004);
-    let top = vec3<f32>(0.076, 0.138, 0.015);
-    let dry = vec3<f32>(0.08, 0.13, 0.015);
+    let bottom = vec3<f32>(0.048, 0.111, 0.006);
+    let top = vec3<f32>(0.114, 0.207, 0.023);
+    let dry = vec3<f32>(0.12, 0.195, 0.023);
     let gradient = pow(clamp(input.height, 0.0, 1.0), 1.25);
     var color = mix(bottom, top, gradient);
 
@@ -230,18 +230,18 @@ fn fs_grass(input: BladeOut) -> @location(0) vec4<f32> {
     color *= 0.86 + input.variation * 0.28;
     color *= grass.brightness * (0.34 + 0.66 * ramp * shadow);
 
-    let ground_color = vec3<f32>(0.032, 0.074, 0.004) * (0.30 + 0.70 * ramp * shadow);
+    let ground_color = vec3<f32>(0.048, 0.111, 0.006) * (0.30 + 0.70 * ramp * shadow);
     color = mix(ground_color, color, input.fade);
 
     let view_dir = normalize(camera.camera_pos.xyz - input.world_position);
     let back = pow(max(dot(view_dir, -light), 0.0), 3.0);
     let edge = 1.0 - abs(dot(normalize(input.blade_normal), light));
     let tip = mix(0.25, 1.0, input.height);
-    let trans_color = vec3<f32>(0.08, 0.14, 0.02);
+    let trans_color = vec3<f32>(0.12, 0.21, 0.03);
     color += trans_color * grass.translucency * back * edge * tip * shadow * input.fade;
 
     let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 3.0);
-    color += vec3<f32>(0.14, 0.20, 0.05) * rim * 0.10;
+    color += vec3<f32>(0.21, 0.30, 0.075) * rim * 0.10;
 
     return vec4<f32>(linear_to_srgb(color), 1.0);
 }
