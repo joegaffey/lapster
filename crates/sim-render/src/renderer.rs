@@ -689,11 +689,11 @@ impl Renderer {
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
+            lod_max_clamp: 32.0,
             compare: None,
-            anisotropy_clamp: 1,
+            anisotropy_clamp: 8,
             border_color: None,
         });
         let texture_resources = MeshTextureResources {
@@ -2082,12 +2082,92 @@ fn create_white_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Tex
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+fn mip_level_count(width: u32, height: u32) -> u32 {
+    let max_dimension = width.max(height);
+    u32::BITS - max_dimension.leading_zeros()
+}
+
+fn srgb_to_linear(value: u8) -> f32 {
+    let value = f32::from(value) / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(value: f32) -> u8 {
+    let value = value.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0 + 0.5) as u8
+}
+
+fn downsample_rgba8(
+    rgba8: &[u8],
+    width: u32,
+    height: u32,
+    to_linear: &[f32; 256],
+    to_srgb: &[u8; 4096],
+) -> (Vec<u8>, u32, u32) {
+    let next_width = (width / 2).max(1);
+    let next_height = (height / 2).max(1);
+    let mut next = vec![0u8; (next_width * next_height * 4) as usize];
+    for y in 0..next_height {
+        let y0 = (y * 2).min(height - 1);
+        let y1 = (y * 2 + 1).min(height - 1);
+        for x in 0..next_width {
+            let x0 = (x * 2).min(width - 1);
+            let x1 = (x * 2 + 1).min(width - 1);
+            for channel in 0..3 {
+                let sum = to_linear[rgba8[((y0 * width + x0) * 4 + channel) as usize] as usize]
+                    + to_linear[rgba8[((y0 * width + x1) * 4 + channel) as usize] as usize]
+                    + to_linear[rgba8[((y1 * width + x0) * 4 + channel) as usize] as usize]
+                    + to_linear[rgba8[((y1 * width + x1) * 4 + channel) as usize] as usize];
+                let linear = sum * 0.25;
+                let index = (linear.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize;
+                next[((y * next_width + x) * 4 + channel) as usize] = to_srgb[index];
+            }
+            let alpha = rgba8[((y0 * width + x0) * 4 + 3) as usize] as u32
+                + rgba8[((y0 * width + x1) * 4 + 3) as usize] as u32
+                + rgba8[((y1 * width + x0) * 4 + 3) as usize] as u32
+                + rgba8[((y1 * width + x1) * 4 + 3) as usize] as u32;
+            next[((y * next_width + x) * 4 + 3) as usize] = ((alpha + 2) / 4) as u8;
+        }
+    }
+    (next, next_width, next_height)
+}
+
+fn mip_chain(rgba8: &[u8], width: u32, height: u32) -> Vec<(u32, u32, Vec<u8>)> {
+    let level_count = mip_level_count(width, height);
+    let to_linear = std::array::from_fn(|value| srgb_to_linear(value as u8));
+    let to_srgb = std::array::from_fn(|value| linear_to_srgb(value as f32 / 4095.0));
+    let mut levels = Vec::with_capacity(level_count as usize);
+    levels.push((width, height, rgba8.to_vec()));
+    let mut current_width = width;
+    let mut current_height = height;
+    for _ in 1..level_count {
+        let (next, next_width, next_height) = {
+            let source = &levels.last().expect("mip chain has a base level").2;
+            downsample_rgba8(source, current_width, current_height, &to_linear, &to_srgb)
+        };
+        levels.push((next_width, next_height, next));
+        current_width = next_width;
+        current_height = next_height;
+    }
+    levels
+}
+
 fn create_scene_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture: &SceneTexture,
     label: &str,
 ) -> wgpu::TextureView {
+    let levels = mip_chain(&texture.rgba8, texture.width, texture.height);
     let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("{label} texture")),
         size: wgpu::Extent3d {
@@ -2095,32 +2175,34 @@ fn create_scene_texture(
             height: texture.height,
             depth_or_array_layers: 1,
         },
-        mip_level_count: 1,
+        mip_level_count: levels.len() as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &gpu_texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &texture.rgba8,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(texture.width * 4),
-            rows_per_image: Some(texture.height),
-        },
-        wgpu::Extent3d {
-            width: texture.width,
-            height: texture.height,
-            depth_or_array_layers: 1,
-        },
-    );
+    for (level, (width, height, rgba8)) in levels.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &gpu_texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba8,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(*height),
+            },
+            wgpu::Extent3d {
+                width: *width,
+                height: *height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
     gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
@@ -3074,11 +3156,35 @@ fn create_pipelines(
 #[cfg(test)]
 mod tests {
     use super::{
-        car_shadow_extent_for_elevation, preferred_car_shadow_map_size, preferred_shadow_map_size,
-        select_sample_count, shadow_decal_model, shadow_view_proj,
+        car_shadow_extent_for_elevation, mip_chain, mip_level_count, preferred_car_shadow_map_size,
+        preferred_shadow_map_size, select_sample_count, shadow_decal_model, shadow_view_proj,
     };
     use crate::tuning::ShadowTuning;
     use glam::{Vec3, Vec4};
+
+    #[test]
+    fn mip_chain_halves_to_one_pixel() {
+        assert_eq!(mip_level_count(256, 256), 9);
+        assert_eq!(mip_level_count(300, 100), 9);
+        let levels = mip_chain(&[255u8; 4 * 4 * 4], 4, 4);
+        assert_eq!(levels.len(), 3);
+        assert_eq!((levels[1].0, levels[1].1), (2, 2));
+        assert_eq!((levels[2].0, levels[2].1), (1, 1));
+        assert!(levels[1].2.iter().all(|value| *value == 255));
+    }
+
+    #[test]
+    fn mip_chain_downsamples_in_linear_light() {
+        let mut rgba8 = vec![0u8; 2 * 2 * 4];
+        for (index, pixel) in rgba8.chunks_exact_mut(4).enumerate() {
+            let value = if index < 2 { 0 } else { 255 };
+            pixel.fill(value);
+            pixel[3] = 255;
+        }
+        let levels = mip_chain(&rgba8, 2, 2);
+        let mid = levels[1].2[0];
+        assert!((187..=189).contains(&mid), "mid={mid}");
+    }
 
     #[test]
     fn sample_count_prefers_requested_with_fallback() {

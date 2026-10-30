@@ -1,6 +1,6 @@
 import init, { DriveViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
-import { loadPackFromUrl } from "../src/assets/loader.ts";
+import { loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
@@ -30,7 +30,6 @@ declare global {
   }
 }
 
-const PACK_VERSION = encodeURIComponent(APP_VERSION);
 const AUDIO_STORAGE_KEY =
   BUILD_CHANNEL === "dev" ? "lapster.audio.dev.v1" : "lapster.audio.v1";
 setupHud();
@@ -59,9 +58,11 @@ if (devMode) {
   }
 }
 const defaultTrack = loadSelectedTrack();
-const TRACK_URL = params.get("track") ?? `${defaultTrack.url}?v=${PACK_VERSION}`;
-const CAR_URL =
-  params.get("car") ?? `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${PACK_VERSION}`;
+const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
+const CAR_URL = withPackVersion(
+  params.get("car") ?? "../../fixtures/cars/mazda-rx7/mazda-rx7.sima",
+  APP_VERSION,
+);
 const carBay = selectedBay();
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 let renderScale = 1;

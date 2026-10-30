@@ -110,6 +110,18 @@ export async function loadPackFromBytes(bytes: Uint8Array): Promise<LoadedPack> 
   return pack;
 }
 
+export function withPackVersion(
+  url: string,
+  version: string,
+  base = globalThis.location?.href ?? "http://localhost/",
+): string {
+  const resolved = new URL(url, base);
+  if (!resolved.searchParams.has("v")) {
+    resolved.searchParams.set("v", version);
+  }
+  return resolved.toString();
+}
+
 export async function loadPackFromUrl(
   url: string,
   cache?: PackCache,

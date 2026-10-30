@@ -26,6 +26,40 @@ test("skidpad grows stylized grass blades", async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
+test("grass renders on the WebGL2 fallback", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "gpu", {
+      configurable: true,
+      get: () => undefined,
+    });
+  });
+
+  await page.goto(
+    "/web/track-viewer/?track=../../fixtures/tracks/skidpad05/pack.sima&v=grass-webgl2",
+  );
+  await page.waitForFunction(
+    () => (window as any).__trackViewerReady === true || (window as any).__trackViewerError,
+    undefined,
+    { timeout: 30_000 },
+  );
+  await page.waitForTimeout(300);
+
+  const info = await page.evaluate(() => ({
+    error: (window as any).__trackViewerError,
+    debug: JSON.parse((window as any).__trackViewer.debug_info()),
+    webgl2: Boolean(document.querySelector("#view")?.getContext("webgl2")),
+  }));
+  expect(info.error).toBeUndefined();
+  expect(info.webgl2).toBe(true);
+  expect(info.debug.stats.grassBlades).toBeGreaterThan(200_000);
+  expect(pageErrors).toEqual([]);
+});
+
 test("grass window follows the car", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

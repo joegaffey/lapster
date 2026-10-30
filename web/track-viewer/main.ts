@@ -1,6 +1,6 @@
 import init, { TrackViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
-import { loadPackFromUrl } from "../src/assets/loader.ts";
+import { loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
@@ -36,9 +36,10 @@ setupHud();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
-const TRACK_URL =
-  params.get("track") ??
-  `../../fixtures/tracks/skidpad05/pack.sima?v=${encodeURIComponent(APP_VERSION)}`;
+const TRACK_URL = withPackVersion(
+  params.get("track") ?? "../../fixtures/tracks/skidpad05/pack.sima",
+  APP_VERSION,
+);
 
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",

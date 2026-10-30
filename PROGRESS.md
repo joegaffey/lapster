@@ -201,7 +201,9 @@ Toolchain setup scripts:
   texture-enable flag is preserved when mesh transforms and alpha are updated. The flat background stays close to
   the blade base color. The Skidpad grass tile is twice the previous world size. Blade tips
   use the texture-mean color and reduced translucency so the grass has less internal
-  contrast and fades more smoothly. Covered by `web/tests/grass.spec.ts`; attribution is
+  contrast and fades more smoothly. Scene textures get a linear-light CPU-generated mip
+  chain with trilinear filtering and anisotropy, removing the grazing-angle grass banding.
+  Covered by `web/tests/grass.spec.ts`, including a forced WebGL2 run; attribution is
   recorded in `THIRD_PARTY_NOTICES.md`.
 - Skidpad backdrop: the distant `0GRASSext` terrain mesh uses a blue-grey color instead of
   grass green, matching the mountain backdrop.
@@ -411,7 +413,7 @@ matrix then expands to the other supported wheelbases.
   Rust. Clutch torque and RPM blending are implemented in `sim-core`.
 - Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
 - No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
-- Renderer now samples one base-color texture per mesh, but has no image decoder/KTX2, mipmaps, culling, LOD, or instancing yet.
+- Renderer now samples one base-color texture per mesh with linear-light CPU-generated mipmaps, but has no image decoder/KTX2, culling, LOD, or instancing yet.
 - GLB importer keeps full mesh density, applies the RX-7 FD3S baseline to imported cars,
   ignores glTF extensions beyond baseColor, and has no decimation or steering/interior
   extraction. AC `.ini` physics import remains pending.
@@ -425,9 +427,9 @@ matrix then expands to the other supported wheelbases.
 - The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is
   checked in as a temporary demo fixture; confirm redistribution rights or replace it before
   a public/commercial release.
-- Asset cache is keyed by URL; default URLs use the generated build version, and the Pages
-  build versions the Wasm package directory. Explicit custom pack URLs still need a
-  cache-busting query after changing the asset.
+- Asset cache is keyed by URL; pack URLs pick up the generated build version automatically,
+  including explicit custom `?track=`/`?car=` URLs, and the Pages build versions the Wasm
+  package directory. An explicit pack `?v=` value is preserved.
 - `.ini` physics mapping and full texture decoding remain; GLB/AC importers are first-pass.
 - Wheel/FFB currently runs on the main thread during the CP6.5 spike; move it to the HID
   worker after hardware validation if frame pacing or report jitter requires it.

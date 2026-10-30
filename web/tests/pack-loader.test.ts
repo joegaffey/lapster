@@ -7,6 +7,7 @@ import {
   loadPackFromBytes,
   loadPackFromUrl,
   parsePack,
+  withPackVersion,
   type PackCache,
 } from "../src/assets/loader.ts";
 
@@ -80,6 +81,21 @@ test("loads a pack inside a worker", async () => {
   assert.equal(result.kind, "Car");
   assert.equal(result.chunks, 2);
   assert.ok(result.physicsBytes > 0);
+});
+
+test("adds the build version to pack URLs without one", () => {
+  const url = new URL(
+    withPackVersion("../../fixtures/tracks/minimal/pack.sima", "build-123", "https://example.com/web/"),
+  );
+  assert.equal(url.pathname, "/fixtures/tracks/minimal/pack.sima");
+  assert.equal(url.searchParams.get("v"), "build-123");
+});
+
+test("preserves an explicit pack cache version", () => {
+  const url = new URL(
+    withPackVersion("../../fixtures/tracks/minimal/pack.sima?v=asset-7", "build-123", "https://example.com/web/"),
+  );
+  assert.equal(url.searchParams.get("v"), "asset-7");
 });
 
 test("loads through a cacheable URL", async () => {

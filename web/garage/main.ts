@@ -1,6 +1,6 @@
 import init, { GarageViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
-import { loadPackFromUrl } from "../src/assets/loader.ts";
+import { loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
@@ -76,12 +76,11 @@ checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
 const defaultTrack = loadSelectedTrack();
-const TRACK_URL =
-  params.get("track") ??
-  `${defaultTrack.url}?v=${encodeURIComponent(APP_VERSION)}`;
-const CAR_URL =
-  params.get("car") ??
-  `../../fixtures/cars/mazda-rx7/mazda-rx7.sima?v=${encodeURIComponent(APP_VERSION)}`;
+const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
+const CAR_URL = withPackVersion(
+  params.get("car") ?? "../../fixtures/cars/mazda-rx7/mazda-rx7.sima",
+  APP_VERSION,
+);
 
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
