@@ -23,8 +23,8 @@ struct Grass {
     wind_freq: f32,
     brightness: f32,
     translucency: f32,
-    pad0: f32,
-    pad1: f32,
+    center_x: f32,
+    center_z: f32,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -180,9 +180,12 @@ fn vs_grass(input: BladeIn) -> BladeOut {
     let height = input.shape.y;
     let base = input.base.xyz;
     let camera_distance = distance(base.xz, camera.camera_pos.xz);
-    let fade = (1.0 - smoothstep(58.0, 86.0, camera_distance)) * chunk_fade.x;
-    let y = input.position.y * height * fade;
-    let x = input.position.x * input.shape.x;
+    let center_distance = distance(base.xz, vec2<f32>(grass.center_x, grass.center_z));
+    let fade = (1.0 - smoothstep(58.0, 86.0, center_distance)) * chunk_fade.x;
+    let wide = 1.0 + smoothstep(10.0, 45.0, camera_distance) * 2.0;
+    let taller = 1.0 + smoothstep(15.0, 45.0, camera_distance) * 0.6;
+    let y = input.position.y * height * fade * taller;
+    let x = input.position.x * input.shape.x * wide;
     let c = cos(yaw);
     let s = sin(yaw);
     let rotated = vec3<f32>(x * c, y, -x * s);

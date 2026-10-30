@@ -107,6 +107,10 @@ impl GrassField {
         &self.chunks
     }
 
+    pub fn center(&self) -> Vec3 {
+        self.center
+    }
+
     pub fn len(&self) -> usize {
         self.chunks.values().map(Vec::len).sum()
     }

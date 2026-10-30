@@ -61,8 +61,8 @@ struct GrassUniform {
     wind_freq: f32,
     brightness: f32,
     translucency: f32,
-    pad0: f32,
-    pad1: f32,
+    center_x: f32,
+    center_z: f32,
 }
 
 #[repr(C)]
@@ -540,6 +540,7 @@ impl Renderer {
             "car shadow bind group",
         );
 
+        let grass_center = scene.grass.center();
         let grass_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("grass uniform"),
             contents: bytemuck::bytes_of(&GrassUniform {
@@ -549,8 +550,8 @@ impl Renderer {
                 wind_freq: 0.35,
                 brightness: 1.0,
                 translucency: 0.65,
-                pad0: 0.0,
-                pad1: 0.0,
+                center_x: grass_center.x,
+                center_z: grass_center.z,
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -1081,6 +1082,7 @@ impl Renderer {
 
         if self.grass_shader_enabled && !self.grass_chunks.is_empty() {
             let time = ((performance_now() - self.grass_start_ms).max(0.0) / 1000.0) as f32;
+            let center = self.grass_field.center();
             let uniform = GrassUniform {
                 time,
                 wind_strength: 0.16,
@@ -1088,8 +1090,8 @@ impl Renderer {
                 wind_freq: 0.35,
                 brightness: 1.0,
                 translucency: 0.65,
-                pad0: 0.0,
-                pad1: 0.0,
+                center_x: center.x,
+                center_z: center.z,
             };
             self.queue
                 .write_buffer(&self.grass_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
