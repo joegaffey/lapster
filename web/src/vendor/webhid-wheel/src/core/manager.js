@@ -315,7 +315,7 @@ export class WheelManager {
         this._applySteeringSettings();
         this._applyFfbSettings();
         if (this._profile && this._missingAliases.length) this.applySetup(this._profile);
-        else this._ensureDefaultBindings(existing);
+        this._ensureDefaultBindings(existing);
         this.emit('connect', { session: existing, device: existing.device });
       }
       this._recomputeChannels();
@@ -364,9 +364,8 @@ export class WheelManager {
 
     if (this._profile && this._missingAliases.length) {
       this.applySetup(this._profile);
-    } else {
-      this._ensureDefaultBindings(entry);
     }
+    this._ensureDefaultBindings(entry);
 
     this._recomputeChannels();
     this.emit('connect', { session: entry, device: entry.device });

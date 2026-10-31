@@ -452,3 +452,25 @@ test('WheelManager expands a single selected interface with its HID++ sibling', 
   assert.deepEqual(entry.interfaces, [input, hidpp]);
   assert.equal(entry.capabilities.ffb, true);
 });
+
+test('WheelManager falls back to the connected wheel when a saved profile does not match', async () => {
+  const input = new FakeInputDevice();
+  const hidpp = new FakeHidppDevice();
+  globalThis.navigator.hid = {
+    requestDevice: async () => [input],
+    getDevices: async () => [input, hidpp]
+  };
+
+  const manager = new WheelManager();
+  const entry = await manager.connect();
+  const profile = manager.toSetup();
+  profile.devices[0].hardware.signature = 'stale-signature';
+  await manager.disconnectAll();
+  manager.applySetup(profile);
+
+  const reconnected = await manager.connect([input]);
+
+  assert.equal(reconnected.id, entry.id);
+  assert.equal(manager.getCalibration().device, reconnected.id);
+  assert.equal(manager.getFfb().device, reconnected.id);
+});
