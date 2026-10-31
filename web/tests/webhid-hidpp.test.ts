@@ -420,3 +420,35 @@ test('RS50 profile uses the separate HID++ interface', async () => {
   assert.equal(wheel.ffbDevice, hidpp);
   assert.equal(wheel.ffbCaps.constant, true);
 });
+
+test('WheelManager discovers a HID++ sibling when the picker returns only the input', async () => {
+  const input = new FakeInputDevice();
+  const hidpp = new FakeHidppDevice();
+  globalThis.navigator.hid = {
+    requestDevice: async () => [input],
+    getDevices: async () => [input, hidpp]
+  };
+
+  const manager = new WheelManager();
+  const entry = await manager.connect();
+
+  assert.equal(entry.device, input);
+  assert.deepEqual(entry.interfaces, [input, hidpp]);
+  assert.equal(entry.capabilities.ffb, true);
+});
+
+test('WheelManager expands a single selected interface with its HID++ sibling', async () => {
+  const input = new FakeInputDevice();
+  const hidpp = new FakeHidppDevice();
+  globalThis.navigator.hid = {
+    requestDevice: async () => [],
+    getDevices: async () => [input, hidpp]
+  };
+
+  const manager = new WheelManager();
+  const entry = await manager.connect([input]);
+
+  assert.equal(entry.device, input);
+  assert.deepEqual(entry.interfaces, [input, hidpp]);
+  assert.equal(entry.capabilities.ffb, true);
+});

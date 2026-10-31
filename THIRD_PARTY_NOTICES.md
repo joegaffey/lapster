@@ -38,7 +38,9 @@ SOFTWARE.
 - Source: https://github.com/joegaffey/webhid-wheel
 - Vendored version: `0.4.42` (`de02f7f`)
 - Used in: `web/src/vendor/webhid-wheel/`
-- Local patch: split multi-axis report items so Arduino handbrakes and similar generic HID axes update.
+- Local patches: split multi-axis report items so Arduino handbrakes and similar generic HID
+  axes update; expand a selected HID++ wheel interface with its granted sibling interface so
+  force feedback binds when the picker returns only one interface.
 - License: MIT
 - Purpose: WebHID wheel and generic HID input, multi-device mapping, setup profiles,
   constant-force FFB, and the embeddable configuration panel.
