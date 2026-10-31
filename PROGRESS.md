@@ -91,7 +91,7 @@ Toolchain setup scripts:
 | GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
 | GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/`; dev preview deploys branch builds separately |
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
-| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.42, multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; CAMMUS C5 hardware validation pending |
+| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.4.42 (`de02f7f`), multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, Logitech G923/RS50/G Pro HID++ FFB, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
 
 ## Current capabilities
@@ -320,8 +320,9 @@ Toolchain setup scripts:
 
 ## Wheel and FFB workstream
 
-**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.42 (`9fbfb6f`) with
-multi-device `WheelManager` sessions, portable setup profiles, and the shared
+**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.4.42 (`de02f7f`) with
+multi-device `WheelManager` sessions, portable setup profiles, Logitech G923/RS50/G Pro
+HID++ constant force with multi-interface grouping, and the shared
 `<webhid-config-panel>`. Drive mounts the panel under Settings → Controls and keeps the
 main-thread feel mixer in its `extra-settings` slot. Mapped steering, throttle, brake,
 clutch, handbrake, and gear buttons feed the drive input alongside keyboard and touch. The
@@ -335,8 +336,9 @@ worker-side HID acquisition remain.
 - Target every wheelbase supported by [`webhid-wheel`](https://github.com/joegaffey/webhid-wheel),
   not a CAMMUS-only path.
 - Test CAMMUS C5 first, then CAMMUS C12 and FFBeast; generic USB-PID wheels are best effort.
-- Logitech G29/DFGT constant force is supported by the vendored profiles; T248/T300 remain
-  input-only, and other Fanatec/Logitech vendor protocols remain future work.
+- Logitech G29/DFGT classic force, G923 PlayStation classic force, and G923 Xbox/RS50/G Pro
+  HID++ force are supported by the vendored profiles; T248/T300 remain input-only, and other
+  Fanatec/Logitech vendor protocols remain future work.
 - CP6.5 runs the FFB adapter on the **main thread**. Move it to the HID worker later as an
   optimization if measurements show frame-pacing or `sendReport` jitter problems.
 - Keep `webhid-wheel` behind an input/FFB adapter so the worker migration does not change the
@@ -367,7 +369,8 @@ worker-side HID acquisition remain.
   `lapster.wheel.v3` store and `metadata.lapster` feel round-trip.
 - High-frequency constant-force path with coalescing and backpressure. Implemented.
 - Worker-compatible acquisition and reconnect. Core remains DOM-free for CP7.
-- Expanded profiles and recorded report fixtures. CAMMUS C5/C12, FFBeast, G29/DFGT.
+- Expanded profiles and recorded report fixtures. CAMMUS C5/C12, FFBeast, G29/DFGT,
+  G923 PlayStation/Xbox, RS50 and G Pro HID++.
 - CAMMUS C5 primary verification, then C12/FFBeast.
 
 **Hardware acceptance:** CAMMUS C5 steering and FFB, with watchdog/stop behavior. The device

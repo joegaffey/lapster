@@ -348,10 +348,14 @@ as the first acceptance device.
 | CAMMUS C12 | steering/buttons/axes | constant force (USB-PID) | Profile present, verify |
 | FFBeast | steering | constant force (vendor) | Profile present, verify |
 | Logitech G29 | steering/buttons/axes | constant force (classic Logitech) | Profile present, verify |
+| Logitech G923 (PlayStation) | steering/buttons/axes | constant force (classic Logitech) | Profile present, verify |
+| Logitech G923 (Xbox) | steering/buttons/axes | constant force (HID++) | Profile present, verify |
+| Logitech RS50 | steering/buttons/axes | constant force (HID++) | Profile present, verify |
+| Logitech G Pro | steering/buttons/axes | constant force (HID++) | Profile present, verify |
 | Thrustmaster T248 / T300RS | steering/buttons | none (T248 needs the PadForge bridge) | Input-only fallback |
 | Logitech Driving Force GT | steering/buttons | constant force (classic Logitech) | Profile present, verify |
 | Generic USB-PID wheel | generic HID | constant force (auto-detect) | Best effort |
-| Logitech / Fanatec (other) | generic/vendor | not yet supported | Future vendor profiles |
+| Other Logitech / Fanatec | generic/vendor | not yet supported | Future vendor profiles |
 
 Chromium-only for WebHID. Firefox and Safari fall back to Gamepad API or keyboard; no WebHID
 FFB. Multi-device sessions use the upstream `WebHIDDevice` + `mapChannels` APIs; the earlier
@@ -359,7 +363,7 @@ FFB. Multi-device sessions use the upstream `WebHIDDevice` + `mapChannels` APIs;
 in the [upstream integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
 **Upstream `webhid-wheel` requirements:** these are tracked in the library repository and
-must not be reimplemented here. Vendored as 0.4.42 (`9fbfb6f`) in
+must not be reimplemented here. Vendored as 0.4.42 (`de02f7f`) in
 `web/src/vendor/webhid-wheel/`.
 
 - Generic multi-device sessions with stable device identity and hot-plug. Implemented.

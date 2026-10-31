@@ -441,7 +441,7 @@ and complete the audio/device matrix integration.
 
 ### Upstream `webhid-wheel` dependencies
 
-Vendored as 0.4.42 (`9fbfb6f`) from the library repository. See the
+Vendored as 0.4.42 (`de02f7f`) from the library repository. See the
 [Package, setup profiles and Lapster integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
 - Generic multi-device sessions (`WebHIDDevice` + `mapChannels`) for wheel, pedals, buttons
@@ -453,8 +453,9 @@ Vendored as 0.4.42 (`9fbfb6f`) from the library repository. See the
 - Fast constant-force path that avoids multiple reports per update and supports a configurable
   100-250 Hz rate with backpressure. Implemented.
 - Worker-compatible device acquisition and reconnect behavior. Core remains DOM-free for CP7.
-- CAMMUS C5 primary verification, then C12/FFBeast; Logitech G29/DFGT constant force;
-  T248/T300 input-only; vendor profiles remain future work.
+- CAMMUS C5 primary verification, then C12/FFBeast; Logitech G29/DFGT classic force,
+  G923 PlayStation/Xbox, RS50 and G Pro HID++ constant force; T248/T300 input-only; other
+  vendor profiles remain future work.
 - Recorded report fixtures and a manual hardware checklist for each supported device.
 
 ### CP8: Hardening and release

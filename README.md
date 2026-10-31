@@ -84,11 +84,12 @@ isolation or worker startup fails.
 - **Wheel/FFB dev spike:** vendored `webhid-wheel` 0.4.42 WebHID input with
   multi-device sessions, portable setup profiles, direct wheel steering, front-axle
   self-aligning torque, and a main-thread fast constant-force path fed from the SAB FFB
-  mailbox at 200 Hz. Drive exposes the shared `<webhid-config-panel>` under
-  **Settings → Controls** for device management, steering/FFB calibration, pedal and
-  button mapping, profile import/export, and emergency stop. Lapster feel controls for rear
-  breakaway lightening, front-grip shudder, road noise, roughness, and slip-driven looseness
-  live in the panel's app slot. Mapped throttle, brake, clutch, handbrake, and gear buttons
+  mailbox at 200 Hz. Includes Logitech G923 (PlayStation and Xbox), RS50, and G Pro HID++
+  force feedback with multi-interface session grouping. Drive exposes the shared
+  `<webhid-config-panel>` under **Settings → Controls** for device management, steering/FFB
+  calibration, pedal and button mapping, profile import/export, and emergency stop. Lapster
+  feel controls for rear breakaway lightening, front-grip shudder, road noise, roughness, and
+  slip-driven looseness live in the panel's app slot. Mapped throttle, brake, clutch, handbrake, and gear buttons
   feed the driving input alongside keyboard and touch fallbacks. Browsers without WebHID
   still boot normally and hide the wheel controls.
 - **Cockpit dial cluster:** a generated cowl, runtime speedometer/RPM textures, a
