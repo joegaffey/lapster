@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-10-30
+Last updated: 2026-10-31
 Repository root: the directory containing this file
 Current phase: **WebHID wheel/FFB feel spike and cockpit dial presentation (dev branch)**
 
@@ -263,6 +263,8 @@ Toolchain setup scripts:
     checkpoint/metal-box materials, asphalt/kerb/grass/concrete surfaces.
   - Kerbs are mountable: collision keeps their top faces but omits vertical faces so the
     car can drive over them instead of hitting an invisible wall.
+  - Repaired the Drift Tracks T1 road UV seam in the source GLB; the lane marking now
+    stays continuous through the corner exit. Covered by the round-trip fixture test.
 - AC track import:
   - `cargo run -p asset-compiler -- bake-ac-track <track-dir> [out] [--scale <factor>]`
   - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the

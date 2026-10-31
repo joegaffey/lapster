@@ -131,6 +131,32 @@ fn glb_track_bake_is_deterministic_and_round_trips() {
             texture.width as usize * texture.height as usize * 4
         );
     }
+
+    let road = visual
+        .meshes
+        .iter()
+        .position(|mesh| mesh.name == "Drift Track_Drift_Track_Albedo_0")
+        .expect("Drift Track road mesh");
+    let road = &visual.mesh_buffers[road];
+    let t1_seam = road
+        .positions
+        .iter()
+        .zip(&road.uvs)
+        .filter(|(position, _)| {
+            (position[0] + 118.855).abs() < 0.05 && (position[2] + 41.014).abs() < 0.05
+        })
+        .map(|(_, uv)| uv[1])
+        .collect::<Vec<_>>();
+    assert!(
+        t1_seam.len() >= 2,
+        "expected both sides of the T1 road UV seam"
+    );
+    for v in t1_seam {
+        assert!(
+            (v - 0.5349).abs() < 0.001,
+            "T1 lane marking UV seam should be continuous, got {v}"
+        );
+    }
 }
 
 #[test]

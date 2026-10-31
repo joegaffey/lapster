@@ -4,6 +4,10 @@
 - **Author:** The-Third-Dimension (https://sketchfab.com/muneeb.changezi1)
 - **License:** CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 - **Source file:** `drift_tracks.glb` (7.1k triangles, 5.5k vertices, embedded textures)
+- **Local derivative change:** repaired the T1 road UV seam on the `Drift Track` mesh by
+  changing the road primitive's vertex 1370 V coordinate from `0.1960` to `0.5349`. The
+  repaired lane marking is continuous through the T1 exit instead of stepping across a dark
+  wedge. The collision mesh is unchanged.
 - **Status:** imported fixture; mesh selectors, textures, and collision are defined in the GLB
   and `track.json`. Baked pack: 6,940 visual triangles, 5,160 collision triangles, 10
   textures, 10 materials.
