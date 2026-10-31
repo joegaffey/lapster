@@ -29,8 +29,6 @@ export interface WheelFfbStatus {
   parser: string;
   ffb: boolean;
   ffbTarget: string | null;
-  ffbDevice: string;
-  ffbInterfaces: number;
   ffbGain: number;
   error: string;
   steering: number;
@@ -156,7 +154,6 @@ export class WheelFfb {
       (entry) => entry.session && entry.session.isConnected,
     );
     const steering = this.steeringSession();
-    const ffb = this.ffbSession();
     const ffbTarget = this.manager.getFfb();
     const primary = steering ?? connected[0] ?? null;
     return {
@@ -166,8 +163,6 @@ export class WheelFfb {
       parser: primary ? primary.capabilities.profile || primary.driver : "",
       ffb: this.ffbAvailable,
       ffbTarget: ffbTarget.device,
-      ffbDevice: ffb ? (ffb.session as any).ffbDevice?.productName || "" : "",
-      ffbInterfaces: ffb ? ffb.interfaces?.length ?? 0 : 0,
       ffbGain: ffbTarget.gain,
       error: this.error,
       steering: this.steering,

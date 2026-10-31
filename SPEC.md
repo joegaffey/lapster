@@ -363,7 +363,7 @@ FFB. Multi-device sessions use the upstream `WebHIDDevice` + `mapChannels` APIs;
 in the [upstream integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
 
 **Upstream `webhid-wheel` requirements:** these are tracked in the library repository and
-must not be reimplemented here. Vendored as 0.4.42 (`de02f7f`) in
+must not be reimplemented here. Vendored as 0.5.0 (`1e20fba`) in
 `web/src/vendor/webhid-wheel/`.
 
 - Generic multi-device sessions with stable device identity and hot-plug. Implemented.

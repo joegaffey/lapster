@@ -44,7 +44,7 @@ function stateFor(wheel) {
   return wheel._hidppFfb;
 }
 
-function constantParams(effectId, level, options, autostart) {
+function constantParams(effectId, level, autostart) {
   const params = new Uint8Array(14);
   params[0] = effectId;
   params[1] = EFFECT_CONSTANT | (autostart ? EFFECT_AUTOSTART : 0);
@@ -123,7 +123,7 @@ async function allocateConstantSlot(state, level, options) {
   const response = await state.transport.send(
     state.featureIndex,
     FN_DOWNLOAD_EFFECT,
-    constantParams(0, level, options, options.autostart !== false)
+    constantParams(0, level, options.autostart !== false)
   );
   const slot = response[3];
   if (!slot) throw new Error('Logitech HID++ did not allocate a force-feedback slot.');
@@ -150,7 +150,7 @@ async function applyConstant(device, value, wheel, options) {
   await state.transport.send(
     state.featureIndex,
     FN_DOWNLOAD_EFFECT,
-    constantParams(state.slot, level, options, options.autostartUpdates === true)
+    constantParams(state.slot, level, options.autostartUpdates === true)
   );
   state.playing = true;
   state.lastLevel = level;
@@ -163,7 +163,7 @@ async function stop(wheel) {
     await state.transport.send(
       state.featureIndex,
       FN_DOWNLOAD_EFFECT,
-      constantParams(state.slot, 0, state.options || {}, false)
+      constantParams(state.slot, 0, false)
     );
   } catch { /* noop */ }
   try {
