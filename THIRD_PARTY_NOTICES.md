@@ -41,8 +41,9 @@ SOFTWARE.
 - Local patches: split multi-axis report items so Arduino handbrakes and similar generic HID
   axes update; expand a selected HID++ wheel interface with its granted sibling interface so
   force feedback binds when the picker returns only one interface; allocate a single HID++
-  force slot under concurrent updates; fall back to the connected wheel when a saved profile's
-  device aliases no longer match.
+  force slot under concurrent updates; start HID++ effects only when allocated so force
+  updates do not restart them; fall back to the connected wheel when a saved profile's device
+  aliases no longer match.
 - License: MIT
 - Purpose: WebHID wheel and generic HID input, multi-device mapping, setup profiles,
   constant-force FFB, and the embeddable configuration panel.

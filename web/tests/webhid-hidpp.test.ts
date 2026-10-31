@@ -205,7 +205,7 @@ test('HID++ FFB discovers the feature, allocates a slot and updates force', asyn
   assert.equal(wheel._hidppFfb.slot, 2);
   const constant = downloads[downloads.length - 1];
   assert.equal(constant.data[3], 2);
-  assert.equal(constant.data[4], 0x80);
+  assert.equal(constant.data[4], 0x00);
   assert.equal((constant.data[9] << 8) | constant.data[10], 4096);
   assert.deepEqual(wheel._hidppFfb.protocolVersion, { major: 4, minor: 2, ping: 0x5a });
 
@@ -216,13 +216,13 @@ test('HID++ FFB discovers the feature, allocates a slot and updates force', asyn
   const updates = sentFor(hidpp, hidpp.featureIndex, 2);
   const update = updates[updates.length - 1];
   assert.equal(update.data[3], 2);
-  assert.equal(update.data[4], 0x80);
+  assert.equal(update.data[4], 0x00);
   assert.equal((update.data[9] << 8) | update.data[10], 0xf000);
 
   await wheel.stopEffects();
   const zero = sentFor(hidpp, hidpp.featureIndex, 2).slice(-1)[0];
   assert.equal(zero.data[3], 2);
-  assert.equal(zero.data[4], 0x80);
+  assert.equal(zero.data[4], 0x00);
   assert.equal((zero.data[9] << 8) | zero.data[10], 0);
   const stop = sentFor(hidpp, hidpp.featureIndex, 3).slice(-1)[0];
   assert.deepEqual(Array.from(stop.data.slice(3, 5)), [2, 0x01]);
@@ -387,7 +387,7 @@ test('G923 Xbox uses HID++ on the same interface as input', async () => {
   await wheel.setConstantForce(0.5);
   const downloads = sentFor(device, device.featureIndex, 2);
   assert.equal(downloads.length, 3);
-  assert.equal(downloads[downloads.length - 1].data[4], 0x80);
+  assert.equal(downloads[downloads.length - 1].data[4], 0x00);
   assert.equal((downloads[downloads.length - 1].data[9] << 8) | downloads[downloads.length - 1].data[10], 0xf000);
 
   device.oninputreport(report(1, [
