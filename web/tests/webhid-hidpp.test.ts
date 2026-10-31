@@ -200,11 +200,13 @@ test('HID++ FFB discovers the feature, allocates a slot and updates force', asyn
 
   await wheel.setConstantForce(0.5);
   const downloads = sentFor(hidpp, hidpp.featureIndex, 2);
+  const allocation = downloads.find(report => report.data[3] === 0 && report.data[4] === 0x80);
+  assert.ok(allocation);
+  assert.equal(wheel._hidppFfb.slot, 2);
   const constant = downloads[downloads.length - 1];
-  assert.equal(constant.data[3], 0);
+  assert.equal(constant.data[3], 2);
   assert.equal(constant.data[4], 0x80);
   assert.equal((constant.data[9] << 8) | constant.data[10], 4096);
-  assert.equal(wheel._hidppFfb.slot, 2);
   assert.deepEqual(wheel._hidppFfb.protocolVersion, { major: 4, minor: 2, ping: 0x5a });
 
   const play = sentFor(hidpp, hidpp.featureIndex, 3).slice(-1)[0];
@@ -228,6 +230,28 @@ test('HID++ FFB discovers the feature, allocates a slot and updates force', asyn
   await wheel.disconnect();
   assert.equal(hidpp.opened, false);
   assert.equal(input.opened, false);
+});
+
+test('HID++ FFB allocates one constant slot for concurrent updates', async () => {
+  const input = new FakeInputDevice();
+  const hidpp = new FakeHidppDevice();
+  const wheel = new WebHIDWheel();
+  await wheel.connect(input, { interfaces: [input, hidpp] });
+
+  await Promise.all([
+    wheel.setConstantForceFast(0.1),
+    wheel.setConstantForceFast(0.2),
+    wheel.setConstantForceFast(0.3),
+    wheel.setConstantForceFast(0.4),
+    wheel.setConstantForceFast(0.5)
+  ]);
+
+  const downloads = sentFor(hidpp, hidpp.featureIndex, 2);
+  const allocations = downloads.filter(report => report.data[3] === 0 && report.data[4] === 0x80);
+  assert.equal(allocations.length, 1);
+  assert.ok(wheel._hidppFfb.slot > 1);
+  const updates = downloads.filter(report => report.data[3] === wheel._hidppFfb.slot);
+  assert.equal(updates.length, 5);
 });
 
 test('G Pro input report drives steering, buttons and hat', async () => {
@@ -362,9 +386,9 @@ test('G923 Xbox uses HID++ on the same interface as input', async () => {
 
   await wheel.setConstantForce(0.5);
   const downloads = sentFor(device, device.featureIndex, 2);
-  assert.equal(downloads.length, 2);
-  assert.equal(downloads[1].data[4], 0x80);
-  assert.equal((downloads[1].data[9] << 8) | downloads[1].data[10], 0xf000);
+  assert.equal(downloads.length, 3);
+  assert.equal(downloads[downloads.length - 1].data[4], 0x80);
+  assert.equal((downloads[downloads.length - 1].data[9] << 8) | downloads[downloads.length - 1].data[10], 0xf000);
 
   device.oninputreport(report(1, [
     0x00, 0x80,

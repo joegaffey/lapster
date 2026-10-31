@@ -36,6 +36,7 @@ function stateFor(wheel) {
       playing: false,
       initialized: false,
       initPromise: null,
+      slotPromise: null,
       lastLevel: 0,
       options: {}
     };
@@ -118,33 +119,40 @@ async function ensureInitialized(device, wheel, options, state) {
   return state.initPromise;
 }
 
+async function allocateConstantSlot(state, level, options) {
+  const response = await state.transport.send(
+    state.featureIndex,
+    FN_DOWNLOAD_EFFECT,
+    constantParams(0, level, options)
+  );
+  const slot = response[3];
+  if (!slot) throw new Error('Logitech HID++ did not allocate a force-feedback slot.');
+  state.slot = slot;
+  state.playing = true;
+  try {
+    await state.transport.send(state.featureIndex, FN_SET_EFFECT_STATE, [slot, STATE_PLAY]);
+  } catch { /* autostart is the primary path */ }
+}
+
 async function applyConstant(device, value, wheel, options) {
   const state = stateFor(wheel);
   await ensureInitialized(device, wheel, options, state);
   const level = forceLevel(value, wheel, options);
 
   if (!state.slot) {
-    const response = await state.transport.send(
-      state.featureIndex,
-      FN_DOWNLOAD_EFFECT,
-      constantParams(0, level, options)
-    );
-    const slot = response[3];
-    if (!slot) throw new Error('Logitech HID++ did not allocate a force-feedback slot.');
-    state.slot = slot;
-    state.playing = true;
-    try {
-      await state.transport.send(state.featureIndex, FN_SET_EFFECT_STATE, [slot, STATE_PLAY]);
-    } catch { /* autostart is the primary path */ }
-  } else {
-    await state.transport.send(
-      state.featureIndex,
-      FN_DOWNLOAD_EFFECT,
-      constantParams(state.slot, level, options)
-    );
-    state.playing = true;
+    if (!state.slotPromise) {
+      state.slotPromise = allocateConstantSlot(state, level, options)
+        .finally(() => { state.slotPromise = null; });
+    }
+    await state.slotPromise;
   }
 
+  await state.transport.send(
+    state.featureIndex,
+    FN_DOWNLOAD_EFFECT,
+    constantParams(state.slot, level, options)
+  );
+  state.playing = true;
   state.lastLevel = level;
 }
 
