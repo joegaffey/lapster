@@ -42,6 +42,20 @@ The relay server can also be run directly:
 cargo run -p relay-server -- --static-dir dist --bind 0.0.0.0:3000
 ```
 
+## External Relay
+
+The dev/static Pages build cannot host WebSockets itself. Host `relay-server`
+separately and point the browser at it with the `ws` query parameter:
+
+```text
+https://joegaffey.com/lapster-dev/web/multiplayer/?ws=wss%3A%2F%2Frelay.example.test%2Fws
+```
+
+The lobby preserves `ws` when redirecting to Drive and when copying an invite.
+The relay URL must use `wss://` when the page is served over HTTPS. The relay
+server itself still needs no track or car assets in this mode; use any existing
+directory for `--static-dir`.
+
 ## Codespaces
 
 1. Create a Codespace from this branch.
