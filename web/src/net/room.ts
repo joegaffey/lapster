@@ -63,6 +63,7 @@ export function lobbyInviteUrl(
   room: string,
   car: string,
   track: string,
+  relayUrl?: string | null,
 ): string {
   const url = new URL(baseHref);
   url.search = "";
@@ -70,6 +71,9 @@ export function lobbyInviteUrl(
   url.searchParams.set("room", room);
   url.searchParams.set("car", car);
   url.searchParams.set("track", track);
+  if (relayUrl) {
+    url.searchParams.set("ws", relayUrl);
+  }
   return url.toString();
 }
 
@@ -78,6 +82,7 @@ export function driveRoomUrl(
   room: string,
   car: string,
   track: string,
+  relayUrl?: string | null,
 ): string {
   const url = new URL(baseHref);
   url.search = "";
@@ -86,5 +91,8 @@ export function driveRoomUrl(
   url.searchParams.set("room", room);
   url.searchParams.set("car", car);
   url.searchParams.set("track", track);
+  if (relayUrl) {
+    url.searchParams.set("ws", relayUrl);
+  }
   return url.toString();
 }

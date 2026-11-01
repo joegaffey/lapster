@@ -84,6 +84,7 @@ copyInviteButton.addEventListener("click", async () => {
       room,
       selectedCar.id,
       selectedTrack.id,
+      relayOverride,
     );
     await navigator.clipboard.writeText(url);
     setStatus("Invite link copied.");
@@ -109,6 +110,7 @@ form.addEventListener("submit", (event) => {
       room,
       selectedCar.id,
       selectedTrack.id,
+      relayOverride,
     );
     window.location.assign(driveUrl);
   } catch (error) {

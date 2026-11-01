@@ -21,12 +21,14 @@ test("invite links keep the room, car, and track", () => {
       "ABC123",
       "mazda-rx7",
       "skidpad05",
+      "wss://relay.example.test/ws",
     ),
   );
   assert.equal(url.searchParams.get("room"), "ABC123");
   assert.equal(url.searchParams.get("car"), "mazda-rx7");
   assert.equal(url.searchParams.get("track"), "skidpad05");
   assert.equal(url.searchParams.get("password"), null);
+  assert.equal(url.searchParams.get("ws"), "wss://relay.example.test/ws");
   assert.equal(url.hash, "");
 });
 
