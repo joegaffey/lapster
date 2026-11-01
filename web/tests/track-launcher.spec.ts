@@ -88,30 +88,43 @@ test("launcher car selection persists into drive and garage", async ({ page }) =
   expect(garage.asset).toContain("sc-deckard-conejo");
 });
 
-test("garage car picker loads a catalog car", async ({ page }) => {
+test("garage mixes catalog cars across bays", async ({ page }) => {
   await page.goto("/web/garage/");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
     { timeout: 30_000 },
   );
-  await expect(page.locator("#car-select")).toHaveValue("mazda-rx7");
 
-  await page.selectOption("#car-select", "sc-deckard-conejo");
-  await page.waitForURL(/car=.*sc-deckard-conejo/);
-  await page.waitForFunction(
-    () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
-    undefined,
-    { timeout: 30_000 },
+  const initial = await page.evaluate(() => {
+    const viewer = (window as any).__garageViewer;
+    return {
+      error: (window as any).__garageViewerError,
+      bays: JSON.parse(viewer.bay_list()),
+      selected: JSON.parse(viewer.bay_info()),
+      menuButtons: document.querySelectorAll("#car-list button").length,
+    };
+  });
+  expect(initial.error).toBeUndefined();
+  expect(new Set(initial.bays.map((bay: any) => bay.carId))).toEqual(
+    new Set(["mazda-rx7", "sc-deckard-conejo"]),
   );
-  const state = await page.evaluate(() => ({
-    error: (window as any).__garageViewerError,
-    asset: document.querySelector("#asset")?.textContent,
-    selected: (document.querySelector("#car-select") as HTMLSelectElement).value,
-    stored: localStorage.getItem("lapster.car.v1"),
-  }));
-  expect(state.error).toBeUndefined();
+  expect(initial.menuButtons).toBe(0);
+  expect(initial.selected.carId).toBe("mazda-rx7");
+
+  await page.keyboard.press("ArrowRight");
+  const state = await page.evaluate(() => {
+    const viewer = (window as any).__garageViewer;
+    return {
+      info: JSON.parse(viewer.bay_info()),
+      asset: document.querySelector("#asset")?.textContent,
+      drive: document.querySelector("#drive-car")?.getAttribute("href"),
+      stored: localStorage.getItem("lapster.car.v1"),
+    };
+  });
+  expect(state.info.carId).toBe("sc-deckard-conejo");
+  expect(state.info.car.id).toBe("sc-deckard-conejo");
   expect(state.asset).toContain("sc-deckard-conejo");
-  expect(state.selected).toBe("sc-deckard-conejo");
+  expect(state.drive).toContain("sc-deckard-conejo");
   expect(state.stored).toBe("sc-deckard-conejo");
 });

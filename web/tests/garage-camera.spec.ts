@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("garage camera orbits, zooms, and resets", async ({ page }) => {
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
   );
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
@@ -75,7 +75,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
 
 test("garage camera flies between bays", async ({ page }) => {
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
   );
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
@@ -88,11 +88,20 @@ test("garage camera flies between bays", async ({ page }) => {
   );
   await page.mouse.move(640, 360);
   await page.click("#bay-next");
-  await page.waitForTimeout(150);
+  await page.waitForFunction(
+    (target) => {
+      const current = JSON.parse((window as any).__garageViewer.camera_info()).target;
+      return current.some(
+        (value: number, index: number) => Math.abs(value - target[index]) > 1e-4,
+      );
+    },
+    initial.target,
+    { timeout: 5_000 },
+  );
   const midFlight = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.camera_info()),
   );
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(1_000);
   const final = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.camera_info()),
   );
@@ -104,7 +113,7 @@ test("garage camera flies between bays", async ({ page }) => {
 
 test("garage bay navigation reverses order in the second row", async ({ page }) => {
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6&bay=5",
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6&bay=5",
   );
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
@@ -127,7 +136,7 @@ test("garage bay navigation reverses order in the second row", async ({ page }) 
 
 test("garage car arrows use the screen sides and toggle on mouse movement", async ({ page }) => {
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
   );
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
@@ -161,7 +170,7 @@ test.describe("mobile car navigation", () => {
 
   test("garage car arrows start hidden and reveal on touch", async ({ page }) => {
     await page.goto(
-      "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+      "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
     );
     await page.waitForFunction(
       () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
@@ -182,7 +191,7 @@ test.describe("mobile car navigation", () => {
 
 test("garage camera orbits but does not pan", async ({ page }) => {
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
   );
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,

@@ -185,9 +185,11 @@ the XML height is not forced onto the mesh.
   `sc-deckard-conejo`, their pack URLs, and their audio profiles.
 - Menu: both launch pages expose a Car picker and persist it in
   `lapster.car.v1`.
-- Garage and Drive: with no `?car=` parameter they load the selected catalog
-  car. The garage toolbar has a car picker that persists the choice and reloads
-  the pack. `?car=` still overrides for custom packs.
+- Garage: loads every catalog pack and mixes the models across the ten bays.
+  Bay navigation persists the selected bay's car; there is no garage car
+  dropdown, selection menu, or `?car=` override.
+- Drive: with no `?car=` parameter it loads the selected catalog car. `?car=`
+  still overrides for custom packs.
 - Audio: the selected catalog entry supplies the Engine_Sim profile. Unknown
   packs keep the legacy `rotary2`/`sports` fallback.
 - Cockpit: cars with a `body_interior` get the interior camera override and the
@@ -195,7 +197,8 @@ the XML height is not forced onto the mesh.
 - Lighting: textured rear-lamp triangles are split by lateral position into
   outer brake and inner reverse lenses. Plain-white body triangles are skipped.
 - Bay paint: textured cars keep their baked livery; the garage bay colour does
-  not tint them.
+  not tint them. Catalog models alternate by bay, with the bay colour index
+  carried into Drive as the paint choice.
 
 ## Pack summary
 
@@ -270,9 +273,9 @@ Remaining work:
 
 ### Controls and selection
 
-- Add a proper garage/menu car browser with previews and per-car metadata.
+- Add previews and per-car metadata to the garage/menu car browser.
 - Add query-parameter/catalog validation for unknown or mismatched car IDs.
-- Test the car picker and per-car audio in Playwright.
+- Test the mixed garage showroom and per-car audio in Playwright.
 - Revisit car-specific physics/setup defaults and the cockpit camera for the
   Camaro.
 

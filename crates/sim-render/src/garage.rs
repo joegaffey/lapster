@@ -14,6 +14,12 @@ use crate::scene::{
 };
 use crate::shadow_decal_yaw;
 
+pub struct GarageCar<'a> {
+    pub physics: &'a CarPhysics,
+    pub visual: &'a CarVisual,
+    pub manifest: &'a AssetManifest,
+}
+
 impl Scene {
     #[allow(clippy::too_many_arguments)]
     pub fn build_garage(
@@ -21,14 +27,15 @@ impl Scene {
         track_metadata: &TrackMetadata,
         track_collision: &TrackCollision,
         track_manifest: &AssetManifest,
-        car_physics: &CarPhysics,
-        car_visual: &CarVisual,
-        car_manifest: &AssetManifest,
+        cars: &[GarageCar<'_>],
         car_count: usize,
         color_offset: usize,
         static_car_shadows: bool,
         brake_lights: bool,
     ) -> Result<Scene, String> {
+        if cars.is_empty() {
+            return Err("garage requires at least one car".to_string());
+        }
         let mut scene = Scene::build(
             track_visual,
             track_metadata,
@@ -42,25 +49,40 @@ impl Scene {
         let car_forward = car_rotation * Vec3::NEG_Z;
         let car_right = car_rotation * Vec3::X;
         let car_start = scene.meshes.len();
-        let car_texture_base = scene.textures.len();
-        for texture in &car_visual.textures {
-            scene.textures.push(scene_texture(texture)?);
+        let mut car_texture_bases = Vec::with_capacity(cars.len());
+        for car in cars {
+            car_texture_bases.push(scene.textures.len());
+            for texture in &car.visual.textures {
+                scene.textures.push(scene_texture(texture)?);
+            }
         }
-        let silhouette = if static_car_shadows {
-            None
+        let silhouettes = if static_car_shadows {
+            cars.iter().map(|_| None).collect::<Vec<_>>()
         } else {
-            build_car_silhouette(car_visual)?
+            cars.iter()
+                .map(|car| build_car_silhouette(car.visual))
+                .collect::<Result<Vec<_>, _>>()?
         };
-        let decal_texture = silhouette.as_ref().map(|silhouette| {
-            let index = scene.textures.len();
-            scene.textures.push(silhouette.texture.clone());
-            index
-        });
+        let decal_textures = silhouettes
+            .iter()
+            .map(|silhouette| {
+                silhouette.as_ref().map(|silhouette| {
+                    let index = scene.textures.len();
+                    scene.textures.push(silhouette.texture.clone());
+                    index
+                })
+            })
+            .collect::<Vec<_>>();
 
         let bay_count = car_count.clamp(1, 10);
         let mut bays = Vec::with_capacity(bay_count);
         let mut first_bounds = None;
         for index in 0..bay_count {
+            let car_index = index % cars.len();
+            let car = &cars[car_index];
+            let car_texture_base = car_texture_bases[car_index];
+            let silhouette = &silhouettes[car_index];
+            let decal_texture = decal_textures[car_index];
             let color_index = (color_offset + index) % BAY_COLORS.len();
             let color = BAY_COLORS[color_index];
             let (translation, rotation) = if bay_count == 1 {
@@ -87,7 +109,7 @@ impl Scene {
             let car_mesh_start = scene.meshes.len();
             let built = build_car(
                 &mut scene,
-                car_visual,
+                car.visual,
                 car_texture_base,
                 transform,
                 color,
@@ -109,7 +131,7 @@ impl Scene {
                 target: (translation + Vec3::Y * 0.6).to_array(),
                 fov_y: 0.85,
             };
-            let decal_mesh_index = match (&silhouette, decal_texture) {
+            let decal_mesh_index = match (silhouette.as_ref(), decal_texture) {
                 (Some(silhouette), Some(texture)) => Some(add_car_decal(
                     &mut scene,
                     texture,
@@ -129,10 +151,34 @@ impl Scene {
                 first_bounds = Some(built.bounds);
             }
             let decal_yaw = shadow_decal_yaw(row_forward);
+            let car_info = json!({
+                "id": car.manifest.id,
+                "mass": car.physics.mass,
+                "wheelbase": car.physics.wheelbase,
+                "trackWidth": car.physics.track_width,
+                "wheels": car.physics.wheels.iter().map(|wheel| json!({
+                    "name": wheel.name,
+                    "position": wheel.position,
+                    "radius": wheel.radius,
+                    "width": wheel.width,
+                    "front": wheel.is_front,
+                    "left": wheel.is_left,
+                    "driven": wheel.driven,
+                })).collect::<Vec<_>>(),
+                "meshCount": car.visual.meshes.len(),
+                "meshBufferCount": car.visual.mesh_buffers.len(),
+                "steeringWheel": car.visual.steering_wheel.is_some(),
+                "bounds": {
+                    "min": built.bounds.min,
+                    "max": built.bounds.max,
+                },
+            });
             bays.push(GarageBay {
                 wheels: built.wheels,
                 camera,
                 name: format!("Bay {}", index + 1),
+                car_id: car.manifest.id.clone(),
+                car: car_info,
                 color,
                 color_name: BAY_COLOR_NAMES[color_index],
                 decal_mesh_index,
@@ -162,20 +208,29 @@ impl Scene {
             .map(|mesh| mesh.indices.len() as u32 / 3)
             .sum::<u32>();
 
+        let car_texture_count = cars
+            .iter()
+            .map(|car| car.visual.textures.len() as u32)
+            .sum::<u32>();
+        let decal_texture_count = decal_textures
+            .iter()
+            .filter(|texture| texture.is_some())
+            .count() as u32;
+        let first_car = &cars[0];
+
         scene.stats.vertices += car_vertices;
         scene.stats.triangles += car_triangles;
         scene.stats.draw_calls += car_draw_calls as u32;
-        scene.stats.textures +=
-            car_visual.textures.len() as u32 + u32::from(decal_texture.is_some());
+        scene.stats.textures += car_texture_count + decal_texture_count;
 
         scene.debug_info = json!({
             "asset": { "id": track_manifest.id, "kind": "Track" },
             "car": {
-                "id": car_manifest.id,
-                "mass": car_physics.mass,
-                "wheelbase": car_physics.wheelbase,
-                "trackWidth": car_physics.track_width,
-                "wheels": car_physics.wheels.iter().map(|wheel| json!({
+                "id": first_car.manifest.id,
+                "mass": first_car.physics.mass,
+                "wheelbase": first_car.physics.wheelbase,
+                "trackWidth": first_car.physics.track_width,
+                "wheels": first_car.physics.wheels.iter().map(|wheel| json!({
                     "name": wheel.name,
                     "position": wheel.position,
                     "radius": wheel.radius,
@@ -184,14 +239,18 @@ impl Scene {
                     "left": wheel.is_left,
                     "driven": wheel.driven,
                 })).collect::<Vec<_>>(),
-                "meshCount": car_visual.meshes.len(),
-                "meshBufferCount": car_visual.mesh_buffers.len(),
-                "steeringWheel": car_visual.steering_wheel.is_some(),
+                "meshCount": first_car.visual.meshes.len(),
+                "meshBufferCount": first_car.visual.mesh_buffers.len(),
+                "steeringWheel": first_car.visual.steering_wheel.is_some(),
                 "bounds": {
                     "min": body_bounds.min,
                     "max": body_bounds.max,
                 },
             },
+            "cars": cars.iter().map(|car| json!({
+                "id": car.manifest.id,
+                "meshCount": car.visual.meshes.len(),
+            })).collect::<Vec<_>>(),
             "stats": {
                 "vertices": scene.stats.vertices,
                 "triangles": scene.stats.triangles,
@@ -228,7 +287,9 @@ impl Scene {
                 "vertices": mesh.vertices.len(),
                 "triangles": mesh.indices.len() / 3,
             })).collect::<Vec<_>>(),
-            "warnings": track_manifest.warnings.iter().chain(car_manifest.warnings.iter()).cloned().collect::<Vec<_>>(),
+            "warnings": track_manifest.warnings.iter().chain(
+                cars.iter().flat_map(|car| car.manifest.warnings.iter())
+            ).cloned().collect::<Vec<_>>(),
         })
         .to_string();
 

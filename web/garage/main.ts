@@ -46,9 +46,8 @@ const bayLabel = document.querySelector<HTMLElement>("#bay-label")!;
 const bayPrev = document.querySelector<HTMLButtonElement>("#bay-prev")!;
 const bayNext = document.querySelector<HTMLButtonElement>("#bay-next")!;
 const driveCar = document.querySelector<HTMLAnchorElement>("#drive-car")!;
-const carSelect = document.querySelector<HTMLSelectElement>("#car-select")!;
 const carNav = document.querySelector<HTMLElement>("#car-nav")!;
-const CAR_NAV_HIDE_DELAY_MS = 2200;
+const CAR_NAV_HIDE_DELAY_MS = 5000;
 let carNavHideTimer = 0;
 
 const scheduleCarNavHide = () => {
@@ -85,25 +84,8 @@ checkForUpdate();
 const params = new URLSearchParams(window.location.search);
 const defaultTrack = loadSelectedTrack();
 const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
-const selectedCar = loadSelectedCar();
-const CAR_URL = withPackVersion(params.get("car") ?? selectedCar.url, APP_VERSION);
-for (const car of CAR_OPTIONS) {
-  const option = document.createElement("option");
-  option.value = car.id;
-  option.textContent = car.name;
-  carSelect.append(option);
-}
-carSelect.value = selectedCar.id;
-carSelect.addEventListener("change", () => {
-  const car = findCar(carSelect.value);
-  if (!car) {
-    return;
-  }
-  saveSelectedCar(car.id);
-  const url = new URL(window.location.href);
-  url.searchParams.set("car", car.url);
-  window.location.assign(url);
-});
+const requestedCar = loadSelectedCar();
+const CAR_URLS = CAR_OPTIONS.map((car) => withPackVersion(car.url, APP_VERSION));
 
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
@@ -144,19 +126,17 @@ function addRows(target: HTMLElement, rows: Array<[string, string]>) {
   }
 }
 
-function renderDebug(debug: any) {
-  asset.textContent = `${debug.asset.id} + ${debug.car.id}`;
-
+function renderCar(car: any) {
   addRows(carStats, [
-    ["mass", `${debug.car.mass.toFixed(0)} kg`],
-    ["wheelbase", `${debug.car.wheelbase.toFixed(2)} m`],
-    ["track width", debug.car.trackWidth.map((value: number) => value.toFixed(2)).join(" / ")],
-    ["meshes", String(debug.car.meshCount)],
-    ["steering wheel", debug.car.steeringWheel ? "yes" : "no"],
+    ["mass", `${car.mass.toFixed(0)} kg`],
+    ["wheelbase", `${car.wheelbase.toFixed(2)} m`],
+    ["track width", car.trackWidth.map((value: number) => value.toFixed(2)).join(" / ")],
+    ["meshes", String(car.meshCount)],
+    ["steering wheel", car.steeringWheel ? "yes" : "no"],
   ]);
 
   wheels.replaceChildren();
-  for (const wheel of debug.car.wheels) {
+  for (const wheel of car.wheels) {
     const item = document.createElement("li");
     const name = document.createElement("span");
     name.className = "name";
@@ -169,6 +149,11 @@ function renderDebug(debug: any) {
     item.append(name, detail);
     wheels.append(item);
   }
+}
+
+function renderDebug(debug: any) {
+  asset.textContent = `${debug.asset.id} + ${debug.car.id}`;
+  renderCar(debug.car);
 
   addRows(stats, [
     ["vertices", String(debug.stats.vertices)],
@@ -203,15 +188,18 @@ async function boot() {
   await init();
 
   status.textContent = "loading packs";
-  const [trackPack, carPack] = await Promise.all([
+  const [trackPack, carPacks] = await Promise.all([
     loadPack(TRACK_URL),
-    loadPack(CAR_URL),
+    Promise.all(CAR_URLS.map((url) => loadPack(url))),
   ]);
-  carSelect.value = findCar(carPack.manifest.id)?.id ?? "";
 
   resizeCanvas();
   status.textContent = "creating renderer";
-  const viewer = await GarageViewer.create(canvas, trackPack.bytes, carPack.bytes);
+  const viewer = await GarageViewer.create(
+    canvas,
+    trackPack.bytes,
+    carPacks.map((pack) => pack.bytes),
+  );
   window.__garageViewer = viewer;
   setupAssistsDialog(viewer, {
     gameplay: false,
@@ -226,6 +214,11 @@ async function boot() {
   const debug = JSON.parse(viewer.debug_info());
   renderDebug(debug);
   const orbitCamera = setupTrackCamera(canvas, viewer, { allowPan: false });
+  const bays = JSON.parse(viewer.bay_list()) as Array<{
+    index: number;
+    carId: string;
+    colorName: string;
+  }>;
   let selectedBay = 0;
 
   let steer = 0.3;
@@ -259,14 +252,19 @@ async function boot() {
     orbitCamera?.setHome(cameraInfo, animate);
     const info = JSON.parse(viewer.bay_info());
     selectedBay = info.selected;
+    const car = findCar(info.carId) ?? CAR_OPTIONS[0];
     saveSelectedBay(selectedBay);
-    bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count}) · ${info.colorName}`;
-    driveCar.title = `Drive the ${info.colorName} car`;
+    saveSelectedCar(car.id);
+    asset.textContent = `${debug.asset.id} + ${car.id}`;
+    renderCar(info.car ?? debug.car);
+    bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count}) · ${car.name} · ${info.colorName}`;
+    driveCar.title = `Drive the ${info.colorName} ${car.name}`;
     const driveUrl = new URL("../drive/", window.location.href);
     const driveParams = new URLSearchParams(params);
     if (!driveParams.has("track")) {
       driveParams.set("track", `${defaultTrack.url}?v=${encodeURIComponent(APP_VERSION)}`);
     }
+    driveParams.set("car", car.url);
     driveParams.set("bay", String(selectedBay + 1));
     driveUrl.search = driveParams.toString();
     driveCar.href = driveUrl.href;
@@ -295,7 +293,12 @@ async function boot() {
     selectBay(next);
   };
 
-  selectBay(getSelectedBay(), false);
+  const savedBay = getSelectedBay();
+  const initialBay =
+    bays[savedBay]?.carId === requestedCar.id
+      ? savedBay
+      : (bays.find((bay) => bay.carId === requestedCar.id)?.index ?? 0);
+  selectBay(initialBay, false);
   bayPrev.addEventListener("click", () => {
     stepBay(-1);
     showCarNav();

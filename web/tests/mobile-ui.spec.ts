@@ -7,7 +7,7 @@ test("mobile starts collapsed and exposes touch controls", async ({ page }) => {
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await page.goto(
-    "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+    "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
   );
   await page.waitForFunction(
     () => (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
@@ -85,7 +85,7 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
     page.waitForFunction(expression, undefined, { timeout: 30_000 });
 
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
   );
   await waitFor(() => (window as any).__garageViewerReady === true || (window as any).__garageViewerError);
   await page.locator("#assists-open").click();

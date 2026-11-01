@@ -175,19 +175,19 @@ Toolchain setup scripts:
   button. Track adds right/shift-drag panning and caps the camera at 60 m to avoid high-angle
   model artifacts; garage is orbit/zoom only. Garage starts from a front three-quarter view
   with the wheels turned slightly.
-- Garage showroom: two facing rows of five cars each (red/blue/yellow/green/orange opposite
-  black/white/pink/navy/cyan), aligned to the five canopy bays. Screen-side chevrons and
-  Left/Right arrow keys fly the camera between cars, with per-bay camera homes and wheel
-  controls following the selection. The chevrons start hidden, appear on mouse movement or
-  touch, and fade out when idle. The selected car persists in `localStorage` and becomes the
-  driving car, including its showroom paint; the garage `Drive` button and the menu Drive
-  demo both use it.
+- Garage showroom: a curated mixed catalog across two facing rows of five bays
+  (red/blue/yellow/green/orange opposite black/white/pink/navy/cyan), with models alternating
+  by bay. Screen-side chevrons and Left/Right arrow keys fly the camera between cars, with
+  per-bay camera homes and wheel controls following the selection. The chevrons start hidden, appear on mouse movement or touch, and fade out when
+  idle. The selected bay's car persists in `localStorage` and becomes the driving car,
+  including its showroom paint; the garage `Drive` button and the menu Drive demo both use it.
 - Car and track launchers: the app menu and public landing page offer the RX-7 or Deckard
   Conejo plus Skidpad 0.5 or Drift Tracks. Selections persist in `localStorage`
   (`lapster.car.v1`, `lapster.track.v1`); Drive and the garage `Drive` button default to them
   and fall back to RX-7/Skidpad. Speed Dreams source, FAL text, and rebuild instructions live
   in `fixtures/sources/cars/sc-deckard-conejo/` and `docs/speed-dreams-pipeline.md`.
-  The garage has its own car picker. Playwright coverage lives in
+  The garage loads every catalog pack into the mixed showroom; it does not use a car
+  dropdown, car menu, or `?car=` override. Playwright coverage lives in
   `web/tests/track-launcher.spec.ts`.
 - Stylized grass: the Stylized Components GrassField shader was adapted to WGSL and a new
   instanced render pass. Scenes grow up to 240,000 wind-animated blades in clumps on GRASS

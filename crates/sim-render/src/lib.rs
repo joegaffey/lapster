@@ -199,7 +199,7 @@ impl GarageViewer {
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         track_pack_bytes: js_sys::Uint8Array,
-        car_pack_bytes: js_sys::Uint8Array,
+        car_packs: js_sys::Array,
     ) -> Result<GarageViewer, JsValue> {
         let track_bytes = track_pack_bytes.to_vec();
         let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
@@ -214,26 +214,38 @@ impl GarageViewer {
         let track_manifest = track_pack.manifest().clone();
         drop(track_pack);
 
-        let car_bytes = car_pack_bytes.to_vec();
-        let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-        if car_pack.kind() != sim_types::AssetKind::Car {
-            return Err(JsValue::from_str(
-                "expected a car pack for the second argument",
-            ));
+        if car_packs.length() == 0 {
+            return Err(JsValue::from_str("expected at least one car pack"));
         }
-        let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-        let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
-        let car_manifest = car_pack.manifest().clone();
-        drop(car_pack);
+        let mut car_data = Vec::with_capacity(car_packs.length() as usize);
+        for value in car_packs.iter() {
+            let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
+            let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
+            if car_pack.kind() != sim_types::AssetKind::Car {
+                return Err(JsValue::from_str(
+                    "expected car packs for the second argument",
+                ));
+            }
+            let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
+            let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
+            let car_manifest = car_pack.manifest().clone();
+            car_data.push((car_physics, car_visual, car_manifest));
+        }
+        let cars = car_data
+            .iter()
+            .map(|(physics, visual, manifest)| garage::GarageCar {
+                physics,
+                visual,
+                manifest,
+            })
+            .collect::<Vec<_>>();
 
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
             &track_collision,
             &track_manifest,
-            &car_physics,
-            &car_visual,
-            &car_manifest,
+            &cars,
             10,
             0,
             true,
@@ -359,10 +371,32 @@ impl GarageViewer {
             "selected": self.selected_bay,
             "count": self.bays.len(),
             "name": bay.map(|bay| bay.name.clone()).unwrap_or_default(),
+            "carId": bay.map(|bay| bay.car_id.clone()).unwrap_or_default(),
+            "car": bay.map(|bay| bay.car.clone()),
             "color": bay.map(|bay| bay.color),
             "colorName": bay.map(|bay| bay.color_name).unwrap_or_default(),
         })
         .to_string()
+    }
+
+    pub fn bay_list(&self) -> String {
+        serde_json::to_string(
+            &self
+                .bays
+                .iter()
+                .enumerate()
+                .map(|(index, bay)| {
+                    serde_json::json!({
+                        "index": index,
+                        "name": bay.name,
+                        "carId": bay.car_id,
+                        "color": bay.color,
+                        "colorName": bay.color_name,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string())
     }
 
     pub fn render(&mut self) -> Result<(), JsValue> {
@@ -690,14 +724,17 @@ impl DriveViewer {
         }
 
         let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
+        let cars = [garage::GarageCar {
+            physics: &car_physics,
+            visual: &car_visual,
+            manifest: &car_manifest,
+        }];
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
             &track_collision,
             &track_manifest,
-            &car_physics,
-            &car_visual,
-            &car_manifest,
+            &cars,
             1,
             car_bay,
             false,

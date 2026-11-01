@@ -20,16 +20,15 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
   can still be loaded with `?car=` and `?track=`. Throttle, brake, edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
   500 Hz physics, and a shareable tuning dialog.
-- **Garage** — choose the RX-7 or Deckard from the garage car picker, then browse ten bays for
-  the selected car in two facing rows of five: red/blue/yellow/green/orange opposite
-  black/white/pink/navy/cyan. Vertex-coloured cars use the bay paint; the textured Deckard
-  keeps its source livery. Each car sits centered in its canopy bay with a front
-  three-quarter start view; screen-side chevrons or arrow keys fly smoothly between bays.
-  The chevrons start hidden, fade in on mouse movement or touch, and fade out when idle.
-  Wheel steering/spin controls and an orbit/zoom camera follow the selection. The selected
-  car is remembered and drives with its showroom paint; the garage `Drive` button opens it
-  with the launcher's selected track (Skidpad by default), and the menu's Drive demo uses the
-  same car selection.
+- **Garage** — browse a curated mixed showroom where the catalog cars alternate across ten
+  colour-keyed bays in two facing rows of five: red/blue/yellow/green/orange opposite
+  black/white/pink/navy/cyan. Chevrons or arrow keys step through the bays. Vertex-coloured
+  cars use the bay paint; the textured Deckard keeps its source livery. Each car sits centered in its canopy bay with a front
+  three-quarter start view. The chevrons start hidden, fade in on mouse movement or touch,
+  and fade out when idle. Wheel steering/spin controls and an orbit/zoom camera follow the
+  selection. The selected bay's car is remembered and drives with its showroom paint; the
+  garage `Drive` button opens it with the launcher's selected track (Skidpad by default),
+  and the menu's Drive demo uses the same car selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation. Camera height is capped at 60 m to avoid high-angle
   model artifacts.

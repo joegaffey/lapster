@@ -4,7 +4,7 @@ test("garage viewer renders the car on the track", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6");
+  await page.goto("/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
@@ -27,21 +27,20 @@ test("garage viewer renders the car on the track", async ({ page }) => {
   expect(state.error).toBeUndefined();
   expect(state.ready).toBe(true);
   expect(state.status).toBe("ready");
-  expect(state.car).toContain("mass1200 kg");
-  expect(state.car).toContain("wheelbase2.60 m");
-  expect(state.car).toContain("track width1.80 / 1.80");
-  expect(state.car).toContain("steering wheelyes");
+  expect(state.car).toContain("mass1270 kg");
+  expect(state.car).toContain("wheelbase2.45 m");
+  expect(state.car).toContain("track width1.73 / 1.73");
+  expect(state.car).toContain("steering wheelno");
 
   for (const wheel of ["FL front", "FR front", "RL rear drive", "RR rear drive"]) {
     expect(state.wheels).toContain(wheel);
   }
-  expect(state.stats).toContain("vertices4492");
-  expect(state.stats).toContain("triangles4046");
   expect(state.stats).toContain("track tris86");
-  expect(state.stats).toContain("car tris3960");
-  expect(state.stats).toContain("draw calls58");
-  expect(state.debug.stats.texturedMeshes).toBe(1);
-  expect(state.debug.stats.outlinedMeshes).toBe(53);
+  expect(state.debug.cars.map((car: any) => car.id)).toEqual([
+    "mazda-rx7",
+    "sc-deckard-conejo",
+  ]);
+  expect(state.debug.stats.carDrawCalls).toBeGreaterThan(100);
   expect(pageErrors).toEqual([]);
 
   if (!process.env.CI) {
