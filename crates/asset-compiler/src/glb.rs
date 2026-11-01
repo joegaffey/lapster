@@ -3,10 +3,12 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use glam::{Mat3, Mat4, Vec3};
 use gltf::image::Format;
+use image::imageops::FilterType;
+use sha2::{Digest, Sha256};
 use sim_types::{
     Aabb, AeroSpec, BrakeSpec, CarPhysics, CarVisual, DriveLayout, EngineSpec, MaterialRef,
     MeshBuffers, MeshRef, NodeTransform, PacejkaCoefficients, SteeringSpec, SuspensionSpec,
-    TireSpec, TorquePoint, WheelPhysics, WheelVisual,
+    TextureRef, TireSpec, TorquePoint, WheelPhysics, WheelVisual,
 };
 
 use crate::mesh::{bounds, merge_bounds};
@@ -26,7 +28,17 @@ struct WheelImport {
     center: Vec3,
 }
 
+struct BodyGroup {
+    key: (u32, u32),
+    image: Option<usize>,
+    mesh: MeshBuffers,
+}
+
 pub fn import_car(path: &Path) -> Result<ImportedCar> {
+    import_car_with_textures(path, false)
+}
+
+pub fn import_car_with_textures(path: &Path, use_textures: bool) -> Result<ImportedCar> {
     let (document, buffers, images) =
         gltf::import(path).with_context(|| format!("failed to import {}", path.display()))?;
     let scene = document
@@ -35,11 +47,12 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
         .context("GLB has no scene")?;
 
     let yaw = Mat4::from_rotation_y(std::f32::consts::PI);
-    let mut body = empty_mesh();
+    let mut body_groups: Vec<BodyGroup> = Vec::new();
     let mut glass = empty_mesh();
     let mut wheels = Vec::new();
     let mut warnings = Vec::new();
     let mut removed_logos = 0;
+    let mut wheel_texture_image = None;
     let mut stack = scene
         .nodes()
         .map(|node| (node, Mat4::IDENTITY))
@@ -57,6 +70,10 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
                 let center = car.transform_point3(Vec3::ZERO);
                 let mut wheel_mesh = empty_mesh();
                 for primitive in mesh.primitives() {
+                    let texture_image = primitive_texture_image(&primitive);
+                    if use_textures && wheel_texture_image.is_none() {
+                        wheel_texture_image = texture_image;
+                    }
                     append_primitive(
                         &mut wheel_mesh,
                         &primitive,
@@ -64,7 +81,11 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
                         &images,
                         car,
                         Some(center),
-                        None,
+                        if use_textures && texture_image.is_some() {
+                            Some([1.0, 1.0, 1.0])
+                        } else {
+                            None
+                        },
                     )?;
                 }
                 wheels.push(WheelImport {
@@ -82,8 +103,39 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
                             &mut glass, &primitive, &buffers, &images, car, None, None,
                         )?;
                     } else {
+                        let texture_image = primitive_texture_image(&primitive);
+                        let texture_size = texture_image
+                            .and_then(|index| images.get(index))
+                            .map(|image| (image.width, image.height));
+                        let key = texture_size.unwrap_or((0, 0));
+                        let group_index = body_groups.iter().position(|group| group.key == key);
+                        let group_index = match group_index {
+                            Some(index) => index,
+                            None => {
+                                body_groups.push(BodyGroup {
+                                    key,
+                                    image: texture_image,
+                                    mesh: empty_mesh(),
+                                });
+                                body_groups.len() - 1
+                            }
+                        };
+                        if body_groups[group_index].image.is_none() {
+                            body_groups[group_index].image = texture_image;
+                        }
+                        let sample_light_color = upper.contains("LGT") || upper.contains("RLGTP");
                         append_primitive(
-                            &mut body, &primitive, &buffers, &images, car, None, None,
+                            &mut body_groups[group_index].mesh,
+                            &primitive,
+                            &buffers,
+                            &images,
+                            car,
+                            None,
+                            if use_textures && texture_image.is_some() && !sample_light_color {
+                                Some([1.0, 1.0, 1.0])
+                            } else {
+                                None
+                            },
                         )?;
                     }
                 }
@@ -95,7 +147,7 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
         }
     }
 
-    if body.positions.is_empty() || body.indices.is_empty() {
+    if body_groups.is_empty() {
         bail!("GLB has no body mesh");
     }
     if wheels.len() != 4 {
@@ -117,14 +169,71 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
         (!a_front, !a_left).cmp(&(!b_front, !b_left))
     });
 
-    let body_bounds = bounds(&body);
-    let body_ref = mesh_ref("body", &body, 0);
-    let mut meshes = vec![body_ref];
-    let mut mesh_buffers = vec![body];
+    body_groups.sort_by(|a, b| {
+        b.mesh
+            .positions
+            .len()
+            .cmp(&a.mesh.positions.len())
+            .then_with(|| a.key.cmp(&b.key))
+    });
+    let body_bounds = body_groups
+        .iter()
+        .map(|group| bounds(&group.mesh))
+        .reduce(|current, next| merge_bounds(Some(current), &next))
+        .unwrap_or(Aabb {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        });
+    let mut textures = Vec::new();
+    let mut materials = Vec::new();
+    let mut meshes = Vec::new();
+    let mut mesh_buffers = Vec::new();
+    let mut body_texture_found = false;
+    for (index, group) in body_groups.into_iter().enumerate() {
+        let texture = if use_textures {
+            group
+                .image
+                .map(|image_index| {
+                    let image = &images[image_index];
+                    let max_dim = if image.width.max(image.height) >= 2048 {
+                        1024
+                    } else {
+                        512
+                    };
+                    import_texture(image, max_dim, &format!("body_{index}"), &mut textures)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        body_texture_found |= texture.is_some();
+        let material = materials.len() as u16;
+        materials.push(MaterialRef {
+            name: if index == 0 {
+                String::from("imported_body")
+            } else {
+                format!("imported_body_{index}")
+            },
+            base_color: [1.0, 1.0, 1.0, 1.0],
+            metallic: 0.0,
+            roughness: 0.6,
+            base_color_texture: texture,
+            outline: index == 0,
+        });
+        let name = match index {
+            0 => String::from("body"),
+            1 => String::from("body_interior"),
+            _ => format!("body_{index}"),
+        };
+        meshes.push(mesh_ref(&name, &group.mesh, material));
+        mesh_buffers.push(group.mesh);
+    }
+    let wheel_material = materials.len() as u16;
+    let glass_material = wheel_material + 1;
     let mut wheel_visuals = Vec::with_capacity(4);
     let mut world_bounds = Some(body_bounds);
 
-    for (index, wheel) in wheels.into_iter().enumerate() {
+    for wheel in wheels {
         let wheel_bounds = bounds(&wheel.mesh);
         let extent = [
             wheel_bounds.max[0] - wheel_bounds.min[0],
@@ -141,8 +250,12 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
             (false, true) => "RL",
             (false, false) => "RR",
         };
-        let mesh_index = index + 1;
-        meshes.push(mesh_ref(&format!("wheel_{label}"), &wheel.mesh, 1));
+        let mesh_index = meshes.len();
+        meshes.push(mesh_ref(
+            &format!("wheel_{label}"),
+            &wheel.mesh,
+            wheel_material,
+        ));
         mesh_buffers.push(wheel.mesh.clone());
         wheel_visuals.push(WheelVisual {
             name: label.to_string(),
@@ -174,44 +287,41 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
     }
 
     if !glass.positions.is_empty() && !glass.indices.is_empty() {
-        meshes.push(mesh_ref("body_glass", &glass, 2));
+        meshes.push(mesh_ref("body_glass", &glass, glass_material));
         mesh_buffers.push(glass);
     }
 
     let wheels: [WheelVisual; 4] = wheel_visuals
         .try_into()
         .map_err(|_| anyhow::anyhow!("GLB did not produce four wheel visuals"))?;
-    let materials = vec![
-        MaterialRef {
-            name: String::from("imported_body"),
-            base_color: [1.0, 1.0, 1.0, 1.0],
-            metallic: 0.0,
-            roughness: 0.6,
-            base_color_texture: None,
-            outline: true,
-        },
-        MaterialRef {
-            name: String::from("imported_wheel"),
-            base_color: [1.0, 1.0, 1.0, 1.0],
-            metallic: 0.0,
-            roughness: 0.8,
-            base_color_texture: None,
-            outline: true,
-        },
-        MaterialRef {
-            name: String::from("imported_glass"),
-            base_color: [0.035, 0.045, 0.055, 0.32],
-            metallic: 0.0,
-            roughness: 0.1,
-            base_color_texture: None,
-            outline: false,
-        },
-    ];
+    let wheel_texture = if use_textures {
+        wheel_texture_image
+            .map(|index| import_texture(&images[index], 512, "wheel", &mut textures))
+            .transpose()?
+    } else {
+        None
+    };
+    materials.push(MaterialRef {
+        name: String::from("imported_wheel"),
+        base_color: [1.0, 1.0, 1.0, 1.0],
+        metallic: 0.0,
+        roughness: 0.8,
+        base_color_texture: wheel_texture,
+        outline: true,
+    });
+    materials.push(MaterialRef {
+        name: String::from("imported_glass"),
+        base_color: [0.035, 0.045, 0.055, 0.32],
+        metallic: 0.0,
+        roughness: 0.1,
+        base_color_texture: None,
+        outline: false,
+    });
 
     let visual = CarVisual {
         meshes,
         materials,
-        textures: Vec::new(),
+        textures,
         mesh_buffers,
         body: NodeTransform {
             translation: [0.0, 0.0, 0.0],
@@ -226,10 +336,17 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
     if removed_logos > 0 {
         warnings.push(format!("removed {removed_logos} logo node(s)"));
     }
-    warnings.push("baked source materials and palette texture into vertex colours".to_string());
-    warnings.push("body paint defaulted to a demo red".to_string());
+    if use_textures {
+        if body_texture_found {
+            warnings.push("imported body base-colour texture".to_string());
+        }
+        if wheel_texture.is_some() {
+            warnings.push("imported wheel base-colour texture".to_string());
+        }
+    } else {
+        warnings.push("baked source materials and palette texture into vertex colours".to_string());
+    }
     warnings.push("glass split into a semi-transparent mesh".to_string());
-    warnings.push("no steering wheel or interior found".to_string());
 
     Ok(ImportedCar {
         physics,
@@ -237,6 +354,73 @@ pub fn import_car(path: &Path) -> Result<ImportedCar> {
         bounds: world_bounds.unwrap_or(body_bounds),
         warnings,
     })
+}
+
+fn primitive_texture_image(primitive: &gltf::Primitive<'_>) -> Option<usize> {
+    primitive
+        .material()
+        .pbr_metallic_roughness()
+        .base_color_texture()
+        .map(|info| info.texture().source().index())
+}
+
+fn import_texture(
+    source: &gltf::image::Data,
+    max_dim: u32,
+    name: &str,
+    textures: &mut Vec<TextureRef>,
+) -> Result<u32> {
+    if source.width == 0 || source.height == 0 {
+        bail!("texture {name} has zero dimensions");
+    }
+    let mut rgba = Vec::with_capacity(source.width as usize * source.height as usize * 4);
+    for pixel in 0..source.width as usize * source.height as usize {
+        match source.format {
+            Format::R8G8B8A8 => {
+                let offset = pixel * 4;
+                rgba.extend_from_slice(&source.pixels[offset..offset + 4]);
+            }
+            Format::R8G8B8 => {
+                let offset = pixel * 3;
+                rgba.extend_from_slice(&source.pixels[offset..offset + 3]);
+                rgba.push(255);
+            }
+            Format::R8G8 => {
+                let offset = pixel * 2;
+                rgba.push(source.pixels[offset]);
+                rgba.push(source.pixels[offset + 1]);
+                rgba.push(0);
+                rgba.push(255);
+            }
+            Format::R8 => {
+                let value = source.pixels[pixel];
+                rgba.extend_from_slice(&[value, value, value, 255]);
+            }
+            _ => bail!("unsupported texture format for {name}"),
+        }
+    }
+    let mut image = image::RgbaImage::from_raw(source.width, source.height, rgba)
+        .with_context(|| format!("failed to create image for {name}"))?;
+    let longest = source.width.max(source.height);
+    if longest > max_dim {
+        let scale = max_dim as f32 / longest as f32;
+        let width = ((source.width as f32 * scale).round() as u32).max(1);
+        let height = ((source.height as f32 * scale).round() as u32).max(1);
+        image = image::imageops::resize(&image, width, height, FilterType::Lanczos3);
+    }
+    let (width, height) = image.dimensions();
+    let pixels = image.into_raw();
+    let hash: [u8; 32] = Sha256::digest(&pixels).into();
+    let index = textures.len() as u32;
+    textures.push(TextureRef {
+        name: format!("{name}_{width}x{height}"),
+        mime: String::from("image/png"),
+        hash,
+        width,
+        height,
+        rgba8: pixels,
+    });
+    Ok(index)
 }
 
 pub(crate) fn empty_mesh() -> MeshBuffers {

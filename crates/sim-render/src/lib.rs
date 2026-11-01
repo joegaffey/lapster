@@ -631,6 +631,7 @@ pub struct DriveViewer {
     particles: ParticleSystem,
     last_particle_time: Option<f64>,
     tuning: TuningConfig,
+    cockpit_dial_offsets: [[f32; 3]; 3],
     track_shadow_center: Vec3,
     track_shadow_half: f32,
 }
@@ -677,6 +678,16 @@ impl DriveViewer {
         let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
         let car_manifest = car_pack.manifest().clone();
         drop(car_pack);
+
+        if car_visual
+            .meshes
+            .iter()
+            .any(|mesh| mesh.name == "body_interior")
+        {
+            tuning.camera.cockpit.eye = [-0.4, 1.10, 0.1];
+            tuning.camera.cockpit.target = [-0.4, 1.00, -20.3];
+            tuning.camera.cockpit.fov_y = 1.0;
+        }
 
         let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
         let mut scene = Scene::build_garage(
@@ -772,6 +783,7 @@ impl DriveViewer {
             particles: ParticleSystem::new(),
             last_particle_time: None,
             tuning,
+            cockpit_dial_offsets: [[0.0; 3]; 3],
             track_shadow_center: Vec3::from_array(track_shadow_center),
             track_shadow_half,
         };
@@ -1135,6 +1147,9 @@ impl DriveViewer {
         for needle in &self.rig.cockpit_needles {
             self.renderer.set_mesh_visible(needle.mesh_index, visible);
         }
+        for cover in &self.rig.cockpit_covers {
+            self.renderer.set_mesh_visible(cover.mesh_index, visible);
+        }
         for segment in &self.rig.gear_segments {
             self.renderer.set_mesh_visible(
                 segment.mesh_index,
@@ -1152,6 +1167,26 @@ impl DriveViewer {
             };
             self.renderer.set_mesh_alpha(index, alpha);
         }
+    }
+
+    pub fn set_cockpit_dial_offset(&mut self, source: &str, x: f32, y: f32, z: f32) {
+        let index = match source.to_ascii_lowercase().as_str() {
+            "speed" => 0,
+            "rpm" => 1,
+            "gear" => 2,
+            _ => return,
+        };
+        self.cockpit_dial_offsets[index] = [x, y, z];
+        self.update_visuals();
+    }
+
+    pub fn cockpit_dial_offsets(&self) -> String {
+        serde_json::json!({
+            "speed": self.cockpit_dial_offsets[0],
+            "rpm": self.cockpit_dial_offsets[1],
+            "gear": self.cockpit_dial_offsets[2],
+        })
+        .to_string()
     }
 
     pub fn set_traction_control(&mut self, enabled: bool) {
@@ -1297,6 +1332,9 @@ impl DriveViewer {
     pub fn set_body_visible(&mut self, visible: bool) {
         self.renderer
             .set_mesh_visible(self.rig.body_mesh_index, visible);
+        for index in &self.rig.extra_body_meshes {
+            self.renderer.set_mesh_visible(*index, visible);
+        }
         if let Some(index) = self.rig.glass_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
@@ -1416,17 +1454,35 @@ impl DriveViewer {
         self.renderer.set_shadow_focus(focus.to_array(), extent);
         self.renderer
             .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
+        for index in &self.rig.extra_body_meshes {
+            self.renderer
+                .set_mesh_model(*index, car_world * self.rig.body_local);
+        }
         if let Some(index) = self.rig.dashboard_mesh_index {
             self.renderer
                 .set_mesh_model(index, car_world * self.rig.dashboard_local);
         }
+        let speed_offset = Mat4::from_translation(Vec3::from_array(self.cockpit_dial_offsets[0]));
+        let rpm_offset = Mat4::from_translation(Vec3::from_array(self.cockpit_dial_offsets[1]));
+        let gear_offset = Mat4::from_translation(Vec3::from_array(self.cockpit_dial_offsets[2]));
+        for cover in &self.rig.cockpit_covers {
+            let offset = match cover.source {
+                CockpitNeedleSource::Speed => speed_offset,
+                CockpitNeedleSource::Rpm => rpm_offset,
+                CockpitNeedleSource::Gear => gear_offset,
+            };
+            self.renderer.set_mesh_model(
+                cover.mesh_index,
+                car_world * self.rig.dashboard_local * offset,
+            );
+        }
         if let Some(index) = self.rig.speedometer_face_mesh_index {
             self.renderer
-                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+                .set_mesh_model(index, car_world * self.rig.dashboard_local * speed_offset);
         }
         if let Some(index) = self.rig.rpm_face_mesh_index {
             self.renderer
-                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+                .set_mesh_model(index, car_world * self.rig.dashboard_local * rpm_offset);
         }
         let speed_kph = state.velocity.length() * 3.6;
         let gear_fraction = ((state.gear.max(1) - 1) as f32 / 5.0).clamp(0.0, 1.0);
@@ -1439,15 +1495,23 @@ impl DriveViewer {
             let start = 135.0_f32.to_radians();
             let sweep = 270.0_f32.to_radians();
             let angle = start - fraction * sweep;
+            let offset = match needle.source {
+                CockpitNeedleSource::Speed => speed_offset,
+                CockpitNeedleSource::Rpm => rpm_offset,
+                CockpitNeedleSource::Gear => gear_offset,
+            };
             let model = car_world
                 * self.rig.dashboard_local
+                * offset
                 * Mat4::from_translation(needle.center)
                 * Mat4::from_rotation_z(angle);
             self.renderer.set_mesh_model(needle.mesh_index, model);
         }
         for segment in &self.rig.gear_segments {
-            let model =
-                car_world * self.rig.dashboard_local * Mat4::from_translation(segment.center);
+            let model = car_world
+                * self.rig.dashboard_local
+                * gear_offset
+                * Mat4::from_translation(segment.center);
             self.renderer.set_mesh_model(segment.mesh_index, model);
             self.renderer.set_mesh_visible(
                 segment.mesh_index,

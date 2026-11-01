@@ -342,6 +342,7 @@ mod tests {
         CarRig {
             body_mesh_index: 0,
             body_local: Mat4::IDENTITY,
+            extra_body_meshes: Vec::new(),
             glass_mesh_index: None,
             brake_light_mesh_index: None,
             reverse_light_mesh_index: None,
@@ -350,6 +351,7 @@ mod tests {
             speedometer_face_mesh_index: None,
             rpm_face_mesh_index: None,
             cockpit_needles: Vec::new(),
+            cockpit_covers: Vec::new(),
             gear_segments: Vec::new(),
             wheels: (0..4)
                 .map(|index| RigWheel {

@@ -24,10 +24,16 @@ fn run() -> Result<()> {
             bake_asset(kind, Path::new(dir), Some(Path::new(out)))?;
         }
         [command, glb] if command == "bake-glb" => {
-            bake_glb(Path::new(glb), None)?;
+            bake_glb(Path::new(glb), None, false)?;
         }
         [command, glb, out] if command == "bake-glb" => {
-            bake_glb(Path::new(glb), Some(Path::new(out)))?;
+            bake_glb(Path::new(glb), Some(Path::new(out)), false)?;
+        }
+        [command, glb, flag] if command == "bake-glb" && *flag == "--textures" => {
+            bake_glb(Path::new(glb), None, true)?;
+        }
+        [command, glb, out, flag] if command == "bake-glb" && *flag == "--textures" => {
+            bake_glb(Path::new(glb), Some(Path::new(out)), true)?;
         }
         [command, dir] if command == "bake-glb-track" => {
             bake_glb_track(Path::new(dir), None)?;
@@ -159,8 +165,8 @@ fn bake_asset(kind: &str, dir: &Path, out: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn bake_glb(input: &Path, out: Option<&Path>) -> Result<()> {
-    let bytes = bake::bake_car_glb(input)?;
+fn bake_glb(input: &Path, out: Option<&Path>, textures: bool) -> Result<()> {
+    let bytes = bake::bake_car_glb_with_textures(input, textures)?;
     let output = out
         .map(Path::to_path_buf)
         .unwrap_or_else(|| input.with_extension("sima"));
@@ -170,10 +176,11 @@ fn bake_glb(input: &Path, out: Option<&Path>) -> Result<()> {
     }
     fs::write(&output, &bytes).with_context(|| format!("failed to write {}", output.display()))?;
     println!(
-        "baked GLB {} -> {} ({} bytes)",
+        "baked GLB {} -> {} ({} bytes){}",
         input.display(),
         output.display(),
-        bytes.len()
+        bytes.len(),
+        if textures { " with textures" } else { "" }
     );
     Ok(())
 }
@@ -184,6 +191,6 @@ fn read_pack(path: &str) -> Result<Vec<u8>> {
 
 fn usage() {
     eprintln!(
-        "usage:\n  asset-compiler bake <car|track> <dir> [out]\n  asset-compiler bake-glb <car.glb> [out]\n  asset-compiler bake-glb-track <dir> [out]\n  asset-compiler bake-ac-track <dir> [out] [--scale <factor>] [--texture-overrides <file>]\n  asset-compiler inspect <pack>\n  asset-compiler validate <pack>"
+        "usage:\n  asset-compiler bake <car|track> <dir> [out]\n  asset-compiler bake-glb <car.glb> [out] [--textures]\n  asset-compiler bake-glb-track <dir> [out]\n  asset-compiler bake-ac-track <dir> [out] [--scale <factor>] [--texture-overrides <file>]\n  asset-compiler inspect <pack>\n  asset-compiler validate <pack>"
     );
 }

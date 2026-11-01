@@ -163,6 +163,22 @@
       #viewer-controls > *:hover {
         background: #1c2430;
       }
+      #viewer-controls .car-picker {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 6px;
+      }
+      #viewer-controls .car-picker span {
+        color: #8f9bab;
+      }
+      #viewer-controls select {
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
       #car-nav {
         position: fixed;
         inset: 0;
@@ -303,6 +319,10 @@
     </nav>
     <nav id="viewer-controls" aria-label="Viewer controls">
       <a class="hud-exit" href="../">Exit</a>
+      <label class="car-picker">
+        <span>Car</span>
+        <select id="car-select" aria-label="Choose a car"></select>
+      </label>
       <a id="drive-car" href="../drive/">Drive</a>
       <button id="reset-camera" type="button">Reset camera</button>
     </nav>

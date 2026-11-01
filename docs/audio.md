@@ -28,8 +28,10 @@ DSP is moved behind the worker boundary.
 
 ## Engine voice
 
-- Engine profile: `rotary2`, with external vehicle RPM, speed, gear, throttle, brake, and
-  conditioned load.
+- Engine profile comes from the selected car catalog entry: `rotary2` for the Mazda RX-7
+  and `v8cross` (cross-plane V8) for the Speed Dreams Deckard Conejo. Custom packs that are
+  not in the catalog use the legacy `rotary2`/`sports` fallback. The profile is driven by
+  external vehicle RPM, speed, gear, throttle, brake, and conditioned load.
 - External-state adapter:
   - locks the clutch for audio purposes;
   - uses a 60 ms RPM low-pass with a 12,000 rpm/s slew limit outside shifts;
@@ -91,7 +93,8 @@ cornering slip:
 ## Deferred work
 
 - Direct SAB snapshot reads from an audio worklet.
-- Per-car audio profiles and rotary/piston metadata in asset packs.
+- Move engine profile, exhaust, and cockpit audio metadata from the web catalog into asset
+  packs; custom Speed Dreams cars currently fall back to `rotary2`.
 - Optional licensed one-shot or sample layer.
 - Stereo/axle panning, surface-specific kerb/gravel detail, Doppler, and reverb zones.
 - HID/FFB/audio integration in the worker topology.

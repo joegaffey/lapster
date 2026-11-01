@@ -11,7 +11,12 @@ import { setupAssistsDialog } from "../src/ui/assists.ts";
 import { setupDevMenu } from "../src/ui/dev-menu.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
-import { saveSelectedBay, selectedBay } from "../src/ui/car-selection.ts";
+import {
+  findCar,
+  loadSelectedCar,
+  saveSelectedBay,
+  selectedBay,
+} from "../src/ui/car-selection.ts";
 import { loadSelectedTrack } from "../src/ui/track-selection.ts";
 import { PhysicsClient } from "../src/sim/physics.ts";
 import { SnapshotSmoother } from "../src/sim/interpolate.ts";
@@ -59,11 +64,10 @@ if (devMode) {
 }
 const defaultTrack = loadSelectedTrack();
 const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
-const CAR_URL = withPackVersion(
-  params.get("car") ?? "../../fixtures/cars/mazda-rx7/mazda-rx7.sima",
-  APP_VERSION,
-);
+const selectedCar = loadSelectedCar();
+const CAR_URL = withPackVersion(params.get("car") ?? selectedCar.url, APP_VERSION);
 const carBay = selectedBay();
+
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 let renderScale = 1;
 const status = document.querySelector<HTMLElement>("#status")!;
@@ -739,7 +743,10 @@ async function boot() {
   window.__driveViewer = driver;
 
   if (physicsWorker) {
-    audio = new EngineSimAudio();
+    const carOption = findCar(carPack.manifest.id);
+    audio = new EngineSimAudio(
+      carOption ? { engine: carOption.engine, vehicle: carOption.vehicle } : undefined,
+    );
     if (storedTuning?.audio) {
       audio.applyTuning(storedTuning.audio);
     }

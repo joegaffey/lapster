@@ -45,11 +45,19 @@ export interface TireAudioWheel {
   surface?: string;
 }
 
+export interface EngineSimAudioOptions {
+  engine?: string;
+  vehicle?: string;
+}
+
 export class EngineSimAudio {
   status: AudioStatus = "off";
   error = "";
   muted = false;
   tuning: AudioTuning = { ...DEFAULT_AUDIO_TUNING };
+
+  private readonly engineId: string;
+  private readonly vehicleId: string;
 
   private context: AudioContext | null = null;
   private sim: EngineSim | null = null;
@@ -94,6 +102,11 @@ export class EngineSimAudio {
   private hasRpm = false;
   private hasLoad = false;
 
+  constructor(options: EngineSimAudioOptions = {}) {
+    this.engineId = options.engine ?? "rotary2";
+    this.vehicleId = options.vehicle ?? "sports";
+  }
+
   get contextState(): string {
     return this.context?.state ?? "closed";
   }
@@ -125,8 +138,8 @@ export class EngineSimAudio {
         import.meta.url,
       );
       const sim = new EngineSim(context, {
-        engine: "rotary2",
-        vehicle: "sports",
+        engine: this.engineId,
+        vehicle: this.vehicleId,
         volume: 1,
       });
       sim.setAutoShift(false);

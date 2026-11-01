@@ -94,6 +94,12 @@ pub struct CockpitNeedle {
 }
 
 #[derive(Debug, Clone)]
+pub struct CockpitCover {
+    pub mesh_index: usize,
+    pub source: CockpitNeedleSource,
+}
+
+#[derive(Debug, Clone)]
 pub struct CockpitGearSegment {
     pub mesh_index: usize,
     pub center: Vec3,
@@ -104,6 +110,7 @@ pub struct CockpitGearSegment {
 pub struct CarRig {
     pub body_mesh_index: usize,
     pub body_local: Mat4,
+    pub extra_body_meshes: Vec<usize>,
     pub glass_mesh_index: Option<usize>,
     pub brake_light_mesh_index: Option<usize>,
     pub reverse_light_mesh_index: Option<usize>,
@@ -112,6 +119,7 @@ pub struct CarRig {
     pub speedometer_face_mesh_index: Option<usize>,
     pub rpm_face_mesh_index: Option<usize>,
     pub cockpit_needles: Vec<CockpitNeedle>,
+    pub cockpit_covers: Vec<CockpitCover>,
     pub gear_segments: Vec<CockpitGearSegment>,
     pub wheels: Vec<RigWheel>,
     pub steering_mesh_index: Option<usize>,

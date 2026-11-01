@@ -8,6 +8,10 @@ safe to commit except where noted.
 - `cars/minimal/car.json`: one body box, four cylinder wheels, and a hand-authored physics
   configuration.
 - `cars/mazda-rx7/`: default demo car. CC BY 3.0; see its README for attribution.
+- `cars/sc-deckard-conejo/`: textured Speed Dreams demo car. Free Art License 1.3; see
+  `docs/speed-dreams-pipeline.md` and its README for attribution and rebuild steps.
+- `sources/cars/sc-deckard-conejo/`: tracked Speed Dreams source, donor wheel, license text,
+  and original readme. Committed so the FAL source remains available with the baked pack.
 - `tracks/minimal/track.json`: ground plane, two walls, start line, a generated gauge-texture
   sign, spawn point, cameras, surfaces, and labeled X/Y/Z axes.
 - `tracks/skidpad05/pack.sima`: temporary default demo track. The source archive had no
@@ -32,6 +36,8 @@ cargo run -p asset-compiler -- bake car fixtures/cars/minimal
 cargo run -p asset-compiler -- bake track fixtures/tracks/minimal
 cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb
 cargo run -p asset-compiler -- bake-glb-track fixtures/tracks/drift-sketchfab
+tools/speed-dreams/build-car.sh fixtures/sources/cars/sc-deckard-conejo \
+  fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima
 ```
 
 The Skidpad pack is baked from the raw AC mod under `fixtures/real/`:
@@ -43,5 +49,9 @@ cargo run -p asset-compiler -- bake-ac-track fixtures/real/tracks/skidpad05 \
 
 ## Real assets
 
-Raw mod assets are not committed. Place them under `fixtures/real/` and follow
-`docs/manual-asset-testing.md`. The `fixtures/real/` directory is gitignored.
+Raw assets that cannot be redistributed are not committed. Place them under `fixtures/real/`
+and follow `docs/manual-asset-testing.md`. The `fixtures/real/` directory is gitignored.
+
+Redistributable Speed Dreams sources belong under `fixtures/sources/`, not `fixtures/real/`.
+The FAL requires the source and modification notices to remain available with modified
+copies. See `docs/speed-dreams-pipeline.md`.

@@ -8,9 +8,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::camera::Camera;
 use crate::scene::{
-    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitGearSegment,
-    CockpitNeedle, CockpitNeedleSource, GarageBay, LineVertex, MeshData, MeshVertex, RigWheel,
-    Scene, SceneTexture, SceneWheel,
+    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitCover,
+    CockpitGearSegment, CockpitNeedle, CockpitNeedleSource, GarageBay, LineVertex, MeshData,
+    MeshVertex, RigWheel, Scene, SceneTexture, SceneWheel,
 };
 use crate::shadow_decal_yaw;
 
@@ -456,7 +456,9 @@ const BAY_COLORS: [[f32; 3]; 10] = [
     [0.02, 0.56, 0.55],
 ];
 
-const COCKPIT_DIALS: [(CockpitNeedleSource, [f32; 3], f32, f32); 3] = [
+type CockpitDial = (CockpitNeedleSource, [f32; 3], f32, f32);
+
+const COCKPIT_DIALS: [CockpitDial; 3] = [
     (
         CockpitNeedleSource::Speed,
         [-0.442, 0.935, -0.22],
@@ -474,6 +476,27 @@ const COCKPIT_DIALS: [(CockpitNeedleSource, [f32; 3], f32, f32); 3] = [
         [-0.258, 0.935, -0.22],
         0.044,
         0.035,
+    ),
+];
+
+const CAMARO_COCKPIT_DIALS: [CockpitDial; 3] = [
+    (
+        CockpitNeedleSource::Speed,
+        [-0.515, 0.945, -0.32],
+        0.0419,
+        0.0253,
+    ),
+    (
+        CockpitNeedleSource::Rpm,
+        [-0.315, 0.945, -0.32],
+        0.0448,
+        0.0253,
+    ),
+    (
+        CockpitNeedleSource::Gear,
+        [-0.415, 0.935, -0.305],
+        0.0361,
+        0.0217,
     ),
 ];
 
@@ -496,8 +519,23 @@ fn build_car(
         .get(body_index)
         .ok_or_else(|| "car body mesh has no buffers".to_string())?
         .clone();
+    let textured_body = car_visual
+        .materials
+        .get(body_mesh.material as usize)
+        .is_some_and(|material| material.base_color_texture.is_some());
+    let has_interior = car_visual
+        .meshes
+        .iter()
+        .any(|mesh| mesh.name == "body_interior");
+    let synthetic_cockpit = brake_lights && !has_interior;
+    let cockpit_dials: &[CockpitDial] = if has_interior {
+        &CAMARO_COCKPIT_DIALS
+    } else {
+        &COCKPIT_DIALS
+    };
+    let has_cockpit_gauges = synthetic_cockpit || has_interior;
     let (brake_light_buffers, reverse_light_buffers) = if brake_lights {
-        split_rear_lights(&mut body_buffers, &body_mesh.bounds)
+        split_rear_lights(&mut body_buffers, &body_mesh.bounds, textured_body)
     } else {
         (None, None)
     };
@@ -521,6 +559,33 @@ fn build_car(
     let body_bounds = world_bounds(&body_buffers, body_model);
     add_box_lines(&mut scene.lines, &body_bounds, [0.25, 0.75, 1.0]);
 
+    let mut extra_body_meshes = Vec::new();
+    for (index, mesh) in car_visual.meshes.iter().enumerate() {
+        if index == body_index || mesh.name == "body_glass" || !mesh.name.starts_with("body_") {
+            continue;
+        }
+        let buffers = car_visual
+            .mesh_buffers
+            .get(index)
+            .ok_or_else(|| format!("car mesh {} has no buffers", mesh.name))?;
+        let color = car_material_color(car_visual, mesh.material as usize);
+        let mesh_index = push_car_mesh(
+            scene,
+            &format!("{prefix}_{}", mesh.name),
+            mesh,
+            buffers,
+            color,
+            body_model,
+            CarMeshStyle {
+                texture: car_texture(car_visual, mesh, car_texture_base)?,
+                outline: car_outline(car_visual, mesh),
+                alpha: car_material_alpha(car_visual, mesh.material as usize),
+            },
+        )?;
+        extra_body_meshes.push(mesh_index);
+    }
+
+    let body_texture = car_texture(car_visual, body_mesh, car_texture_base)?;
     let brake_light_mesh_index = if let Some(buffers) = brake_light_buffers {
         Some(push_car_light_mesh(
             scene,
@@ -529,6 +594,7 @@ fn build_car(
             body_mesh,
             &buffers,
             body_model,
+            body_texture,
         )?)
     } else {
         None
@@ -541,6 +607,7 @@ fn build_car(
             body_mesh,
             &buffers,
             body_model,
+            body_texture,
         )?)
     } else {
         None
@@ -572,7 +639,7 @@ fn build_car(
         None
     };
 
-    let dashboard_mesh_index = if brake_lights {
+    let dashboard_mesh_index = if synthetic_cockpit {
         let dashboard = mesh_index_by_name(car_visual, "body_glass")
             .and_then(|index| car_visual.mesh_buffers.get(index))
             .and_then(cockpit_cowl_buffers);
@@ -618,21 +685,52 @@ fn build_car(
         None
     };
 
-    let has_dashboard_faces = brake_lights && dashboard_mesh_index.is_some();
-    let speedometer_face_mesh_index = if has_dashboard_faces {
-        push_dial_face(scene, prefix, CockpitNeedleSource::Speed, body_model)?
+    let mut cockpit_covers = Vec::new();
+    if has_cockpit_gauges {
+        for &(source, center, radius, depth) in cockpit_dials {
+            if source == CockpitNeedleSource::Gear {
+                continue;
+            }
+            cockpit_covers.push(CockpitCover {
+                mesh_index: push_dial_cover(
+                    scene,
+                    prefix,
+                    center,
+                    radius * 1.18,
+                    depth - 0.004,
+                    body_model,
+                )?,
+                source,
+            });
+        }
+    }
+
+    let speedometer_face_mesh_index = if has_cockpit_gauges {
+        push_dial_face(
+            scene,
+            prefix,
+            CockpitNeedleSource::Speed,
+            cockpit_dials,
+            body_model,
+        )?
     } else {
         None
     };
-    let rpm_face_mesh_index = if has_dashboard_faces {
-        push_dial_face(scene, prefix, CockpitNeedleSource::Rpm, body_model)?
+    let rpm_face_mesh_index = if has_cockpit_gauges {
+        push_dial_face(
+            scene,
+            prefix,
+            CockpitNeedleSource::Rpm,
+            cockpit_dials,
+            body_model,
+        )?
     } else {
         None
     };
 
     let mut cockpit_needles = Vec::new();
-    if brake_lights && dashboard_mesh_index.is_some() {
-        for (source, center, radius, depth) in COCKPIT_DIALS {
+    if has_cockpit_gauges {
+        for &(source, center, radius, depth) in cockpit_dials {
             if source == CockpitNeedleSource::Gear {
                 continue;
             }
@@ -676,8 +774,8 @@ fn build_car(
     }
 
     let mut gear_segments = Vec::new();
-    if brake_lights && dashboard_mesh_index.is_some() {
-        if let Some((_, center, radius, depth)) = COCKPIT_DIALS
+    if has_cockpit_gauges {
+        if let Some((_, center, radius, depth)) = cockpit_dials
             .iter()
             .find(|(source, _, _, _)| *source == CockpitNeedleSource::Gear)
         {
@@ -827,6 +925,7 @@ fn build_car(
     let rig = CarRig {
         body_mesh_index,
         body_local,
+        extra_body_meshes,
         glass_mesh_index,
         brake_light_mesh_index,
         reverse_light_mesh_index,
@@ -835,6 +934,7 @@ fn build_car(
         speedometer_face_mesh_index,
         rpm_face_mesh_index,
         cockpit_needles,
+        cockpit_covers,
         gear_segments,
         wheels: rig_wheels,
         steering_mesh_index,
@@ -1031,14 +1131,55 @@ fn cockpit_cowl_buffers(glass: &MeshBuffers) -> Option<MeshBuffers> {
     Some(buffers)
 }
 
+fn push_dial_cover(
+    scene: &mut Scene,
+    prefix: &str,
+    center: [f32; 3],
+    radius: f32,
+    depth: f32,
+    body_model: Mat4,
+) -> Result<usize, String> {
+    let mut buffers = dial_face_buffers(center, radius, depth);
+    buffers.colors.fill([0.004, 0.005, 0.006]);
+    let mesh_ref = MeshRef {
+        name: format!("{}_dial_cover", prefix),
+        vertex_offset: 0,
+        vertex_count: buffers.positions.len() as u32,
+        index_offset: 0,
+        index_count: buffers.indices.len() as u32,
+        material: 0,
+        bounds: Aabb {
+            min: [center[0] - radius, center[1] - radius, center[2]],
+            max: [center[0] + radius, center[1] + radius, center[2]],
+        },
+        lod: 0,
+    };
+    let index = push_car_mesh(
+        scene,
+        &format!("{}_dial_cover_{}", prefix, scene.meshes.len()),
+        &mesh_ref,
+        &buffers,
+        [0.004, 0.005, 0.006],
+        body_model,
+        CarMeshStyle {
+            texture: None,
+            outline: false,
+            alpha: 1.0,
+        },
+    )?;
+    scene.meshes[index].casts_static_shadow = false;
+    scene.meshes[index].casts_dynamic_shadow = false;
+    Ok(index)
+}
+
 fn push_dial_face(
     scene: &mut Scene,
     prefix: &str,
     source: CockpitNeedleSource,
+    dials: &[CockpitDial],
     body_model: Mat4,
 ) -> Result<Option<usize>, String> {
-    let Some((_, center, radius, depth)) =
-        COCKPIT_DIALS.iter().find(|(dial, _, _, _)| *dial == source)
+    let Some((_, center, radius, depth)) = dials.iter().find(|(dial, _, _, _)| *dial == source)
     else {
         return Ok(None);
     };
@@ -1399,6 +1540,7 @@ fn push_car_light_mesh(
     body_mesh: &MeshRef,
     buffers: &MeshBuffers,
     model: Mat4,
+    texture: Option<usize>,
 ) -> Result<usize, String> {
     let light_ref = MeshRef {
         name: format!("body_{name}"),
@@ -1418,7 +1560,7 @@ fn push_car_light_mesh(
         [1.0, 1.0, 1.0],
         model,
         CarMeshStyle {
-            texture: None,
+            texture,
             outline: false,
             alpha: 1.0,
         },
@@ -1431,6 +1573,7 @@ fn push_car_light_mesh(
 fn split_rear_lights(
     buffers: &mut MeshBuffers,
     bounds: &Aabb,
+    skip_plain_white: bool,
 ) -> (Option<MeshBuffers>, Option<MeshBuffers>) {
     let rear_start = bounds.max[2] - 0.35;
     let mut brake = new_light_buffers();
@@ -1445,6 +1588,17 @@ fn split_rear_lights(
                 .is_some_and(|position| position[2] >= rear_start)
         });
         if !rear {
+            body_indices.extend_from_slice(triangle);
+            continue;
+        }
+        if skip_plain_white
+            && triangle.iter().all(|index| {
+                buffers
+                    .colors
+                    .get(*index as usize)
+                    .is_some_and(|color| *color == [1.0, 1.0, 1.0])
+            })
+        {
             body_indices.extend_from_slice(triangle);
             continue;
         }
@@ -1468,7 +1622,19 @@ fn split_rear_lights(
                 max - min < 0.04 && color[0] > 0.15
             })
         });
-        if red_orange {
+        if skip_plain_white {
+            let lateral = triangle
+                .iter()
+                .filter_map(|index| buffers.positions.get(*index as usize))
+                .map(|position| position[0].abs())
+                .sum::<f32>()
+                / 3.0;
+            if lateral < 0.52 {
+                push_light_triangle(&mut reverse, buffers, triangle);
+            } else {
+                push_light_triangle(&mut brake, buffers, triangle);
+            }
+        } else if red_orange {
             push_light_triangle(&mut brake, buffers, triangle);
         } else if reverse_lens {
             push_light_triangle(&mut reverse, buffers, triangle);

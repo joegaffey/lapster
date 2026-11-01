@@ -14,16 +14,16 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 
 Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
-- **Drive** — Mazda RX-7 on the Skidpad 0.5 track by default. The launcher also offers the
-  Drift Tracks fixture; the last track chosen there becomes the default for Drive and the
-  garage's `Drive` button. Custom tracks can still be loaded with
-  `?track=../../fixtures/tracks/drift-sketchfab/pack.sima`. Throttle, brake,
-  edge-triggered reverse,
+- **Drive** — choose the Mazda RX-7 or Speed Dreams Deckard Conejo, then Skidpad 0.5 or
+  Drift Tracks. The RX-7 and Skidpad remain the defaults. The launcher remembers the last car
+  and track; both become the default for Drive and the garage's `Drive` button. Custom packs
+  can still be loaded with `?car=` and `?track=`. Throttle, brake, edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
-  500 Hz physics, and a
-  shareable tuning dialog.
-- **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
-  opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
+  500 Hz physics, and a shareable tuning dialog.
+- **Garage** — choose the RX-7 or Deckard from the garage car picker, then browse ten bays for
+  the selected car in two facing rows of five: red/blue/yellow/green/orange opposite
+  black/white/pink/navy/cyan. Vertex-coloured cars use the bay paint; the textured Deckard
+  keeps its source livery. Each car sits centered in its canopy bay with a front
   three-quarter start view; screen-side chevrons or arrow keys fly smoothly between bays.
   The chevrons start hidden, fade in on mouse movement or touch, and fade out when idle.
   Wheel steering/spin controls and an orbit/zoom camera follow the selection. The selected
@@ -64,6 +64,9 @@ isolation or worker startup fails.
 
 - Synthetic fixtures plus default GLB car and AC track assets with deterministic baking and
   validation.
+- Speed Dreams car import: tracked `.acc` source, Assimp/glTF Transform conversion, textured
+  pack, brake/reverse lights, cockpit interior, and per-car V8 audio. See
+  [`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md).
 - Versioned asset packs: JSON manifest, aligned rkyv chunks, SHA-256 chunk verification.
 - 500 Hz fixed-step vehicle physics:
   - raycast suspension with anti-roll bars, stiffer damping, and progressive bump stops,
@@ -96,8 +99,8 @@ isolation or worker startup fails.
   seven-segment sprite gear display for `N`, `1–6`, and `R`, and red needles calibrated to
   `7:30 → 4:30`; dial faces are recessed into their cylinders.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
-  `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
-  audio. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,
+  AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo audio. The
+  RX-7 uses the `rotary2` profile; the Speed Dreams Deckard Conejo uses `v8cross`. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,
   a low concrete rumble plus grit for the transition apron, kerb patter, and grass
   rumble/rustle from per-wheel surface names and speed. A tire-screech layer gates
   band-passed noise from lateral and longitudinal skid, load, and speed. Audio starts off on
@@ -144,6 +147,13 @@ The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 27
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
 estimates until a licensed AC `.ini` source is available.
 
+The Deckard Conejo is imported from Speed Dreams with the generic GLB physics baseline
+(1,270 kg, 2.73 m wheelbase, six-speed RWD) plus its source geometry and textures. Its Speed
+Dreams XML contains a 1,700 kg Camaro SS setup, 6.2 L V8 torque curve, gearbox, brakes,
+suspension, and aero data; mapping those values is the main remaining physics task. See
+[`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md) for the import process,
+attribution, and remaining work.
+
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
 opaque glass; cockpit mode renders it at 6% alpha. The body is visible by default, wheels
 always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. The bonnet
@@ -153,7 +163,9 @@ camera is centered on the car's longitudinal axis at 1.25 m; cockpit eye is 1.10
 ## Build and run
 
 Prerequisites: stable Rust, the `wasm32-unknown-unknown` target, `wasm-bindgen` 0.2.129,
-Node 24+, and Python 3 for the local server.
+Node 24+, and Python 3 for the local server. Rebuilding the Speed Dreams car also needs
+Assimp 5.3.x and the tool dependencies in `tools/speed-dreams/`; see
+[`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md).
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -208,7 +220,9 @@ crates/
   sim-worker/      Rust/Wasm physics worker entry and simulation wrapper
   sim-render/      wgpu renderer and wasm viewers
 web/               TypeScript glue, viewers, build scripts, tests
+tools/speed-dreams/ offline Speed Dreams car conversion helper
 fixtures/          synthetic car and track fixtures plus baked packs
+fixtures/sources/  tracked redistributable source assets and license notices
 ```
 
 Vehicle dynamics are intentionally first-party. General-purpose physics engines are optional
@@ -230,6 +244,13 @@ wind-animated toon blade pass. See [`docs/art-style.md`](docs/art-style.md).
   See `fixtures/tracks/drift-sketchfab/README.md` and `THIRD_PARTY_NOTICES.md`.
 - **Skidpad 0.5** is a temporary demo track. The source archive contained no license
   metadata; replace it or confirm redistribution rights before a public/commercial release.
+- **Deckard Conejo RR** by Tom_D3, W.E.C, Chad Phillips, and June Ravenmoon,
+  Free Art License 1.3, via
+  [Speed Dreams](https://forge.a-lec.org/speed-dreams/sc-deckard-conejo). The donor
+  wheel is from the Boxer 96 Carson Tuners Edition. See
+  [`fixtures/sources/cars/sc-deckard-conejo/README.md`](fixtures/sources/cars/sc-deckard-conejo/README.md),
+  [`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md), and
+  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 - **Engine_Sim** by Yigit Salih Emecen, MIT, powers Drive engine audio. See
   [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
   [`docs/audio.md`](docs/audio.md). No upstream audio samples are included.
@@ -240,9 +261,9 @@ wind-animated toon blade pass. See [`docs/art-style.md`](docs/art-style.md).
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
 in [`PLAN.md`](PLAN.md). Drive uses the SAB physics worker by default and an external-state
-Engine_Sim rotary2 audio spike. Next is listening/tuning and deciding whether to restore more
-EngineSim drivetrain transients or move the audio DSP directly onto SAB snapshots. Remaining
-work includes the HID/FFB worker, AC `.ini` physics mapping, full texture decoding,
+Engine_Sim audio spike with per-car profiles. Next is moving the audio DSP directly onto SAB
+snapshots and tuning the Speed Dreams V8 and rotary voices. Remaining work includes the
+HID/FFB worker, Speed Dreams XML and AC `.ini` physics mapping, full texture decoding,
 KTX2/Basis texture compression, texture atlases, fence/tent collision policy, and hardening.
 
 ## License

@@ -43,6 +43,24 @@ supported. The first GLB pass bakes materials into vertex colours, derives wheel
 from node names, removes logo nodes, and uses generic vehicle physics; decimation and
 per-vehicle physics mapping are follow-up work.
 
+## Speed Dreams cars
+
+Speed Dreams cars use a tool-assisted AC3D-to-glTF path:
+
+```bash
+npm install --prefix tools/speed-dreams
+tools/speed-dreams/build-car.sh \
+  fixtures/sources/cars/<name> \
+  fixtures/cars/<name>/<name>.sima
+```
+
+The current script is hardcoded to the Deckard Conejo source names and wheel
+dimensions. Copy and adapt it for another car; read
+`docs/speed-dreams-pipeline.md` before adding one.
+Track the source, license text, and modification notes under
+`fixtures/sources/cars/<name>/`; FAL assets cannot be distributed with the pack
+alone.
+
 ## GLB tracks
 
 For a GLB track plus a `track.json` selector file:

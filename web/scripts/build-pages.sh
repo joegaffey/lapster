@@ -70,6 +70,7 @@ fi
 
 cp -R "$ROOT/fixtures/cars" "$DIST/fixtures/cars"
 cp -R "$ROOT/fixtures/tracks" "$DIST/fixtures/tracks"
+cp -R "$ROOT/fixtures/sources" "$DIST/fixtures/sources"
 cp "$ROOT/fixtures/README.md" "$DIST/fixtures/README.md"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$DIST/THIRD_PARTY_NOTICES.md"
 touch "$DIST/.nojekyll"

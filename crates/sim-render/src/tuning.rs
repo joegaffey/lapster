@@ -199,7 +199,7 @@ impl Default for CameraTuning {
     fn default() -> Self {
         Self {
             bonnet: CameraShot {
-                eye: [0.0, 1.25, -0.1],
+                eye: [0.0, 1.25, -0.14],
                 target: [0.0, 1.05, -20.0],
                 fov_y: 1.0,
             },

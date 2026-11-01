@@ -5,7 +5,14 @@ import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
-import { saveSelectedBay, selectedBay as getSelectedBay } from "../src/ui/car-selection.ts";
+import {
+  CAR_OPTIONS,
+  findCar,
+  loadSelectedCar,
+  saveSelectedBay,
+  saveSelectedCar,
+  selectedBay as getSelectedBay,
+} from "../src/ui/car-selection.ts";
 import { loadSelectedTrack } from "../src/ui/track-selection.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
@@ -39,6 +46,7 @@ const bayLabel = document.querySelector<HTMLElement>("#bay-label")!;
 const bayPrev = document.querySelector<HTMLButtonElement>("#bay-prev")!;
 const bayNext = document.querySelector<HTMLButtonElement>("#bay-next")!;
 const driveCar = document.querySelector<HTMLAnchorElement>("#drive-car")!;
+const carSelect = document.querySelector<HTMLSelectElement>("#car-select")!;
 const carNav = document.querySelector<HTMLElement>("#car-nav")!;
 const CAR_NAV_HIDE_DELAY_MS = 2200;
 let carNavHideTimer = 0;
@@ -77,10 +85,25 @@ checkForUpdate();
 const params = new URLSearchParams(window.location.search);
 const defaultTrack = loadSelectedTrack();
 const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
-const CAR_URL = withPackVersion(
-  params.get("car") ?? "../../fixtures/cars/mazda-rx7/mazda-rx7.sima",
-  APP_VERSION,
-);
+const selectedCar = loadSelectedCar();
+const CAR_URL = withPackVersion(params.get("car") ?? selectedCar.url, APP_VERSION);
+for (const car of CAR_OPTIONS) {
+  const option = document.createElement("option");
+  option.value = car.id;
+  option.textContent = car.name;
+  carSelect.append(option);
+}
+carSelect.value = selectedCar.id;
+carSelect.addEventListener("change", () => {
+  const car = findCar(carSelect.value);
+  if (!car) {
+    return;
+  }
+  saveSelectedCar(car.id);
+  const url = new URL(window.location.href);
+  url.searchParams.set("car", car.url);
+  window.location.assign(url);
+});
 
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
@@ -184,6 +207,7 @@ async function boot() {
     loadPack(TRACK_URL),
     loadPack(CAR_URL),
   ]);
+  carSelect.value = findCar(carPack.manifest.id)?.id ?? "";
 
   resizeCanvas();
   status.textContent = "creating renderer";

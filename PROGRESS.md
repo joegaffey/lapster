@@ -1,8 +1,8 @@
 # Project Progress
 
-Last updated: 2026-10-31
+Last updated: 2026-11-01
 Repository root: the directory containing this file
-Current phase: **WebHID wheel/FFB feel spike and cockpit dial presentation (dev branch)**
+Current phase: **Speed Dreams car integration (Deckard Conejo) and car catalog**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -93,6 +93,7 @@ Toolchain setup scripts:
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
 | CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.5.0 (`1e20fba`), multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, Logitech G923/RS50/G Pro HID++ FFB, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
+| Speed Dreams car import | Working | Deckard Conejo `.acc`/XML/textures + Carson donor wheel; textured body/interior, glass, lights, cockpit camera, V8 audio, tracked source/license, rebuild script, menu car picker. Physics still uses the generic GLB baseline; see `docs/speed-dreams-pipeline.md` |
 
 ## Current capabilities
 
@@ -113,8 +114,9 @@ Toolchain setup scripts:
   - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
-- Audio spike: vendored Engine_Sim MIT synthesiser (`rotary2`) with combustion events,
-  exhaust/intake resonators, transmission, and optional turbo; toolbar mute; no sample assets
+- Audio spike: vendored Engine_Sim MIT synthesiser with per-car profiles (`rotary2` for the
+  RX-7, `v8cross` for the Deckard Conejo) with combustion events, exhaust/intake resonators,
+  transmission, and optional turbo; toolbar mute; no sample assets
   or track reverb yet. A small external-state adapter drives its RPM/speed/gear from the
   vehicle and locks the clutch, so the engine note follows the simulation instead of
   Engine_Sim's own drivetrain. A 60 ms RPM conditioner with a 12,000 rpm/s slew limit removes
@@ -180,10 +182,13 @@ Toolchain setup scripts:
   touch, and fade out when idle. The selected car persists in `localStorage` and becomes the
   driving car, including its showroom paint; the garage `Drive` button and the menu Drive
   demo both use it.
-- Track launcher: the app menu and public landing page offer Skidpad 0.5 and Drift Tracks as
-  Drive choices. The selection persists in `localStorage` (`lapster.track.v1`); Drive and the
-  garage `Drive` button default to it and fall back to Skidpad when nothing is selected.
-  Playwright coverage lives in `web/tests/track-launcher.spec.ts`.
+- Car and track launchers: the app menu and public landing page offer the RX-7 or Deckard
+  Conejo plus Skidpad 0.5 or Drift Tracks. Selections persist in `localStorage`
+  (`lapster.car.v1`, `lapster.track.v1`); Drive and the garage `Drive` button default to them
+  and fall back to RX-7/Skidpad. Speed Dreams source, FAL text, and rebuild instructions live
+  in `fixtures/sources/cars/sc-deckard-conejo/` and `docs/speed-dreams-pipeline.md`.
+  The garage has its own car picker. Playwright coverage lives in
+  `web/tests/track-launcher.spec.ts`.
 - Stylized grass: the Stylized Components GrassField shader was adapted to WGSL and a new
   instanced render pass. Scenes grow up to 240,000 wind-animated blades in clumps on GRASS
   collision within 90 m of the spawn, with toon shading, procedural dry patches, back-lit
@@ -453,10 +458,10 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset with the RPM conditioner.
-   If the drivetrain transients are missed, restore selected EngineSim shift/launch events
-   rather than returning to its independent drivetrain. Decide separately whether to smooth
-   engine RPM in `sim-core` and retune TC.
+1. **Speed Dreams physics (next)**: parse `sc-deckard-conejo.xml` into `CarPhysics`,
+   including mass, CG, torque curve, gears, final drive, brakes, aero, springs/dampers, and
+   tire mu. Confirm the reverse-light split visually. Move per-car audio and cockpit metadata
+   into the pack before adding more Speed Dreams cars.
 2. **CP6.5 — wheel/FFB validation**: run the CAMMUS C5 checklist, tune the feel mixer, and
    decide whether the main-thread adapter stays or moves into the HID worker.
 3. **Vendored `webhid-wheel` validation**: run multi-device profile, pedal/button mapping,
