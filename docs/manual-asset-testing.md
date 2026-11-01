@@ -55,7 +55,9 @@ tools/speed-dreams/build-car.sh \
 ```
 
 The current script is hardcoded to the Deckard Conejo source names and wheel
-dimensions. Copy and adapt it for another car; read
+dimensions, and passes `body/sc-deckard-conejo.xml` through
+`--physics-xml` so mass, engine, gearbox, brakes, steering, suspension, tire mu,
+and aero come from the source setup. Copy and adapt it for another car; read
 `docs/speed-dreams-pipeline.md` before adding one.
 Track the source, license text, and modification notes under
 `fixtures/sources/cars/<name>/`; FAL assets cannot be distributed with the pack

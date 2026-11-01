@@ -146,12 +146,12 @@ The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 27
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
 estimates until a licensed AC `.ini` source is available.
 
-The Deckard Conejo is imported from Speed Dreams with the generic GLB physics baseline
-(1,270 kg, 2.73 m wheelbase, six-speed RWD) plus its source geometry and textures. Its Speed
-Dreams XML contains a 1,700 kg Camaro SS setup, 6.2 L V8 torque curve, gearbox, brakes,
-suspension, and aero data; mapping those values is the main remaining physics task. See
-[`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md) for the import process,
-attribution, and remaining work.
+The Deckard Conejo is imported from Speed Dreams with its source geometry and textures plus
+the XML setup mapped into runtime physics: 1,700 kg, 0.30 m CG height, 52/48 weight split,
+6.2 L V8 with the 21-point torque curve, six-speed RWD gearbox with 3.8 final drive, source
+steering lock, brake pressure/areas, spring/damper rates, anti-roll bars, tire mu, and aero
+coefficients. See [`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md) for the
+mapping assumptions, attribution, and remaining work.
 
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
 opaque glass; cockpit mode renders it at 6% alpha. The body is visible by default, wheels
@@ -265,7 +265,7 @@ Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md
 in [`PLAN.md`](PLAN.md). Drive uses the SAB physics worker by default and an external-state
 Engine_Sim audio spike with per-car profiles. Next is moving the audio DSP directly onto SAB
 snapshots and tuning the Speed Dreams V8 and rotary voices. Remaining work includes the
-HID/FFB worker, Speed Dreams XML and AC `.ini` physics mapping, full texture decoding,
+HID/FFB worker, AC `.ini` physics mapping, generic Speed Dreams XML mapping, full texture decoding,
 KTX2/Basis texture compression, texture atlases, fence/tent collision policy, and hardening.
 
 ## License

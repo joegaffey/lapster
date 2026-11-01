@@ -92,9 +92,20 @@ pub fn bake_car_glb(path: &Path) -> Result<Vec<u8>> {
 }
 
 pub fn bake_car_glb_with_textures(path: &Path, use_textures: bool) -> Result<Vec<u8>> {
+    bake_car_glb_with_physics(path, use_textures, None)
+}
+
+pub fn bake_car_glb_with_physics(
+    path: &Path,
+    use_textures: bool,
+    physics_xml: Option<&Path>,
+) -> Result<Vec<u8>> {
     let source_bytes =
         fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let imported = crate::glb::import_car_with_textures(path, use_textures)?;
+    let mut imported = crate::glb::import_car_with_textures(path, use_textures)?;
+    if let Some(physics_xml) = physics_xml {
+        crate::speed_dreams::apply_physics(&mut imported.physics, physics_xml)?;
+    }
     let statistics = stats(
         &imported.visual.meshes,
         &imported.visual.materials,

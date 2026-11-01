@@ -1033,6 +1033,10 @@ impl DriveViewer {
         self.renderer.render()
     }
 
+    pub fn debug_info(&self) -> String {
+        self.info.clone()
+    }
+
     pub fn telemetry(&self) -> String {
         let state = &self.vehicle.state;
         let speed = state.velocity.length();

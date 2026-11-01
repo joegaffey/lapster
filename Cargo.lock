@@ -46,6 +46,7 @@ dependencies = [
  "sim-asset",
  "sim-core",
  "sim-types",
+ "xml-rs",
 ]
 
 [[package]]

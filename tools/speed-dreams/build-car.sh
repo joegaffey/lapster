@@ -11,8 +11,9 @@ if [[ -z "$SRC" || -z "$OUT" ]]; then
 fi
 
 BODY="$SRC/body/sc-deckard-conejo.acc"
+XML="$SRC/body/sc-deckard-conejo.xml"
 WHEEL="$SRC/wheel/wheel0.acc"
-for file in "$BODY" "$WHEEL"; do
+for file in "$BODY" "$XML" "$WHEEL"; do
   if [[ ! -f "$file" ]]; then
     echo "missing source file: $file" >&2
     exit 1
@@ -37,4 +38,4 @@ NAME="$(basename "$OUT")"
 NAME="${NAME%.sima}"
 node "$ROOT/tools/speed-dreams/assemble.mjs" "$TMP/body.glb" "$TMP/wheel.glb" "$TMP/$NAME.glb"
 mkdir -p "$(dirname "$OUT")"
-cargo run -q -p asset-compiler -- bake-glb "$TMP/$NAME.glb" "$OUT" --textures
+cargo run -q -p asset-compiler -- bake-glb "$TMP/$NAME.glb" "$OUT" --textures --physics-xml "$XML"

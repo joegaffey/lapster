@@ -20,6 +20,7 @@ serde_json = "1"
 sha2 = "0.10"
 sim-asset = { path = "../sim-asset" }
 sim-types = { path = "../sim-types" }
+xml-rs = "0.8"
 
 [dev-dependencies]
 sim-core = { path = "../sim-core" }

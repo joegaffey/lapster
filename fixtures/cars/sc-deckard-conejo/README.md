@@ -30,16 +30,18 @@ owners. Lapster does not imply manufacturer affiliation.
 
 ## Pack
 
-- SHA-256: `460aca9d6be3fca2942b2806a92a1cb8e4aa56b711bb51e018161d1732f982ab`
+- SHA-256: `4812013118dd62ac459391c4a65660265963b12d772cfab8ac050448dbac8b11`
 - ID: `sc-deckard-conejo`
 - Schema: 3
 - 11,352 vertices, 13,058 triangles, 4 materials, 3 textures, 7 draw calls.
 - Textured body + interior, glass, four donor wheels, brake/reverse lamp meshes.
 - Body/interior are split so cockpit mode can use the interior material without
   exterior outlines.
-- Six-speed rear-wheel-drive generic physics derived from wheel placement.
-- Mass 1,270 kg, 2.73 m wheelbase, 1.62 m track; inherited GLB-import baseline,
-  not the Speed Dreams XML values yet.
+- Source XML mapped into runtime physics: 1,700 kg, 0.30 m CG height, 52/48 weight
+  distribution, 6.2 L V8 with a 21-point torque curve, six-speed RWD gearbox with
+  3.8 final drive, source steering lock, brake pressure/areas, spring/damper rates,
+  anti-roll bars, tire mu, and aerodynamic coefficients.
+- 2.73 m wheelbase, 1.62 m track; 6,426,968 bytes.
 
 ## Rebuild
 

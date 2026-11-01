@@ -93,7 +93,7 @@ Toolchain setup scripts:
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
 | CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.5.0 (`1e20fba`), multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, Logitech G923/RS50/G Pro HID++ FFB, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
-| Speed Dreams car import | Working | Deckard Conejo `.acc`/XML/textures + Carson donor wheel; textured body/interior, glass, lights, cockpit camera, V8 audio, tracked source/license, rebuild script, menu car picker. Physics still uses the generic GLB baseline; see `docs/speed-dreams-pipeline.md` |
+| Speed Dreams car import | Working | Deckard Conejo `.acc`/XML/textures + Carson donor wheel; textured body/interior, glass, lights, cockpit camera, V8 audio, tracked source/license, rebuild script, mixed garage, XML physics mapping. See `docs/speed-dreams-pipeline.md` |
 
 ## Current capabilities
 

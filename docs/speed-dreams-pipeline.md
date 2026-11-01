@@ -24,12 +24,15 @@ Implemented for `sc-deckard-conejo`:
 - Car catalog entry in the menu, Garage, and Drive.
 - Per-car engine audio: `rotary2` for the RX-7, `v8cross` for the Deckard
   Conejo.
+- Source XML mapped into `CarPhysics` for mass, engine, gearbox, brakes,
+  steering, suspension, tire mu, and aero.
 - Source assets, license text, attribution, reproducible build script, baked
   pack, and validation commands are checked in.
 
 Not yet implemented:
 
-- Generic XML-to-physics mapping for Speed Dreams cars.
+- A generic Speed Dreams XML-to-physics path for arbitrary cars; the current
+  mapping is wired for the Deckard section layout.
 - Generic cockpit layout, steering-wheel, driver, and source gauge import.
 - A standalone Speed Dreams asset importer inside `asset-compiler`.
 - Automatic light classification and headlights.
@@ -208,42 +211,54 @@ the XML height is not forced onto the mesh.
 - 11,352 vertices, 13,058 triangles.
 - 4 materials, 3 textures, 7 draw calls.
 - Body/interior split, glass, four wheels, brake/reverse meshes.
-- Physics: 1,270 kg, 2.73 m wheelbase, 1.62 m track, 6-speed rear-wheel drive.
-  These are the generic GLB-import baseline, not the XML values above.
+- Physics: 1,700 kg, 0.30 m CG height, 52/48 weight distribution, 6-speed RWD.
+  Mass, engine, gearbox, brakes, steering, suspension, tire mu, and aero come
+  from `sc-deckard-conejo.xml`; see [Physics](#physics).
 
 ## Known issues
 
-**Physics mapping is unresolved.** The Deckard Conejo currently uses the generic GLB import
-baseline (1,270 kg, RX-7-derived engine/tire/brake/suspension values) rather than the values in
-`sc-deckard-conejo.xml`. It drives, but it is not a Camaro SS physics model. Tracked in
-[issue #16](https://github.com/joegaffey/lapster/issues/16); see [Physics](#physics).
-
-The reverse-light lens split is also a Deckard-specific heuristic and has not been
-re-confirmed visually since the last fix.
+The reverse-light lens split is a Deckard-specific heuristic and has not been re-confirmed
+visually since the last fix.
 
 ## What remains
 
 ### Physics
 
-The largest gap is XML physics. The current pack uses the same generic mass,
-inertia, tire, brake, spring, damper, and engine values as the RX-7 import, only
-with geometry-derived wheelbase and track. The source XML already contains:
+`crates/asset-compiler/src/speed_dreams.rs` parses the source XML and replaces the
+GLB-import baseline during `bake-glb --physics-xml`. The mapped values are:
 
-- 1,700 kg mass, 0.30 m CG height, 52/48 weight distribution;
-- 6.2 L V8, 6,930 rpm maximum, 1,000 rpm idle;
-- 21-point torque curve peaking at about 567 Nm;
-- 6-speed ratios 3.01/2.07/1.43/1.00/0.84/0.57 and 3.8 final drive;
-- brake pressure/repartition, steering lock, tire mu, spring rates, damper
-  rates, anti-roll bars, and aerodynamic lift coefficients.
+- 1,700 kg mass, 0.30 m CG height, 52/48 front-rear weight distribution.
+- 6.2 L V8: 1,000 rpm idle, 6,930 rpm maximum, and the source 21-point torque
+  curve.
+- Six-speed ratios 3.01/2.07/1.43/1.00/0.84/0.57 with a 3.8 final drive.
+- 45° steer lock, source wheel rotation, brake pressure/repartition, and
+  per-wheel piston areas/disk diameters.
+- Tire mu, spring rates, suspension courses, slow bump/rebound damper rates,
+  anti-roll bars, and aero drag/area/lift coefficients.
 
-Remaining work:
+Mapping assumptions:
 
-- Parse `sc-deckard-conejo.xml` into `CarPhysics` in the asset compiler.
-- Map Speed Dreams suspension deflections, bellcranks, and damper units correctly.
-- Map Pacejka coefficients from Speed Dreams tire stiffness/mu rather than using
-  the generic defaults.
-- Add deterministic fixtures/tests for the XML mapping.
-- Use the source engine inertia and engine braking coefficients.
+- Wheelbase, track, wheel radii, widths, and positions still come from the
+  assembled GLB geometry.
+- Wheel rate is `spring * bellcrank²`; suspension travel is
+  `course / bellcrank`. Dampers use the source slow bump/rebound rates.
+- Brake torque is estimated as `pressure * piston area * pad mu * disk radius`.
+  The front brake section omits pad mu, so it uses 0.4; the rears use the source
+  0.25.
+- Tire `friction_scale` uses the source mu; Pacejka shape coefficients remain
+  Lapster defaults.
+- Inertia is estimated from the mapped mass, wheelbase, and track.
+- Downforce is stored but the current vehicle model does not apply it.
+
+Remaining physics work:
+
+- Add engine inertia and engine-braking coefficients to the runtime schema;
+  they are present in the source XML but not yet modelled.
+- Map reverse gear ratio and Speed Dreams differential behavior.
+- Map Pacejka coefficients from Speed Dreams tire stiffness/elasticity rather
+  than only the friction scale.
+- Apply aero lift/downforce in the vehicle model.
+- Generalise section lookup and units for arbitrary Speed Dreams cars.
 
 ### Visual and cockpit
 

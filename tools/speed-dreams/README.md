@@ -42,7 +42,9 @@ cargo run -p asset-compiler -- validate fixtures/cars/sc-deckard-conejo/sc-decka
 2. `assemble.mjs` deduplicates, flattens, and joins the four wheel primitives;
    assigns the glass material; rotates and lifts the body; and adds four wheel
    nodes.
-3. `asset-compiler bake-glb --textures` bakes the runtime pack.
+3. `asset-compiler bake-glb --textures --physics-xml <xml>` bakes the runtime
+   pack, replacing the GLB physics baseline with the source Speed Dreams XML
+   mass, engine, gearbox, brakes, steering, suspension, tire mu, and aero.
 
 The script is intentionally specific to the Deckard Conejo layout. Generalising
 it for arbitrary Speed Dreams cars is remaining work; see the pipeline doc.
