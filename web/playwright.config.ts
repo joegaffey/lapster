@@ -4,7 +4,8 @@ export default defineConfig({
   testDir: "./tests",
   testMatch: /.*\.spec\.ts/,
   timeout: 60_000,
-  workers: 1,
+  fullyParallel: true,
+  workers: Number(process.env.PLAYWRIGHT_WORKERS ?? 1),
   retries: process.env.CI ? 2 : 0,
   outputDir: "test-results",
   use: {

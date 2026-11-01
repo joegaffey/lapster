@@ -202,7 +202,10 @@ from a conditioned version of the vehicle's RPM plus actual speed and gear throu
 external-state adapter.
 
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
-the NSS/NSPR libraries if the system does not have them. `npm run bench:physics` runs the
+the NSS/NSPR libraries if the system does not have them. CI shards the browser suite three
+ways. Locally it defaults to one worker so CPU-only physics timing stays stable; set
+`PLAYWRIGHT_WORKERS=2` (or higher) to opt into parallel workers, or pass a spec path to run
+only the affected tests. `npm run bench:physics` runs the
 opt-in main-thread vs worker A/B benchmark; set `PERF_CPU_THROTTLE=4` for a CPU-throttled run.
 Frame pacing is only meaningful on GPU-backed Chromium; the benchmark always asserts worker
 tick rate. Add `PERF_ASSERT_FPS=1` to gate frame pacing and `PERF_REQUIRE_MAIN_HZ=1` to require
