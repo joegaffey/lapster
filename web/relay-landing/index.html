@@ -17,10 +17,10 @@
     <main>
       <h1>Lapster relay</h1>
       <p id="status">Redirecting to the Lapster launcher…</p>
-      <p><a id="link" href="https://joegaffey.com/lapster-dev/web/">Open Lapster</a></p>
+      <p><a id="link" href="https://joegaffey.com/lapster-dev/">Open Lapster</a></p>
     </main>
     <script>
-      const target = new URL("https://joegaffey.com/lapster-dev/web/");
+      const target = new URL("https://joegaffey.com/lapster-dev/");
       const params = new URLSearchParams(window.location.search);
       for (const [key, value] of params) {
         if (key !== "ws") target.searchParams.set(key, value);
