@@ -38,6 +38,28 @@
         height: 100%;
         display: block;
       }
+      #net-badge {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        z-index: 12;
+        max-width: calc(100vw - 32px);
+        padding: 7px 10px;
+        border: 1px solid #2a303a;
+        border-radius: 3px;
+        background: rgba(10, 13, 17, 0.9);
+        color: #38bdf8;
+        font-size: 11px;
+        line-height: 1.4;
+        backdrop-filter: blur(8px);
+      }
+      #net-badge[hidden] {
+        display: none;
+      }
+      #net-badge.error {
+        border-color: #7f1d1d;
+        color: #f87171;
+      }
       #hud {
         position: fixed;
         top: 16px;
@@ -476,6 +498,7 @@
     </div>
 
     <canvas id="view"></canvas>
+    <div id="net-badge" data-testid="net-badge" hidden>Multiplayer</div>
     <nav id="viewer-controls" aria-label="Drive controls">
       <a class="hud-exit" href="../">Exit</a>
       <button id="reset" data-testid="reset">Reset</button>

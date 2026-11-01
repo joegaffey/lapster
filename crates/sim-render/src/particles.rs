@@ -5,7 +5,7 @@ use sim_core::VehicleState;
 use crate::scene::CarRig;
 use crate::tuning::{ParticleSurface, ParticleTuning};
 
-pub const MAX_PARTICLES: usize = 1024;
+pub const MAX_PARTICLES: usize = 2048;
 const TAU: f32 = std::f32::consts::TAU;
 
 #[repr(C)]

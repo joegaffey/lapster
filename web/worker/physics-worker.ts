@@ -236,6 +236,13 @@ self.onmessage = async (event: MessageEvent) => {
       publish();
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
+    case "place_on_grid":
+      simulation.place_on_grid(message.slot ?? 0);
+      nextDeadline = performance.now();
+      markDiagnosticsBaseline();
+      publish();
+      post("ack", { id: message.id, tick: Number(simulation.tick()) });
+      break;
     case "simulate": {
       const tick = simulation.simulate(
         message.seconds,

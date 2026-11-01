@@ -2,7 +2,7 @@
 
 Last updated: 2026-11-01
 Repository root: the directory containing this file
-Current phase: **Speed Dreams car integration (Deckard Conejo) and car catalog**
+Current phase: **Relay multiplayer prototype**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -94,9 +94,15 @@ Toolchain setup scripts:
 | CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.5.0 (`1e20fba`), multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, Logitech G923/RS50/G Pro HID++ FFB, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
 | Speed Dreams car import | Working | Deckard Conejo `.acc`/XML/textures + Carson donor wheel; textured body/interior, glass, lights, cockpit camera, V8 audio, tracked source/license, rebuild script, mixed garage, XML physics mapping. See `docs/speed-dreams-pipeline.md` |
+| Relay multiplayer prototype | Working | Native `relay-server` rooms with optional password and 4-player cap; browser lobby, invite URL, 20 Hz full snapshots, interpolation, garage-bay spawns, same-model remote rigs, remote tyre smoke, distance-attenuated remote engine and tyre audio, and room badge. No server physics, collision, or automated two-browser test. See `docs/multiplayer.md` |
 
 ## Current capabilities
 
+- Relay-only multiplayer prototype: `relay-server` serves the built site and `/ws` on one port;
+  rooms hold up to four players on one car/track, with an optional password. Clients keep local
+  physics and upload the existing 64-float snapshot at 20 Hz; remote cars interpolate, spawn
+  in the garage bay layout, emit tyre smoke, and play distance-attenuated engine and tyre audio. No
+  server authority or car-to-car collision yet.
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
 - 500 Hz fixed-step vehicle physics in the SAB worker by default (`?physics=main` selects the
   main-thread fallback):

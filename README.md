@@ -32,6 +32,12 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation. Camera height is capped at 60 m to avoid high-angle
   model artifacts.
+- **Multiplayer** — relay-only rooms for up to four players on one car and track, with an
+  optional room password. Clients keep local physics and exchange 64-float snapshots at
+  20 Hz; the server does not simulate or arbitrate. Cars start in the garage bay positions
+  and are currently ghosts with no car-to-car collision. Remote cars emit tyre smoke and
+  distance-attenuated engine/tyre audio. Run it with
+  `cd web && npm run serve:multiplayer`; see [`docs/multiplayer.md`](docs/multiplayer.md).
 
 The demos load these assets by default; no query parameters are required. Custom packs can
 still be selected with `?car=` and `?track=`. Append `?dev=1` to Drive to enable the developer
@@ -177,6 +183,20 @@ npm run build:viewer
 cd ..
 python3 -m http.server 8123 --bind 127.0.0.1
 ```
+
+For relay multiplayer, build the Pages site and run the room server on one origin:
+
+```bash
+cd web
+npm run build:viewer
+bash scripts/build-pages.sh
+npm run serve:multiplayer
+```
+
+Then open the URL printed by the script, normally
+`http://127.0.0.1:3000/web/multiplayer/`. If port 3000 is occupied, the script uses
+the next free port. In Codespaces, make port `3000` public and open the forwarded URL.
+See [`docs/multiplayer.md`](docs/multiplayer.md).
 
 Open `http://127.0.0.1:8123/`.
 

@@ -1,0 +1,23 @@
+{
+  "name": "Lapster relay multiplayer",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    }
+  },
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Lapster relay",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "cargo install wasm-bindgen-cli --version 0.2.129 --locked && cd web && npm ci",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer", "ms-playwright.playwright"]
+    }
+  }
+}

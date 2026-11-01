@@ -127,6 +127,10 @@ export class PhysicsClient {
     return this.command("reset", {}).then(() => undefined);
   }
 
+  placeOnGrid(slot: number): Promise<void> {
+    return this.command("place_on_grid", { slot }).then(() => undefined);
+  }
+
   applySetup(setup: string): void {
     void this.command("apply_setup", { setup });
   }

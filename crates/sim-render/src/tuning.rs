@@ -291,7 +291,7 @@ impl Default for ShadowTuning {
 impl Default for ParticleTuning {
     fn default() -> Self {
         Self {
-            max_active: MAX_PARTICLES,
+            max_active: 1024,
             max_spawn_per_step: 8,
             min_speed: 1.5,
             max_dt: 0.05,

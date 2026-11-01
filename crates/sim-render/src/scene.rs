@@ -158,6 +158,7 @@ pub struct Scene {
     pub car_mesh_range: Option<Range<usize>>,
     pub stats: SceneStats,
     pub car_rig: Option<CarRig>,
+    pub car_rigs: Vec<CarRig>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -330,6 +331,7 @@ impl Scene {
             car_mesh_range: None,
             stats,
             car_rig: None,
+            car_rigs: Vec::new(),
         })
     }
 }

@@ -140,12 +140,13 @@ impl Scene {
                 )?),
                 _ => None,
             };
+            let mut rig = built.rig.clone();
+            rig.decal_mesh_index = decal_mesh_index;
+            rig.decal_width = silhouette.as_ref().map(|s| s.width).unwrap_or(1.0);
+            rig.decal_length = silhouette.as_ref().map(|s| s.length).unwrap_or(1.0);
+            scene.car_rigs.push(rig.clone());
             if index == 0 {
                 scene.camera = camera;
-                let mut rig = built.rig.clone();
-                rig.decal_mesh_index = decal_mesh_index;
-                rig.decal_width = silhouette.as_ref().map(|s| s.width).unwrap_or(1.0);
-                rig.decal_length = silhouette.as_ref().map(|s| s.length).unwrap_or(1.0);
                 scene.car_rig = Some(rig);
                 scene.wheels = built.wheels.clone();
                 first_bounds = Some(built.bounds);
