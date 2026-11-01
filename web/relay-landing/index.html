@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lapster Multiplayer Relay</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-monospace, monospace; background: #080a0d; color: #e6e8eb; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; }
+      main { max-width: 560px; border: 1px solid #2a303a; background: #0d1117; padding: 24px; }
+      h1 { margin: 0 0 10px; font-size: 24px; }
+      p { color: #8f9bab; line-height: 1.6; font-size: 13px; }
+      a { color: #38bdf8; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Lapster relay</h1>
+      <p id="status">Redirecting to the Lapster launcher…</p>
+      <p><a id="link" href="https://joegaffey.com/lapster-dev/web/">Open Lapster</a></p>
+    </main>
+    <script>
+      const target = new URL("https://joegaffey.com/lapster-dev/web/");
+      const params = new URLSearchParams(window.location.search);
+      for (const [key, value] of params) {
+        if (key !== "ws") target.searchParams.set(key, value);
+      }
+      target.searchParams.set("ws", `wss://${window.location.host}/ws`);
+      document.querySelector("#link").href = target.toString();
+      window.location.replace(target.toString());
+    </script>
+  </body>
+</html>

@@ -1,5 +1,6 @@
 const NAME_STORAGE_KEY = "lapster.net.name.v1";
 const PASSWORD_STORAGE_KEY = "lapster.net.password.v1";
+const RELAY_STORAGE_KEY = "lapster.net.relay.v1";
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export function makeRoomCode(length = 6): string {
@@ -56,6 +57,52 @@ export function saveRoomPassword(password: string): void {
   } catch {
     // Storage may be unavailable in private or embedded contexts.
   }
+}
+
+export function normalizeRelayUrl(
+  value: string | null | undefined,
+  baseHref: string | undefined = globalThis.location?.href,
+): string | null {
+  const raw = value?.trim() ?? "";
+  if (!raw) {
+    return null;
+  }
+  try {
+    const url = new URL(raw, baseHref ?? "http://127.0.0.1/");
+    if (url.protocol === "http:") {
+      url.protocol = "ws:";
+    } else if (url.protocol === "https:") {
+      url.protocol = "wss:";
+    }
+    if (url.protocol !== "ws:" && url.protocol !== "wss:") {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function loadRelayUrl(): string | null {
+  try {
+    return normalizeRelayUrl(localStorage.getItem(RELAY_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+export function saveRelayUrl(value: string | null | undefined): string | null {
+  const relay = normalizeRelayUrl(value);
+  try {
+    if (relay) {
+      localStorage.setItem(RELAY_STORAGE_KEY, relay);
+    } else {
+      localStorage.removeItem(RELAY_STORAGE_KEY);
+    }
+  } catch {
+    // Storage may be unavailable in private or embedded contexts.
+  }
+  return relay;
 }
 
 export function lobbyInviteUrl(

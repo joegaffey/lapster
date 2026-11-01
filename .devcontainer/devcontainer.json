@@ -2,9 +2,6 @@
   "name": "Lapster relay multiplayer",
   "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
   "features": {
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "24"
-    },
     "ghcr.io/devcontainers/features/sshd:1": {
       "version": "latest"
     }
@@ -16,8 +13,8 @@
       "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "rustup target add wasm32-unknown-unknown && cargo install wasm-bindgen-cli --version 0.2.129 --locked && cd web && npm ci && npm run build:viewer && bash scripts/build-pages.sh",
-  "postStartCommand": "setsid -f bash web/scripts/serve-multiplayer.sh >/tmp/lapster-relay.log 2>&1",
+  "postCreateCommand": "cargo build -p relay-server",
+  "postStartCommand": "setsid -f bash web/scripts/serve-relay.sh >/tmp/lapster-relay.log 2>&1",
   "customizations": {
     "vscode": {
       "extensions": ["rust-lang.rust-analyzer", "ms-playwright.playwright"]

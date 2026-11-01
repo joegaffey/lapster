@@ -181,6 +181,16 @@
       </div>
       <form id="join-form">
         <label>
+          Relay server <span class="chip">optional</span>
+          <input
+            id="relay"
+            name="relay"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="wss://relay.example.test/ws — blank uses this page"
+          />
+        </label>
+        <label>
           Room code
           <div class="row">
             <input id="room" name="room" autocomplete="off" spellcheck="false" maxlength="32" />

@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { lobbyInviteUrl, makeRoomCode, normalizeRoomCode } from "../src/net/room.ts";
+import {
+  lobbyInviteUrl,
+  makeRoomCode,
+  normalizeRelayUrl,
+  normalizeRoomCode,
+} from "../src/net/room.ts";
 import { parseServerMessage, validState } from "../src/net/protocol.ts";
 
 test("room codes are shareable and normalised", () => {
@@ -12,6 +17,19 @@ test("room codes are shareable and normalised", () => {
   }
   assert.equal(normalizeRoomCode("bad code"), null);
   assert.equal(normalizeRoomCode(""), null);
+});
+
+test("relay URLs normalise to websocket protocols", () => {
+  assert.equal(
+    normalizeRelayUrl("https://relay.example.test/ws", "https://page.example/"),
+    "wss://relay.example.test/ws",
+  );
+  assert.equal(
+    normalizeRelayUrl("ws://127.0.0.1:3000/ws", "http://127.0.0.1/"),
+    "ws://127.0.0.1:3000/ws",
+  );
+  assert.equal(normalizeRelayUrl("", "https://page.example/"), null);
+  assert.equal(normalizeRelayUrl("ftp://relay", "https://page.example/"), null);
 });
 
 test("invite links keep the room, car, and track", () => {

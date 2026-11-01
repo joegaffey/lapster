@@ -30,7 +30,9 @@ import { RemoteStateBuffer } from "../src/net/remote-state.ts";
 import {
   loadPlayerName,
   loadRoomPassword,
+  normalizeRelayUrl,
   normalizeRoomCode,
+  saveRelayUrl,
 } from "../src/net/room.ts";
 import type { PlayerInfo, StateMessage } from "../src/net/protocol.ts";
 import { SNAPSHOT_STATE } from "../src/types/asset-layout.ts";
@@ -89,7 +91,7 @@ const CAR_URL = withPackVersion(
 const carBay = selectedBay();
 const mpMode = params.get("mp") === "1";
 const REMOTE_SLOTS = 3;
-const MULTIPLAYER_SEND_HZ = 20;
+const MULTIPLAYER_SEND_HZ = 30;
 
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 let renderScale = 1;
@@ -433,6 +435,10 @@ async function setupMultiplayer(viewer: DriveViewer, info: any): Promise<void> {
   if (!room) {
     setNetBadge("Invalid room code", true);
     return;
+  }
+  const relayOverride = normalizeRelayUrl(params.get("ws"));
+  if (relayOverride) {
+    saveRelayUrl(relayOverride);
   }
   const client = new RelayClient({
     room,

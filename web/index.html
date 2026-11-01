@@ -187,7 +187,7 @@
           <strong>Garage</strong>
           <span>Choose the car you drive; wheel controls and orbit camera.</span>
         </a>
-        <a class="card" href="./multiplayer/">
+        <a class="card" id="multiplayer-link" href="./multiplayer/">
           <strong>Multiplayer</strong>
           <span>Join a room and drive together; requires the relay server.</span>
         </a>
@@ -233,6 +233,22 @@
               other.setAttribute("aria-current", String(other === link));
             }
           });
+        }
+
+        const RELAY_STORAGE_KEY = "lapster.net.relay.v1";
+        const multiplayerLink = document.querySelector("#multiplayer-link");
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const fromUrl = params.get("ws");
+          if (fromUrl) localStorage.setItem(RELAY_STORAGE_KEY, fromUrl);
+          const relay = fromUrl || localStorage.getItem(RELAY_STORAGE_KEY);
+          if (relay && multiplayerLink) {
+            const url = new URL("./multiplayer/", window.location.href);
+            url.searchParams.set("ws", relay);
+            multiplayerLink.href = url.toString();
+          }
+        } catch {
+          // Keep the plain lobby link when storage is unavailable.
         }
 
         const TRACK_STORAGE_KEY = "lapster.track.v1";

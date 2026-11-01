@@ -34,7 +34,7 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
   model artifacts.
 - **Multiplayer** — relay-only rooms for up to four players on one car and track, with an
   optional room password. Clients keep local physics and exchange 64-float snapshots at
-  20 Hz; the server does not simulate or arbitrate. Cars start in the garage bay positions
+  30 Hz; the server does not simulate or arbitrate. Cars start in the garage bay positions
   and are currently ghosts with no car-to-car collision. Remote cars emit tyre smoke and
   distance-attenuated engine/tyre audio. Run it with
   `cd web && npm run serve:multiplayer`; see [`docs/multiplayer.md`](docs/multiplayer.md).
@@ -195,8 +195,9 @@ npm run serve:multiplayer
 
 Then open the URL printed by the script, normally
 `http://127.0.0.1:3000/web/multiplayer/`. If port 3000 is occupied, the script uses
-the next free port. In Codespaces, make port `3000` public and open the forwarded URL.
-See [`docs/multiplayer.md`](docs/multiplayer.md).
+the next free port. In Codespaces, only the relay runs; port `3000` redirects to the
+dev multiplayer client with the correct `ws=` URL. See
+[`docs/multiplayer.md`](docs/multiplayer.md).
 
 Open `http://127.0.0.1:8123/`.
 

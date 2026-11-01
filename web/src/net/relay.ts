@@ -1,3 +1,4 @@
+import { loadRelayUrl } from "./room.ts";
 import {
   parseServerMessage,
   type PlayerInfo,
@@ -160,7 +161,7 @@ export function resolveRelayUrl(
   href: string | undefined = globalThis.location?.href,
 ): string {
   const base = new URL(href ?? "http://127.0.0.1/");
-  const override = base.searchParams.get("ws");
+  const override = base.searchParams.get("ws") || loadRelayUrl();
   const url = new URL(override || "/ws", base);
   if (url.protocol === "http:") {
     url.protocol = "ws:";

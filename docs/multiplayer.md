@@ -10,8 +10,8 @@ vehicle physics.
 - One car model and one track per room.
 - Up to four players.
 - Optional room password.
-- Local physics at 500 Hz, state upload at 20 Hz.
-- Remote cars interpolate an 80 ms snapshot buffer.
+- Local physics at 500 Hz, state upload at 30 Hz.
+- Remote cars interpolate a 100 ms tick-based snapshot timeline.
 - Cars are ghosts: no car-to-car collision and no server correction.
 - Offline Pages deployment and the single-player physics worker are unchanged.
 
@@ -58,13 +58,20 @@ directory for `--static-dir`.
 
 ## Codespaces
 
+Codespaces is used as a **relay-only** host to keep startup fast. The browser
+client comes from the dev Pages build.
+
 1. Create a Codespace from this branch.
-2. The devcontainer builds the site and starts the relay on port `3000` automatically.
-   If it is not running, use `bash web/scripts/serve-multiplayer.sh`.
+2. The devcontainer builds only `relay-server` and starts it on port `3000`.
+   If it is not running, use `bash web/scripts/serve-relay.sh`.
 3. Set port `3000` to **Public** in the Ports panel, or run
    `gh codespace ports visibility 3000:public`.
-4. Open `https://<codespace-name>-3000.app.github.dev/web/multiplayer/`.
-5. Check `/tmp/lapster-relay.log` inside the Codespace if the room server does not start.
+4. Open `https://<codespace-name>-3000.app.github.dev/`. It redirects to the dev
+   multiplayer client with the correct `ws=` relay URL.
+5. Check `/tmp/lapster-relay.log` inside the Codespace if the relay does not start.
+
+This avoids installing Node, wasm-bindgen, and the full viewer build in the
+Codespace. Only Rust and the small relay binary are required.
 
 The invite link contains the room, car, and track. Share the password separately
 when one is set. Codespaces is suitable for development and short playtests; it
