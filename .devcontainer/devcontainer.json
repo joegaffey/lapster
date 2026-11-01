@@ -14,7 +14,8 @@
       "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "cargo install wasm-bindgen-cli --version 0.2.129 --locked && cd web && npm ci",
+  "postCreateCommand": "cargo install wasm-bindgen-cli --version 0.2.129 --locked && cd web && npm ci && npm run build:viewer && bash scripts/build-pages.sh",
+  "postStartCommand": "setsid -f bash web/scripts/serve-multiplayer.sh >/tmp/lapster-relay.log 2>&1",
   "customizations": {
     "vscode": {
       "extensions": ["rust-lang.rust-analyzer", "ms-playwright.playwright"]

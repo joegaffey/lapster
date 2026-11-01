@@ -45,10 +45,12 @@ cargo run -p relay-server -- --static-dir dist --bind 0.0.0.0:3000
 ## Codespaces
 
 1. Create a Codespace from this branch.
-2. Run `cd web && npm run build:viewer && bash scripts/build-pages.sh`.
-3. Run `cd .. && cargo run -p relay-server -- --static-dir dist --bind 0.0.0.0:3000`.
-4. In the Ports panel, set port `3000` to **Public**.
-5. Open `https://<codespace-name>-3000.app.github.dev/web/multiplayer/`.
+2. The devcontainer builds the site and starts the relay on port `3000` automatically.
+   If it is not running, use `bash web/scripts/serve-multiplayer.sh`.
+3. Set port `3000` to **Public** in the Ports panel, or run
+   `gh codespace ports visibility 3000:public`.
+4. Open `https://<codespace-name>-3000.app.github.dev/web/multiplayer/`.
+5. Check `/tmp/lapster-relay.log` inside the Codespace if the room server does not start.
 
 The invite link contains the room, car, and track. Share the password separately
 when one is set. Codespaces is suitable for development and short playtests; it
