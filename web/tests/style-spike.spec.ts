@@ -211,6 +211,36 @@ test("style spike drives in car views and supports camera controls", async ({ pa
   expect(errors).toEqual([]);
 });
 
+test("style spike collapses its panels on mobile", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/web/style-spike/?quality=low&treeMass=0&bushMass=0&grass=0&v=style-mobile-ui");
+  await waitForReady(page);
+  await page.waitForTimeout(300);
+
+  await expect(page.locator("#hud")).toHaveClass(/hud-collapsed/);
+  await expect(page.locator("#panel-toggles")).toBeVisible();
+  await expect(page.locator("#controls")).toBeVisible();
+  await expect(page.locator("#mobile-info")).toHaveText("Show info");
+
+  await page.click("#mobile-controls");
+  await expect(page.locator("#controls")).toBeHidden();
+  await expect(page.locator("#mobile-controls")).toHaveText("Show controls");
+
+  await page.click("#mobile-controls");
+  await expect(page.locator("#controls")).toBeVisible();
+  await expect(page.locator("#mobile-controls")).toHaveText("Hide controls");
+
+  await page.click("#mobile-info");
+  await expect(page.locator("#hud")).toBeVisible();
+  await expect(page.locator("#mobile-info")).toHaveText("Hide info");
+  expect(errors).toEqual([]);
+});
+
 test("style spike quality controls drop vegetation tiers", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

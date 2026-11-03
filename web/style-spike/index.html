@@ -110,6 +110,12 @@
         width: min(300px, calc(100vw - 32px));
         padding: 12px;
       }
+      #controls.controls-collapsed {
+        display: none;
+      }
+      #panel-toggles {
+        display: none;
+      }
       #controls label {
         display: grid;
         grid-template-columns: 1fr auto;
@@ -211,8 +217,21 @@
           top: auto;
           left: 12px;
           right: 12px;
-          bottom: 12px;
+          bottom: calc(58px + env(safe-area-inset-bottom));
           width: auto;
+        }
+        #panel-toggles {
+          position: fixed;
+          left: 12px;
+          right: 12px;
+          bottom: calc(12px + env(safe-area-inset-bottom));
+          z-index: 12;
+          display: flex;
+          gap: 6px;
+        }
+        #panel-toggles button {
+          flex: 1;
+          text-align: center;
         }
       }
     </style>
@@ -316,6 +335,15 @@
         <a class="button" id="exit" href="../">Exit</a>
       </div>
     </section>
+
+    <div id="panel-toggles" role="group" aria-label="Panel visibility">
+      <button id="mobile-info" type="button" aria-controls="hud" aria-expanded="false">
+        Show info
+      </button>
+      <button id="mobile-controls" type="button" aria-controls="controls" aria-expanded="true">
+        Hide controls
+      </button>
+    </div>
 
     <script type="module" src="./main.js"></script>
   </body>

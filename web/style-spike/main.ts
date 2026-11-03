@@ -191,7 +191,10 @@ const treeMassValue = document.querySelector<HTMLElement>("#tree-mass-value")!;
 const bushMassSlider = document.querySelector<HTMLInputElement>("#bush-mass-slider")!;
 const bushMassValue = document.querySelector<HTMLElement>("#bush-mass-value")!;
 const hud = document.querySelector<HTMLElement>("#hud")!;
+const controls = document.querySelector<HTMLElement>("#controls")!;
 const toggleHud = document.querySelector<HTMLButtonElement>("#toggle-hud")!;
+const mobileInfo = document.querySelector<HTMLButtonElement>("#mobile-info")!;
+const mobileControls = document.querySelector<HTMLButtonElement>("#mobile-controls")!;
 
 let viewer: TrackViewer | undefined;
 let renderScale = 1;
@@ -216,6 +219,23 @@ let flyEye: Vec3 = [0, 0, 0];
 let flyForward: Vec3 = [0, 0, -1];
 let driveSteer = 0;
 const pressedKeys = new Set<string>();
+
+function setHudCollapsed(collapsed: boolean): void {
+  hud.classList.toggle("hud-collapsed", collapsed);
+  toggleHud.textContent = collapsed ? "Show HUD" : "Hide HUD";
+  mobileInfo.textContent = collapsed ? "Show info" : "Hide info";
+  mobileInfo.setAttribute("aria-expanded", String(!collapsed));
+}
+
+function setControlsCollapsed(collapsed: boolean): void {
+  controls.classList.toggle("controls-collapsed", collapsed);
+  mobileControls.textContent = collapsed ? "Show controls" : "Hide controls";
+  mobileControls.setAttribute("aria-expanded", String(!collapsed));
+}
+
+if (window.matchMedia(MOBILE_QUERY).matches) {
+  setHudCollapsed(true);
+}
 
 checkForUpdate();
 
@@ -952,8 +972,19 @@ async function boot(): Promise<void> {
   canvas.addEventListener("pointercancel", endFlyPointer);
   canvas.addEventListener("lostpointercapture", endFlyPointer);
   toggleHud.addEventListener("click", () => {
-    const collapsed = hud.classList.toggle("hud-collapsed");
-    toggleHud.textContent = collapsed ? "Show HUD" : "Hide HUD";
+    setHudCollapsed(!hud.classList.contains("hud-collapsed"));
+  });
+  mobileInfo.addEventListener("click", () => {
+    setHudCollapsed(!hud.classList.contains("hud-collapsed"));
+  });
+  mobileControls.addEventListener("click", () => {
+    setControlsCollapsed(!controls.classList.contains("controls-collapsed"));
+  });
+  const mobileMedia = window.matchMedia(MOBILE_QUERY);
+  mobileMedia.addEventListener("change", () => {
+    if (!mobileMedia.matches) {
+      setControlsCollapsed(false);
+    }
   });
 
   status.textContent = "ready";
