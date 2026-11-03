@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
 use sim_types::{
-    AssetManifest, MeshBuffers, TextureRef, TrackCollision, TrackMetadata, TrackVisual,
+    AssetManifest, CarVisual, MeshBuffers, TextureRef, TrackCollision, TrackMetadata, TrackVisual,
 };
 
 use crate::camera::Camera;
@@ -19,6 +19,7 @@ pub struct MeshVertex {
     pub normal: [f32; 3],
     pub color: [f32; 3],
     pub uv: [f32; 2],
+    pub wind: [f32; 2],
 }
 
 #[repr(C)]
@@ -61,6 +62,7 @@ pub struct MeshData {
     pub casts_static_shadow: bool,
     pub casts_dynamic_shadow: bool,
     pub is_decal: bool,
+    pub foliage: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +148,23 @@ pub struct GarageBay {
     pub decal_ground_y: f32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct VegetationGroups {
+    pub near: Vec<usize>,
+    pub mid: Vec<usize>,
+    pub far: Vec<usize>,
+    pub trees: usize,
+    pub bushes: usize,
+    pub candidates: usize,
+    pub collision_candidates: usize,
+    pub visual_candidates: usize,
+    pub near_candidates: usize,
+    pub mid_candidates: usize,
+    pub far_candidates: usize,
+    pub min_candidate_distance: f32,
+    pub sample_candidate: [f32; 3],
+}
+
 pub struct Scene {
     pub meshes: Vec<MeshData>,
     pub textures: Vec<SceneTexture>,
@@ -159,6 +178,10 @@ pub struct Scene {
     pub stats: SceneStats,
     pub car_rig: Option<CarRig>,
     pub car_rigs: Vec<CarRig>,
+    pub vegetation: Option<VegetationGroups>,
+    pub mass_foliage: Option<crate::vegetation::MassFoliage>,
+    pub style_car_transform: Option<Mat4>,
+    pub style_car_bounds: Option<sim_types::Aabb>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -177,6 +200,59 @@ impl Scene {
         collision: &TrackCollision,
         manifest: &AssetManifest,
     ) -> Result<Scene, String> {
+        Self::build_internal(visual, metadata, collision, manifest, false)
+    }
+
+    pub fn build_style_spike(
+        visual: &TrackVisual,
+        metadata: &TrackMetadata,
+        collision: &TrackCollision,
+        manifest: &AssetManifest,
+    ) -> Result<Scene, String> {
+        Self::build_internal(visual, metadata, collision, manifest, true)
+    }
+
+    pub fn build_style_spike_with_car(
+        visual: &TrackVisual,
+        metadata: &TrackMetadata,
+        collision: &TrackCollision,
+        manifest: &AssetManifest,
+        car_visual: &CarVisual,
+    ) -> Result<Scene, String> {
+        let mut scene = Self::build_internal(visual, metadata, collision, manifest, true)?;
+        let texture_base = scene.textures.len();
+        for texture in &car_visual.textures {
+            scene.textures.push(scene_texture(texture)?);
+        }
+        let base_transform = crate::garage::car_transform(metadata)?;
+        let (_, rotation, _) = base_transform.to_scale_rotation_translation();
+        let forward = rotation * Vec3::NEG_Z;
+        let transform = Mat4::from_translation(forward * 24.0) * base_transform;
+        let built = crate::garage::build_car(
+            &mut scene,
+            car_visual,
+            texture_base,
+            transform,
+            [0.78, 0.08, 0.06],
+            "style_car",
+            true,
+            false,
+        )?;
+        scene.style_car_transform = Some(transform);
+        scene.style_car_bounds = Some(built.bounds);
+        scene.car_rig = Some(built.rig.clone());
+        scene.car_rigs.push(built.rig);
+        scene.wheels = built.wheels;
+        Ok(scene)
+    }
+
+    fn build_internal(
+        visual: &TrackVisual,
+        metadata: &TrackMetadata,
+        collision: &TrackCollision,
+        manifest: &AssetManifest,
+        style_spike: bool,
+    ) -> Result<Scene, String> {
         if visual.meshes.len() != visual.mesh_buffers.len() {
             return Err(format!(
                 "track visual has {} mesh refs but {} mesh buffers",
@@ -185,7 +261,7 @@ impl Scene {
             ));
         }
 
-        let textures = visual
+        let mut textures = visual
             .textures
             .iter()
             .map(scene_texture)
@@ -267,7 +343,54 @@ impl Scene {
                 casts_static_shadow: true,
                 casts_dynamic_shadow: false,
                 is_decal: false,
+                foliage: false,
             });
+        }
+
+        let mut vegetation = None;
+        let mut mass_foliage = None;
+        if style_spike {
+            let seed = manifest.id.bytes().fold(0x9e37_79b9_u64, |hash, byte| {
+                hash.wrapping_mul(0x100_0000_01b3).wrapping_add(byte as u64)
+            });
+            let built = crate::vegetation::build(visual, metadata, collision, seed);
+            let texture_index = textures.len();
+            textures.push(built.texture);
+            let mut mass = built.mass;
+            mass.texture = texture_index;
+            let mesh_start = meshes.len();
+            let mut groups = VegetationGroups {
+                trees: built.trees,
+                bushes: built.bushes,
+                candidates: built.candidates,
+                collision_candidates: built.collision_candidates,
+                visual_candidates: built.visual_candidates,
+                near_candidates: built.near_candidates,
+                mid_candidates: built.mid_candidates,
+                far_candidates: built.far_candidates,
+                min_candidate_distance: built.min_candidate_distance,
+                sample_candidate: built.sample_candidate,
+                ..VegetationGroups::default()
+            };
+            for (index, mut mesh) in built.meshes.into_iter().enumerate() {
+                if mesh.texture.is_some() {
+                    mesh.texture = Some(texture_index);
+                }
+                stats.vertices += mesh.vertices.len() as u32;
+                stats.triangles += (mesh.indices.len() / 3) as u32;
+                stats.draw_calls += 1;
+                meshes.push(mesh);
+                let scene_index = mesh_start + index;
+                if built.tiers[0].contains(&index) {
+                    groups.near.push(scene_index);
+                } else if built.tiers[1].contains(&index) {
+                    groups.mid.push(scene_index);
+                } else if built.tiers[2].contains(&index) {
+                    groups.far.push(scene_index);
+                }
+            }
+            vegetation = Some(groups);
+            mass_foliage = Some(mass);
         }
 
         let mut lines = Vec::new();
@@ -315,9 +438,42 @@ impl Scene {
                 "triangles": mesh.index_count / 3,
                 "material": mesh.material,
             })).collect::<Vec<_>>(),
+            "vegetation": vegetation.as_ref().map(|groups| json!({
+                "trees": groups.trees,
+                "bushes": groups.bushes,
+                "candidates": groups.candidates,
+                "collisionCandidates": groups.collision_candidates,
+                "visualCandidates": groups.visual_candidates,
+                "nearCandidates": groups.near_candidates,
+                "midCandidates": groups.mid_candidates,
+                "farCandidates": groups.far_candidates,
+                "minCandidateDistance": groups.min_candidate_distance,
+                "sampleCandidate": groups.sample_candidate,
+                "nearMeshes": groups.near.len(),
+                "midMeshes": groups.mid.len(),
+                "farMeshes": groups.far.len(),
+            })),
+            "massFoliage": mass_foliage.as_ref().map(|mass| json!({
+                "trees": {
+                    "instances": mass.tree_instances.len(),
+                    "layers": mass.tree_layer_ends.len(),
+                    "layerEnds": mass.tree_layer_ends,
+                },
+                "bushes": {
+                    "instances": mass.bush_instances.len(),
+                    "layers": mass.bush_layer_ends.len(),
+                    "layerEnds": mass.bush_layer_ends,
+                },
+            })),
             "warnings": manifest.warnings,
         })
         .to_string();
+
+        let camera = if style_spike {
+            style_camera(metadata).unwrap_or(camera)
+        } else {
+            camera
+        };
 
         Ok(Scene {
             meshes,
@@ -332,8 +488,35 @@ impl Scene {
             stats,
             car_rig: None,
             car_rigs: Vec::new(),
+            vegetation,
+            mass_foliage,
+            style_car_transform: None,
+            style_car_bounds: None,
         })
     }
+}
+
+fn style_camera(metadata: &TrackMetadata) -> Option<Camera> {
+    let spawn = metadata.spawns.first()?;
+    let position = Vec3::from_array(spawn.position);
+    let rotation = Quat::from_xyzw(
+        spawn.rotation_xyzw[0],
+        spawn.rotation_xyzw[1],
+        spawn.rotation_xyzw[2],
+        spawn.rotation_xyzw[3],
+    );
+    let rotation = if rotation.length_squared() > 1e-6 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+    let forward = rotation * Vec3::NEG_Z;
+    let right = rotation * Vec3::X;
+    Some(Camera {
+        eye: (position + Vec3::Y * 9.5 - forward * 24.0 + right * 17.0).to_array(),
+        target: (position + forward * 20.0 + Vec3::Y * 2.0).to_array(),
+        fov_y: 0.9,
+    })
 }
 
 pub(crate) fn build_vertices(buffers: &MeshBuffers, color: [f32; 3]) -> Vec<MeshVertex> {
@@ -350,6 +533,7 @@ pub(crate) fn build_vertices(buffers: &MeshBuffers, color: [f32; 3]) -> Vec<Mesh
                 .unwrap_or([0.0, 1.0, 0.0]),
             color: buffers.colors.get(index).copied().unwrap_or(color),
             uv: buffers.uvs.get(index).copied().unwrap_or([0.0, 0.0]),
+            wind: [0.0, 0.0],
         })
         .collect()
 }
@@ -542,8 +726,12 @@ fn add_spawn(lines: &mut Vec<LineVertex>, metadata: &TrackMetadata) {
         spawn.rotation_xyzw[1],
         spawn.rotation_xyzw[2],
         spawn.rotation_xyzw[3],
-    )
-    .normalize();
+    );
+    let rotation = if rotation.length_squared() > 1e-6 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
     let forward = rotation * Vec3::new(0.0, 0.0, -5.0);
     push_line(
         lines,

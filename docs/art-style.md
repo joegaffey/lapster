@@ -1,6 +1,14 @@
 # Lapster Art Style: Technical Blueprint / Papercraft Toon
 
-Status: adopted. CP4.5 implements the flat-screen forward-renderer slice; WebXR is later.
+Status: adopted. CP4.5 implements the flat-screen forward-renderer slice; the
+`web/style-spike/` page validates the hybrid painterly-toon direction with procedural
+leaf-card vegetation; WebXR is later.
+
+> Direction note: the overall target is **hybrid painterly toon**. The papercraft rules
+> below remain authoritative for cars, barriers, the cockpit, and other mechanical forms.
+> Organic environment art moves toward soft leaf-card silhouettes, spherical normals, and
+> painterly color; see the style spike for the current implementation. A full rewrite of
+> this document around the hybrid direction is still pending.
 
 ## 1. Goals
 
@@ -188,5 +196,14 @@ track is measured.
 
 - Asset compiler checks triangle/part/color budgets and hull generation.
 - Golden screenshots for the flat WebGPU path, plus WebGL2 fallback where supported.
+- `web/style-spike/` validates the hybrid direction on a track section: procedural leaf-card
+  trees/bushes, existing grass, vegetation tiers, quality presets, and adaptive auto quality.
+  Low quality must keep the leaf-card silhouette language rather than falling back to
+  polygonal primitive canopies. The spike exposes independent grass, tree, and bush mass
+  sliders with a >350k-card GPU stress pool and keeps vegetation off road surfaces. Trees
+  and bushes reuse the grass grid-raycast/grass-surface strategy and are limited to the track
+  verge so distant terrain stays clear. Grass and the instanced foliage fade are camera-centred,
+  with near-plane and behind-camera collapse to limit overdraw; the spike currently covers an
+  800 m radius around spawn with a 35 m verge.
 - Per-eye XR screenshots and frame-time traces only when XR work begins.
 - No screen-space outline or post-processing dependency.

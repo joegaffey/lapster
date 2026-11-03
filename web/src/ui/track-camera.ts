@@ -8,6 +8,7 @@ export interface CameraInfo {
 
 interface CameraViewer {
   camera_info(): string;
+  set_camera_fov?(fovY: number): void;
   set_camera(
     eyeX: number,
     eyeY: number,
@@ -47,11 +48,21 @@ const prefersReducedMotion = () =>
 
 export interface OrbitCameraController {
   setHome(info: CameraInfo, animate?: boolean): void;
+  setEnabled(enabled: boolean): void;
+  nudge(
+    deltaSeconds: number,
+    orbitX: number,
+    orbitY: number,
+    panX: number,
+    panY: number,
+    zoom: number,
+  ): void;
 }
 
 export interface TrackCameraOptions {
   allowPan?: boolean;
   maxHeight?: number;
+  attachResetButton?: boolean;
 }
 
 export function setupTrackCamera(
@@ -85,6 +96,7 @@ export function setupTrackCamera(
   let maxEyeY =
     configuredMaxHeight === undefined ? Infinity : Math.max(configuredMaxHeight, initialEye[1]);
   let flightFrame = 0;
+  let enabled = true;
 
   const cancelFlight = () => {
     if (flightFrame !== 0) {
@@ -97,6 +109,7 @@ export function setupTrackCamera(
     target[1] = clamp(target[1], minTargetY, maxTargetY);
     eye[1] = clamp(eye[1], minEyeY, maxEyeY);
     viewer.set_camera(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
+    viewer.set_camera_fov?.(info.fovY);
   };
 
   const orbit = (dx: number, dy: number) => {
@@ -149,6 +162,9 @@ export function setupTrackCamera(
   };
 
   canvas.addEventListener("pointerdown", (event) => {
+    if (!enabled) {
+      return;
+    }
     event.preventDefault();
     cancelFlight();
     try {
@@ -165,6 +181,9 @@ export function setupTrackCamera(
   });
 
   canvas.addEventListener("pointermove", (event) => {
+    if (!enabled) {
+      return;
+    }
     const previous = pointers.get(event.pointerId);
     if (!previous) {
       return;
@@ -212,6 +231,9 @@ export function setupTrackCamera(
   canvas.addEventListener(
     "wheel",
     (event) => {
+      if (!enabled) {
+        return;
+      }
       event.preventDefault();
       cancelFlight();
       zoomBy(Math.exp(event.deltaY * 0.001));
@@ -220,14 +242,44 @@ export function setupTrackCamera(
     { passive: false },
   );
 
-  document.querySelector<HTMLButtonElement>("#reset-camera")?.addEventListener("click", () => {
-    cancelFlight();
-    eye = [...initialEye] as Vec3;
-    target = [...initialTarget] as Vec3;
-    viewer.reset_camera();
-  });
+  if (options.attachResetButton !== false) {
+    document.querySelector<HTMLButtonElement>("#reset-camera")?.addEventListener("click", () => {
+      if (!enabled) {
+        return;
+      }
+      cancelFlight();
+      eye = [...initialEye] as Vec3;
+      target = [...initialTarget] as Vec3;
+      viewer.reset_camera();
+    });
+  }
 
   return {
+    nudge(deltaSeconds, orbitX, orbitY, panX, panY, zoom) {
+      if (!enabled) {
+        return;
+      }
+      cancelFlight();
+      if (orbitX !== 0 || orbitY !== 0) {
+        orbit(orbitX * 140 * deltaSeconds, orbitY * 140 * deltaSeconds);
+      }
+      if (panX !== 0 || panY !== 0) {
+        pan(panX * 320 * deltaSeconds, panY * 320 * deltaSeconds);
+      }
+      if (zoom !== 0) {
+        zoomBy(Math.exp(zoom * deltaSeconds * 1.4));
+      }
+      apply();
+    },
+    setEnabled(value: boolean) {
+      enabled = value;
+      if (!enabled) {
+        cancelFlight();
+        pointers.clear();
+        pinch = null;
+        canvas.classList.remove("dragging");
+      }
+    },
     setHome(next: CameraInfo, animate = false) {
       info = next;
       const nextEye = toVec3(next.eye);

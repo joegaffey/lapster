@@ -12,6 +12,7 @@ use crate::grass::{GrassChunkKey, GrassField, GrassInstance, GRASS_CLUMPS_PER_FR
 use crate::particles::{ParticleInstance, MAX_PARTICLES};
 use crate::scene::{LineVertex, MeshData, MeshVertex, OutlineVertex, Scene, SceneTexture};
 use crate::tuning::{GpuTuning, ParticleRenderTuning, ShadowTuning};
+use crate::vegetation::{MassFoliage, MassFoliageInstance};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const GRASS_CHUNK_FADE_MS: f64 = 450.0;
@@ -31,8 +32,13 @@ pub enum CarShadowMode {
     Off,
 }
 
-static MESH_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2];
+static MESH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x3,
+    2 => Float32x3,
+    3 => Float32x2,
+    4 => Float32x2
+];
 static OUTLINE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 static LINE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
@@ -45,11 +51,31 @@ static GRASS_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 1] =
     wgpu::vertex_attr_array![0 => Float32x3];
 static GRASS_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4];
+static MASS_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2];
+static MASS_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+    wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4];
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GrassVertex {
     position: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct MassVertex {
+    position: [f32; 2],
+    uv: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct MassUniform {
+    time: f32,
+    max_distance: f32,
+    wind_strength: f32,
+    pad: f32,
 }
 
 #[repr(C)]
@@ -124,6 +150,26 @@ struct GpuGrassChunk {
     fade: f32,
 }
 
+struct MassFoliageGpu {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::PipelineLayout,
+    shader: wgpu::ShaderModule,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+    tree_instance_buffer: Option<wgpu::Buffer>,
+    bush_instance_buffer: Option<wgpu::Buffer>,
+    tree_instance_count: u32,
+    bush_instance_count: u32,
+    tree_draw_count: u32,
+    bush_draw_count: u32,
+    tree_layer_ends: Vec<u32>,
+    bush_layer_ends: Vec<u32>,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    texture_bind_group: wgpu::BindGroup,
+}
+
 struct GpuMesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -141,6 +187,7 @@ struct GpuMesh {
     shadow_static_base: bool,
     shadow_dynamic_base: bool,
     is_decal: bool,
+    foliage: bool,
     model: Mat4,
 }
 
@@ -152,7 +199,7 @@ fn model_alpha(mesh: &GpuMesh, grass_texture_enabled: bool) -> [f32; 4] {
         } else {
             0.0
         },
-        0.0,
+        if mesh.foliage { 1.0 } else { 0.0 },
         0.0,
     ]
 }
@@ -179,6 +226,8 @@ pub struct Renderer {
     outline_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     grass_pipeline: wgpu::RenderPipeline,
+    grass_shader: wgpu::ShaderModule,
+    grass_pipeline_layout: wgpu::PipelineLayout,
     grass_vertex_buffer: wgpu::Buffer,
     grass_index_buffer: wgpu::Buffer,
     grass_index_count: u32,
@@ -186,10 +235,12 @@ pub struct Renderer {
     grass_field: GrassField,
     grass_texture_enabled: bool,
     grass_shader_enabled: bool,
+    grass_density: f32,
     grass_uniform_buffer: wgpu::Buffer,
     grass_bind_group: wgpu::BindGroup,
     grass_chunk_bind_group_layout: wgpu::BindGroupLayout,
     grass_start_ms: f64,
+    mass_foliage: Option<MassFoliageGpu>,
     camera_bind_group_layout: wgpu::BindGroupLayout,
     mesh_texture_layout: wgpu::BindGroupLayout,
     mesh_sampler: wgpu::Sampler,
@@ -703,6 +754,17 @@ impl Renderer {
             white_view: &white_view,
             sampler: &sampler,
         };
+        let mass_foliage = scene.mass_foliage.as_ref().and_then(|mass| {
+            create_mass_foliage(
+                &device,
+                &queue,
+                mass,
+                &texture_resources,
+                &camera_bind_group_layout,
+                format,
+                sample_count,
+            )
+        });
         let meshes = scene
             .meshes
             .iter()
@@ -754,6 +816,8 @@ impl Renderer {
             outline_pipeline: pipelines.outline,
             line_pipeline: pipelines.line,
             grass_pipeline,
+            grass_shader,
+            grass_pipeline_layout,
             grass_vertex_buffer,
             grass_index_buffer,
             grass_index_count,
@@ -761,10 +825,12 @@ impl Renderer {
             grass_field,
             grass_texture_enabled: true,
             grass_shader_enabled: false,
+            grass_density: 1.0,
             grass_uniform_buffer,
             grass_bind_group,
             grass_chunk_bind_group_layout,
             grass_start_ms: performance_now(),
+            mass_foliage,
             camera_bind_group_layout: camera_bind_group_layout.clone(),
             mesh_texture_layout: texture_bind_group_layout,
             mesh_sampler: sampler,
@@ -866,7 +932,7 @@ impl Renderer {
             self.queue.write_buffer(
                 &mesh.model_buffer,
                 offset,
-                bytemuck::bytes_of(&[mesh.alpha, value, 0.0, 0.0]),
+                bytemuck::bytes_of(&[mesh.alpha, value, if mesh.foliage { 1.0 } else { 0.0 }, 0.0]),
             );
         }
     }
@@ -875,8 +941,13 @@ impl Renderer {
         self.grass_shader_enabled = enabled;
     }
 
-    pub fn set_grass_center(&mut self, center: Vec3) {
-        self.grass_field.update(center);
+    pub fn set_grass_density(&mut self, density: f32) {
+        self.grass_density = density.clamp(0.0, 1.0);
+    }
+
+    pub fn set_grass_center_xz(&mut self, x: f32, z: f32) {
+        let y = self.grass_field.center().y;
+        self.grass_field.update(Vec3::new(x, y, z));
     }
 
     fn sync_grass_chunks(&mut self) {
@@ -1030,7 +1101,97 @@ impl Renderer {
             self.config.format,
             actual,
         );
+        self.grass_pipeline = create_grass_pipeline(
+            &self.device,
+            &self.grass_shader,
+            &self.grass_pipeline_layout,
+            self.config.format,
+            actual,
+        );
+        if let Some(mass) = &mut self.mass_foliage {
+            mass.pipeline = create_mass_foliage_pipeline(
+                &self.device,
+                &mass.shader,
+                &mass.layout,
+                self.config.format,
+                actual,
+            );
+        }
         actual
+    }
+
+    pub fn set_tree_mass(&mut self, layers: u32) -> u32 {
+        let Some(mass) = &mut self.mass_foliage else {
+            return 0;
+        };
+        let clamped = layers.min(mass.tree_layer_ends.len() as u32);
+        mass.tree_draw_count = if clamped == 0 {
+            0
+        } else {
+            mass.tree_layer_ends[clamped as usize - 1]
+        };
+        clamped
+    }
+
+    pub fn set_bush_mass(&mut self, layers: u32) -> u32 {
+        let Some(mass) = &mut self.mass_foliage else {
+            return 0;
+        };
+        let clamped = layers.min(mass.bush_layer_ends.len() as u32);
+        mass.bush_draw_count = if clamped == 0 {
+            0
+        } else {
+            mass.bush_layer_ends[clamped as usize - 1]
+        };
+        clamped
+    }
+
+    pub fn set_vegetation_mass(&mut self, layers: u32) -> u32 {
+        let trees = self.set_tree_mass(layers);
+        let bushes = self.set_bush_mass(layers);
+        trees.max(bushes)
+    }
+
+    pub fn tree_mass_max_layers(&self) -> u32 {
+        self.mass_foliage
+            .as_ref()
+            .map(|mass| mass.tree_layer_ends.len() as u32)
+            .unwrap_or(0)
+    }
+
+    pub fn bush_mass_max_layers(&self) -> u32 {
+        self.mass_foliage
+            .as_ref()
+            .map(|mass| mass.bush_layer_ends.len() as u32)
+            .unwrap_or(0)
+    }
+
+    pub fn tree_mass_instance_count(&self) -> u32 {
+        self.mass_foliage
+            .as_ref()
+            .map(|mass| mass.tree_instance_count)
+            .unwrap_or(0)
+    }
+
+    pub fn bush_mass_instance_count(&self) -> u32 {
+        self.mass_foliage
+            .as_ref()
+            .map(|mass| mass.bush_instance_count)
+            .unwrap_or(0)
+    }
+
+    pub fn tree_mass_active_instances(&self) -> u32 {
+        self.mass_foliage
+            .as_ref()
+            .map(|mass| mass.tree_draw_count)
+            .unwrap_or(0)
+    }
+
+    pub fn bush_mass_active_instances(&self) -> u32 {
+        self.mass_foliage
+            .as_ref()
+            .map(|mass| mass.bush_draw_count)
+            .unwrap_or(0)
     }
 
     pub fn msaa_samples(&self) -> u32 {
@@ -1097,6 +1258,32 @@ impl Renderer {
             };
             self.queue
                 .write_buffer(&self.grass_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        }
+
+        let wind_time = ((performance_now() - self.grass_start_ms).max(0.0) / 1000.0) as f32;
+        if let Some(mass) = &self.mass_foliage {
+            let uniform = MassUniform {
+                time: wind_time,
+                max_distance: 90.0,
+                wind_strength: 1.0,
+                pad: 0.0,
+            };
+            self.queue
+                .write_buffer(&mass.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        }
+        for mesh in self.meshes.iter().filter(|mesh| mesh.foliage) {
+            let uniform = ModelUniform {
+                model: mesh.model.to_cols_array_2d(),
+                alpha: model_alpha(mesh, self.grass_texture_enabled),
+                emissive: [
+                    mesh.emissive[0],
+                    mesh.emissive[1],
+                    mesh.emissive[2],
+                    wind_time,
+                ],
+            };
+            self.queue
+                .write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&uniform));
         }
 
         if self.high_shadow_active() && self.shadow_dirty {
@@ -1236,12 +1423,16 @@ impl Renderer {
                     let Some(fade_bind_group) = &chunk.fade_bind_group else {
                         continue;
                     };
-                    if chunk.count == 0 {
+                    if chunk.count == 0 || self.grass_density <= 0.0 {
+                        continue;
+                    }
+                    let count = ((chunk.count as f32) * self.grass_density).round() as u32;
+                    if count == 0 {
                         continue;
                     }
                     pass.set_bind_group(3, fade_bind_group, &[]);
                     pass.set_vertex_buffer(1, buffer.slice(..));
-                    pass.draw_indexed(0..self.grass_index_count, 0, 0..chunk.count);
+                    pass.draw_indexed(0..self.grass_index_count, 0, 0..count.min(chunk.count));
                 }
                 pass.set_bind_group(
                     3,
@@ -1252,6 +1443,29 @@ impl Renderer {
                     },
                     &[],
                 );
+            }
+
+            if let Some(mass) = &self.mass_foliage {
+                if mass.tree_draw_count > 0 || mass.bush_draw_count > 0 {
+                    pass.set_pipeline(&mass.pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_bind_group(1, &mass.bind_group, &[]);
+                    pass.set_bind_group(2, &mass.texture_bind_group, &[]);
+                    pass.set_vertex_buffer(0, mass.vertex_buffer.slice(..));
+                    pass.set_index_buffer(mass.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    if mass.tree_draw_count > 0 {
+                        if let Some(buffer) = &mass.tree_instance_buffer {
+                            pass.set_vertex_buffer(1, buffer.slice(..));
+                            pass.draw_indexed(0..mass.index_count, 0, 0..mass.tree_draw_count);
+                        }
+                    }
+                    if mass.bush_draw_count > 0 {
+                        if let Some(buffer) = &mass.bush_instance_buffer {
+                            pass.set_vertex_buffer(1, buffer.slice(..));
+                            pass.draw_indexed(0..mass.index_count, 0, 0..mass.bush_draw_count);
+                        }
+                    }
+                }
             }
 
             pass.set_pipeline(&self.transparent_pipeline);
@@ -1945,7 +2159,12 @@ fn create_mesh(
     };
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
-        alpha: [mesh.alpha, grass_texture_enabled, 0.0, 0.0],
+        alpha: [
+            mesh.alpha,
+            grass_texture_enabled,
+            if mesh.foliage { 1.0 } else { 0.0 },
+            0.0,
+        ],
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
     };
     let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -2014,6 +2233,7 @@ fn create_mesh(
         shadow_static_base: mesh.casts_static_shadow,
         shadow_dynamic_base: mesh.casts_dynamic_shadow,
         is_decal: mesh.is_decal,
+        foliage: mesh.foliage,
         model: mesh.model,
     }
 }
@@ -2631,6 +2851,200 @@ fn create_particle_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn create_mass_foliage(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    mass: &MassFoliage,
+    texture_resources: &MeshTextureResources<'_>,
+    camera_layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> Option<MassFoliageGpu> {
+    if mass.tree_instances.is_empty() && mass.bush_instances.is_empty() {
+        return None;
+    }
+    let vertices = [
+        MassVertex {
+            position: [-0.5, -0.5],
+            uv: [0.0, 0.0],
+        },
+        MassVertex {
+            position: [0.5, -0.5],
+            uv: [1.0, 0.0],
+        },
+        MassVertex {
+            position: [0.5, 0.5],
+            uv: [1.0, 1.0],
+        },
+        MassVertex {
+            position: [-0.5, 0.5],
+            uv: [0.0, 1.0],
+        },
+    ];
+    let indices = [0u32, 1, 2, 0, 2, 3];
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("mass foliage vertices"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("mass foliage indices"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    let tree_instance_buffer =
+        create_mass_instance_buffer(device, "mass foliage tree instances", &mass.tree_instances);
+    let bush_instance_buffer =
+        create_mass_instance_buffer(device, "mass foliage bush instances", &mass.bush_instances);
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("mass foliage uniform"),
+        contents: bytemuck::bytes_of(&MassUniform {
+            time: 0.0,
+            max_distance: 90.0,
+            wind_strength: 1.0,
+            pad: 0.0,
+        }),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("mass foliage uniform layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("mass foliage uniform bind group"),
+        layout: &uniform_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+    let texture_bind_group = create_mesh_texture_bind_group(
+        device,
+        queue,
+        texture_resources,
+        "mass foliage texture",
+        Some(mass.texture),
+    );
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("mass foliage shader"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("mass_foliage.wgsl"))),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("mass foliage pipeline layout"),
+        bind_group_layouts: &[
+            Some(camera_layout),
+            Some(&uniform_layout),
+            Some(texture_resources.layout),
+        ],
+        immediate_size: 0,
+    });
+    let pipeline = create_mass_foliage_pipeline(device, &shader, &layout, format, sample_count);
+    Some(MassFoliageGpu {
+        pipeline,
+        layout,
+        shader,
+        vertex_buffer,
+        index_buffer,
+        index_count: indices.len() as u32,
+        tree_instance_buffer,
+        bush_instance_buffer,
+        tree_instance_count: mass.tree_instances.len() as u32,
+        bush_instance_count: mass.bush_instances.len() as u32,
+        tree_draw_count: 0,
+        bush_draw_count: 0,
+        tree_layer_ends: mass.tree_layer_ends.clone(),
+        bush_layer_ends: mass.bush_layer_ends.clone(),
+        uniform_buffer,
+        bind_group,
+        texture_bind_group,
+    })
+}
+
+fn create_mass_instance_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    instances: &[MassFoliageInstance],
+) -> Option<wgpu::Buffer> {
+    if instances.is_empty() {
+        return None;
+    }
+    Some(
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(instances),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        }),
+    )
+}
+
+fn create_mass_foliage_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("mass foliage pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_mass"),
+            compilation_options: Default::default(),
+            buffers: &[
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<MassVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &MASS_VERTEX_ATTRIBUTES,
+                }),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<MassFoliageInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &MASS_INSTANCE_ATTRIBUTES,
+                }),
+            ],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_mass"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),

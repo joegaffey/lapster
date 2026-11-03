@@ -53,14 +53,14 @@
       "name": "grass",
       "friction": 0.35,
       "roughness": 0.8,
-      "materials": ["Grass Ground", "Grass edge", "Tree wall"]
+      "materials": ["Grass_Ground", "Grass_edge", "Tree wall"]
     },
     {
       "id": 3,
       "name": "concrete",
       "friction": 0.9,
       "roughness": 0.05,
-      "materials": ["Centre Ground", "Concrete", "Fence"]
+      "materials": ["Centre_Ground", "Concrete", "Fence"]
     }
   ],
   "default_surface": 0

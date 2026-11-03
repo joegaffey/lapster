@@ -62,6 +62,7 @@ struct MeshIn {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) uv: vec2<f32>,
+    @location(4) wind: vec2<f32>,
 }
 
 struct MeshOut {
@@ -76,7 +77,19 @@ struct MeshOut {
 @vertex
 fn vs_mesh(input: MeshIn) -> MeshOut {
     var output: MeshOut;
-    let world = model.transform * vec4<f32>(input.position, 1.0);
+    var world = model.transform * vec4<f32>(input.position, 1.0);
+    if model.alpha.z > 0.5 {
+        let phase = input.wind.y;
+        let weight = input.wind.x;
+        let sway = sin(
+            model.emissive.w * 1.35 + phase + world.x * 0.07 + world.z * 0.05
+        );
+        let gust = sin(model.emissive.w * 0.7 + phase * 1.7 + world.z * 0.03);
+        world = vec4<f32>(
+            world.xyz + vec3<f32>(sway * 0.11 + gust * 0.05, gust * 0.03, sway * 0.07) * weight,
+            1.0,
+        );
+    }
     output.clip_position = camera.view_proj * world;
     output.normal = normalize((model.transform * vec4<f32>(input.normal, 0.0)).xyz);
     output.color = input.color;
@@ -220,13 +233,15 @@ fn shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
 
 @fragment
 fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
+    let foliage = model.alpha.z > 0.5;
     let normal = normalize(input.normal);
     let light = normalize(-camera.light_dir.xyz);
     let ndl = max(dot(normal, light), 0.0);
     let ramp = toon_ramp(ndl);
     let texel = textureSample(base_texture, base_sampler, input.uv);
     let alpha = input.alpha * texel.a;
-    if alpha < 0.01 {
+    let cutoff = select(0.01, 0.45, foliage);
+    if alpha < cutoff {
         discard;
     }
     var base = input.color * texel.rgb;
@@ -251,15 +266,24 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     let shadow = environment_shadow * car_shadow;
     let view_dir = normalize(camera.camera_pos.xyz - input.world_position);
     let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 3.0);
-    let rim_tint = vec3<f32>(0.55, 0.72, 0.95);
+    let rim_tint = select(
+        vec3<f32>(0.55, 0.72, 0.95),
+        vec3<f32>(0.42, 0.62, 0.18),
+        foliage,
+    );
     var color =
         base * (0.30 + 0.70 * ramp * shadow)
-        + rim_tint * rim * 0.16
+        + rim_tint * rim * select(0.16, 0.30, foliage)
         + model.emissive.xyz;
     if model.alpha.y > 0.5 {
         color = color * GRASS_TEXTURE_LIFT + vec3<f32>(0.008, 0.008, 0.015);
     }
-    return vec4<f32>(linear_to_srgb(color), alpha);
+    if foliage {
+        let back = pow(max(dot(view_dir, -light), 0.0), 2.0);
+        let edge = 1.0 - abs(dot(normal, view_dir));
+        color += vec3<f32>(0.10, 0.20, 0.035) * back * edge * 0.85;
+    }
+    return vec4<f32>(linear_to_srgb(color), select(alpha, 1.0, foliage));
 }
 
 @fragment

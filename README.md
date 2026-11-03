@@ -32,6 +32,21 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation. Camera height is capped at 60 m to avoid high-angle
   model artifacts.
+- **Style spike** — a dedicated painterly-toon validation page that loads the Skidpad or
+  Drift Tracks fixture, keeps the existing grass and grass/dirt texture reuse, and adds
+  procedurally placed leaf-card trees and bushes with spherical normals, wind sway, and
+  tiered density. Trees and bushes use the same grid-raycast grass-surface test as the grass
+  blades, constrained to the track verge and masked off road geometry, so they stay on grass
+  instead of distant terrain. Independent grass-density, tree-mass, and bush-mass sliders can
+  push the instanced foliage pool past 350k cards for GPU stress testing. Both fixtures now
+  grow grass, including Drift Tracks after its surface mapping was corrected. Grass and the
+  mass-foliage fade use a camera-centred window with near-plane and behind-camera culling;
+  quality presets and an adaptive auto tier adjust vegetation distance, shadows, MSAA, grass
+  density, and render scale without changing the silhouette language. The minimal test car
+  has no synthetic dials and can be driven from the chase, bonnet, cockpit, or isometric
+  views; those cameras reuse the pre-spike tuning. Orbit/pan is the default and supports
+  keyboard orbit/pan, while walk/fly adds mouse-look free movement. The spike currently
+  covers a track verge within roughly 800 m of spawn.
 - **Multiplayer** — relay-only rooms for up to four players on one car and track, with an
   optional room password. Clients keep local physics and exchange 64-float snapshots at
   30 Hz; the server does not simulate or arbitrate. Cars start in the garage bay positions
@@ -252,10 +267,12 @@ Vehicle dynamics are intentionally first-party. General-purpose physics engines 
 collision/query backends only; they are not used as the vehicle model. See `SPEC.md` for the
 physics backend policy.
 
-The visual direction is a forward-rendered technical/papercraft toon style with simple
-geometry, vertex colors, object-space outlines, and textures only where they are the
-practical choice (gauges, signs, decals). Grass on the Skidpad uses an instanced,
-wind-animated toon blade pass. See [`docs/art-style.md`](docs/art-style.md).
+The visual direction is a forward-rendered hybrid painterly-toon style: crisp faceted cars
+and barriers, soft leaf-card vegetation, vertex colors, object-space outlines, and textures
+only where they are the practical choice (gauges, signs, decals, foliage cards). Grass on the
+Skidpad uses an instanced, wind-animated toon blade pass, and the style spike adds procedural
+trees and bushes. See [`docs/art-style.md`](docs/art-style.md) and
+[`web/style-spike/`](web/style-spike/).
 
 ## Credits
 

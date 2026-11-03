@@ -115,6 +115,7 @@ impl Scene {
                 color,
                 &format!("bay_{index}"),
                 brake_lights,
+                true,
             )?;
             if static_car_shadows {
                 for mesh in &mut scene.meshes[car_mesh_start..] {
@@ -457,6 +458,7 @@ fn add_car_decal(
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0],
             uv: *uv,
+            wind: [0.0, 0.0],
         });
     }
     let _ = (width, length);
@@ -473,6 +475,7 @@ fn add_car_decal(
         casts_static_shadow: false,
         casts_dynamic_shadow: false,
         is_decal: true,
+        foliage: false,
     });
     Ok(scene.meshes.len() - 1)
 }
@@ -491,11 +494,11 @@ fn recolor_paint(buffers: &mut MeshBuffers, color: [f32; 3]) {
     }
 }
 
-struct CarBuild {
-    rig: CarRig,
-    wheels: Vec<SceneWheel>,
-    bounds: Aabb,
-    ground_y: f32,
+pub(crate) struct CarBuild {
+    pub(crate) rig: CarRig,
+    pub(crate) wheels: Vec<SceneWheel>,
+    pub(crate) bounds: Aabb,
+    pub(crate) ground_y: f32,
 }
 
 const BAY_SPACING: f32 = 8.0;
@@ -562,7 +565,8 @@ const CAMARO_COCKPIT_DIALS: [CockpitDial; 3] = [
     ),
 ];
 
-fn build_car(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_car(
     scene: &mut Scene,
     car_visual: &CarVisual,
     car_texture_base: usize,
@@ -570,6 +574,7 @@ fn build_car(
     body_color: [f32; 3],
     prefix: &str,
     brake_lights: bool,
+    cockpit_gauges: bool,
 ) -> Result<CarBuild, String> {
     let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
     let body_mesh = car_visual
@@ -589,7 +594,7 @@ fn build_car(
         .meshes
         .iter()
         .any(|mesh| mesh.name == "body_interior");
-    let synthetic_cockpit = brake_lights && !has_interior;
+    let synthetic_cockpit = cockpit_gauges && brake_lights && !has_interior;
     let cockpit_dials: &[CockpitDial] = if has_interior {
         &CAMARO_COCKPIT_DIALS
     } else {
@@ -1591,6 +1596,7 @@ fn push_car_mesh(
         casts_static_shadow: false,
         casts_dynamic_shadow: true,
         is_decal: false,
+        foliage: false,
     });
     Ok(scene.meshes.len() - 1)
 }
@@ -1811,7 +1817,7 @@ fn mesh_index_by_name(car_visual: &CarVisual, name: &str) -> Option<usize> {
     car_visual.meshes.iter().position(|mesh| mesh.name == name)
 }
 
-fn car_transform(metadata: &TrackMetadata) -> Result<Mat4, String> {
+pub(crate) fn car_transform(metadata: &TrackMetadata) -> Result<Mat4, String> {
     let spawn = metadata
         .spawns
         .first()

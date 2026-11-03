@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-01
+Last updated: 2026-11-03
 Repository root: the directory containing this file
 Current phase: **Relay multiplayer prototype**
 
@@ -95,9 +95,24 @@ Toolchain setup scripts:
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
 | Speed Dreams car import | Working | Deckard Conejo `.acc`/XML/textures + Carson donor wheel; textured body/interior, glass, lights, cockpit camera, V8 audio, tracked source/license, rebuild script, mixed garage, XML physics mapping. See `docs/speed-dreams-pipeline.md` |
 | Relay multiplayer prototype | Working | Native `relay-server` rooms with optional password and 4-player cap; browser lobby, invite URL, 30 Hz full snapshots, tick-based interpolation timeline, garage-bay spawns, same-model remote rigs, remote tyre smoke, distance-attenuated remote engine and tyre audio, and room badge. Codespaces runs relay-only and redirects to the dev client. No server physics, collision, or automated two-browser test. See `docs/multiplayer.md` |
+| Style spike | Working | Dedicated `web/style-spike/` page; procedural leaf-card trees/bushes with spherical normals and wind, camera-centred grass and mass-foliage windows with near-plane/behind-camera fade, grid-raycast grass placement limited to track verges with road masking on both fixtures, corrected Drift Tracks grass surface mapping, near/mid/far vegetation tiers, independent grass/tree/bush mass sliders with a >350k-card GPU stress pool, quality presets plus adaptive auto tier, drivable minimal test car without synthetic dials, pre-spike-tuned orbit/pan, chase, bonnet, cockpit, isometric, and mouse-look walk/fly cameras, and WebGPU + WebGL2 Playwright coverage |
 
 ## Current capabilities
 
+- Style spike: `web/style-spike/` validates the hybrid painterly-toon direction on a real
+  track section. It reuses the Skidpad/Drift Tracks fixtures and grass textures, generates
+  alpha-tested leaf-card canopies with spherical normals, winds them in the vertex shader,
+  and places trees and bushes on visual grass while masking out road geometry. Vegetation
+  is merged into near/mid/far tiers so presets and the adaptive auto tier can drop density
+  and draw distance while preserving the painterly silhouette. Trees and bushes reuse the
+  grass strategy of raycasting a fixed grid and accepting only grass collision surfaces,
+  with a track-verge constraint so distant terrain is excluded. Grass and the mass-foliage fade
+  are camera-centred and include near-plane/behind-camera collapse to cut needless fill; the
+  mass pool fades out beyond 90 m. Separate sliders control grass density, tree mass, and bush
+  mass; the instanced mass pool reaches over 350k cards for GPU stress testing. Road-surface
+  masking keeps vegetation off the drivable track. Coverage is currently an 800 m radius around
+  spawn with a 35 m verge, so longer tracks need a chunked expansion later. See
+  `tests/style-spike.spec.ts`.
 - Relay-only multiplayer prototype: `relay-server` serves the built site and `/ws` on one port;
   rooms hold up to four players on one car/track, with an optional password. Clients keep local
   physics and upload the existing 64-float snapshot at 30 Hz; remote cars interpolate, spawn
