@@ -51,10 +51,14 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOut {
 
 @fragment
 fn fs_sky(input: SkyOut) -> @location(0) vec4<f32> {
-    let height = pow(clamp(input.uv.y, 0.0, 1.0), 0.8);
+    let warmth = clamp(camera.sky_horizon.w, 0.0, 1.0);
+    let height = pow(clamp(input.uv.y, 0.0, 1.0), mix(0.8, 2.2, warmth));
     let horizon = camera.sky_horizon.xyz;
     let zenith = camera.sky_zenith.xyz;
-    return vec4<f32>(linear_to_srgb(mix(horizon, zenith, height)), 1.0);
+    var sky = mix(horizon, zenith, height);
+    let dusk_band = smoothstep(0.0, 0.7, height) * (1.0 - smoothstep(0.45, 1.0, height));
+    sky = mix(sky, vec3<f32>(0.62, 0.18, 0.34), dusk_band * warmth * 0.45);
+    return vec4<f32>(linear_to_srgb(sky), 1.0);
 }
 
 struct MeshIn {

@@ -2513,15 +2513,16 @@ fn sun_for_time(hours: f32) -> (Vec3, f32) {
 }
 
 fn sky_colors(elevation: f32) -> ([f32; 4], [f32; 4]) {
-    let day = ((elevation.to_degrees() - 12.0) / 55.0).clamp(0.0, 1.0);
-    let warm_horizon = Vec3::new(0.92, 0.56, 0.36);
-    let warm_zenith = Vec3::new(0.18, 0.22, 0.38);
+    let day = ((elevation.to_degrees() - 10.0) / 50.0).clamp(0.0, 1.0);
+    let warmth = (1.0 - day).powf(1.2);
+    let warm_horizon = Vec3::new(1.0, 0.40, 0.14);
+    let warm_zenith = Vec3::new(0.16, 0.08, 0.36);
     let day_horizon = Vec3::new(0.62, 0.72, 0.80);
     let day_zenith = Vec3::new(0.12, 0.30, 0.55);
     let horizon = warm_horizon.lerp(day_horizon, day);
     let zenith = warm_zenith.lerp(day_zenith, day);
     (
-        [horizon.x, horizon.y, horizon.z, 1.0],
+        [horizon.x, horizon.y, horizon.z, warmth],
         [zenith.x, zenith.y, zenith.z, 1.0],
     )
 }
@@ -3659,6 +3660,14 @@ mod tests {
         let far = noon.transform_point3(Vec3::new(0.5, 0.0, -0.5));
         assert!((near.x + 1.0).abs() < 1e-5);
         assert!((far.x - 1.0).abs() < 0.2, "noon shadow too long: {far:?}");
+    }
+
+    #[test]
+    fn sky_warmth_peaks_at_dawn_and_dusk() {
+        let dawn = super::sky_colors(super::sun_for_time(6.0).1);
+        let noon = super::sky_colors(super::sun_for_time(13.0).1);
+        assert!(dawn.0[3] > 0.9);
+        assert!(noon.0[3] < 0.05);
     }
 
     #[test]
