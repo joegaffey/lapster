@@ -40,10 +40,10 @@ const CONTROL_POINTS: [[f32; 3]; 8] = [
     [-40.0, 0.0, 5.0],
 ];
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 pub struct KerbSpan {
-    pub start: usize,
-    pub end: usize,
+    pub start: f32,
+    pub end: f32,
     pub side: i8,
 }
 
@@ -55,10 +55,10 @@ pub enum PropKind {
     Off,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 pub struct PropLine {
-    pub start: usize,
-    pub end: usize,
+    pub start: f32,
+    pub end: f32,
     pub side: i8,
     pub kind: PropKind,
 }
@@ -96,16 +96,17 @@ fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
         })
         .sum::<f32>();
     let outside_side = if area > 0.0 { -1 } else { 1 };
+    let end = points.len() as f32;
     vec![
         PropLine {
-            start: 0,
-            end: points.len(),
+            start: 0.0,
+            end,
             side: outside_side,
             kind: PropKind::Blocks,
         },
         PropLine {
-            start: 0,
-            end: points.len(),
+            start: 0.0,
+            end,
             side: -outside_side,
             kind: PropKind::Tyres,
         },
@@ -116,12 +117,13 @@ fn sanitize_prop_lines(lines: &[PropLine], count: usize) -> Vec<PropLine> {
     if count < 2 {
         return Vec::new();
     }
+    let limit = count as f32;
     let mut lines = lines
         .iter()
         .filter_map(|line| {
-            let start = line.start.min(count - 1);
-            let end = line.end.min(count);
-            (start < end).then_some(PropLine {
+            let start = line.start.clamp(0.0, limit);
+            let end = line.end.clamp(0.0, limit);
+            (end - start > 1e-4).then_some(PropLine {
                 start,
                 end,
                 side: if line.side >= 0 { 1 } else { -1 },
@@ -129,9 +131,13 @@ fn sanitize_prop_lines(lines: &[PropLine], count: usize) -> Vec<PropLine> {
             })
         })
         .collect::<Vec<_>>();
-    lines.sort_by_key(|line| (line.side, line.start));
+    lines.sort_by(|a, b| {
+        a.side
+            .cmp(&b.side)
+            .then_with(|| a.start.total_cmp(&b.start))
+    });
 
-    let mut last_end = [0usize; 2];
+    let mut last_end = [0.0f32; 2];
     let mut sanitized = Vec::with_capacity(lines.len());
     for line in lines {
         let side_index = usize::from(line.side > 0);
@@ -170,22 +176,16 @@ fn auto_kerb_spans(points: &[Vec3]) -> Vec<KerbSpan> {
         }
 
         let side = if curvature_y > 0.0 { 1 } else { -1 };
+        let start = index as f32;
+        let end = start + 1.0;
         match current.as_mut() {
-            Some(span) if span.side == side => span.end = index + 1,
+            Some(span) if span.side == side => span.end = end,
             Some(_) => {
                 spans.push(current.take().expect("kerb span exists"));
-                current = Some(KerbSpan {
-                    start: index,
-                    end: index + 1,
-                    side,
-                });
+                current = Some(KerbSpan { start, end, side });
             }
             None => {
-                current = Some(KerbSpan {
-                    start: index,
-                    end: index + 1,
-                    side,
-                });
+                current = Some(KerbSpan { start, end, side });
             }
         }
     }
@@ -199,21 +199,26 @@ fn sanitize_kerb_spans(spans: &[KerbSpan], count: usize) -> Vec<KerbSpan> {
     if count < 2 {
         return Vec::new();
     }
+    let limit = count as f32;
     let mut spans = spans
         .iter()
         .filter_map(|span| {
-            let start = span.start.min(count - 1);
-            let end = span.end.min(count);
-            (start < end).then_some(KerbSpan {
+            let start = span.start.clamp(0.0, limit);
+            let end = span.end.clamp(0.0, limit);
+            (end - start > 1e-4).then_some(KerbSpan {
                 start,
                 end,
                 side: if span.side >= 0 { 1 } else { -1 },
             })
         })
         .collect::<Vec<_>>();
-    spans.sort_by_key(|span| (span.side, span.start));
+    spans.sort_by(|a, b| {
+        a.side
+            .cmp(&b.side)
+            .then_with(|| a.start.total_cmp(&b.start))
+    });
 
-    let mut last_end = [0usize; 2];
+    let mut last_end = [0.0f32; 2];
     let mut sanitized: Vec<KerbSpan> = Vec::with_capacity(spans.len());
     for span in spans {
         let side_index = usize::from(span.side > 0);
@@ -285,19 +290,21 @@ pub fn track_from_control_points_with_spans(
     let mut tires_blue = empty_buffers();
     let mut tires_white = empty_buffers();
 
-    for index in 0..points.len() {
-        let point = points[index];
-        let next = points[(index + 1) % points.len()];
-        let future = points[(index + 2) % points.len()];
-        let tangent = (next - point).normalize_or_zero();
-        let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
-        let next_tangent = (future - next).normalize_or_zero();
-        let next_binormal = Vec3::new(-next_tangent.z, 0.0, next_tangent.x).normalize_or_zero();
-
-        for span in &kerb_spans {
-            if index < span.start || index >= span.end {
+    let count = points.len();
+    for span in &kerb_spans {
+        let start = span.start.clamp(0.0, count as f32);
+        let end = span.end.clamp(0.0, count as f32);
+        if end - start <= 1e-4 {
+            continue;
+        }
+        for index in start.floor() as usize..end.ceil() as usize {
+            let segment_start = (index as f32).max(start);
+            let segment_end = ((index + 1) as f32).min(end);
+            if segment_end - segment_start <= 1e-4 {
                 continue;
             }
+            let (point, binormal) = track_frame(&points, segment_start);
+            let (next, next_binormal) = track_frame(&points, segment_end);
             let kerb = if index % 2 == 0 {
                 &mut kerb_red
             } else {
@@ -653,17 +660,51 @@ fn terrain_grid(points: &[Vec3]) -> MeshBuffers {
     buffers
 }
 
-fn offset_path_vertices(points: &[Vec3], start: usize, end: usize, offset: f32) -> Vec<Vec3> {
+fn binormal_at(points: &[Vec3], index: usize) -> Vec3 {
     let count = points.len();
-    (start..=end)
-        .map(|step| {
-            let sample = step % count;
-            let incoming =
-                (points[sample] - points[(sample + count - 1) % count]).normalize_or_zero();
-            let outgoing = (points[(sample + 1) % count] - points[sample]).normalize_or_zero();
-            let tangent = (incoming + outgoing).normalize_or_zero();
-            let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
-            points[sample] + binormal * offset
+    let sample = index % count;
+    let incoming = (points[sample] - points[(sample + count - 1) % count]).normalize_or_zero();
+    let outgoing = (points[(sample + 1) % count] - points[sample]).normalize_or_zero();
+    let tangent = (incoming + outgoing).normalize_or_zero();
+    Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero()
+}
+
+fn track_frame(points: &[Vec3], index: f32) -> (Vec3, Vec3) {
+    let count = points.len();
+    if count == 0 {
+        return (Vec3::ZERO, Vec3::Z);
+    }
+    let wrapped = index.clamp(0.0, count as f32) % count as f32;
+    let base = wrapped.floor() as usize;
+    let t = wrapped - base as f32;
+    let sample = base % count;
+    let next = (sample + 1) % count;
+    let point = points[sample].lerp(points[next], t);
+    let binormal = binormal_at(points, sample).lerp(binormal_at(points, next), t);
+    (point, binormal.normalize_or_zero())
+}
+
+fn offset_path_vertices(points: &[Vec3], start: f32, end: f32, offset: f32) -> Vec<Vec3> {
+    let limit = points.len() as f32;
+    let start = start.clamp(0.0, limit);
+    let end = end.clamp(0.0, limit);
+    if end - start <= 1e-4 {
+        return Vec::new();
+    }
+    let mut steps = vec![start];
+    let mut next = start.floor() + 1.0;
+    while next < end - 1e-4 {
+        steps.push(next);
+        next += 1.0;
+    }
+    if (end - steps.last().copied().unwrap_or(start)).abs() > 1e-4 {
+        steps.push(end);
+    }
+    steps
+        .into_iter()
+        .map(|index| {
+            let (point, binormal) = track_frame(points, index);
+            point + binormal * offset
         })
         .collect()
 }
@@ -713,8 +754,8 @@ fn prop_noise(line: &PropLine, index: usize, salt: u32) -> f32 {
         PropKind::Tyres => 0x85eb_ca6b,
         PropKind::Off => 0,
     };
-    let mut seed = (line.start as u32).wrapping_mul(0x9e37_79b9)
-        ^ (line.end as u32).wrapping_mul(0x85eb_ca6b)
+    let mut seed = line.start.to_bits().wrapping_mul(0x9e37_79b9)
+        ^ line.end.to_bits().wrapping_mul(0x85eb_ca6b)
         ^ ((line.side as i32 as u32) << 8)
         ^ kind_salt
         ^ (index as u32).wrapping_mul(0xc2b2_ae35)
@@ -800,7 +841,7 @@ fn append_kerb(
     );
     let outer_top_start = Vec3::new(
         outer_start.x,
-        outer_base_start + KERB_TOP_OFFSET,
+        outer_base_start + KERB_SURFACE_OFFSET,
         outer_start.z,
     );
     let outer_top_end = Vec3::new(outer_end.x, outer_base_end + KERB_TOP_OFFSET, outer_end.z);
@@ -1012,10 +1053,10 @@ fn push_triangle(buffers: &mut MeshBuffers, corners: [[f32; 3]; 3], normal: [f32
 fn append_collision(collision: &mut TrackCollision, buffers: &MeshBuffers, surface: u16) {
     let base = collision.vertices.len() as u32;
     collision.vertices.extend_from_slice(&buffers.positions);
-    for triangle in buffers.indices.chunks_exact(3) {
-        let a = base + triangle[0];
-        let b = base + triangle[1];
-        let c = base + triangle[2];
+    for [a, b, c] in buffers.indices.as_chunks::<3>().0 {
+        let a = base + *a;
+        let b = base + *b;
+        let c = base + *c;
         let pa = Vec3::from_array(collision.vertices[a as usize]);
         let pb = Vec3::from_array(collision.vertices[b as usize]);
         let pc = Vec3::from_array(collision.vertices[c as usize]);
@@ -1184,13 +1225,13 @@ mod tests {
         let spans = sanitize_kerb_spans(
             &[
                 KerbSpan {
-                    start: 0,
-                    end: 20,
+                    start: 0.0,
+                    end: 20.0,
                     side: -1,
                 },
                 KerbSpan {
-                    start: 0,
-                    end: 20,
+                    start: 0.0,
+                    end: 20.0,
                     side: 1,
                 },
             ],
@@ -1200,11 +1241,13 @@ mod tests {
     }
 
     #[test]
-    fn kerb_sits_outside_asphalt_and_slopes_outward() {
+    fn kerb_leading_edge_is_flush_and_slopes_up_to_outer_trailing_corner() {
         let points = sample_track(&CONTROL_POINTS);
+        let span_start = 10.25;
+        let span_end = 10.75;
         let spans = [KerbSpan {
-            start: 10,
-            end: 11,
+            start: span_start,
+            end: span_end,
             side: 1,
         }];
         let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&spans), Some(&[]))
@@ -1222,32 +1265,50 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(corners.len(), 8);
 
-        let start = points[10];
-        let tangent = (points[11] - start).normalize_or_zero();
-        let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
-        let inner_top = corners[0];
-        let outer_top = corners[1];
-        assert!(((inner_top - start).dot(binormal) - KERB_INNER_RADIUS).abs() < 1e-3);
-        assert!(((outer_top - start).dot(binormal) - KERB_OUTER_RADIUS).abs() < 1e-3);
+        let (start, start_binormal) = track_frame(&points, span_start);
+        let (end, end_binormal) = track_frame(&points, span_end);
+        let inner_top_start = corners[0];
+        let outer_top_start = corners[1];
+        let outer_top_end = corners[2];
+        let inner_top_end = corners[3];
+        assert!(((inner_top_start - start).dot(start_binormal) - KERB_INNER_RADIUS).abs() < 1e-3);
+        assert!(((outer_top_start - start).dot(start_binormal) - KERB_OUTER_RADIUS).abs() < 1e-3);
+        assert!(((inner_top_end - end).dot(end_binormal) - KERB_INNER_RADIUS).abs() < 1e-3);
+        assert!(((outer_top_end - end).dot(end_binormal) - KERB_OUTER_RADIUS).abs() < 1e-3);
         assert!(
-            (inner_top.y - (terrain_height(inner_top.x, inner_top.z) + KERB_SURFACE_OFFSET)).abs()
+            (inner_top_start.y
+                - (terrain_height(inner_top_start.x, inner_top_start.z) + KERB_SURFACE_OFFSET))
+                .abs()
                 < 1e-3
         );
         assert!(
-            (outer_top.y - (terrain_height(outer_top.x, outer_top.z) + KERB_TOP_OFFSET)).abs()
+            (outer_top_start.y
+                - (terrain_height(outer_top_start.x, outer_top_start.z) + KERB_SURFACE_OFFSET))
+                .abs()
                 < 1e-3
         );
-        assert!(outer_top.y > inner_top.y);
+        assert!(
+            (inner_top_end.y
+                - (terrain_height(inner_top_end.x, inner_top_end.z) + KERB_SURFACE_OFFSET))
+                .abs()
+                < 1e-3
+        );
+        assert!(
+            (outer_top_end.y
+                - (terrain_height(outer_top_end.x, outer_top_end.z) + KERB_TOP_OFFSET))
+                .abs()
+                < 1e-3
+        );
+        assert!(outer_top_end.y > inner_top_end.y);
+        assert!(outer_top_end.y > outer_top_start.y);
 
-        for corner in corners {
-            let (index, point) = points
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| a.distance(corner).total_cmp(&b.distance(corner)))
-                .expect("nearest centerline point");
-            let tangent = (points[(index + 1) % points.len()] - *point).normalize_or_zero();
-            let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
-            let lateral = (corner - *point).dot(binormal);
+        for (corner, point, binormal) in [
+            (inner_top_start, start, start_binormal),
+            (outer_top_start, start, start_binormal),
+            (inner_top_end, end, end_binormal),
+            (outer_top_end, end, end_binormal),
+        ] {
+            let lateral = (corner - point).dot(binormal);
             assert!(lateral >= KERB_INNER_RADIUS - 1e-3);
             assert!(lateral <= KERB_OUTER_RADIUS + 1e-3);
         }
@@ -1282,6 +1343,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fractional_prop_range_follows_the_offset_path() {
+        let points = sample_track(&CONTROL_POINTS);
+        let line = PropLine {
+            start: 10.25,
+            end: 12.75,
+            side: 1,
+            kind: PropKind::Blocks,
+        };
+        let vertices = offset_path_vertices(
+            &points,
+            line.start,
+            line.end,
+            PROP_OFFSET * line.side as f32,
+        );
+        assert_eq!(vertices.len(), 4);
+        let (start, start_binormal) = track_frame(&points, line.start);
+        let (end, end_binormal) = track_frame(&points, line.end);
+        assert!(vertices[0].distance(start + start_binormal * PROP_OFFSET) < 1e-3);
+        assert!(
+            vertices
+                .last()
+                .expect("end vertex")
+                .distance(end + end_binormal * PROP_OFFSET)
+                < 1e-3
+        );
+        assert!(!prop_placements(&points, &line).is_empty());
     }
 
     #[test]

@@ -1,4 +1,119 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function findKerbGap(page: Page) {
+  return page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    const spans = JSON.parse(viewer.editor_kerb_spans()) as Array<{
+      start: number;
+      end: number;
+      side: number;
+    }>;
+    const count = (JSON.parse(viewer.editor_centerline()) as number[][]).length;
+    for (const side of [-1, 1]) {
+      const ranges = spans
+        .filter((span) => span.side === side)
+        .sort((a, b) => a.start - b.start);
+      let previous = 0;
+      for (const range of [...ranges, { start: count, end: count, side }]) {
+        const gapStart = previous;
+        const gapEnd = range.start;
+        if (gapEnd - gapStart >= 14) {
+          return { side, index: gapStart + 6, gapStart, gapEnd, count };
+        }
+        previous = Math.max(previous, range.end);
+      }
+    }
+    return { error: "no kerb gap" };
+  });
+}
+
+async function projectGuideIndex(
+  page: Page,
+  side: number,
+  index: number,
+): Promise<[number, number] | null> {
+  const projected = await page.evaluate(
+    ({ side, index }) => {
+      const viewer = (window as any).__trackEditor;
+      const canvas = document.querySelector("#view") as HTMLCanvasElement;
+      const centerline = JSON.parse(viewer.editor_centerline()) as number[][];
+      const camera = JSON.parse(viewer.camera_info()) as {
+        eye: number[];
+        target: number[];
+        fovY: number;
+      };
+      const sub = (a: number[], b: number[]) => [
+        a[0] - b[0],
+        a[1] - b[1],
+        a[2] - b[2],
+      ];
+      const add = (a: number[], b: number[]) => [
+        a[0] + b[0],
+        a[1] + b[1],
+        a[2] + b[2],
+      ];
+      const scale = (value: number[], amount: number) => [
+        value[0] * amount,
+        value[1] * amount,
+        value[2] * amount,
+      ];
+      const dot = (a: number[], b: number[]) =>
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a: number[], b: number[]) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+      const normalize = (value: number[]) => {
+        const length = Math.hypot(value[0], value[1], value[2]);
+        return length > 1e-8 ? scale(value, 1 / length) : [0, 0, 0];
+      };
+      const lerp = (a: number[], b: number[], t: number) => [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+      ];
+      const binormalAt = (sample: number) => {
+        const count = centerline.length;
+        const current = ((sample % count) + count) % count;
+        const incoming = normalize(
+          sub(centerline[current], centerline[(current + count - 1) % count]),
+        );
+        const outgoing = normalize(
+          sub(centerline[(current + 1) % count], centerline[current]),
+        );
+        const tangent = normalize(add(incoming, outgoing));
+        return [-tangent[2], 0, tangent[0]];
+      };
+      const count = centerline.length;
+      const position = Math.max(0, Math.min(count, index));
+      const base = Math.floor(position) % count;
+      const next = (base + 1) % count;
+      const t = position - Math.floor(position);
+      const point = lerp(centerline[base], centerline[next], t);
+      const binormal = normalize(lerp(binormalAt(base), binormalAt(next), t));
+      const guide = add(point, scale(binormal, 6.4 * side));
+      const eye = camera.eye;
+      const forward = normalize(sub(camera.target, eye));
+      const right = normalize(cross(forward, [0, 1, 0]));
+      const up = normalize(cross(right, forward));
+      const offset = sub(guide, eye);
+      const depth = dot(offset, forward);
+      if (depth <= 0.01) {
+        return null;
+      }
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      const tanHalf = Math.tan(camera.fovY * 0.5);
+      const aspect = width / Math.max(height, 1);
+      const ndcX = dot(offset, right) / (depth * tanHalf * aspect);
+      const ndcY = dot(offset, up) / (depth * tanHalf);
+      return [(ndcX * 0.5 + 0.5) * width, (0.5 - ndcY * 0.5) * height];
+    },
+    { side, index },
+  );
+  return projected as [number, number] | null;
+}
 
 test("track editor renders the procedural example track", async ({ page }) => {
   const pageErrors: string[] = [];
@@ -217,5 +332,112 @@ test("prop sections can switch between blocks, tyres, and off", async ({ page })
   expect(result.after[0].kind).toBe("off");
   expect(result.after[1].kind).toBe("tyres");
   expect(result.afterVertices).toBeLessThan(result.beforeVertices);
+  expect(pageErrors).toEqual([]);
+});
+
+test("kerb segments are created and dragged without snapping", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=kerb-drag");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const gap = await findKerbGap(page);
+  expect(gap.error).toBeUndefined();
+  const side = gap.side!;
+  const index = gap.index!;
+  const clickPoint = await projectGuideIndex(page, side, index);
+  expect(clickPoint).not.toBeNull();
+  await page.mouse.click(clickPoint![0], clickPoint![1]);
+
+  await page.waitForFunction(
+    ({ side, index }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const viewer = (window as any).__trackEditor;
+      const spans = JSON.parse(viewer.editor_kerb_spans()) as Array<{
+        start: number;
+        end: number;
+        side: number;
+      }>;
+      return spans.some(
+        (span) => span.side === side && span.start < index && span.end > index,
+      );
+    },
+    { side, index },
+    { timeout: 15_000 },
+  );
+
+  const created = await page.evaluate(
+    ({ side, index }) => {
+      const viewer = (window as any).__trackEditor;
+      const spans = JSON.parse(viewer.editor_kerb_spans()) as Array<{
+        start: number;
+        end: number;
+        side: number;
+      }>;
+      return spans.find(
+        (span) => span.side === side && span.start < index && span.end > index,
+      );
+    },
+    { side, index },
+  );
+  expect(created).toBeTruthy();
+  expect((created?.end ?? 0) - (created?.start ?? 0)).toBeGreaterThan(4);
+
+  const endPoint = await projectGuideIndex(page, side, created!.end);
+  const targetIndex = gap.gapStart! + 11.5;
+  const targetPoint = await projectGuideIndex(page, side, targetIndex);
+  expect(endPoint).not.toBeNull();
+  expect(targetPoint).not.toBeNull();
+  await page.mouse.move(endPoint![0], endPoint![1]);
+  await page.mouse.down();
+  await page.mouse.move(targetPoint![0], targetPoint![1], { steps: 8 });
+  await page.mouse.up();
+
+  await page.waitForFunction(
+    ({ side, oldEnd }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const viewer = (window as any).__trackEditor;
+      const spans = JSON.parse(viewer.editor_kerb_spans()) as Array<{
+        start: number;
+        end: number;
+        side: number;
+      }>;
+      return spans.some(
+        (span) => span.side === side && span.start < oldEnd && span.end > oldEnd + 1,
+      );
+    },
+    { side, oldEnd: created!.end },
+    { timeout: 15_000 },
+  );
+
+  const moved = await page.evaluate(
+    ({ side, oldEnd }) => {
+      const viewer = (window as any).__trackEditor;
+      const spans = JSON.parse(viewer.editor_kerb_spans()) as Array<{
+        start: number;
+        end: number;
+        side: number;
+      }>;
+      return spans.find(
+        (span) => span.side === side && span.start < oldEnd && span.end > oldEnd + 1,
+      );
+    },
+    { side, oldEnd: created!.end },
+  );
+  expect(moved).toBeTruthy();
+  expect(moved!.end).toBeGreaterThan(created!.end + 1);
+  expect(Math.abs(moved!.end - Math.round(moved!.end))).toBeGreaterThan(0.05);
   expect(pageErrors).toEqual([]);
 });

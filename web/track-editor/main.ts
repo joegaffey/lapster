@@ -48,10 +48,20 @@ interface GuidePoint {
   screen: [number, number];
 }
 
-interface PendingPaint {
-  kind: "kerb" | "prop";
+type SegmentKind = "kerb" | "prop";
+
+interface SegmentSelection {
+  kind: SegmentKind;
   side: number;
   start: number;
+  end: number;
+}
+
+interface GuideDrag {
+  kind: "kerb" | "prop";
+  side: number;
+  edge: "start" | "end";
+  pointerId: number;
 }
 
 const MAX_CAMERA_HEIGHT = 140;
@@ -61,7 +71,10 @@ const CENTERLINE_HIT_RADIUS = 12;
 const KERB_RADIUS = 6.4;
 const PROP_OFFSET = 14;
 const GUIDE_HIT_RADIUS = 12;
-const VIRTUAL_POINT_STEP = 2;
+const GUIDE_HANDLE_RADIUS = 7;
+const GUIDE_HANDLE_HIT_RADIUS = 16;
+const DEFAULT_SEGMENT_LENGTH = 6;
+const MIN_SEGMENT_LENGTH = 0.5;
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
   1: "#33ff59",
@@ -102,7 +115,9 @@ let hoverInsert: { point: Vec3; screen: [number, number]; insertIndex: number } 
 let kerbSpans: KerbSpan[] = [];
 let propLines: PropLine[] = [];
 let hoverPoint: GuidePoint | null = null;
-let pendingPaint: PendingPaint | null = null;
+let hoverHandleEdge: "start" | "end" | null = null;
+let selectedSegment: SegmentSelection | null = null;
+let guideDrag: GuideDrag | null = null;
 let paintKind: PropKind = "blocks";
 let overlayVisible = true;
 
@@ -241,6 +256,19 @@ function guideDefinitions(): GuideDef[] {
   ];
 }
 
+function binormalAt(sample: number): Vec3 {
+  const count = centerline.length;
+  const index = ((sample % count) + count) % count;
+  const incoming = normalize(
+    sub(centerline[index], centerline[(index + count - 1) % count]),
+  );
+  const outgoing = normalize(
+    sub(centerline[(index + 1) % count], centerline[index]),
+  );
+  const tangent = normalize(add(incoming, outgoing));
+  return [-tangent[2], 0, tangent[0]];
+}
+
 function offsetPoint(
   index: number,
   side: number,
@@ -250,16 +278,13 @@ function offsetPoint(
     return null;
   }
   const count = centerline.length;
-  const sample = ((index % count) + count) % count;
-  const incoming = normalize(
-    sub(centerline[sample], centerline[(sample + count - 1) % count]),
-  );
-  const outgoing = normalize(
-    sub(centerline[(sample + 1) % count], centerline[sample]),
-  );
-  const tangent = normalize(add(incoming, outgoing));
-  const binormal: Vec3 = [-tangent[2], 0, tangent[0]];
-  return add(centerline[sample], scale(binormal, radius * side));
+  const position = Math.max(0, Math.min(count, index));
+  const base = Math.floor(position) % count;
+  const next = (base + 1) % count;
+  const t = position - Math.floor(position);
+  const point = lerp(centerline[base], centerline[next], t);
+  const binormal = normalize(lerp(binormalAt(base), binormalAt(next), t));
+  return add(point, scale(binormal, radius * side));
 }
 
 function guidePoint(guide: GuideDef, index: number): Vec3 | null {
@@ -321,35 +346,92 @@ function hitGuidePoint(
       if (distance >= bestDistance) {
         continue;
       }
-      const snapped = Math.max(
-        0,
-        Math.min(
-          centerline.length,
-          Math.round((index + t) / VIRTUAL_POINT_STEP) * VIRTUAL_POINT_STEP,
-        ),
-      );
-      const snappedScreen = projected[snapped];
-      if (!snappedScreen) {
-        continue;
-      }
       bestDistance = distance;
-      best = { guide, index: snapped, screen: snappedScreen };
+      best = {
+        guide,
+        index: Math.max(0, Math.min(centerline.length, index + t)),
+        screen: [hitX, hitY],
+      };
     }
   }
   return best;
 }
 
-function pendingGuide(): GuideDef | null {
-  if (!pendingPaint) {
-    return null;
-  }
+function guideFor(kind: SegmentKind, side: number): GuideDef | null {
   return (
     guideDefinitions().find(
-      (guide) =>
-        guide.kind === pendingPaint!.kind &&
-        guide.side === pendingPaint!.side,
+      (guide) => guide.kind === kind && guide.side === side,
     ) ?? null
   );
+}
+
+function findRange(
+  kind: SegmentKind,
+  side: number,
+  index: number,
+): { start: number; end: number; side: number } | null {
+  const ranges = kind === "kerb" ? kerbSpans : propLines;
+  return (
+    ranges.find(
+      (range) =>
+        range.side === side &&
+        index >= range.start - 1e-4 &&
+        index <= range.end + 1e-4,
+    ) ?? null
+  );
+}
+
+function findRangeExact(
+  kind: SegmentKind,
+  side: number,
+  start: number,
+  end: number,
+): { start: number; end: number; side: number } | null {
+  const ranges = kind === "kerb" ? kerbSpans : propLines;
+  return (
+    ranges.find(
+      (range) =>
+        range.side === side &&
+        Math.abs(range.start - start) < 1e-4 &&
+        Math.abs(range.end - end) < 1e-4,
+    ) ?? null
+  );
+}
+
+function selectedPropLine(): PropLine | undefined {
+  if (!selectedSegment || selectedSegment.kind !== "prop") {
+    return undefined;
+  }
+  return propLines.find(
+    (line) =>
+      line.side === selectedSegment!.side &&
+      Math.abs(line.start - selectedSegment!.start) < 1e-4 &&
+      Math.abs(line.end - selectedSegment!.end) < 1e-4,
+  );
+}
+
+function resolveSelection(): void {
+  if (!selectedSegment) {
+    return;
+  }
+  const range =
+    findRangeExact(
+      selectedSegment.kind,
+      selectedSegment.side,
+      selectedSegment.start,
+      selectedSegment.end,
+    ) ??
+    findRange(
+      selectedSegment.kind,
+      selectedSegment.side,
+      (selectedSegment.start + selectedSegment.end) * 0.5,
+    );
+  if (range) {
+    selectedSegment.start = range.start;
+    selectedSegment.end = range.end;
+  } else {
+    selectedSegment = null;
+  }
 }
 
 function subtractRanges<T extends { start: number; end: number; side: number }>(
@@ -374,31 +456,55 @@ function subtractRanges<T extends { start: number; end: number; side: number }>(
   return result;
 }
 
-function paintRange(pending: PendingPaint, endIndex: number): void {
-  let start = pending.start;
-  let end = endIndex;
-  if (start === centerline.length) {
-    start = 0;
+function selectSegment(kind: SegmentKind, side: number, index: number): boolean {
+  const range = findRange(kind, side, index);
+  if (!range) {
+    return false;
   }
-  if (
-    end === 0 &&
-    start > centerline.length * 0.5 &&
-    pending.start < centerline.length
-  ) {
-    end = centerline.length;
+  selectedSegment = {
+    kind,
+    side,
+    start: range.start,
+    end: range.end,
+  };
+  if (kind === "prop") {
+    const line = propLines.find(
+      (item) =>
+        item.side === range.side &&
+        Math.abs(item.start - range.start) < 1e-4 &&
+        Math.abs(item.end - range.end) < 1e-4,
+    );
+    if (line) {
+      paintKind = line.kind;
+    }
   }
-  if (start > end) {
-    [start, end] = [end, start];
+  syncPaintControls();
+  return true;
+}
+
+function createSegment(guide: GuideDef, index: number): void {
+  const count = centerline.length;
+  if (guide.kind === "prop" && paintKind === "off") {
+    flashStatus("Choose Blocks or Tyres to add props");
+    return;
   }
-  if (end - start < 1) {
+  const length = Math.min(DEFAULT_SEGMENT_LENGTH, count);
+  const start = Math.max(0, Math.min(count - length, index - length * 0.5));
+  const end = Math.min(count, start + length);
+  if (end - start < MIN_SEGMENT_LENGTH) {
     return;
   }
 
-  if (pending.kind === "kerb") {
-    kerbSpans = subtractRanges(kerbSpans, pending.side, start, end);
-    kerbSpans.push({ start, end, side: pending.side });
-    kerbSpans.sort((a, b) => a.start - b.start || a.side - b.side);
-    pendingPaint = null;
+  if (guide.kind === "kerb") {
+    kerbSpans = subtractRanges(kerbSpans, guide.side, start, end);
+    kerbSpans.push({ start, end, side: guide.side });
+    kerbSpans.sort((a, b) => a.side - b.side || a.start - b.start);
+    selectedSegment = {
+      kind: "kerb",
+      side: guide.side,
+      start,
+      end,
+    };
     hoverPoint = null;
     syncPaintControls();
     drawControlPoints();
@@ -406,21 +512,87 @@ function paintRange(pending: PendingPaint, endIndex: number): void {
     return;
   }
 
-  propLines = subtractRanges(propLines, pending.side, start, end);
-  if (paintKind !== "off") {
-    propLines.push({
-      start,
-      end,
-      side: pending.side,
-      kind: paintKind,
-    });
-  }
+  propLines = subtractRanges(propLines, guide.side, start, end);
+  propLines.push({
+    start,
+    end,
+    side: guide.side,
+    kind: paintKind,
+  });
   propLines.sort((a, b) => a.side - b.side || a.start - b.start);
-  pendingPaint = null;
+  selectedSegment = {
+    kind: "prop",
+    side: guide.side,
+    start,
+    end,
+  };
   hoverPoint = null;
   syncPaintControls();
   drawControlPoints();
   void rebuildPropLines();
+}
+
+function updateSelectedEdge(edge: "start" | "end", index: number): void {
+  if (!selectedSegment) {
+    return;
+  }
+  const oldStart = selectedSegment.start;
+  const oldEnd = selectedSegment.end;
+  const range = findRangeExact(
+    selectedSegment.kind,
+    selectedSegment.side,
+    oldStart,
+    oldEnd,
+  );
+  if (!range) {
+    return;
+  }
+  if (edge === "start") {
+    selectedSegment.start = Math.max(
+      0,
+      Math.min(index, selectedSegment.end - MIN_SEGMENT_LENGTH),
+    );
+  } else {
+    selectedSegment.end = Math.min(
+      centerline.length,
+      Math.max(index, selectedSegment.start + MIN_SEGMENT_LENGTH),
+    );
+  }
+  range.start = selectedSegment.start;
+  range.end = selectedSegment.end;
+}
+
+function hitGuideHandle(
+  x: number,
+  y: number,
+): { edge: "start" | "end"; guide: GuideDef } | null {
+  if (!selectedSegment) {
+    return null;
+  }
+  const guide = guideFor(selectedSegment.kind, selectedSegment.side);
+  const camera = currentCamera();
+  if (!guide || !camera) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  let best: { edge: "start" | "end"; guide: GuideDef } | null = null;
+  let bestDistance = GUIDE_HANDLE_HIT_RADIUS;
+  for (const edge of ["start", "end"] as const) {
+    const point = guidePoint(guide, selectedSegment[edge]);
+    const projected = point
+      ? projectPoint(point, camera, width, height)
+      : null;
+    if (!projected) {
+      continue;
+    }
+    const distance = Math.hypot(projected[0] - x, projected[1] - y);
+    if (distance <= bestDistance) {
+      bestDistance = distance;
+      best = { edge, guide };
+    }
+  }
+  return best;
 }
 
 function paintLabel(kind: PropKind): string {
@@ -431,14 +603,7 @@ function paintLabel(kind: PropKind): string {
 }
 
 function syncPaintControls(): void {
-  if (pendingPaint) {
-    propSectionLabel.textContent =
-      pendingPaint.kind === "kerb"
-        ? "Select kerb end point"
-        : `Select ${paintLabel(paintKind)} end point`;
-  } else {
-    propSectionLabel.textContent = `Painting: ${paintLabel(paintKind)}`;
-  }
+  propSectionLabel.textContent = `Painting: ${paintLabel(paintKind)}`;
   for (const button of propKindButtons) {
     button.disabled = false;
     button.classList.toggle("active", button.dataset.propKind === paintKind);
@@ -447,6 +612,14 @@ function syncPaintControls(): void {
 
 function setPaintKind(kind: PropKind): void {
   paintKind = kind;
+  const line = selectedPropLine();
+  if (line) {
+    line.kind = kind;
+    syncPaintControls();
+    drawControlPoints();
+    void rebuildPropLines();
+    return;
+  }
   syncPaintControls();
 }
 
@@ -458,8 +631,10 @@ function setOverlayVisible(visible: boolean): void {
   hoverInsert = null;
   hoverDeleteIndex = null;
   hoverPoint = null;
+  hoverHandleEdge = null;
   if (!visible) {
-    pendingPaint = null;
+    selectedSegment = null;
+    guideDrag = null;
     syncPaintControls();
     canvas.style.cursor = "";
   }
@@ -470,10 +645,12 @@ function updateHover(): void {
   hoverInsert = null;
   hoverDeleteIndex = null;
   hoverPoint = null;
+  hoverHandleEdge = null;
   if (
     !overlayVisible ||
     !lastPointer ||
     dragIndex !== null ||
+    guideDrag !== null ||
     rebuilding ||
     cameraDragging
   ) {
@@ -486,15 +663,22 @@ function updateHover(): void {
     canvas.style.cursor = index >= 0 ? "crosshair" : "";
     return;
   }
-  const guide = pendingGuide();
-  const point = hitGuidePoint(
-    lastPointer[0],
-    lastPointer[1],
-    guide ? [guide] : guideDefinitions(),
-  );
+  const handle = hitGuideHandle(lastPointer[0], lastPointer[1]);
+  if (handle) {
+    hoverHandleEdge = handle.edge;
+    canvas.style.cursor = "grab";
+    return;
+  }
+  const point = hitGuidePoint(lastPointer[0], lastPointer[1]);
   if (point) {
     hoverPoint = point;
-    canvas.style.cursor = "copy";
+    canvas.style.cursor = findRange(
+      point.guide.kind,
+      point.guide.side,
+      point.index,
+    )
+      ? "pointer"
+      : "copy";
     return;
   }
   if (centerline.length < 2 || controlPoints.length === 0) {
@@ -560,7 +744,7 @@ function setDeleteMode(enabled: boolean): void {
   hoverInsert = null;
   hoverDeleteIndex = null;
   hoverPoint = null;
-  pendingPaint = null;
+  hoverHandleEdge = null;
   syncPaintControls();
   drawControlPoints();
 }
@@ -671,91 +855,20 @@ function drawControlPoints(): void {
   };
 
   const guides = guideDefinitions();
-  const activeGuide = hoverPoint?.guide ?? pendingGuide();
+  const selectedGuide = selectedSegment
+    ? guideFor(selectedSegment.kind, selectedSegment.side)
+    : null;
+  const draggedGuide = guideDrag
+    ? guideFor(guideDrag.kind, guideDrag.side)
+    : null;
+  const activeGuide = draggedGuide ?? hoverPoint?.guide ?? selectedGuide;
   for (const guide of guides) {
     const active =
       activeGuide?.kind === guide.kind && activeGuide.side === guide.side;
     drawGuide(guidePoints(guide), guide.color, active);
   }
 
-  if (pendingPaint && hoverPoint) {
-    const guide = pendingGuide();
-    if (
-      guide &&
-      hoverPoint.guide.kind === guide.kind &&
-      hoverPoint.guide.side === guide.side
-    ) {
-      let start = pendingPaint.start;
-      let end = hoverPoint.index;
-      if (start === centerline.length) {
-        start = 0;
-      }
-      if (end === 0 && start > centerline.length * 0.5) {
-        end = centerline.length;
-      }
-      if (start > end) {
-        [start, end] = [end, start];
-      }
-      const preview: Vec3[] = [];
-      for (let index = start; index <= end; index += 1) {
-        const point = guidePoint(guide, index);
-        if (point) {
-          preview.push(point);
-        }
-      }
-      const projected = preview
-        .map((point) => projectPoint(point, camera, width, height))
-        .filter((point): point is [number, number] => point !== null);
-      if (projected.length > 1) {
-        overlayContext.save();
-        overlayContext.setLineDash([6, 4]);
-        overlayContext.globalAlpha = 0.95;
-        overlayContext.beginPath();
-        overlayContext.moveTo(projected[0][0], projected[0][1]);
-        for (let index = 1; index < projected.length; index += 1) {
-          overlayContext.lineTo(projected[index][0], projected[index][1]);
-        }
-        overlayContext.lineWidth = 3;
-        overlayContext.strokeStyle = guide.color;
-        overlayContext.stroke();
-        overlayContext.restore();
-      }
-    }
-  }
-
   if (hoverPoint) {
-    const guide = hoverPoint.guide;
-    for (
-      let index = 0;
-      index < centerline.length;
-      index += VIRTUAL_POINT_STEP
-    ) {
-      const point = guidePoint(guide, index);
-      if (!point) {
-        continue;
-      }
-      const projected = projectPoint(point, camera, width, height);
-      if (!projected) {
-        continue;
-      }
-      const active = index === hoverPoint.index;
-      overlayContext.beginPath();
-      overlayContext.arc(
-        projected[0],
-        projected[1],
-        active ? 4 : 1.8,
-        0,
-        Math.PI * 2,
-      );
-      overlayContext.fillStyle = active ? "#f8fafc" : "rgba(248, 250, 252, 0.55)";
-      overlayContext.fill();
-      if (active) {
-        overlayContext.lineWidth = 1.5;
-        overlayContext.strokeStyle = "#080a0d";
-        overlayContext.stroke();
-      }
-    }
-
     const [hitX, hitY] = hoverPoint.screen;
     overlayContext.save();
     overlayContext.setLineDash([3, 3]);
@@ -775,6 +888,65 @@ function drawControlPoints(): void {
     overlayContext.lineWidth = 1.5;
     overlayContext.strokeStyle = "#e6f7ff";
     overlayContext.stroke();
+  }
+
+  if (selectedSegment && selectedGuide) {
+    const preview: Vec3[] = [];
+    const steps = Math.max(
+      2,
+      Math.ceil((selectedSegment.end - selectedSegment.start) * 8),
+    );
+    for (let step = 0; step <= steps; step += 1) {
+      const index =
+        selectedSegment.start +
+        ((selectedSegment.end - selectedSegment.start) * step) / steps;
+      const point = guidePoint(selectedGuide, index);
+      if (point) {
+        preview.push(point);
+      }
+    }
+    const projected = preview
+      .map((point) => projectPoint(point, camera, width, height))
+      .filter((point): point is [number, number] => point !== null);
+    if (projected.length > 1) {
+      overlayContext.save();
+      overlayContext.globalAlpha = 0.9;
+      overlayContext.beginPath();
+      overlayContext.moveTo(projected[0][0], projected[0][1]);
+      for (let index = 1; index < projected.length; index += 1) {
+        overlayContext.lineTo(projected[index][0], projected[index][1]);
+      }
+      overlayContext.lineWidth = 3;
+      overlayContext.strokeStyle = selectedGuide.color;
+      overlayContext.stroke();
+      overlayContext.restore();
+    }
+
+    for (const edge of ["start", "end"] as const) {
+      const point = guidePoint(selectedGuide, selectedSegment[edge]);
+      const projected = point
+        ? projectPoint(point, camera, width, height)
+        : null;
+      if (!projected) {
+        continue;
+      }
+      const active =
+        hoverHandleEdge === edge ||
+        (guideDrag?.edge === edge && guideDrag.kind === selectedSegment.kind);
+      overlayContext.beginPath();
+      overlayContext.arc(
+        projected[0],
+        projected[1],
+        GUIDE_HANDLE_RADIUS + (active ? 2 : 0),
+        0,
+        Math.PI * 2,
+      );
+      overlayContext.fillStyle = active ? "#f8fafc" : selectedGuide.color;
+      overlayContext.fill();
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "#080a0d";
+      overlayContext.stroke();
+    }
   }
 
   controlPoints.forEach((point, index) => {
@@ -842,8 +1014,9 @@ function refreshEditorState(): void {
   centerline = JSON.parse(editorViewer.editor_centerline()) as Vec3[];
   kerbSpans = (
     JSON.parse(editorViewer.editor_kerb_spans()) as KerbSpan[]
-  ).sort((a, b) => a.start - b.start);
+  ).sort((a, b) => a.side - b.side || a.start - b.start);
   propLines = JSON.parse(editorViewer.editor_prop_lines()) as PropLine[];
+  resolveSelection();
   syncPaintControls();
   const debug = JSON.parse(editorViewer.debug_info());
   renderStats(debug);
@@ -931,35 +1104,50 @@ canvas.addEventListener(
       return;
     }
     if (index < 0) {
-      const guide = pendingGuide();
-      const point =
-        !overlayVisible || deleteMode
-          ? null
-          : hitGuidePoint(x, y, guide ? [guide] : guideDefinitions());
-      if (point) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        cameraDragging = false;
-        if (pendingPaint) {
-          paintRange(pendingPaint, point.index);
-        } else {
-          pendingPaint = {
-            kind: point.guide.kind,
-            side: point.guide.side,
-            start: point.index,
+      if (overlayVisible && !deleteMode) {
+        const handle = hitGuideHandle(x, y);
+        if (handle && selectedSegment) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          cameraDragging = false;
+          guideDrag = {
+            kind: selectedSegment.kind,
+            side: selectedSegment.side,
+            edge: handle.edge,
+            pointerId: event.pointerId,
           };
-          hoverPoint = point;
-          syncPaintControls();
+          hoverHandleEdge = handle.edge;
+          cameraController?.setEnabled(false);
+          try {
+            canvas.setPointerCapture(event.pointerId);
+          } catch {
+            // Synthetic pointers may not support capture.
+          }
+          canvas.style.cursor = "grabbing";
           drawControlPoints();
+          return;
         }
-        return;
+        const point = hitGuidePoint(x, y);
+        if (point) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          cameraDragging = false;
+          if (
+            selectSegment(point.guide.kind, point.guide.side, point.index)
+          ) {
+            hoverPoint = point;
+            drawControlPoints();
+          } else {
+            createSegment(point.guide, point.index);
+          }
+          return;
+        }
       }
-      if (pendingPaint) {
-        pendingPaint = null;
+      if (selectedSegment) {
+        selectedSegment = null;
         hoverPoint = null;
+        hoverHandleEdge = null;
         syncPaintControls();
-        drawControlPoints();
-        return;
       }
       if (hoverInsert) {
         event.preventDefault();
@@ -972,8 +1160,11 @@ canvas.addEventListener(
         hoverInsert = null;
         drawControlPoints();
         void rebuildControlPoints();
-      } else if (event.button === 0) {
-        cameraDragging = true;
+      } else {
+        drawControlPoints();
+        if (event.button === 0) {
+          cameraDragging = true;
+        }
       }
       return;
     }
@@ -997,6 +1188,19 @@ canvas.addEventListener(
 window.addEventListener(
   "pointermove",
   (event) => {
+    if (guideDrag && event.pointerId === guideDrag.pointerId) {
+      event.preventDefault();
+      const guide = guideFor(guideDrag.kind, guideDrag.side);
+      if (guide) {
+        const [x, y] = pointerPosition(event);
+        const point = hitGuidePoint(x, y, [guide]);
+        if (point) {
+          updateSelectedEdge(guideDrag.edge, point.index);
+          drawControlPoints();
+        }
+      }
+      return;
+    }
     if (dragIndex === null || event.pointerId !== dragPointerId) {
       return;
     }
@@ -1023,6 +1227,24 @@ const endDrag = (event: PointerEvent) => {
   void rebuildControlPoints();
 };
 
+const endGuideDrag = (event: PointerEvent) => {
+  if (!guideDrag || event.pointerId !== guideDrag.pointerId) {
+    return;
+  }
+  const kind = guideDrag.kind;
+  guideDrag = null;
+  hoverHandleEdge = null;
+  try {
+    canvas.releasePointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture may already be released.
+  }
+  cameraController?.setEnabled(true);
+  canvas.style.cursor = "";
+  drawControlPoints();
+  void (kind === "kerb" ? rebuildKerbSpans() : rebuildPropLines());
+};
+
 canvas.addEventListener("pointermove", (event) => {
   lastPointer = pointerPosition(event);
   if (event.shiftKey !== deleteMode) {
@@ -1036,6 +1258,7 @@ canvas.addEventListener("pointerleave", () => {
   hoverInsert = null;
   hoverDeleteIndex = null;
   hoverPoint = null;
+  hoverHandleEdge = null;
   canvas.style.cursor = "";
   drawControlPoints();
 });
@@ -1044,9 +1267,10 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Shift") {
     setDeleteMode(true);
   }
-  if (event.key === "Escape" && pendingPaint) {
-    pendingPaint = null;
+  if (event.key === "Escape" && selectedSegment && !guideDrag) {
+    selectedSegment = null;
     hoverPoint = null;
+    hoverHandleEdge = null;
     syncPaintControls();
     drawControlPoints();
   }
@@ -1081,6 +1305,8 @@ const endCameraDrag = () => {
 
 window.addEventListener("pointerup", endDrag, { capture: true });
 window.addEventListener("pointercancel", endDrag, { capture: true });
+window.addEventListener("pointerup", endGuideDrag, { capture: true });
+window.addEventListener("pointercancel", endGuideDrag, { capture: true });
 window.addEventListener("pointerup", endCameraDrag, { capture: true });
 window.addEventListener("pointercancel", endCameraDrag, { capture: true });
 
