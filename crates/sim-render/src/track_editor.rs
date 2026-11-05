@@ -23,7 +23,12 @@ const KERB_SURFACE_OFFSET: f32 = 0.06;
 const KERB_TOP_OFFSET: f32 = 0.155;
 const OUTER_EDGE_RADIUS: f32 = 12.0;
 const PROP_OFFSET: f32 = 14.0;
-const PROP_WALL_HEIGHT: f32 = 0.9;
+const BLOCK_HALF_WIDTH: f32 = 0.3;
+const BLOCK_HALF_HEIGHT: f32 = 0.4;
+const BLOCK_HALF_LENGTH: f32 = 0.9;
+const TYRE_RADIUS: f32 = 0.4;
+const TYRE_LAYER_HEIGHT: f32 = 0.3;
+const TYRE_LAYERS: usize = 3;
 const MIN_TURN_RADIUS: f32 = OUTER_EDGE_RADIUS.max(PROP_OFFSET) + 1.0;
 const CURVATURE_RELAXATION: f32 = 0.5;
 const CURVATURE_RELAXATION_ITERATIONS: usize = 1024;
@@ -851,17 +856,27 @@ fn append_prop_lines(
         for (index, (position, tangent)) in prop_placements(points, line).into_iter().enumerate() {
             let (position, heading) = jittered_prop_placement(position, tangent, line, index);
             match line.kind {
-                PropKind::Blocks => {
-                    append_box(barriers, position, Vec3::new(0.3, 0.4, 0.9), heading)
-                }
+                PropKind::Blocks => append_box(
+                    barriers,
+                    position,
+                    Vec3::new(BLOCK_HALF_WIDTH, BLOCK_HALF_HEIGHT, BLOCK_HALF_LENGTH),
+                    heading,
+                ),
                 PropKind::Tyres => {
-                    for layer in 0..3 {
+                    for layer in 0..TYRE_LAYERS {
                         let tire = if layer % 2 == 0 {
                             &mut *tires_blue
                         } else {
                             &mut *tires_white
                         };
-                        append_cylinder(tire, position, 0.4, 0.3, 8, layer as f32 * 0.3);
+                        append_cylinder(
+                            tire,
+                            position,
+                            TYRE_RADIUS,
+                            TYRE_LAYER_HEIGHT,
+                            8,
+                            layer as f32 * TYRE_LAYER_HEIGHT,
+                        );
                     }
                 }
                 PropKind::Off => {}
@@ -870,29 +885,127 @@ fn append_prop_lines(
     }
 }
 
+fn prop_wall_dimensions(kind: PropKind) -> Option<(f32, f32)> {
+    match kind {
+        PropKind::Blocks => Some((BLOCK_HALF_WIDTH, BLOCK_HALF_HEIGHT * 2.0)),
+        PropKind::Tyres => Some((TYRE_RADIUS, TYRE_LAYER_HEIGHT * TYRE_LAYERS as f32)),
+        PropKind::Off => None,
+    }
+}
+
+fn prop_wall_vertical(point: Vec3, height: f32) -> (Vec3, Vec3) {
+    let base = terrain_height(point.x, point.z);
+    (
+        Vec3::new(point.x, base, point.z),
+        Vec3::new(point.x, base + height, point.z),
+    )
+}
+
+fn push_wall_quad(buffers: &mut MeshBuffers, corners: [Vec3; 4], hint: Vec3) {
+    let a = corners[0];
+    let b = corners[1];
+    let c = corners[2];
+    let mut normal = (b - a).cross(c - a).normalize_or_zero();
+    if normal.dot(hint) < 0.0 {
+        normal = -normal;
+    }
+    push_quad(
+        buffers,
+        corners.map(|corner| corner.to_array()),
+        normal.to_array(),
+    );
+}
+
 fn append_prop_walls(points: &[Vec3], lines: &[PropLine], walls: &mut MeshBuffers) {
     for line in lines {
-        if line.kind == PropKind::Off {
+        let Some((half_width, height)) = prop_wall_dimensions(line.kind) else {
+            continue;
+        };
+        let side = line.side as f32;
+        let inner = offset_path_vertices(
+            points,
+            line.start,
+            line.end,
+            (PROP_OFFSET - half_width) * side,
+        );
+        let outer = offset_path_vertices(
+            points,
+            line.start,
+            line.end,
+            (PROP_OFFSET + half_width) * side,
+        );
+        if inner.len() < 2 || inner.len() != outer.len() {
             continue;
         }
-        let vertices =
-            offset_path_vertices(points, line.start, line.end, PROP_OFFSET * line.side as f32);
-        for pair in vertices.windows(2) {
-            let start = pair[0];
-            let end = pair[1];
-            let tangent = (end - start).normalize_or_zero();
-            let normal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
-            let start_base = terrain_height(start.x, start.z);
-            let end_base = terrain_height(end.x, end.z);
-            push_quad(
+        for (inner_pair, outer_pair) in inner.windows(2).zip(outer.windows(2)) {
+            let (inner_start_bottom, inner_start_top) = prop_wall_vertical(inner_pair[0], height);
+            let (inner_end_bottom, inner_end_top) = prop_wall_vertical(inner_pair[1], height);
+            let (outer_start_bottom, outer_start_top) = prop_wall_vertical(outer_pair[0], height);
+            let (outer_end_bottom, outer_end_top) = prop_wall_vertical(outer_pair[1], height);
+            let tangent = (inner_pair[1] - inner_pair[0]).normalize_or_zero();
+            let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
+            push_wall_quad(
                 walls,
                 [
-                    [start.x, start_base, start.z],
-                    [start.x, start_base + PROP_WALL_HEIGHT, start.z],
-                    [end.x, end_base + PROP_WALL_HEIGHT, end.z],
-                    [end.x, end_base, end.z],
+                    inner_start_bottom,
+                    inner_start_top,
+                    inner_end_top,
+                    inner_end_bottom,
                 ],
-                normal.to_array(),
+                -binormal * side,
+            );
+            push_wall_quad(
+                walls,
+                [
+                    outer_start_bottom,
+                    outer_start_top,
+                    outer_end_top,
+                    outer_end_bottom,
+                ],
+                binormal * side,
+            );
+            push_wall_quad(
+                walls,
+                [
+                    inner_start_top,
+                    outer_start_top,
+                    outer_end_top,
+                    inner_end_top,
+                ],
+                Vec3::Y,
+            );
+        }
+
+        let closed = line.start <= 0.0 && line.end >= points.len() as f32;
+        if !closed {
+            let (inner_start_bottom, inner_start_top) = prop_wall_vertical(inner[0], height);
+            let (outer_start_bottom, outer_start_top) = prop_wall_vertical(outer[0], height);
+            let start_tangent = (inner[1] - inner[0]).normalize_or_zero();
+            push_wall_quad(
+                walls,
+                [
+                    inner_start_bottom,
+                    outer_start_bottom,
+                    outer_start_top,
+                    inner_start_top,
+                ],
+                -start_tangent,
+            );
+
+            let (inner_end_bottom, inner_end_top) =
+                prop_wall_vertical(inner[inner.len() - 1], height);
+            let (outer_end_bottom, outer_end_top) =
+                prop_wall_vertical(outer[outer.len() - 1], height);
+            let end_tangent = (inner[inner.len() - 1] - inner[inner.len() - 2]).normalize_or_zero();
+            push_wall_quad(
+                walls,
+                [
+                    inner_end_bottom,
+                    outer_end_bottom,
+                    outer_end_top,
+                    inner_end_top,
+                ],
+                end_tangent,
             );
         }
     }
@@ -1401,13 +1514,24 @@ mod tests {
         let lines = default_prop_lines(&points);
         assert!(lines.iter().any(|line| line.kind != PropKind::Off));
         for line in lines.into_iter().filter(|line| line.kind != PropKind::Off) {
+            let (half_width, _) = prop_wall_dimensions(line.kind).expect("prop wall");
+            let side = line.side as f32;
             let (point, binormal) = track_frame(&points, (line.start + line.end) * 0.5);
-            let wall = point + binormal * (PROP_OFFSET * line.side as f32);
-            let contacts = collider.wall_contacts(
-                Vec3::new(wall.x, terrain_height(wall.x, wall.z) + 0.4, wall.z),
-                0.5,
-            );
-            assert!(!contacts.is_empty());
+            let center = point + binormal * (PROP_OFFSET * side);
+            let contact = |position: Vec3, radius: f32| {
+                collider.wall_contacts(
+                    Vec3::new(
+                        position.x,
+                        terrain_height(position.x, position.z) + 0.4,
+                        position.z,
+                    ),
+                    radius,
+                )
+            };
+            assert!(contact(center, 0.2).is_empty());
+            let inner_face = center - binormal * (half_width * side);
+            assert!(!contact(inner_face - binormal * (side * 0.1), 0.2).is_empty());
+            assert!(contact(inner_face - binormal * (side * 0.8), 0.2).is_empty());
         }
     }
 
