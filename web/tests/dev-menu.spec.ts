@@ -58,6 +58,15 @@ test("dev menu adjusts live settings and car tuning", async ({ page }) => {
   await drawer.locator("summary", { hasText: /^Textures$/ }).click();
   await drawer.locator("summary", { hasText: /^Rendering$/ }).click();
   await drawer.locator("summary", { hasText: /^Shadows$/ }).click();
+  await page.locator("#dev-saturation").evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "1.3";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect
+    .poll(() => page.evaluate(() => document.querySelector<HTMLElement>("#view")?.style.filter))
+    .toBe("saturate(1.3)");
+
   await page.locator("#dev-environment-shadows").selectOption("high");
   await expect
     .poll(async () => (await telemetry(page)).environmentShadowMode)
