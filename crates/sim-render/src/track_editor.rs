@@ -1481,6 +1481,33 @@ mod tests {
     }
 
     #[test]
+    fn editor_shoulders_collide_as_dirt() {
+        use sim_core::TrackCollider;
+
+        let points = sample_track(&CONTROL_POINTS);
+        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
+        let (point, binormal) = track_frame(&points, 10.0);
+        for lateral in [7.0, 8.0, 9.0, 10.0, 11.0] {
+            for side in [-1.0, 1.0] {
+                let sample = point + binormal * (lateral * side);
+                let hit = collider
+                    .raycast(
+                        Vec3::new(sample.x, sample.y + 20.0, sample.z),
+                        Vec3::NEG_Y,
+                        100.0,
+                    )
+                    .unwrap_or_else(|| panic!("no hit at lateral {lateral} side {side}"));
+                assert_eq!(
+                    hit.surface, DIRT_SURFACE,
+                    "lateral {lateral} side {side} hit surface {}",
+                    hit.surface
+                );
+            }
+        }
+    }
+
+    #[test]
     fn editor_track_exports_a_valid_pack() {
         let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
         let bytes = pack_from_track(&track).expect("export pack");

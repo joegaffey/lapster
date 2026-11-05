@@ -74,12 +74,14 @@ export class EngineSimAudio {
   private roadGrass: BiquadFilterNode | null = null;
   private roadOuterGrit: BiquadFilterNode | null = null;
   private roadGrassRustle: BiquadFilterNode | null = null;
+  private roadDirt: BiquadFilterNode | null = null;
   private roadAsphaltGain: GainNode | null = null;
   private roadConcreteGain: GainNode | null = null;
   private roadKerbGain: GainNode | null = null;
   private roadGrassGain: GainNode | null = null;
   private roadOuterGritGain: GainNode | null = null;
   private roadGrassRustleGain: GainNode | null = null;
+  private roadDirtGain: GainNode | null = null;
   private outerTremolo: GainNode | null = null;
   private grassTremolo: GainNode | null = null;
   private dirtLfos: OscillatorNode[] = [];
@@ -89,6 +91,7 @@ export class EngineSimAudio {
     concrete: 0,
     kerb: 0,
     grass: 0,
+    dirt: 0,
     gain: 0,
   };
   private tireSlip = 0;
@@ -201,30 +204,38 @@ export class EngineSimAudio {
       roadGrassRustle.type = "bandpass";
       roadGrassRustle.frequency.value = 600;
       roadGrassRustle.Q.value = 0.7;
+      const roadDirt = context.createBiquadFilter();
+      roadDirt.type = "lowpass";
+      roadDirt.frequency.value = 320;
+      roadDirt.Q.value = 0.9;
       const roadAsphaltGain = context.createGain();
       const roadConcreteGain = context.createGain();
       const roadKerbGain = context.createGain();
       const roadGrassGain = context.createGain();
       const roadOuterGritGain = context.createGain();
       const roadGrassRustleGain = context.createGain();
+      const roadDirtGain = context.createGain();
       roadAsphaltGain.gain.value = 0;
       roadConcreteGain.gain.value = 0;
       roadKerbGain.gain.value = 0;
       roadGrassGain.gain.value = 0;
       roadOuterGritGain.gain.value = 0;
       roadGrassRustleGain.gain.value = 0;
+      roadDirtGain.gain.value = 0;
       source.connect(roadAsphalt);
       source.connect(roadConcrete);
       source.connect(roadOuterGrit);
       source.connect(roadKerb);
       source.connect(roadGrass);
       source.connect(roadGrassRustle);
+      source.connect(roadDirt);
       roadAsphalt.connect(roadAsphaltGain);
       roadConcrete.connect(roadConcreteGain);
       roadOuterGrit.connect(roadOuterGritGain);
       roadKerb.connect(roadKerbGain);
       roadGrass.connect(roadGrassGain);
       roadGrassRustle.connect(roadGrassRustleGain);
+      roadDirt.connect(roadDirtGain);
       roadAsphaltGain.connect(gain);
       roadKerbGain.connect(gain);
       const outerTremolo = context.createGain();
@@ -235,6 +246,7 @@ export class EngineSimAudio {
       roadOuterGritGain.connect(outerTremolo);
       roadGrassGain.connect(grassTremolo);
       roadGrassRustleGain.connect(grassTremolo);
+      roadDirtGain.connect(grassTremolo);
       outerTremolo.connect(gain);
       grassTremolo.connect(gain);
       const dirtLfos: OscillatorNode[] = [];
@@ -267,12 +279,14 @@ export class EngineSimAudio {
       this.roadGrass = roadGrass;
       this.roadOuterGrit = roadOuterGrit;
       this.roadGrassRustle = roadGrassRustle;
+      this.roadDirt = roadDirt;
       this.roadAsphaltGain = roadAsphaltGain;
       this.roadConcreteGain = roadConcreteGain;
       this.roadKerbGain = roadKerbGain;
       this.roadGrassGain = roadGrassGain;
       this.roadOuterGritGain = roadOuterGritGain;
       this.roadGrassRustleGain = roadGrassRustleGain;
+      this.roadDirtGain = roadDirtGain;
       this.tireSource = source;
       this.tireBand1 = tireBand1;
       this.tireBand2 = tireBand2;
@@ -302,12 +316,14 @@ export class EngineSimAudio {
       this.roadGrass = null;
       this.roadOuterGrit = null;
       this.roadGrassRustle = null;
+      this.roadDirt = null;
       this.roadAsphaltGain = null;
       this.roadConcreteGain = null;
       this.roadKerbGain = null;
       this.roadGrassGain = null;
       this.roadOuterGritGain = null;
       this.roadGrassRustleGain = null;
+      this.roadDirtGain = null;
       for (const lfo of this.dirtLfos) lfo.stop();
       for (const lfo of this.dirtLfos) lfo.disconnect();
       this.dirtLfos = [];
@@ -405,6 +421,7 @@ export class EngineSimAudio {
     let concrete = 0;
     let kerb = 0;
     let grass = 0;
+    let dirt = 0;
     for (const wheel of wheels) {
       if (!wheel.contact) {
         continue;
@@ -412,6 +429,8 @@ export class EngineSimAudio {
       const surface = (wheel.surface ?? "").toUpperCase();
       if (surface.includes("GRASS")) {
         grass += 1;
+      } else if (surface.includes("DIRT")) {
+        dirt += 1;
       } else if (surface.includes("KERB")) {
         kerb += 1;
       } else if (surface.includes("ANELLO")) {
@@ -438,7 +457,8 @@ export class EngineSimAudio {
       Math.min(1, load / Math.max(1, this.tuning.tireLoadReference)),
     );
     const speedFactor = Math.max(0.35, Math.min(1, 0.35 + speedMps / 8));
-    const surfaceScreech = grass > asphalt && grass > concrete ? 0.15 : 1;
+    const loose = grass + dirt;
+    const surfaceScreech = loose > asphalt && loose > concrete ? 0.15 : 1;
     const squeal =
       Math.max(0, Math.min(1, slip * this.tuning.tireSquealScale)) *
       loadFactor *
@@ -461,26 +481,31 @@ export class EngineSimAudio {
     const concreteWeight = concrete / 4;
     const kerbWeight = kerb / 4;
     const grassWeight = grass / 4;
+    const dirtWeight = dirt / 4;
     const rolling = Math.max(0, Math.min(1, speedMps / 30));
     const grassRolling = Math.max(0, Math.min(1, speedMps / 12));
+    const dirtRolling = Math.max(0, Math.min(1, speedMps / 14));
     const asphaltGain = rolling * 0.18 * asphaltWeight;
     const concreteGain = rolling * 2.2 * concreteWeight;
     const outerGritGain = rolling * 0.35 * concreteWeight;
     const kerbGain = rolling * 0.5 * kerbWeight;
     const grassGain = grassRolling * 1.5 * grassWeight;
     const grassRustleGain = grassRolling * 0.2 * grassWeight;
+    const dirtGain = dirtRolling * 1.2 * dirtWeight;
     this.roadSurface = {
       asphalt: asphaltWeight,
       concrete: concreteWeight,
       kerb: kerbWeight,
       grass: grassWeight,
+      dirt: dirtWeight,
       gain:
         asphaltGain +
         concreteGain +
         outerGritGain +
         kerbGain +
         grassGain +
-        grassRustleGain,
+        grassRustleGain +
+        dirtGain,
     };
     this.roadAsphaltGain?.gain.setTargetAtTime(asphaltGain, now, 0.08);
     this.roadConcreteGain?.gain.setTargetAtTime(concreteGain, now, 0.08);
@@ -488,6 +513,7 @@ export class EngineSimAudio {
     this.roadKerbGain?.gain.setTargetAtTime(kerbGain, now, 0.08);
     this.roadGrassGain?.gain.setTargetAtTime(grassGain, now, 0.08);
     this.roadGrassRustleGain?.gain.setTargetAtTime(grassRustleGain, now, 0.08);
+    this.roadDirtGain?.gain.setTargetAtTime(dirtGain, now, 0.08);
   }
 
   tireState(): { gain: number; slip: number } {
@@ -502,6 +528,7 @@ export class EngineSimAudio {
     concrete: number;
     kerb: number;
     grass: number;
+    dirt: number;
     gain: number;
   } {
     return { ...this.roadSurface };
@@ -611,12 +638,14 @@ export class EngineSimAudio {
     this.roadGrass?.disconnect();
     this.roadOuterGrit?.disconnect();
     this.roadGrassRustle?.disconnect();
+    this.roadDirt?.disconnect();
     this.roadAsphaltGain?.disconnect();
     this.roadConcreteGain?.disconnect();
     this.roadKerbGain?.disconnect();
     this.roadGrassGain?.disconnect();
     this.roadOuterGritGain?.disconnect();
     this.roadGrassRustleGain?.disconnect();
+    this.roadDirtGain?.disconnect();
     for (const lfo of this.dirtLfos) lfo.stop();
     for (const lfo of this.dirtLfos) lfo.disconnect();
     this.dirtLfos = [];
@@ -631,12 +660,14 @@ export class EngineSimAudio {
     this.roadGrass = null;
     this.roadOuterGrit = null;
     this.roadGrassRustle = null;
+    this.roadDirt = null;
     this.roadAsphaltGain = null;
     this.roadConcreteGain = null;
     this.roadKerbGain = null;
     this.roadGrassGain = null;
     this.roadOuterGritGain = null;
     this.roadGrassRustleGain = null;
+    this.roadDirtGain = null;
     this.gain?.disconnect();
     this.analyser?.disconnect();
     this.gain = null;
