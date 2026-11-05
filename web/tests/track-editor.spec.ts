@@ -186,6 +186,7 @@ test("track editor renders the procedural example track", async ({ page }) => {
   expect(state.surfaces).toContain("grass");
   expect(state.surfaces).toContain("dirt");
   expect(state.meshes).toContain("asphalt_dither");
+  expect(state.meshes).toContain("mountains");
   expect(state.meshes).not.toContain("dither_shoulder");
   expect(state.meshes).toContain("kerb_red");
   expect(state.meshes).toContain("barriers");

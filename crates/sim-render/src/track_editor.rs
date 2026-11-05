@@ -16,6 +16,13 @@ const KERB_SURFACE: u16 = 3;
 const WALL_SURFACE: u16 = 4;
 const TERRAIN_SIZE: f32 = 300.0;
 const TERRAIN_CELLS: usize = 128;
+const MOUNTAIN_INNER_RADIUS: f32 = 120.0;
+const MOUNTAIN_RISE_START: f32 = 700.0;
+const MOUNTAIN_OUTER_RADIUS: f32 = 3600.0;
+const MOUNTAIN_SEGMENTS: usize = 192;
+const MOUNTAIN_RINGS: usize = 48;
+const MOUNTAIN_GROUND_COLOR: [f32; 3] = [0.302, 0.431, 0.208];
+const MOUNTAIN_ROCK_COLOR: [f32; 3] = [0.12, 0.16, 0.22];
 const KERB_INNER_RADIUS: f32 = 6.0;
 const KERB_OUTER_RADIUS: f32 = 6.8;
 const KERB_BOTTOM_OFFSET: f32 = 0.02;
@@ -292,8 +299,10 @@ pub fn track_from_control_points_with_spans(
             .unwrap_or(TRACK_SURFACE)
     });
     let terrain = terrain_grid(&points);
+    let mountains = mountain_grid();
     push_mesh(&mut visual, "asphalt_dither", 1, track_buffers, false);
     push_mesh(&mut visual, "terrain", 2, terrain, false);
+    push_mesh(&mut visual, "mountains", 8, mountains, false);
 
     let mut kerb_red = empty_buffers();
     let mut kerb_white = empty_buffers();
@@ -513,6 +522,41 @@ fn terrain_normal(x: f32, z: f32) -> [f32; 3] {
     Vec3::new(-dx, 1.0, -dz).normalize_or_zero().to_array()
 }
 
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn mountain_noise(x: f32, z: f32) -> f32 {
+    let ridge = (x * 0.0031 + z * 0.0017).sin() * 0.45
+        + (x * 0.0073 - z * 0.0051).sin() * 0.28
+        + (x * 0.0157 + z * 0.0113).sin() * 0.17
+        + (x * 0.0290 + z * 0.0230).sin() * 0.10;
+    (ridge * 0.5 + 0.5).clamp(0.0, 1.0)
+}
+
+fn mountain_height(x: f32, z: f32) -> f32 {
+    let radius = (x * x + z * z).sqrt();
+    let t = ((radius - MOUNTAIN_RISE_START) / (MOUNTAIN_OUTER_RADIUS - MOUNTAIN_RISE_START))
+        .clamp(0.0, 1.0);
+    let envelope = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.88, 1.0, t));
+    let ridge = mountain_noise(x, z);
+    envelope * (35.0 + 165.0 * ridge.powf(1.35))
+}
+
+fn distant_terrain_height(x: f32, z: f32) -> f32 {
+    terrain_height(x, z) - 0.15 + mountain_height(x, z)
+}
+
+fn distant_terrain_normal(x: f32, z: f32) -> [f32; 3] {
+    let epsilon = 20.0;
+    let dx = (distant_terrain_height(x + epsilon, z) - distant_terrain_height(x - epsilon, z))
+        / (epsilon * 2.0);
+    let dz = (distant_terrain_height(x, z + epsilon) - distant_terrain_height(x, z - epsilon))
+        / (epsilon * 2.0);
+    Vec3::new(-dx, 1.0, -dz).normalize_or_zero().to_array()
+}
+
 fn materials() -> Vec<MaterialRef> {
     vec![
         material("asphalt", [0.045, 0.045, 0.05, 1.0], false),
@@ -523,6 +567,7 @@ fn materials() -> Vec<MaterialRef> {
         material("concrete", [0.667, 0.667, 0.667, 1.0], true),
         material("tire_blue", [0.133, 0.333, 0.667, 1.0], true),
         material("tire_white", [0.867, 0.867, 0.867, 1.0], true),
+        material("mountain", [0.12, 0.16, 0.22, 1.0], false),
     ]
 }
 
@@ -683,6 +728,41 @@ fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
         buffers,
         surface_ids,
     }
+}
+
+fn mountain_grid() -> MeshBuffers {
+    let mut buffers = empty_buffers();
+    let row = MOUNTAIN_SEGMENTS + 1;
+    for ring in 0..=MOUNTAIN_RINGS {
+        let radial = ring as f32 / MOUNTAIN_RINGS as f32;
+        let radius = MOUNTAIN_INNER_RADIUS
+            + (MOUNTAIN_OUTER_RADIUS - MOUNTAIN_INNER_RADIUS) * radial.powf(1.6);
+        for segment in 0..=MOUNTAIN_SEGMENTS {
+            let angle = segment as f32 / MOUNTAIN_SEGMENTS as f32 * TAU;
+            let x = radius * angle.cos();
+            let z = radius * angle.sin();
+            let rise = mountain_height(x, z);
+            let rock = smoothstep(10.0, 70.0, rise);
+            let color = Vec3::from_array(MOUNTAIN_GROUND_COLOR)
+                .lerp(Vec3::from_array(MOUNTAIN_ROCK_COLOR), rock);
+            buffers.positions.push([x, distant_terrain_height(x, z), z]);
+            buffers.normals.push(distant_terrain_normal(x, z));
+            buffers
+                .uvs
+                .push([segment as f32 / MOUNTAIN_SEGMENTS as f32, radial]);
+            buffers.colors.push(color.to_array());
+        }
+    }
+    for ring in 0..MOUNTAIN_RINGS {
+        for segment in 0..MOUNTAIN_SEGMENTS {
+            let base = (ring * row + segment) as u32;
+            let next = ((ring + 1) * row + segment) as u32;
+            buffers
+                .indices
+                .extend_from_slice(&[base, next, next + 1, base, next + 1, base + 1]);
+        }
+    }
+    buffers
 }
 
 fn terrain_grid(points: &[Vec3]) -> MeshBuffers {
@@ -1489,6 +1569,28 @@ mod tests {
         let points = sample_track(&CONTROL_POINTS);
         let tangent = (points[1] - points[0]).normalize_or_zero();
         assert!(forward.dot(tangent) > 0.99);
+    }
+
+    #[test]
+    fn editor_track_has_a_mountain_backdrop() {
+        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let index = track
+            .visual
+            .meshes
+            .iter()
+            .position(|mesh| mesh.name == "mountains")
+            .expect("mountain mesh");
+        let mesh = &track.visual.meshes[index];
+        assert_eq!(
+            track.visual.materials[mesh.material as usize].name,
+            "mountain"
+        );
+        assert!(track.visual.mesh_buffers[index].indices.len() / 3 > 10_000);
+        assert!(!track.visual.mesh_buffers[index].positions.is_empty());
+        assert_eq!(
+            track.visual.mesh_buffers[index].colors.len(),
+            track.visual.mesh_buffers[index].positions.len()
+        );
     }
 
     #[test]
