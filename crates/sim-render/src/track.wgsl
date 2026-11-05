@@ -105,6 +105,18 @@ fn vs_shadow(input: MeshIn) -> @builtin(position) vec4<f32> {
     return camera.light_view_proj * world;
 }
 
+fn bayer4(coord: vec2<f32>) -> f32 {
+    let x = u32(coord.x) & 3u;
+    let y = u32(coord.y) & 3u;
+    var threshold = array<f32, 16>(
+        0.0625, 0.5625, 0.1875, 0.6875,
+        0.8125, 0.3125, 0.9375, 0.4375,
+        0.2500, 0.7500, 0.1250, 0.6250,
+        1.0000, 0.5000, 0.8750, 0.3750,
+    );
+    return threshold[x + y * 4u];
+}
+
 fn toon_ramp(ndl: f32) -> f32 {
     if ndl > 0.72 {
         return 1.0;
@@ -245,6 +257,31 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         discard;
     }
     var base = input.color * texel.rgb;
+    if model.alpha.w > 0.5 {
+        let asphalt = vec3<f32>(0.045, 0.045, 0.05);
+        let grass = vec3<f32>(0.048, 0.111, 0.006);
+        let edge = clamp(input.uv.y, 0.0, 1.0);
+        let threshold = bayer4(input.clip_position.xy);
+        let asphalt_center = 0.06;
+        let asphalt_half_width = 0.04;
+        let grass_center = 0.86;
+        let grass_half_width = 0.05;
+        if edge <= asphalt_center - asphalt_half_width {
+            base = asphalt;
+        } else if edge < asphalt_center + asphalt_half_width {
+            let blend = (edge - (asphalt_center - asphalt_half_width))
+                / (asphalt_half_width * 2.0);
+            base = select(asphalt, input.color, blend > threshold);
+        } else if edge <= grass_center - grass_half_width {
+            base = input.color;
+        } else if edge < grass_center + grass_half_width {
+            let blend = (edge - (grass_center - grass_half_width))
+                / (grass_half_width * 2.0);
+            base = select(input.color, grass, blend > threshold);
+        } else {
+            base = grass;
+        }
+    }
     if model.alpha.y > 0.5 {
         base = texel.rgb * GRASS_TEXTURE_GAIN;
     }

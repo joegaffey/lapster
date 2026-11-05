@@ -188,6 +188,7 @@ struct GpuMesh {
     shadow_dynamic_base: bool,
     is_decal: bool,
     foliage: bool,
+    dither: bool,
     model: Mat4,
 }
 
@@ -200,7 +201,7 @@ fn model_alpha(mesh: &GpuMesh, grass_texture_enabled: bool) -> [f32; 4] {
             0.0
         },
         if mesh.foliage { 1.0 } else { 0.0 },
-        0.0,
+        if mesh.dither { 1.0 } else { 0.0 },
     ]
 }
 
@@ -2157,13 +2158,14 @@ fn create_mesh(
     } else {
         0.0
     };
+    let dither = mesh.name.to_ascii_lowercase().contains("dither");
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
         alpha: [
             mesh.alpha,
             grass_texture_enabled,
             if mesh.foliage { 1.0 } else { 0.0 },
-            0.0,
+            if dither { 1.0 } else { 0.0 },
         ],
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
     };
@@ -2234,6 +2236,7 @@ fn create_mesh(
         shadow_dynamic_base: mesh.casts_dynamic_shadow,
         is_decal: mesh.is_decal,
         foliage: mesh.foliage,
+        dither,
         model: mesh.model,
     }
 }

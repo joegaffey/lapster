@@ -45,6 +45,7 @@ wasm-bindgen --target web --out-dir web/pkg/worker target/wasm32-unknown-unknown
 mv web/pkg/worker/sim_worker_bg.wasm.opt web/pkg/worker/sim_worker_bg.wasm
 
 npx esbuild web/track-viewer/main.ts --bundle --format=esm --outfile=web/track-viewer/main.js --external:../pkg/*
+npx esbuild web/track-editor/main.ts --bundle --format=esm --outfile=web/track-editor/main.js --external:../pkg/*
 npx esbuild web/style-spike/main.ts --bundle --format=esm --outfile=web/style-spike/main.js --external:../pkg/*
 npx esbuild web/garage/main.ts --bundle --format=esm --outfile=web/garage/main.js --external:../pkg/*
 npx esbuild web/drive/main.ts --bundle --format=esm --outfile=web/drive/main.js --external:../pkg/*

@@ -6,6 +6,7 @@ mod grass;
 mod particles;
 mod renderer;
 mod scene;
+mod track_editor;
 mod tuning;
 mod vegetation;
 
@@ -44,12 +45,16 @@ struct StyleDrive {
 #[wasm_bindgen]
 pub struct TrackViewer {
     renderer: renderer::Renderer,
+    canvas: web_sys::HtmlCanvasElement,
     debug_info: String,
     initial_camera: Camera,
     camera: Camera,
     vegetation: Option<scene::VegetationGroups>,
     style_car: Option<StyleCar>,
     style_drive: Option<StyleDrive>,
+    editor_control_points: Option<Vec<[f32; 3]>>,
+    editor_kerb_spans: Vec<track_editor::KerbSpan>,
+    editor_prop_lines: Vec<track_editor::PropLine>,
 }
 
 #[wasm_bindgen]
@@ -74,6 +79,24 @@ impl TrackViewer {
         car_pack_bytes: js_sys::Uint8Array,
     ) -> Result<TrackViewer, JsValue> {
         Self::create_internal(canvas, pack_bytes, true, Some(car_pack_bytes.to_vec())).await
+    }
+
+    pub async fn create_editor(canvas: web_sys::HtmlCanvasElement) -> Result<TrackViewer, JsValue> {
+        let points = crate::track_editor::default_control_points();
+        let track = crate::track_editor::track_from_control_points(&points).map_err(js_error)?;
+        let scene = Scene::build(
+            &track.visual,
+            &track.metadata,
+            &track.collision,
+            &track.manifest,
+        )
+        .map_err(|error| JsValue::from_str(&error))?;
+        let mut viewer =
+            Self::create_from_scene(canvas, scene, &track.metadata, &track.collision, None).await?;
+        viewer.editor_control_points = Some(points);
+        viewer.editor_kerb_spans = track.kerb_spans;
+        viewer.editor_prop_lines = track.prop_lines;
+        Ok(viewer)
     }
 
     async fn create_internal(
@@ -113,6 +136,18 @@ impl TrackViewer {
             (false, _) => Scene::build(&visual, &metadata, &collision, &manifest),
         }
         .map_err(|error| JsValue::from_str(&error))?;
+        let car_physics = car.map(|(_, physics)| physics);
+        Self::create_from_scene(canvas, scene, &metadata, &collision, car_physics).await
+    }
+
+    async fn create_from_scene(
+        canvas: web_sys::HtmlCanvasElement,
+        scene: Scene,
+        metadata: &sim_types::TrackMetadata,
+        collision: &sim_types::TrackCollision,
+        car_physics: Option<sim_types::CarPhysics>,
+    ) -> Result<TrackViewer, JsValue> {
+        let canvas_handle = canvas.clone();
         let debug_info = scene.debug_info.clone();
         let vegetation = scene.vegetation.clone();
         let style_car_transform = scene.style_car_transform;
@@ -122,13 +157,13 @@ impl TrackViewer {
         let style_rig = scene.car_rig.clone();
         let camera = scene.camera;
         let shadow_focus = camera.target;
-        let (collision_center, region_half) = track_region(&collision, &metadata);
+        let (collision_center, region_half) = track_region(collision, metadata);
         let region_center = metadata
             .spawns
             .first()
             .map(|spawn| spawn.position)
             .unwrap_or(collision_center);
-        let collider = TrackCollider::from_collision(&collision, &metadata);
+        let collider = TrackCollider::from_collision(collision, metadata);
         let ground_y = collider
             .raycast(
                 Vec3::new(region_center[0], region_center[1] + 100.0, region_center[2]),
@@ -144,8 +179,8 @@ impl TrackViewer {
         renderer.set_lines_visible(false);
         renderer.set_baked_region(collision_center, region_half, ground_y);
         renderer.set_shadow_focus(shadow_focus, TRACK_SHADOW_EXTENT);
-        let style_drive = if let (Some((_, car_physics)), Some(transform), Some(rig)) =
-            (car.as_ref(), style_car_transform, style_rig.as_ref())
+        let style_drive = if let (Some(car_physics), Some(transform), Some(rig)) =
+            (car_physics, style_car_transform, style_rig.as_ref())
         {
             let (_, rotation, translation) = transform.to_scale_rotation_translation();
             let spawn = sim_types::SpawnPoint {
@@ -153,7 +188,7 @@ impl TrackViewer {
                 position: translation.to_array(),
                 rotation_xyzw: rotation.to_array(),
             };
-            let mut vehicle = Vehicle::new(car_physics.clone(), collider.clone(), &spawn);
+            let mut vehicle = Vehicle::new(car_physics, collider.clone(), &spawn);
             for _ in 0..500 {
                 vehicle.step(Controls::default());
             }
@@ -181,12 +216,16 @@ impl TrackViewer {
         };
         Ok(TrackViewer {
             renderer,
+            canvas: canvas_handle,
             debug_info,
             initial_camera: camera,
             camera,
             vegetation,
             style_car,
             style_drive,
+            editor_control_points: None,
+            editor_kerb_spans: Vec::new(),
+            editor_prop_lines: Vec::new(),
         })
     }
 
@@ -204,6 +243,125 @@ impl TrackViewer {
 
     pub fn camera_info(&self) -> String {
         camera_json(&self.camera)
+    }
+
+    pub fn editor_control_points(&self) -> String {
+        let points = self
+            .editor_control_points
+            .as_ref()
+            .map(|points| crate::track_editor::control_points_with_heights(points))
+            .unwrap_or_default();
+        serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_centerline(&self) -> String {
+        let points = self
+            .editor_control_points
+            .as_ref()
+            .map(|points| crate::track_editor::centerline_points(points))
+            .unwrap_or_default();
+        serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_kerb_spans(&self) -> String {
+        serde_json::to_string(&self.editor_kerb_spans).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_prop_lines(&self) -> String {
+        serde_json::to_string(&self.editor_prop_lines).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub async fn set_editor_control_points(&mut self, points_json: &str) -> Result<(), JsValue> {
+        let points = serde_json::from_str::<Vec<[f32; 3]>>(points_json).map_err(js_error)?;
+        let points = crate::track_editor::control_points_with_heights(&points);
+        self.rebuild_editor(
+            points,
+            self.editor_kerb_spans.clone(),
+            self.editor_prop_lines.clone(),
+        )
+        .await
+    }
+
+    pub async fn set_editor_kerb_spans(&mut self, spans_json: &str) -> Result<(), JsValue> {
+        let spans = serde_json::from_str::<Vec<crate::track_editor::KerbSpan>>(spans_json)
+            .map_err(js_error)?;
+        let points = self
+            .editor_control_points
+            .clone()
+            .ok_or_else(|| JsValue::from_str("editor control points unavailable"))?;
+        self.rebuild_editor(points, spans, self.editor_prop_lines.clone())
+            .await
+    }
+
+    pub async fn set_editor_prop_lines(&mut self, lines_json: &str) -> Result<(), JsValue> {
+        let lines = serde_json::from_str::<Vec<crate::track_editor::PropLine>>(lines_json)
+            .map_err(js_error)?;
+        let points = self
+            .editor_control_points
+            .clone()
+            .ok_or_else(|| JsValue::from_str("editor control points unavailable"))?;
+        self.rebuild_editor(points, self.editor_kerb_spans.clone(), lines)
+            .await
+    }
+
+    async fn rebuild_editor(
+        &mut self,
+        points: Vec<[f32; 3]>,
+        kerb_spans: Vec<crate::track_editor::KerbSpan>,
+        prop_lines: Vec<crate::track_editor::PropLine>,
+    ) -> Result<(), JsValue> {
+        let track = crate::track_editor::track_from_control_points_with_spans(
+            &points,
+            Some(&kerb_spans),
+            Some(&prop_lines),
+        )
+        .map_err(js_error)?;
+        let scene = Scene::build(
+            &track.visual,
+            &track.metadata,
+            &track.collision,
+            &track.manifest,
+        )
+        .map_err(|error| JsValue::from_str(&error))?;
+        let debug_info = scene.debug_info.clone();
+        let camera = self.camera;
+        let (collision_center, region_half) = track_region(&track.collision, &track.metadata);
+        let region_center = track
+            .metadata
+            .spawns
+            .first()
+            .map(|spawn| spawn.position)
+            .unwrap_or(collision_center);
+        let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
+        let ground_y = collider
+            .raycast(
+                Vec3::new(region_center[0], region_center[1] + 100.0, region_center[2]),
+                Vec3::NEG_Y,
+                300.0,
+            )
+            .map(|hit| hit.point.y)
+            .unwrap_or(region_center[1]);
+        let width = self.canvas.width().max(1);
+        let height = self.canvas.height().max(1);
+        let mut renderer = renderer::Renderer::new(
+            self.canvas.clone(),
+            width,
+            height,
+            scene,
+            &GpuTuning::default(),
+        )
+        .await?;
+        renderer.set_lines_visible(false);
+        renderer.set_baked_region(collision_center, region_half, ground_y);
+        renderer.set_shadow_focus(camera.target, TRACK_SHADOW_EXTENT);
+        renderer.set_grass_center_xz(camera.eye[0], camera.eye[2]);
+        renderer.set_camera(camera);
+        self.renderer = renderer;
+        self.debug_info = debug_info;
+        self.editor_control_points = Some(points);
+        self.editor_kerb_spans = track.kerb_spans;
+        self.editor_prop_lines = track.prop_lines;
+        Ok(())
     }
 
     pub fn set_environment_shadow_mode(&mut self, mode: &str) {
