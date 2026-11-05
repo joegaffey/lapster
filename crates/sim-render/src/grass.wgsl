@@ -181,7 +181,12 @@ fn vs_grass(input: BladeIn) -> BladeOut {
     let base = input.base.xyz;
     let camera_distance = distance(base.xz, camera.camera_pos.xz);
     let center_distance = distance(base.xz, vec2<f32>(grass.center_x, grass.center_z));
-    let fade = (1.0 - smoothstep(58.0, 86.0, center_distance)) * chunk_fade.x;
+    let base_clip = camera.view_proj * vec4<f32>(base, 1.0);
+    let behind_fade = smoothstep(0.0, 8.0, base_clip.w);
+    let near_fade = smoothstep(1.0, 3.0, camera_distance);
+    let fade =
+        (1.0 - smoothstep(58.0, 86.0, center_distance)) * chunk_fade.x
+        * behind_fade * near_fade;
     let wide = 1.0 + smoothstep(10.0, 45.0, camera_distance) * 2.0;
     let taller = 1.0 + smoothstep(15.0, 45.0, camera_distance) * 0.6;
     let y = input.position.y * height * fade * taller;

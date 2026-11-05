@@ -459,6 +459,8 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
     antiAliasing.value = current.antiAliasing;
     renderScale.value = String(current.renderScale);
     renderScaleValue.textContent = `${Math.round(current.renderScale * 100)}%`;
+    saturation.value = String(current.saturation);
+    saturationValue.textContent = `${Math.round(current.saturation * 100)}%`;
   };
 
   const updateSetting = (patch: Partial<AssistSettings>) => {
@@ -605,6 +607,19 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
     updateSetting({ renderScale: Number(renderScale.value) as AssistSettings["renderScale"] });
   });
   viewBody.append(fieldRow("Render scale", renderScale, renderScaleValue));
+
+  const saturationValue = document.createElement("output");
+  const saturation = document.createElement("input");
+  saturation.id = "dev-saturation";
+  saturation.type = "range";
+  saturation.min = "0.75";
+  saturation.max = "2";
+  saturation.step = "0.05";
+  saturation.addEventListener("input", () => {
+    saturationValue.textContent = `${Math.round(Number(saturation.value) * 100)}%`;
+    updateSetting({ saturation: Number(saturation.value) });
+  });
+  viewBody.append(fieldRow("Saturation", saturation, saturationValue));
 
   const environment = document.createElement("select");
   environment.id = "dev-environment-shadows";

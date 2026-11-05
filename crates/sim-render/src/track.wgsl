@@ -51,10 +51,14 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOut {
 
 @fragment
 fn fs_sky(input: SkyOut) -> @location(0) vec4<f32> {
-    let height = pow(clamp(input.uv.y, 0.0, 1.0), 0.8);
+    let warmth = clamp(camera.sky_horizon.w, 0.0, 1.0);
+    let height = pow(clamp(input.uv.y, 0.0, 1.0), mix(0.8, 2.2, warmth));
     let horizon = camera.sky_horizon.xyz;
     let zenith = camera.sky_zenith.xyz;
-    return vec4<f32>(linear_to_srgb(mix(horizon, zenith, height)), 1.0);
+    var sky = mix(horizon, zenith, height);
+    let dusk_band = smoothstep(0.0, 0.7, height) * (1.0 - smoothstep(0.45, 1.0, height));
+    sky = mix(sky, vec3<f32>(0.62, 0.18, 0.34), dusk_band * warmth * 0.45);
+    return vec4<f32>(linear_to_srgb(sky), 1.0);
 }
 
 struct MeshIn {
@@ -62,6 +66,7 @@ struct MeshIn {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) uv: vec2<f32>,
+    @location(4) wind: vec2<f32>,
 }
 
 struct MeshOut {
@@ -76,7 +81,19 @@ struct MeshOut {
 @vertex
 fn vs_mesh(input: MeshIn) -> MeshOut {
     var output: MeshOut;
-    let world = model.transform * vec4<f32>(input.position, 1.0);
+    var world = model.transform * vec4<f32>(input.position, 1.0);
+    if model.alpha.z > 0.5 {
+        let phase = input.wind.y;
+        let weight = input.wind.x;
+        let sway = sin(
+            model.emissive.w * 1.35 + phase + world.x * 0.07 + world.z * 0.05
+        );
+        let gust = sin(model.emissive.w * 0.7 + phase * 1.7 + world.z * 0.03);
+        world = vec4<f32>(
+            world.xyz + vec3<f32>(sway * 0.11 + gust * 0.05, gust * 0.03, sway * 0.07) * weight,
+            1.0,
+        );
+    }
     output.clip_position = camera.view_proj * world;
     output.normal = normalize((model.transform * vec4<f32>(input.normal, 0.0)).xyz);
     output.color = input.color;
@@ -90,6 +107,18 @@ fn vs_mesh(input: MeshIn) -> MeshOut {
 fn vs_shadow(input: MeshIn) -> @builtin(position) vec4<f32> {
     let world = model.transform * vec4<f32>(input.position, 1.0);
     return camera.light_view_proj * world;
+}
+
+fn bayer4(coord: vec2<f32>) -> f32 {
+    let x = u32(coord.x) & 3u;
+    let y = u32(coord.y) & 3u;
+    var threshold = array<f32, 16>(
+        0.0625, 0.5625, 0.1875, 0.6875,
+        0.8125, 0.3125, 0.9375, 0.4375,
+        0.2500, 0.7500, 0.1250, 0.6250,
+        1.0000, 0.5000, 0.8750, 0.3750,
+    );
+    return threshold[x + y * 4u];
 }
 
 fn toon_ramp(ndl: f32) -> f32 {
@@ -220,16 +249,43 @@ fn shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
 
 @fragment
 fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
+    let foliage = model.alpha.z > 0.5;
     let normal = normalize(input.normal);
     let light = normalize(-camera.light_dir.xyz);
     let ndl = max(dot(normal, light), 0.0);
     let ramp = toon_ramp(ndl);
     let texel = textureSample(base_texture, base_sampler, input.uv);
     let alpha = input.alpha * texel.a;
-    if alpha < 0.01 {
+    let cutoff = select(0.01, 0.45, foliage);
+    if alpha < cutoff {
         discard;
     }
     var base = input.color * texel.rgb;
+    if model.alpha.w > 0.5 {
+        let asphalt = vec3<f32>(0.045, 0.045, 0.05);
+        let grass = vec3<f32>(0.048, 0.111, 0.006);
+        let edge = abs(input.uv.y * 2.0 - 1.0);
+        let threshold = bayer4(input.clip_position.xy);
+        let asphalt_center = 0.5;
+        let asphalt_half_width = 0.02;
+        let grass_center = 0.93;
+        let grass_half_width = 0.025;
+        if edge <= asphalt_center - asphalt_half_width {
+            base = asphalt;
+        } else if edge < asphalt_center + asphalt_half_width {
+            let blend = (edge - (asphalt_center - asphalt_half_width))
+                / (asphalt_half_width * 2.0);
+            base = select(asphalt, input.color, blend > threshold);
+        } else if edge <= grass_center - grass_half_width {
+            base = input.color;
+        } else if edge < grass_center + grass_half_width {
+            let blend = (edge - (grass_center - grass_half_width))
+                / (grass_half_width * 2.0);
+            base = select(input.color, grass, blend > threshold);
+        } else {
+            base = grass;
+        }
+    }
     if model.alpha.y > 0.5 {
         base = texel.rgb * GRASS_TEXTURE_GAIN;
     }
@@ -251,15 +307,24 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     let shadow = environment_shadow * car_shadow;
     let view_dir = normalize(camera.camera_pos.xyz - input.world_position);
     let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 3.0);
-    let rim_tint = vec3<f32>(0.55, 0.72, 0.95);
+    let rim_tint = select(
+        vec3<f32>(0.55, 0.72, 0.95),
+        vec3<f32>(0.42, 0.62, 0.18),
+        foliage,
+    );
     var color =
         base * (0.30 + 0.70 * ramp * shadow)
-        + rim_tint * rim * 0.16
+        + rim_tint * rim * select(0.16, 0.30, foliage)
         + model.emissive.xyz;
     if model.alpha.y > 0.5 {
         color = color * GRASS_TEXTURE_LIFT + vec3<f32>(0.008, 0.008, 0.015);
     }
-    return vec4<f32>(linear_to_srgb(color), alpha);
+    if foliage {
+        let back = pow(max(dot(view_dir, -light), 0.0), 2.0);
+        let edge = 1.0 - abs(dot(normal, view_dir));
+        color += vec3<f32>(0.10, 0.20, 0.035) * back * edge * 0.85;
+    }
+    return vec4<f32>(linear_to_srgb(color), select(alpha, 1.0, foliage));
 }
 
 @fragment

@@ -276,6 +276,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   const msaa = page.locator("#msaa-mode");
   const renderScale = page.locator("#render-scale");
   const renderScaleValue = page.locator("#render-scale-value");
+  const saturation = page.locator("#color-saturation");
+  const saturationValue = page.locator("#color-saturation-value");
   const view = page.locator("#view");
 
   await expect(environment).toHaveValue("hybrid");
@@ -293,6 +295,11 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(fpsCounter).toBeHidden();
   await expect(renderScale).toHaveValue("1");
   await expect(renderScaleValue).toHaveText("100%");
+  await expect(saturation).toHaveValue("1.15");
+  await expect(saturationValue).toHaveText("115%");
+  expect(await view.evaluate((element) => (element as HTMLElement).style.filter)).toBe(
+    "saturate(1.15)",
+  );
   const fullWidth = await view.evaluate((element) => (element as HTMLCanvasElement).width);
 
   await fpsToggle.click();
@@ -306,6 +313,16 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect
     .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
     .toBe(Math.max(1, Math.floor(fullWidth * 0.5)));
+
+  await saturation.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "1.4";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(saturationValue).toHaveText("140%");
+  expect(await view.evaluate((element) => (element as HTMLElement).style.filter)).toBe(
+    "saturate(1.4)",
+  );
 
   await environment.selectOption("high");
   await carShadow.selectOption("dynamic");
@@ -465,6 +482,11 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(fpsCounter).toBeHidden();
   await expect(renderScale).toHaveValue("1");
   await expect(renderScaleValue).toHaveText("100%");
+  await expect(saturation).toHaveValue("1.15");
+  await expect(saturationValue).toHaveText("115%");
+  expect(await view.evaluate((element) => (element as HTMLElement).style.filter)).toBe(
+    "saturate(1.15)",
+  );
   await expect
     .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
     .toBe(fullWidth);

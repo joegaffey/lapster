@@ -17,7 +17,9 @@
   under CC BY 4.0.
 
 The source model contains the drift course, kerbs, grass, fences, checkpoints, start
-marker, and scenery. Only drivable surfaces and barriers are used for collision. Checkpoint
+marker, and scenery. Surface mappings use the GLB's underscore material names
+(`Grass_Ground`, `Grass_edge`, `Centre_Ground`) so grass and centre-ground collision receive
+their correct friction instead of falling back to asphalt. Only drivable surfaces and barriers are used for collision. Checkpoint
 flags, loose props (including the metal box), and the tree-wall billboard are excluded from
 the visual import. The dockyard entrance posts and light pole are retained. GLB base-colour textures are imported and referenced by the baked materials,
 and unused materials/textures are pruned from the pack. Kerbs use `"mountable": true`, which

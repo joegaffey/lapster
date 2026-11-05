@@ -6,17 +6,21 @@ mod grass;
 mod particles;
 mod renderer;
 mod scene;
+mod track_editor;
 mod tuning;
+mod vegetation;
 
 use wasm_bindgen::prelude::*;
 
 use crate::camera::Camera;
-use crate::particles::ParticleSystem;
+use crate::particles::{ParticleInstance, ParticleSystem};
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
-use crate::tuning::{GpuTuning, TuningConfig};
+use crate::tuning::{GpuTuning, ParticleTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
-use sim_core::{Controls, PhysicsTuning, TrackCollider, Vehicle, FIXED_DT};
+use sim_core::{
+    Controls, PhysicsTuning, TrackCollider, Vehicle, VehicleState, WheelState, FIXED_DT,
+};
 use sim_types::snapshot_state as snapshot;
 use sim_types::{CarTuning, SNAPSHOT_STATE_FLOATS};
 
@@ -25,12 +29,32 @@ pub fn start() {
     console_error_panic_hook::set_once();
 }
 
+struct StyleCar {
+    transform: Mat4,
+    bounds: sim_types::Aabb,
+}
+
+struct StyleDrive {
+    vehicle: Vehicle,
+    rig: CarRig,
+    previous_state: VehicleState,
+    accumulator: f32,
+    last_time: Option<f64>,
+}
+
 #[wasm_bindgen]
 pub struct TrackViewer {
     renderer: renderer::Renderer,
+    canvas: web_sys::HtmlCanvasElement,
     debug_info: String,
     initial_camera: Camera,
     camera: Camera,
+    vegetation: Option<scene::VegetationGroups>,
+    style_car: Option<StyleCar>,
+    style_drive: Option<StyleDrive>,
+    editor_control_points: Option<Vec<[f32; 3]>>,
+    editor_kerb_spans: Vec<track_editor::KerbSpan>,
+    editor_prop_lines: Vec<track_editor::PropLine>,
 }
 
 #[wasm_bindgen]
@@ -38,6 +62,48 @@ impl TrackViewer {
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         pack_bytes: js_sys::Uint8Array,
+    ) -> Result<TrackViewer, JsValue> {
+        Self::create_internal(canvas, pack_bytes, false, None).await
+    }
+
+    pub async fn create_style(
+        canvas: web_sys::HtmlCanvasElement,
+        pack_bytes: js_sys::Uint8Array,
+    ) -> Result<TrackViewer, JsValue> {
+        Self::create_internal(canvas, pack_bytes, true, None).await
+    }
+
+    pub async fn create_style_with_car(
+        canvas: web_sys::HtmlCanvasElement,
+        pack_bytes: js_sys::Uint8Array,
+        car_pack_bytes: js_sys::Uint8Array,
+    ) -> Result<TrackViewer, JsValue> {
+        Self::create_internal(canvas, pack_bytes, true, Some(car_pack_bytes.to_vec())).await
+    }
+
+    pub async fn create_editor(canvas: web_sys::HtmlCanvasElement) -> Result<TrackViewer, JsValue> {
+        let points = crate::track_editor::default_control_points();
+        let track = crate::track_editor::track_from_control_points(&points).map_err(js_error)?;
+        let scene = Scene::build(
+            &track.visual,
+            &track.metadata,
+            &track.collision,
+            &track.manifest,
+        )
+        .map_err(|error| JsValue::from_str(&error))?;
+        let mut viewer =
+            Self::create_from_scene(canvas, scene, &track.metadata, &track.collision, None).await?;
+        viewer.editor_control_points = Some(points);
+        viewer.editor_kerb_spans = track.kerb_spans;
+        viewer.editor_prop_lines = track.prop_lines;
+        Ok(viewer)
+    }
+
+    async fn create_internal(
+        canvas: web_sys::HtmlCanvasElement,
+        pack_bytes: js_sys::Uint8Array,
+        style_spike: bool,
+        car_bytes: Option<Vec<u8>>,
     ) -> Result<TrackViewer, JsValue> {
         let bytes = pack_bytes.to_vec();
         let pack = sim_asset::Pack::from_bytes(&bytes).map_err(js_error)?;
@@ -50,18 +116,54 @@ impl TrackViewer {
         let manifest = pack.manifest().clone();
         drop(pack);
 
-        let scene = Scene::build(&visual, &metadata, &collision, &manifest)
-            .map_err(|error| JsValue::from_str(&error))?;
+        let car = if let Some(bytes) = car_bytes {
+            let car_pack = sim_asset::Pack::from_bytes(&bytes).map_err(js_error)?;
+            if car_pack.kind() != sim_types::AssetKind::Car {
+                return Err(JsValue::from_str("expected a car pack"));
+            }
+            let visual = car_pack.car_visual_owned().map_err(js_error)?;
+            let physics = car_pack.car_physics_owned().map_err(js_error)?;
+            Some((visual, physics))
+        } else {
+            None
+        };
+
+        let scene = match (style_spike, car.as_ref()) {
+            (true, Some((car_visual, _))) => Scene::build_style_spike_with_car(
+                &visual, &metadata, &collision, &manifest, car_visual,
+            ),
+            (true, None) => Scene::build_style_spike(&visual, &metadata, &collision, &manifest),
+            (false, _) => Scene::build(&visual, &metadata, &collision, &manifest),
+        }
+        .map_err(|error| JsValue::from_str(&error))?;
+        let car_physics = car.map(|(_, physics)| physics);
+        Self::create_from_scene(canvas, scene, &metadata, &collision, car_physics).await
+    }
+
+    async fn create_from_scene(
+        canvas: web_sys::HtmlCanvasElement,
+        scene: Scene,
+        metadata: &sim_types::TrackMetadata,
+        collision: &sim_types::TrackCollision,
+        car_physics: Option<sim_types::CarPhysics>,
+    ) -> Result<TrackViewer, JsValue> {
+        let canvas_handle = canvas.clone();
         let debug_info = scene.debug_info.clone();
+        let vegetation = scene.vegetation.clone();
+        let style_car_transform = scene.style_car_transform;
+        let style_car = style_car_transform
+            .zip(scene.style_car_bounds)
+            .map(|(transform, bounds)| StyleCar { transform, bounds });
+        let style_rig = scene.car_rig.clone();
         let camera = scene.camera;
         let shadow_focus = camera.target;
-        let (collision_center, region_half) = track_region(&collision, &metadata);
+        let (collision_center, region_half) = track_region(collision, metadata);
         let region_center = metadata
             .spawns
             .first()
             .map(|spawn| spawn.position)
             .unwrap_or(collision_center);
-        let collider = TrackCollider::from_collision(&collision, &metadata);
+        let collider = TrackCollider::from_collision(collision, metadata);
         let ground_y = collider
             .raycast(
                 Vec3::new(region_center[0], region_center[1] + 100.0, region_center[2]),
@@ -77,11 +179,53 @@ impl TrackViewer {
         renderer.set_lines_visible(false);
         renderer.set_baked_region(collision_center, region_half, ground_y);
         renderer.set_shadow_focus(shadow_focus, TRACK_SHADOW_EXTENT);
+        let style_drive = if let (Some(car_physics), Some(transform), Some(rig)) =
+            (car_physics, style_car_transform, style_rig.as_ref())
+        {
+            let (_, rotation, translation) = transform.to_scale_rotation_translation();
+            let spawn = sim_types::SpawnPoint {
+                name: "style".to_string(),
+                position: translation.to_array(),
+                rotation_xyzw: rotation.to_array(),
+            };
+            let mut vehicle = Vehicle::new(car_physics, collider.clone(), &spawn);
+            for _ in 0..500 {
+                vehicle.step(Controls::default());
+            }
+            let previous_state = vehicle.state;
+            let mut drive = StyleDrive {
+                vehicle,
+                rig: rig.clone(),
+                previous_state,
+                accumulator: 0.0,
+                last_time: None,
+            };
+            update_style_car_rig(
+                &mut renderer,
+                &drive.rig,
+                drive.vehicle.state.position,
+                drive.vehicle.state.rotation,
+                &drive.vehicle.state,
+                0.0,
+                false,
+            );
+            drive.previous_state = drive.vehicle.state;
+            Some(drive)
+        } else {
+            None
+        };
         Ok(TrackViewer {
             renderer,
+            canvas: canvas_handle,
             debug_info,
             initial_camera: camera,
             camera,
+            vegetation,
+            style_car,
+            style_drive,
+            editor_control_points: None,
+            editor_kerb_spans: Vec::new(),
+            editor_prop_lines: Vec::new(),
         })
     }
 
@@ -99,6 +243,139 @@ impl TrackViewer {
 
     pub fn camera_info(&self) -> String {
         camera_json(&self.camera)
+    }
+
+    pub fn editor_control_points(&self) -> String {
+        let points = self
+            .editor_control_points
+            .as_ref()
+            .map(|points| crate::track_editor::control_points_with_heights(points))
+            .unwrap_or_default();
+        serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_centerline(&self) -> String {
+        let points = self
+            .editor_control_points
+            .as_ref()
+            .map(|points| crate::track_editor::centerline_points(points))
+            .unwrap_or_default();
+        serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_kerb_spans(&self) -> String {
+        serde_json::to_string(&self.editor_kerb_spans).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_prop_lines(&self) -> String {
+        serde_json::to_string(&self.editor_prop_lines).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_track_pack(&self) -> Result<Vec<u8>, JsValue> {
+        let points = self
+            .editor_control_points
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("editor control points unavailable"))?;
+        let track = crate::track_editor::track_from_control_points_with_spans(
+            points,
+            Some(&self.editor_kerb_spans),
+            Some(&self.editor_prop_lines),
+        )
+        .map_err(js_error)?;
+        crate::track_editor::pack_from_track(&track).map_err(|error| JsValue::from_str(&error))
+    }
+
+    pub async fn set_editor_control_points(&mut self, points_json: &str) -> Result<(), JsValue> {
+        let points = serde_json::from_str::<Vec<[f32; 3]>>(points_json).map_err(js_error)?;
+        let points = crate::track_editor::control_points_with_heights(&points);
+        self.rebuild_editor(
+            points,
+            self.editor_kerb_spans.clone(),
+            self.editor_prop_lines.clone(),
+        )
+        .await
+    }
+
+    pub async fn set_editor_kerb_spans(&mut self, spans_json: &str) -> Result<(), JsValue> {
+        let spans = serde_json::from_str::<Vec<crate::track_editor::KerbSpan>>(spans_json)
+            .map_err(js_error)?;
+        let points = self
+            .editor_control_points
+            .clone()
+            .ok_or_else(|| JsValue::from_str("editor control points unavailable"))?;
+        self.rebuild_editor(points, spans, self.editor_prop_lines.clone())
+            .await
+    }
+
+    pub async fn set_editor_prop_lines(&mut self, lines_json: &str) -> Result<(), JsValue> {
+        let lines = serde_json::from_str::<Vec<crate::track_editor::PropLine>>(lines_json)
+            .map_err(js_error)?;
+        let points = self
+            .editor_control_points
+            .clone()
+            .ok_or_else(|| JsValue::from_str("editor control points unavailable"))?;
+        self.rebuild_editor(points, self.editor_kerb_spans.clone(), lines)
+            .await
+    }
+
+    async fn rebuild_editor(
+        &mut self,
+        points: Vec<[f32; 3]>,
+        kerb_spans: Vec<crate::track_editor::KerbSpan>,
+        prop_lines: Vec<crate::track_editor::PropLine>,
+    ) -> Result<(), JsValue> {
+        let track = crate::track_editor::track_from_control_points_with_spans(
+            &points,
+            Some(&kerb_spans),
+            Some(&prop_lines),
+        )
+        .map_err(js_error)?;
+        let scene = Scene::build(
+            &track.visual,
+            &track.metadata,
+            &track.collision,
+            &track.manifest,
+        )
+        .map_err(|error| JsValue::from_str(&error))?;
+        let debug_info = scene.debug_info.clone();
+        let camera = self.camera;
+        let (collision_center, region_half) = track_region(&track.collision, &track.metadata);
+        let region_center = track
+            .metadata
+            .spawns
+            .first()
+            .map(|spawn| spawn.position)
+            .unwrap_or(collision_center);
+        let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
+        let ground_y = collider
+            .raycast(
+                Vec3::new(region_center[0], region_center[1] + 100.0, region_center[2]),
+                Vec3::NEG_Y,
+                300.0,
+            )
+            .map(|hit| hit.point.y)
+            .unwrap_or(region_center[1]);
+        let width = self.canvas.width().max(1);
+        let height = self.canvas.height().max(1);
+        let mut renderer = renderer::Renderer::new(
+            self.canvas.clone(),
+            width,
+            height,
+            scene,
+            &GpuTuning::default(),
+        )
+        .await?;
+        renderer.set_lines_visible(false);
+        renderer.set_baked_region(collision_center, region_half, ground_y);
+        renderer.set_shadow_focus(camera.target, TRACK_SHADOW_EXTENT);
+        renderer.set_grass_center_xz(camera.eye[0], camera.eye[2]);
+        renderer.set_camera(camera);
+        self.renderer = renderer;
+        self.debug_info = debug_info;
+        self.editor_control_points = Some(points);
+        self.editor_kerb_spans = track.kerb_spans;
+        self.editor_prop_lines = track.prop_lines;
+        Ok(())
     }
 
     pub fn set_environment_shadow_mode(&mut self, mode: &str) {
@@ -125,6 +402,202 @@ impl TrackViewer {
 
     pub fn set_grass_shader_enabled(&mut self, enabled: bool) {
         self.renderer.set_grass_shader_enabled(enabled);
+    }
+
+    pub fn set_vegetation_tier(&mut self, tier: &str) {
+        let Some(groups) = &self.vegetation else {
+            return;
+        };
+        let medium = tier != "low";
+        let high = tier == "high";
+        for &index in &groups.near {
+            self.renderer.set_mesh_visible(index, true);
+        }
+        for &index in &groups.mid {
+            self.renderer.set_mesh_visible(index, medium);
+        }
+        for &index in &groups.far {
+            self.renderer.set_mesh_visible(index, high);
+        }
+    }
+
+    pub fn style_camera_tuning(&self) -> String {
+        serde_json::to_string(&TuningConfig::default().camera).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    pub fn set_camera_fov(&mut self, fov_y: f32) {
+        self.camera.fov_y = fov_y.clamp(0.1, 3.0);
+        self.renderer.set_camera(self.camera);
+    }
+
+    pub fn style_car_info(&self) -> String {
+        let Some(car) = &self.style_car else {
+            return "null".to_string();
+        };
+        let (position, rotation, speed_kph, rpm, gear) = if let Some(drive) = &self.style_drive {
+            let state = &drive.vehicle.state;
+            (
+                state.position,
+                state.rotation,
+                state.velocity.length() * 3.6,
+                state.engine_rpm,
+                state.gear,
+            )
+        } else {
+            let (_, rotation, translation) = car.transform.to_scale_rotation_translation();
+            (translation, rotation, 0.0, 0.0, 0)
+        };
+        let forward = rotation * Vec3::NEG_Z;
+        let right = rotation * Vec3::X;
+        let up = rotation * Vec3::Y;
+        serde_json::json!({
+            "position": position.to_array(),
+            "forward": forward.to_array(),
+            "right": right.to_array(),
+            "up": up.to_array(),
+            "speedKph": speed_kph,
+            "rpm": rpm,
+            "gear": gear,
+            "bounds": {
+                "min": car.bounds.min,
+                "max": car.bounds.max,
+            },
+        })
+        .to_string()
+    }
+
+    pub fn update_car(
+        &mut self,
+        time_seconds: f64,
+        throttle: f32,
+        brake: f32,
+        steering: f32,
+        handbrake: f32,
+        cockpit: bool,
+    ) -> Result<(), JsValue> {
+        let Some(drive) = &mut self.style_drive else {
+            return Ok(());
+        };
+        let dt = match drive.last_time {
+            Some(last) => ((time_seconds - last).max(0.0) as f32).min(0.05),
+            None => 0.0,
+        };
+        drive.last_time = Some(time_seconds);
+        drive.accumulator += dt;
+        let controls = Controls {
+            steering: steering.clamp(-1.0, 1.0),
+            throttle: throttle.clamp(0.0, 1.0),
+            brake: brake.clamp(0.0, 1.0),
+            clutch: 0.0,
+            gear: auto_gear(drive.vehicle.state.velocity.length()),
+            handbrake: handbrake.clamp(0.0, 1.0),
+        };
+        let mut steps = 0;
+        while drive.accumulator >= FIXED_DT && steps < 25 {
+            drive.previous_state = drive.vehicle.state;
+            drive.vehicle.step(controls);
+            drive.accumulator -= FIXED_DT;
+            steps += 1;
+        }
+        if steps == 25 && drive.accumulator > FIXED_DT {
+            drive.accumulator = 0.0;
+        }
+        let alpha = (drive.accumulator / FIXED_DT).clamp(0.0, 1.0);
+        let position = drive
+            .previous_state
+            .position
+            .lerp(drive.vehicle.state.position, alpha);
+        let rotation = drive
+            .previous_state
+            .rotation
+            .slerp(drive.vehicle.state.rotation, alpha)
+            .normalize();
+        update_style_car_rig(
+            &mut self.renderer,
+            &drive.rig,
+            position,
+            rotation,
+            &drive.vehicle.state,
+            brake,
+            cockpit,
+        );
+        self.renderer.set_shadow_focus(
+            [position.x, position.y + 0.5, position.z],
+            TRACK_SHADOW_EXTENT,
+        );
+        Ok(())
+    }
+
+    pub fn reset_car(&mut self) {
+        let Some(drive) = &mut self.style_drive else {
+            return;
+        };
+        drive.vehicle.reset();
+        for _ in 0..500 {
+            drive.vehicle.step(Controls::default());
+        }
+        drive.previous_state = drive.vehicle.state;
+        drive.accumulator = 0.0;
+        drive.last_time = None;
+        let position = drive.vehicle.state.position;
+        let rotation = drive.vehicle.state.rotation;
+        update_style_car_rig(
+            &mut self.renderer,
+            &drive.rig,
+            position,
+            rotation,
+            &drive.vehicle.state,
+            0.0,
+            false,
+        );
+        self.renderer.set_shadow_focus(
+            [position.x, position.y + 0.5, position.z],
+            TRACK_SHADOW_EXTENT,
+        );
+    }
+
+    pub fn style_info(&self) -> String {
+        serde_json::json!({
+            "backend": self.renderer.backend(),
+            "surfaceFormat": self.renderer.surface_format(),
+            "vegetation": self.vegetation.as_ref().map(|groups| serde_json::json!({
+                "trees": groups.trees,
+                "bushes": groups.bushes,
+                "candidates": groups.candidates,
+                "nearMeshes": groups.near.len(),
+                "midMeshes": groups.mid.len(),
+                "farMeshes": groups.far.len(),
+            })),
+            "mass": {
+                "trees": {
+                    "maxLayers": self.renderer.tree_mass_max_layers(),
+                    "instances": self.renderer.tree_mass_instance_count(),
+                    "activeInstances": self.renderer.tree_mass_active_instances(),
+                },
+                "bushes": {
+                    "maxLayers": self.renderer.bush_mass_max_layers(),
+                    "instances": self.renderer.bush_mass_instance_count(),
+                    "activeInstances": self.renderer.bush_mass_active_instances(),
+                },
+            },
+        })
+        .to_string()
+    }
+
+    pub fn set_tree_mass(&mut self, layers: u32) -> u32 {
+        self.renderer.set_tree_mass(layers)
+    }
+
+    pub fn set_bush_mass(&mut self, layers: u32) -> u32 {
+        self.renderer.set_bush_mass(layers)
+    }
+
+    pub fn set_vegetation_mass(&mut self, layers: u32) -> u32 {
+        self.renderer.set_vegetation_mass(layers)
+    }
+
+    pub fn set_grass_density(&mut self, density: f32) {
+        self.renderer.set_grass_density(density);
     }
 
     pub fn set_msaa_samples(&mut self, requested: u32) -> Result<u32, JsValue> {
@@ -169,6 +642,7 @@ impl TrackViewer {
         self.camera.eye = [eye_x, eye_y, eye_z];
         self.camera.target = [target_x, target_y, target_z];
         self.renderer.set_camera(self.camera);
+        self.renderer.set_grass_center_xz(eye_x, eye_z);
         self.renderer
             .set_shadow_focus([target_x, target_y, target_z], TRACK_SHADOW_EXTENT);
     }
@@ -176,6 +650,8 @@ impl TrackViewer {
     pub fn reset_camera(&mut self) {
         self.camera = self.initial_camera;
         self.renderer.set_camera(self.camera);
+        self.renderer
+            .set_grass_center_xz(self.camera.eye[0], self.camera.eye[2]);
         self.renderer
             .set_shadow_focus(self.camera.target, TRACK_SHADOW_EXTENT);
     }
@@ -199,7 +675,7 @@ impl GarageViewer {
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         track_pack_bytes: js_sys::Uint8Array,
-        car_pack_bytes: js_sys::Uint8Array,
+        car_packs: js_sys::Array,
     ) -> Result<GarageViewer, JsValue> {
         let track_bytes = track_pack_bytes.to_vec();
         let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
@@ -214,26 +690,38 @@ impl GarageViewer {
         let track_manifest = track_pack.manifest().clone();
         drop(track_pack);
 
-        let car_bytes = car_pack_bytes.to_vec();
-        let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-        if car_pack.kind() != sim_types::AssetKind::Car {
-            return Err(JsValue::from_str(
-                "expected a car pack for the second argument",
-            ));
+        if car_packs.length() == 0 {
+            return Err(JsValue::from_str("expected at least one car pack"));
         }
-        let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-        let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
-        let car_manifest = car_pack.manifest().clone();
-        drop(car_pack);
+        let mut car_data = Vec::with_capacity(car_packs.length() as usize);
+        for value in car_packs.iter() {
+            let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
+            let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
+            if car_pack.kind() != sim_types::AssetKind::Car {
+                return Err(JsValue::from_str(
+                    "expected car packs for the second argument",
+                ));
+            }
+            let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
+            let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
+            let car_manifest = car_pack.manifest().clone();
+            car_data.push((car_physics, car_visual, car_manifest));
+        }
+        let cars = car_data
+            .iter()
+            .map(|(physics, visual, manifest)| garage::GarageCar {
+                physics,
+                visual,
+                manifest,
+            })
+            .collect::<Vec<_>>();
 
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
             &track_collision,
             &track_manifest,
-            &car_physics,
-            &car_visual,
-            &car_manifest,
+            &cars,
             10,
             0,
             true,
@@ -359,10 +847,32 @@ impl GarageViewer {
             "selected": self.selected_bay,
             "count": self.bays.len(),
             "name": bay.map(|bay| bay.name.clone()).unwrap_or_default(),
+            "carId": bay.map(|bay| bay.car_id.clone()).unwrap_or_default(),
+            "car": bay.map(|bay| bay.car.clone()),
             "color": bay.map(|bay| bay.color),
             "colorName": bay.map(|bay| bay.color_name).unwrap_or_default(),
         })
         .to_string()
+    }
+
+    pub fn bay_list(&self) -> String {
+        serde_json::to_string(
+            &self
+                .bays
+                .iter()
+                .enumerate()
+                .map(|(index, bay)| {
+                    serde_json::json!({
+                        "index": index,
+                        "name": bay.name,
+                        "carId": bay.car_id,
+                        "color": bay.color,
+                        "colorName": bay.color_name,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string())
     }
 
     pub fn render(&mut self) -> Result<(), JsValue> {
@@ -469,6 +979,348 @@ impl GarageViewer {
 
     pub fn spin_angle(&self) -> f32 {
         self.spin
+    }
+}
+
+fn state_from_frame(frame: &[f32]) -> Result<VehicleState, JsValue> {
+    if frame.len() < SNAPSHOT_STATE_FLOATS {
+        return Err(JsValue::from_str("remote snapshot is too short"));
+    }
+    let position = Vec3::new(
+        frame[snapshot::POSITION],
+        frame[snapshot::POSITION + 1],
+        frame[snapshot::POSITION + 2],
+    );
+    let rotation = Quat::from_xyzw(
+        frame[snapshot::ROTATION],
+        frame[snapshot::ROTATION + 1],
+        frame[snapshot::ROTATION + 2],
+        frame[snapshot::ROTATION + 3],
+    );
+    let rotation = if rotation.length_squared() > 1e-8 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+    let contact_center = Vec3::new(
+        frame[snapshot::CONTACT_CENTER],
+        frame[snapshot::CONTACT_CENTER + 1],
+        frame[snapshot::CONTACT_CENTER + 2],
+    );
+    let contact_normal = Vec3::new(
+        frame[snapshot::CONTACT_NORMAL],
+        frame[snapshot::CONTACT_NORMAL + 1],
+        frame[snapshot::CONTACT_NORMAL + 2],
+    )
+    .normalize_or(Vec3::Y);
+    let mut wheels = [WheelState::default(); 4];
+    let surface_ids = frame[snapshot::SURFACE_IDS].max(0.0) as u32;
+    for (index, wheel) in wheels.iter_mut().enumerate() {
+        wheel.surface_id = ((surface_ids >> (index * 6)) & 0x3f) as u16;
+        wheel.angular_velocity = frame[snapshot::WHEEL_ANGULAR_SPEEDS + index];
+        wheel.suspension_compression = frame[snapshot::SUSPENSION_TRAVEL + index];
+        wheel.slip_ratio = frame[snapshot::SLIP_RATIO + index];
+        wheel.slip_angle = frame[snapshot::SLIP_ANGLE + index];
+        wheel.normal_load = frame[snapshot::TIRE_LOAD + index];
+        wheel.contact = frame[snapshot::CONTACT_FLAGS + index] > 0.5;
+        wheel.surface_friction = frame[snapshot::SURFACE_FRICTION + index];
+        wheel.steer_angle = frame[snapshot::WHEEL_STEER_ANGLE + index];
+        wheel.spin_angle = frame[snapshot::WHEEL_SPIN_ANGLE + index];
+        wheel.contact_point = contact_center;
+        wheel.contact_normal = contact_normal;
+    }
+    Ok(VehicleState {
+        position,
+        rotation,
+        velocity: Vec3::new(
+            frame[snapshot::VELOCITY],
+            frame[snapshot::VELOCITY + 1],
+            frame[snapshot::VELOCITY + 2],
+        ),
+        angular_velocity: Vec3::new(
+            frame[snapshot::ANGULAR_VELOCITY],
+            frame[snapshot::ANGULAR_VELOCITY + 1],
+            frame[snapshot::ANGULAR_VELOCITY + 2],
+        ),
+        wheels,
+        engine_rpm: frame[snapshot::ENGINE_RPM],
+        gear: frame[snapshot::GEAR].round() as i32,
+        steering_rack_torque: frame[snapshot::RACK_TORQUE],
+        tick: frame[snapshot::TICK].max(0.0) as u64,
+    })
+}
+
+fn remote_particles_tuning(base: &ParticleTuning) -> ParticleTuning {
+    let mut tuning = base.clone();
+    tuning.max_active = tuning.max_active.min(160);
+    tuning.max_spawn_per_step = tuning.max_spawn_per_step.min(4);
+    tuning
+}
+
+fn set_rig_cockpit_visible(renderer: &mut renderer::Renderer, rig: &CarRig, visible: bool) {
+    if let Some(index) = rig.dashboard_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+    if let Some(index) = rig.speedometer_face_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+    if let Some(index) = rig.rpm_face_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+    for needle in &rig.cockpit_needles {
+        renderer.set_mesh_visible(needle.mesh_index, visible);
+    }
+    for cover in &rig.cockpit_covers {
+        renderer.set_mesh_visible(cover.mesh_index, visible);
+    }
+    for segment in &rig.gear_segments {
+        renderer.set_mesh_visible(segment.mesh_index, visible);
+    }
+    if let Some(index) = rig.steering_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+}
+
+fn set_rig_exterior_visible(renderer: &mut renderer::Renderer, rig: &CarRig, visible: bool) {
+    renderer.set_mesh_visible(rig.body_mesh_index, visible);
+    for index in &rig.extra_body_meshes {
+        renderer.set_mesh_visible(*index, visible);
+    }
+    if let Some(index) = rig.glass_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+    if let Some(index) = rig.brake_light_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+    if let Some(index) = rig.reverse_light_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+    for wheel in &rig.wheels {
+        renderer.set_mesh_visible(wheel.mesh_index, visible);
+    }
+    if let Some(index) = rig.decal_mesh_index {
+        renderer.set_mesh_visible(index, visible);
+    }
+    if !visible {
+        if let Some(index) = rig.dashboard_mesh_index {
+            renderer.set_mesh_visible(index, false);
+        }
+        if let Some(index) = rig.speedometer_face_mesh_index {
+            renderer.set_mesh_visible(index, false);
+        }
+        if let Some(index) = rig.rpm_face_mesh_index {
+            renderer.set_mesh_visible(index, false);
+        }
+        for needle in &rig.cockpit_needles {
+            renderer.set_mesh_visible(needle.mesh_index, false);
+        }
+        for cover in &rig.cockpit_covers {
+            renderer.set_mesh_visible(cover.mesh_index, false);
+        }
+        for segment in &rig.gear_segments {
+            renderer.set_mesh_visible(segment.mesh_index, false);
+        }
+        if let Some(index) = rig.steering_mesh_index {
+            renderer.set_mesh_visible(index, false);
+        }
+    }
+}
+
+fn update_remote_rig(
+    renderer: &mut renderer::Renderer,
+    rig: &CarRig,
+    state: &VehicleState,
+    brake: f32,
+    _cockpit: bool,
+) {
+    let car_world = Mat4::from_rotation_translation(state.rotation, state.position);
+    renderer.set_mesh_model(rig.body_mesh_index, car_world * rig.body_local);
+    for index in &rig.extra_body_meshes {
+        renderer.set_mesh_model(*index, car_world * rig.body_local);
+    }
+    if let Some(index) = rig.glass_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.body_local);
+    }
+    if let Some(index) = rig.brake_light_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.body_local);
+        renderer.set_mesh_emissive(
+            index,
+            if brake > 0.05 {
+                [5.0, 0.12, 0.02]
+            } else {
+                [0.0; 3]
+            },
+        );
+    }
+    if let Some(index) = rig.reverse_light_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.body_local);
+        renderer.set_mesh_emissive(
+            index,
+            if state.gear == -1 {
+                [3.5, 3.5, 3.5]
+            } else {
+                [0.0; 3]
+            },
+        );
+    }
+    for (index, wheel) in rig.wheels.iter().enumerate() {
+        let wheel_state = state.wheels.get(index).copied().unwrap_or_default();
+        let spin = Mat4::from_rotation_x(-wheel_state.spin_angle);
+        let rotation = if wheel.is_front {
+            Mat4::from_rotation_y(wheel_state.steer_angle) * spin
+        } else {
+            spin
+        };
+        renderer.set_mesh_model(wheel.mesh_index, car_world * wheel.local_model * rotation);
+    }
+    if let Some(index) = rig.decal_mesh_index {
+        let mut contact_count = 0.0f32;
+        let mut contact = Vec3::ZERO;
+        let mut normal = Vec3::ZERO;
+        for wheel in &state.wheels {
+            if wheel.contact {
+                contact += wheel.contact_point;
+                normal += wheel.contact_normal;
+                contact_count += 1.0;
+            }
+        }
+        let base = if contact_count > 0.0 {
+            contact / contact_count
+        } else {
+            state.position
+        };
+        let normal = if normal.length_squared() > 0.001 {
+            normal.normalize()
+        } else {
+            Vec3::Y
+        };
+        let light = Vec3::from_array(renderer.sun_direction());
+        let yaw = shadow_decal_yaw(state.rotation * Vec3::NEG_Z);
+        renderer.set_shadow_decal(
+            index,
+            base.to_array(),
+            normal.to_array(),
+            yaw,
+            rig.decal_width,
+            rig.decal_length,
+            light.to_array(),
+            0.7,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_style_car_rig(
+    renderer: &mut renderer::Renderer,
+    rig: &CarRig,
+    position: Vec3,
+    rotation: Quat,
+    state: &VehicleState,
+    brake: f32,
+    cockpit: bool,
+) {
+    let car_world = Mat4::from_rotation_translation(rotation, position);
+    renderer.set_mesh_model(rig.body_mesh_index, car_world * rig.body_local);
+    for index in &rig.extra_body_meshes {
+        renderer.set_mesh_model(*index, car_world * rig.body_local);
+    }
+    if let Some(index) = rig.glass_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.body_local);
+    }
+    if let Some(index) = rig.dashboard_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.dashboard_local);
+    }
+    if let Some(index) = rig.speedometer_face_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.dashboard_local);
+    }
+    if let Some(index) = rig.rpm_face_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.dashboard_local);
+    }
+    for cover in &rig.cockpit_covers {
+        renderer.set_mesh_model(cover.mesh_index, car_world * rig.dashboard_local);
+    }
+    let speed_kph = state.velocity.length() * 3.6;
+    let gear_fraction = ((state.gear.max(1) - 1) as f32 / 5.0).clamp(0.0, 1.0);
+    for needle in &rig.cockpit_needles {
+        let fraction = match needle.source {
+            CockpitNeedleSource::Speed => (speed_kph / 330.0).clamp(0.0, 1.0),
+            CockpitNeedleSource::Rpm => (state.engine_rpm / 10_000.0).clamp(0.0, 1.0),
+            CockpitNeedleSource::Gear => gear_fraction,
+        };
+        let angle = 135.0_f32.to_radians() - fraction * 270.0_f32.to_radians();
+        let model = car_world
+            * rig.dashboard_local
+            * Mat4::from_translation(needle.center)
+            * Mat4::from_rotation_z(angle);
+        renderer.set_mesh_model(needle.mesh_index, model);
+    }
+    for segment in &rig.gear_segments {
+        let model = car_world * rig.dashboard_local * Mat4::from_translation(segment.center);
+        renderer.set_mesh_model(segment.mesh_index, model);
+        renderer.set_mesh_visible(segment.mesh_index, cockpit && state.gear == segment.gear);
+    }
+    if let Some(index) = rig.brake_light_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.body_local);
+        renderer.set_mesh_emissive(
+            index,
+            if brake > 0.05 {
+                [5.0, 0.12, 0.02]
+            } else {
+                [0.0; 3]
+            },
+        );
+    }
+    if let Some(index) = rig.reverse_light_mesh_index {
+        renderer.set_mesh_model(index, car_world * rig.body_local);
+        renderer.set_mesh_emissive(
+            index,
+            if state.gear == -1 {
+                [4.0, 4.0, 4.0]
+            } else {
+                [0.0; 3]
+            },
+        );
+    }
+    for (index, wheel) in rig.wheels.iter().enumerate() {
+        let wheel_state = state.wheels.get(index).copied().unwrap_or_default();
+        let spin = Mat4::from_rotation_x(-wheel_state.spin_angle);
+        let wheel_rotation = if wheel.is_front {
+            Mat4::from_rotation_y(wheel_state.steer_angle) * spin
+        } else {
+            spin
+        };
+        renderer.set_mesh_model(
+            wheel.mesh_index,
+            car_world * wheel.local_model * wheel_rotation,
+        );
+    }
+    if let Some(index) = rig.steering_mesh_index {
+        let steer = state
+            .wheels
+            .first()
+            .map(|wheel| wheel.steer_angle)
+            .unwrap_or(0.0);
+        renderer.set_mesh_model(
+            index,
+            car_world * rig.steering_local * Mat4::from_rotation_x(-steer * 3.0),
+        );
+    }
+}
+
+fn auto_gear(speed_mps: f32) -> i32 {
+    let kph = speed_mps * 3.6;
+    if kph < 25.0 {
+        1
+    } else if kph < 50.0 {
+        2
+    } else if kph < 80.0 {
+        3
+    } else if kph < 115.0 {
+        4
+    } else if kph < 160.0 {
+        5
+    } else {
+        6
     }
 }
 
@@ -616,7 +1468,10 @@ pub struct DriveViewer {
     renderer: renderer::Renderer,
     vehicle: Vehicle,
     previous_state: sim_core::VehicleState,
-    rig: CarRig,
+    rigs: Vec<CarRig>,
+    local_slot: usize,
+    remote_visible: Vec<bool>,
+    remote_states: Vec<Option<VehicleState>>,
     info: String,
     accumulator: f32,
     last_time: Option<f64>,
@@ -624,13 +1479,18 @@ pub struct DriveViewer {
     track_id: String,
     car_id: String,
     car_bay: usize,
+    color_offset: usize,
     camera_mode: CameraMode,
     brake_lights_on: bool,
     reverse_lights_on: bool,
     surface_names: Vec<String>,
     particles: ParticleSystem,
+    remote_particles: Vec<ParticleSystem>,
+    particle_instances: Vec<ParticleInstance>,
+    remote_particle_tuning: ParticleTuning,
     last_particle_time: Option<f64>,
     tuning: TuningConfig,
+    cockpit_dial_offsets: [[f32; 3]; 3],
     track_shadow_center: Vec3,
     track_shadow_half: f32,
 }
@@ -643,6 +1503,7 @@ impl DriveViewer {
         car_pack_bytes: js_sys::Uint8Array,
         car_bay: Option<usize>,
         tuning_json: Option<String>,
+        remote_slots: Option<usize>,
     ) -> Result<DriveViewer, JsValue> {
         let mut tuning = tuning_json
             .and_then(|json| serde_json::from_str::<TuningConfig>(&json).ok())
@@ -678,25 +1539,42 @@ impl DriveViewer {
         let car_manifest = car_pack.manifest().clone();
         drop(car_pack);
 
+        if car_visual
+            .meshes
+            .iter()
+            .any(|mesh| mesh.name == "body_interior")
+        {
+            tuning.camera.cockpit.eye = [-0.4, 1.10, 0.1];
+            tuning.camera.cockpit.target = [-0.4, 1.00, -20.3];
+            tuning.camera.cockpit.fov_y = 1.0;
+        }
+
         let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
+        let remote_slots = remote_slots.unwrap_or(0).min(7);
+        let cars = [garage::GarageCar {
+            physics: &car_physics,
+            visual: &car_visual,
+            manifest: &car_manifest,
+        }];
+        let remote_particle_tuning = remote_particles_tuning(&tuning.particles);
+        let color_offset = if remote_slots == 0 { car_bay } else { 0 };
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
             &track_collision,
             &track_manifest,
-            &car_physics,
-            &car_visual,
-            &car_manifest,
-            1,
-            car_bay,
+            &cars,
+            1 + remote_slots,
+            color_offset,
             false,
             true,
         )
         .map_err(|error| JsValue::from_str(&error))?;
-        let rig = scene
-            .car_rig
-            .take()
-            .ok_or_else(|| JsValue::from_str("garage scene has no car rig"))?;
+        let mut rigs = std::mem::take(&mut scene.car_rigs);
+        if rigs.len() < 1 + remote_slots {
+            return Err(JsValue::from_str("scene did not build enough car rigs"));
+        }
+        rigs.truncate(1 + remote_slots);
         let info = scene.debug_info.clone();
         let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
         let mut spawn = track_metadata
@@ -757,7 +1635,10 @@ impl DriveViewer {
             renderer,
             vehicle,
             previous_state,
-            rig,
+            rigs,
+            local_slot: 0,
+            remote_visible: vec![false; 1 + remote_slots],
+            remote_states: vec![None; 1 + remote_slots],
             info,
             accumulator: 0.0,
             last_time: None,
@@ -765,13 +1646,18 @@ impl DriveViewer {
             track_id: track_manifest.id,
             car_id: car_manifest.id,
             car_bay,
+            color_offset,
             camera_mode: CameraMode::Chase,
             brake_lights_on: false,
             reverse_lights_on: false,
             surface_names,
             particles: ParticleSystem::new(),
+            remote_particles: (0..=remote_slots).map(|_| ParticleSystem::new()).collect(),
+            particle_instances: Vec::with_capacity(crate::particles::MAX_PARTICLES),
+            remote_particle_tuning,
             last_particle_time: None,
             tuning,
+            cockpit_dial_offsets: [[0.0; 3]; 3],
             track_shadow_center: Vec3::from_array(track_shadow_center),
             track_shadow_half,
         };
@@ -779,6 +1665,9 @@ impl DriveViewer {
         drive
             .renderer
             .set_particle_render_tuning(&drive.tuning.particles.render);
+        for slot in 1..=remote_slots {
+            let _ = drive.set_remote_visible(slot, false);
+        }
         drive.write_initial_pose()?;
         Ok(drive)
     }
@@ -911,68 +1800,7 @@ impl DriveViewer {
     }
 
     pub fn render_remote(&mut self, frame: &[f32]) -> Result<(), JsValue> {
-        if frame.len() < SNAPSHOT_STATE_FLOATS {
-            return Err(JsValue::from_str("remote snapshot is too short"));
-        }
-        let position = Vec3::new(
-            frame[snapshot::POSITION],
-            frame[snapshot::POSITION + 1],
-            frame[snapshot::POSITION + 2],
-        );
-        let rotation = Quat::from_xyzw(
-            frame[snapshot::ROTATION],
-            frame[snapshot::ROTATION + 1],
-            frame[snapshot::ROTATION + 2],
-            frame[snapshot::ROTATION + 3],
-        );
-        let rotation = if rotation.length_squared() > 1e-8 {
-            rotation.normalize()
-        } else {
-            Quat::IDENTITY
-        };
-        let contact_center = Vec3::new(
-            frame[snapshot::CONTACT_CENTER],
-            frame[snapshot::CONTACT_CENTER + 1],
-            frame[snapshot::CONTACT_CENTER + 2],
-        );
-        let contact_normal = Vec3::new(
-            frame[snapshot::CONTACT_NORMAL],
-            frame[snapshot::CONTACT_NORMAL + 1],
-            frame[snapshot::CONTACT_NORMAL + 2],
-        )
-        .normalize_or(Vec3::Y);
-        let mut remote = self.vehicle.state;
-        remote.position = position;
-        remote.rotation = rotation;
-        remote.velocity = Vec3::new(
-            frame[snapshot::VELOCITY],
-            frame[snapshot::VELOCITY + 1],
-            frame[snapshot::VELOCITY + 2],
-        );
-        remote.angular_velocity = Vec3::new(
-            frame[snapshot::ANGULAR_VELOCITY],
-            frame[snapshot::ANGULAR_VELOCITY + 1],
-            frame[snapshot::ANGULAR_VELOCITY + 2],
-        );
-        remote.engine_rpm = frame[snapshot::ENGINE_RPM];
-        remote.gear = frame[snapshot::GEAR].round() as i32;
-        remote.steering_rack_torque = frame[snapshot::RACK_TORQUE];
-        remote.tick = frame[snapshot::TICK].max(0.0) as u64;
-        let surface_ids = frame[snapshot::SURFACE_IDS].max(0.0) as u32;
-        for (index, wheel) in remote.wheels.iter_mut().enumerate() {
-            wheel.surface_id = ((surface_ids >> (index * 6)) & 0x3f) as u16;
-            wheel.angular_velocity = frame[snapshot::WHEEL_ANGULAR_SPEEDS + index];
-            wheel.suspension_compression = frame[snapshot::SUSPENSION_TRAVEL + index];
-            wheel.slip_ratio = frame[snapshot::SLIP_RATIO + index];
-            wheel.slip_angle = frame[snapshot::SLIP_ANGLE + index];
-            wheel.normal_load = frame[snapshot::TIRE_LOAD + index];
-            wheel.contact = frame[snapshot::CONTACT_FLAGS + index] > 0.5;
-            wheel.surface_friction = frame[snapshot::SURFACE_FRICTION + index];
-            wheel.steer_angle = frame[snapshot::WHEEL_STEER_ANGLE + index];
-            wheel.spin_angle = frame[snapshot::WHEEL_SPIN_ANGLE + index];
-            wheel.contact_point = contact_center;
-            wheel.contact_normal = contact_normal;
-        }
+        let remote = state_from_frame(frame)?;
         self.vehicle.state = remote;
         self.previous_state = remote;
         self.last_time = None;
@@ -982,6 +1810,93 @@ impl DriveViewer {
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
+    }
+
+    pub fn set_remote_visible(&mut self, slot: usize, visible: bool) -> Result<(), JsValue> {
+        if slot == self.local_slot {
+            return Ok(());
+        }
+        let Some(rig) = self.rigs.get(slot) else {
+            return Err(JsValue::from_str("remote slot is out of range"));
+        };
+        set_rig_exterior_visible(&mut self.renderer, rig, visible);
+        self.remote_visible[slot] = visible;
+        if !visible {
+            self.remote_states[slot] = None;
+            self.remote_particles[slot].clear();
+        }
+        Ok(())
+    }
+
+    pub fn set_remote_state(&mut self, slot: usize, frame: &[f32]) -> Result<(), JsValue> {
+        if slot == self.local_slot {
+            return Ok(());
+        }
+        if slot >= self.rigs.len() {
+            return Err(JsValue::from_str("remote slot is out of range"));
+        }
+        let remote = state_from_frame(frame)?;
+        let brake = frame[snapshot::BRAKE];
+        let was_hidden = !self.remote_visible[slot];
+        self.remote_visible[slot] = true;
+        self.remote_states[slot] = Some(remote);
+        if was_hidden {
+            set_rig_exterior_visible(&mut self.renderer, &self.rigs[slot], true);
+        }
+        update_remote_rig(
+            &mut self.renderer,
+            &self.rigs[slot],
+            &remote,
+            brake,
+            self.camera_mode == CameraMode::Cockpit,
+        );
+        Ok(())
+    }
+
+    pub fn place_on_grid(&mut self, slot: usize) -> Result<(), JsValue> {
+        self.vehicle.place_on_grid(slot);
+        for _ in 0..500 {
+            self.vehicle.step(Controls::default());
+        }
+        self.previous_state = self.vehicle.state;
+        self.accumulator = 0.0;
+        self.last_time = None;
+        self.last_particle_time = None;
+        self.step_times.clear();
+        self.particles.clear();
+        self.set_brake_lights(0.0);
+        self.set_reverse_lights(false);
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
+    }
+
+    pub fn set_local_slot(&mut self, slot: usize) -> Result<(), JsValue> {
+        if slot >= self.rigs.len() {
+            return Err(JsValue::from_str("local slot is out of range"));
+        }
+        if slot == self.local_slot {
+            return Ok(());
+        }
+        let old = self.local_slot;
+        self.local_slot = slot;
+        self.remote_visible[old] = false;
+        self.remote_states[old] = None;
+        self.remote_visible[slot] = true;
+        self.remote_states[slot] = None;
+        self.remote_particles[old].clear();
+        self.remote_particles[slot].clear();
+        set_rig_exterior_visible(&mut self.renderer, &self.rigs[old], false);
+        set_rig_exterior_visible(&mut self.renderer, &self.rigs[slot], true);
+        set_rig_cockpit_visible(&mut self.renderer, &self.rigs[slot], true);
+        self.previous_state = self.vehicle.state;
+        self.update_visuals();
+        self.update_camera();
+        self.renderer.render()
+    }
+
+    pub fn debug_info(&self) -> String {
+        self.info.clone()
     }
 
     pub fn telemetry(&self) -> String {
@@ -1017,7 +1932,19 @@ impl DriveViewer {
             "track": self.track_id,
             "car": self.car_id,
             "carBay": self.car_bay,
-            "carColor": garage::BAY_COLOR_NAMES[self.car_bay],
+            "localSlot": self.local_slot,
+            "remoteSlots": self.rigs.len().saturating_sub(1),
+            "remoteCars": self.remote_states.iter().enumerate().filter_map(|(slot, state)| {
+                if slot == self.local_slot { return None; }
+                state.map(|state| serde_json::json!({
+                    "slot": slot,
+                    "tick": state.tick,
+                    "gear": state.gear,
+                    "position": [state.position.x, state.position.y, state.position.z],
+                }))
+            }).collect::<Vec<_>>(),
+            "carColor": garage::BAY_COLOR_NAMES
+                [(self.color_offset + self.local_slot) % garage::BAY_COLOR_NAMES.len()],
             "shadowMapSize": self.renderer.shadow_map_size(),
             "carShadowMapSize": self.renderer.car_shadow_map_size(),
             "shadowFocus": self.renderer.shadow_focus(),
@@ -1123,19 +2050,22 @@ impl DriveViewer {
 
     fn update_dashboard_visibility(&mut self) {
         let visible = self.camera_mode == CameraMode::Cockpit;
-        if let Some(index) = self.rig.dashboard_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].dashboard_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
-        if let Some(index) = self.rig.speedometer_face_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].speedometer_face_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
-        if let Some(index) = self.rig.rpm_face_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].rpm_face_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
-        for needle in &self.rig.cockpit_needles {
+        for needle in &self.rigs[self.local_slot].cockpit_needles {
             self.renderer.set_mesh_visible(needle.mesh_index, visible);
         }
-        for segment in &self.rig.gear_segments {
+        for cover in &self.rigs[self.local_slot].cockpit_covers {
+            self.renderer.set_mesh_visible(cover.mesh_index, visible);
+        }
+        for segment in &self.rigs[self.local_slot].gear_segments {
             self.renderer.set_mesh_visible(
                 segment.mesh_index,
                 visible && self.vehicle.state.gear == segment.gear,
@@ -1144,7 +2074,7 @@ impl DriveViewer {
     }
 
     fn apply_cockpit_glass_alpha(&mut self) {
-        if let Some(index) = self.rig.glass_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].glass_mesh_index {
             let alpha = if self.camera_mode == CameraMode::Cockpit {
                 self.tuning.camera.cockpit_glass_alpha
             } else {
@@ -1152,6 +2082,26 @@ impl DriveViewer {
             };
             self.renderer.set_mesh_alpha(index, alpha);
         }
+    }
+
+    pub fn set_cockpit_dial_offset(&mut self, source: &str, x: f32, y: f32, z: f32) {
+        let index = match source.to_ascii_lowercase().as_str() {
+            "speed" => 0,
+            "rpm" => 1,
+            "gear" => 2,
+            _ => return,
+        };
+        self.cockpit_dial_offsets[index] = [x, y, z];
+        self.update_visuals();
+    }
+
+    pub fn cockpit_dial_offsets(&self) -> String {
+        serde_json::json!({
+            "speed": self.cockpit_dial_offsets[0],
+            "rpm": self.cockpit_dial_offsets[1],
+            "gear": self.cockpit_dial_offsets[2],
+        })
+        .to_string()
     }
 
     pub fn set_traction_control(&mut self, enabled: bool) {
@@ -1237,12 +2187,12 @@ impl DriveViewer {
         height: u32,
         rgba: &[u8],
     ) -> Result<(), JsValue> {
-        let index = self.rig.speedometer_face_mesh_index;
+        let index = self.rigs[self.local_slot].speedometer_face_mesh_index;
         self.set_dial_face_texture(index, width, height, rgba)
     }
 
     pub fn set_rpm_texture(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), JsValue> {
-        let index = self.rig.rpm_face_mesh_index;
+        let index = self.rigs[self.local_slot].rpm_face_mesh_index;
         self.set_dial_face_texture(index, width, height, rgba)
     }
 
@@ -1282,8 +2232,7 @@ impl DriveViewer {
             height,
             rgba8: rgba.to_vec(),
         };
-        let indexes: Vec<usize> = self
-            .rig
+        let indexes: Vec<usize> = self.rigs[self.local_slot]
             .gear_segments
             .iter()
             .map(|segment| segment.mesh_index)
@@ -1296,14 +2245,17 @@ impl DriveViewer {
 
     pub fn set_body_visible(&mut self, visible: bool) {
         self.renderer
-            .set_mesh_visible(self.rig.body_mesh_index, visible);
-        if let Some(index) = self.rig.glass_mesh_index {
+            .set_mesh_visible(self.rigs[self.local_slot].body_mesh_index, visible);
+        for index in &self.rigs[self.local_slot].extra_body_meshes {
+            self.renderer.set_mesh_visible(*index, visible);
+        }
+        if let Some(index) = self.rigs[self.local_slot].glass_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
-        if let Some(index) = self.rig.brake_light_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].brake_light_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
-        if let Some(index) = self.rig.reverse_light_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].reverse_light_mesh_index {
             self.renderer.set_mesh_visible(index, visible);
         }
     }
@@ -1314,7 +2266,7 @@ impl DriveViewer {
             return;
         }
         self.brake_lights_on = on;
-        if let Some(index) = self.rig.brake_light_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].brake_light_mesh_index {
             self.renderer
                 .set_mesh_emissive(index, if on { [5.0, 0.12, 0.02] } else { [0.0; 3] });
         }
@@ -1325,7 +2277,7 @@ impl DriveViewer {
             return;
         }
         self.reverse_lights_on = on;
-        if let Some(index) = self.rig.reverse_light_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].reverse_light_mesh_index {
             self.renderer
                 .set_mesh_emissive(index, if on { [3.5, 3.5, 3.5] } else { [0.0; 3] });
         }
@@ -1353,6 +2305,7 @@ impl DriveViewer {
         self.renderer
             .set_particle_render_tuning(&self.tuning.particles.render);
         self.apply_cockpit_glass_alpha();
+        self.remote_particle_tuning = remote_particles_tuning(&self.tuning.particles);
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
@@ -1383,6 +2336,7 @@ impl DriveViewer {
         self.renderer
             .set_particle_render_tuning(&self.tuning.particles.render);
         self.apply_cockpit_glass_alpha();
+        self.remote_particle_tuning = remote_particles_tuning(&self.tuning.particles);
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
@@ -1414,23 +2368,49 @@ impl DriveViewer {
             (focus, self.tuning.shadows.drive_extent)
         };
         self.renderer.set_shadow_focus(focus.to_array(), extent);
-        self.renderer
-            .set_mesh_model(self.rig.body_mesh_index, car_world * self.rig.body_local);
-        if let Some(index) = self.rig.dashboard_mesh_index {
+        self.renderer.set_mesh_model(
+            self.rigs[self.local_slot].body_mesh_index,
+            car_world * self.rigs[self.local_slot].body_local,
+        );
+        for index in &self.rigs[self.local_slot].extra_body_meshes {
             self.renderer
-                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+                .set_mesh_model(*index, car_world * self.rigs[self.local_slot].body_local);
         }
-        if let Some(index) = self.rig.speedometer_face_mesh_index {
-            self.renderer
-                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        if let Some(index) = self.rigs[self.local_slot].dashboard_mesh_index {
+            self.renderer.set_mesh_model(
+                index,
+                car_world * self.rigs[self.local_slot].dashboard_local,
+            );
         }
-        if let Some(index) = self.rig.rpm_face_mesh_index {
-            self.renderer
-                .set_mesh_model(index, car_world * self.rig.dashboard_local);
+        let speed_offset = Mat4::from_translation(Vec3::from_array(self.cockpit_dial_offsets[0]));
+        let rpm_offset = Mat4::from_translation(Vec3::from_array(self.cockpit_dial_offsets[1]));
+        let gear_offset = Mat4::from_translation(Vec3::from_array(self.cockpit_dial_offsets[2]));
+        for cover in &self.rigs[self.local_slot].cockpit_covers {
+            let offset = match cover.source {
+                CockpitNeedleSource::Speed => speed_offset,
+                CockpitNeedleSource::Rpm => rpm_offset,
+                CockpitNeedleSource::Gear => gear_offset,
+            };
+            self.renderer.set_mesh_model(
+                cover.mesh_index,
+                car_world * self.rigs[self.local_slot].dashboard_local * offset,
+            );
+        }
+        if let Some(index) = self.rigs[self.local_slot].speedometer_face_mesh_index {
+            self.renderer.set_mesh_model(
+                index,
+                car_world * self.rigs[self.local_slot].dashboard_local * speed_offset,
+            );
+        }
+        if let Some(index) = self.rigs[self.local_slot].rpm_face_mesh_index {
+            self.renderer.set_mesh_model(
+                index,
+                car_world * self.rigs[self.local_slot].dashboard_local * rpm_offset,
+            );
         }
         let speed_kph = state.velocity.length() * 3.6;
         let gear_fraction = ((state.gear.max(1) - 1) as f32 / 5.0).clamp(0.0, 1.0);
-        for needle in &self.rig.cockpit_needles {
+        for needle in &self.rigs[self.local_slot].cockpit_needles {
             let fraction = match needle.source {
                 CockpitNeedleSource::Speed => (speed_kph / 330.0).clamp(0.0, 1.0),
                 CockpitNeedleSource::Rpm => (state.engine_rpm / 10_000.0).clamp(0.0, 1.0),
@@ -1439,34 +2419,42 @@ impl DriveViewer {
             let start = 135.0_f32.to_radians();
             let sweep = 270.0_f32.to_radians();
             let angle = start - fraction * sweep;
+            let offset = match needle.source {
+                CockpitNeedleSource::Speed => speed_offset,
+                CockpitNeedleSource::Rpm => rpm_offset,
+                CockpitNeedleSource::Gear => gear_offset,
+            };
             let model = car_world
-                * self.rig.dashboard_local
+                * self.rigs[self.local_slot].dashboard_local
+                * offset
                 * Mat4::from_translation(needle.center)
                 * Mat4::from_rotation_z(angle);
             self.renderer.set_mesh_model(needle.mesh_index, model);
         }
-        for segment in &self.rig.gear_segments {
-            let model =
-                car_world * self.rig.dashboard_local * Mat4::from_translation(segment.center);
+        for segment in &self.rigs[self.local_slot].gear_segments {
+            let model = car_world
+                * self.rigs[self.local_slot].dashboard_local
+                * gear_offset
+                * Mat4::from_translation(segment.center);
             self.renderer.set_mesh_model(segment.mesh_index, model);
             self.renderer.set_mesh_visible(
                 segment.mesh_index,
                 self.camera_mode == CameraMode::Cockpit && state.gear == segment.gear,
             );
         }
-        if let Some(index) = self.rig.glass_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].glass_mesh_index {
             self.renderer
-                .set_mesh_model(index, car_world * self.rig.body_local);
+                .set_mesh_model(index, car_world * self.rigs[self.local_slot].body_local);
         }
-        if let Some(index) = self.rig.brake_light_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].brake_light_mesh_index {
             self.renderer
-                .set_mesh_model(index, car_world * self.rig.body_local);
+                .set_mesh_model(index, car_world * self.rigs[self.local_slot].body_local);
         }
-        if let Some(index) = self.rig.reverse_light_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].reverse_light_mesh_index {
             self.renderer
-                .set_mesh_model(index, car_world * self.rig.body_local);
+                .set_mesh_model(index, car_world * self.rigs[self.local_slot].body_local);
         }
-        for (index, wheel) in self.rig.wheels.iter().enumerate() {
+        for (index, wheel) in self.rigs[self.local_slot].wheels.iter().enumerate() {
             let wheel_state = state.wheels.get(index).copied().unwrap_or_default();
             let spin = Mat4::from_rotation_x(-wheel_state.spin_angle);
             let rotation = if wheel.is_front {
@@ -1477,12 +2465,14 @@ impl DriveViewer {
             self.renderer
                 .set_mesh_model(wheel.mesh_index, car_world * wheel.local_model * rotation);
         }
-        if let Some(index) = self.rig.steering_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].steering_mesh_index {
             let steer = state.wheels[0].steer_angle;
-            let model = car_world * self.rig.steering_local * Mat4::from_rotation_x(-steer * 3.0);
+            let model = car_world
+                * self.rigs[self.local_slot].steering_local
+                * Mat4::from_rotation_x(-steer * 3.0);
             self.renderer.set_mesh_model(index, model);
         }
-        if let Some(index) = self.rig.decal_mesh_index {
+        if let Some(index) = self.rigs[self.local_slot].decal_mesh_index {
             let mut contact_count = 0.0f32;
             let mut contact = Vec3::ZERO;
             let mut normal = Vec3::ZERO;
@@ -1511,8 +2501,8 @@ impl DriveViewer {
                 base.to_array(),
                 normal.to_array(),
                 yaw,
-                self.rig.decal_width,
-                self.rig.decal_length,
+                self.rigs[self.local_slot].decal_width,
+                self.rigs[self.local_slot].decal_length,
                 light.to_array(),
                 0.7,
             );
@@ -1528,16 +2518,44 @@ impl DriveViewer {
             particle_dt,
             car_world,
             state,
-            &self.rig,
+            &self.rigs[self.local_slot],
             &self.surface_names,
             &self.tuning.particles,
         );
-        self.renderer.set_particles(self.particles.instances());
+        for slot in 0..self.rigs.len() {
+            if slot == self.local_slot {
+                continue;
+            }
+            let Some(remote_state) = self.remote_states[slot] else {
+                self.remote_particles[slot].clear();
+                continue;
+            };
+            let remote_world =
+                Mat4::from_rotation_translation(remote_state.rotation, remote_state.position);
+            self.remote_particles[slot].update(
+                particle_dt,
+                remote_world,
+                &remote_state,
+                &self.rigs[slot],
+                &self.surface_names,
+                &self.remote_particle_tuning,
+            );
+        }
+        self.particle_instances.clear();
+        self.particle_instances
+            .extend_from_slice(self.particles.instances());
+        for slot in 0..self.rigs.len() {
+            if slot == self.local_slot {
+                continue;
+            }
+            self.particle_instances
+                .extend_from_slice(self.remote_particles[slot].instances());
+        }
+        self.renderer.set_particles(&self.particle_instances);
     }
 
     fn update_camera(&mut self) {
         let (position, rotation) = self.visual_pose();
-        self.renderer.set_grass_center(position);
         if self.camera_mode == CameraMode::Bonnet {
             let shot = &self.tuning.camera.bonnet;
             let eye = position + rotation * Vec3::from_array(shot.eye);
@@ -1547,6 +2565,7 @@ impl DriveViewer {
                 target: target.to_array(),
                 fov_y: shot.fov_y,
             });
+            self.renderer.set_grass_center_xz(eye.x, eye.z);
             return;
         }
         if self.camera_mode == CameraMode::Cockpit {
@@ -1558,6 +2577,7 @@ impl DriveViewer {
                 target: target.to_array(),
                 fov_y: shot.fov_y,
             });
+            self.renderer.set_grass_center_xz(eye.x, eye.z);
             return;
         }
         if self.camera_mode == CameraMode::Isometric {
@@ -1568,11 +2588,13 @@ impl DriveViewer {
                 .powf(tuning.fit_power)
                 .clamp(tuning.fit_min, tuning.fit_max);
             let offset = Vec3::from_array(tuning.offset) * fit;
+            let eye = focus + offset;
             self.renderer.set_camera(Camera {
-                eye: (focus + offset).to_array(),
+                eye: eye.to_array(),
                 target: focus.to_array(),
                 fov_y: tuning.fov_y,
             });
+            self.renderer.set_grass_center_xz(eye.x, eye.z);
             return;
         }
 
@@ -1590,6 +2612,7 @@ impl DriveViewer {
             target: [target.x, target.y, target.z],
             fov_y: tuning.fov_y,
         });
+        self.renderer.set_grass_center_xz(eye.x, eye.z);
     }
 
     fn visual_pose(&self) -> (Vec3, Quat) {

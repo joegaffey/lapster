@@ -1,6 +1,7 @@
 import init, { DriveViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
-import { loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
+import { EDITOR_TRACK_ID, EDITOR_TRACK_CACHE_KEY } from "../src/assets/editor-track.ts";
+import { loadPackFromBytes, loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
@@ -11,14 +12,31 @@ import { setupAssistsDialog } from "../src/ui/assists.ts";
 import { setupDevMenu } from "../src/ui/dev-menu.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
-import { saveSelectedBay, selectedBay } from "../src/ui/car-selection.ts";
-import { loadSelectedTrack } from "../src/ui/track-selection.ts";
+import {
+  findCar,
+  loadSelectedCar,
+  saveSelectedBay,
+  selectedBay,
+} from "../src/ui/car-selection.ts";
+import { findTrack, loadSelectedTrack } from "../src/ui/track-selection.ts";
 import { PhysicsClient } from "../src/sim/physics.ts";
 import { SnapshotSmoother } from "../src/sim/interpolate.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
+import { RemoteEngineAudio } from "../src/audio/remote-engine-audio.ts";
 import { WheelFfb } from "../src/input/wheel-ffb.ts";
+import { RelayClient } from "../src/net/relay.ts";
+import { RemoteStateBuffer } from "../src/net/remote-state.ts";
+import {
+  loadPlayerName,
+  loadRoomPassword,
+  normalizeRelayUrl,
+  normalizeRoomCode,
+  saveRelayUrl,
+} from "../src/net/room.ts";
+import type { PlayerInfo, StateMessage } from "../src/net/protocol.ts";
+import { SNAPSHOT_STATE } from "../src/types/asset-layout.ts";
 
 declare global {
   interface Window {
@@ -26,7 +44,9 @@ declare global {
     __driveViewerError?: string;
     __driveViewer?: DriveViewer;
     __driveAudio?: EngineSimAudio;
+    __remoteAudio?: RemoteEngineAudio;
     __wheelFfb?: WheelFfb;
+    __relay?: RelayClient;
   }
 }
 
@@ -57,13 +77,23 @@ if (devMode) {
     storedTuning = null;
   }
 }
-const defaultTrack = loadSelectedTrack();
-const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
+const trackParam = params.get("track");
+const defaultTrack = findTrack(trackParam) ?? loadSelectedTrack();
+const TRACK_URL = withPackVersion(
+  trackParam && !findTrack(trackParam) ? trackParam : defaultTrack.url,
+  APP_VERSION,
+);
+const carParam = params.get("car");
+const selectedCar = findCar(carParam) ?? loadSelectedCar();
 const CAR_URL = withPackVersion(
-  params.get("car") ?? "../../fixtures/cars/mazda-rx7/mazda-rx7.sima",
+  carParam && !findCar(carParam) ? carParam : selectedCar.url,
   APP_VERSION,
 );
 const carBay = selectedBay();
+const mpMode = params.get("mp") === "1";
+const REMOTE_SLOTS = 3;
+const MULTIPLAYER_SEND_HZ = 30;
+
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 let renderScale = 1;
 const status = document.querySelector<HTMLElement>("#status")!;
@@ -83,6 +113,7 @@ const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
 const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
+const netBadge = document.querySelector<HTMLElement>("#net-badge")!;
 
 const CAMERA_STORAGE_KEY = BUILD_CHANNEL === "dev" ? "lapster.camera.dev.v1" : "lapster.camera.v1";
 const keys = new Set<string>();
@@ -110,7 +141,13 @@ let accumulated = 0;
 let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
+let relay: RelayClient | null = null;
+let relaySeq = 1;
+let relayUploadTimer: ReturnType<typeof setInterval> | null = null;
+let lastRelayTick = -1;
+const remotePlayers = new Map<number, RemotePlayer>();
 let audio: EngineSimAudio | null = null;
+let remoteAudio: RemoteEngineAudio | null = null;
 let wheel: WheelFfb | null = null;
 let ffbSab: SharedArrayBuffer | null = null;
 const storedAudioPreference = loadAudioPreference();
@@ -132,11 +169,33 @@ let workerAssists = {
   steeringSensitivity: 1,
 };
 
+interface RemotePlayer {
+  id: number;
+  name: string;
+  rig: number;
+  buffer: RemoteStateBuffer;
+}
+
 async function loadPack(url: string) {
   try {
     return await loadPackFromUrl(url, new IndexedDbPackCache());
   } catch {
     return await loadPackFromUrl(url);
+  }
+}
+
+async function loadEditorTrackPack() {
+  const bytes = await new IndexedDbPackCache().get(EDITOR_TRACK_CACHE_KEY);
+  if (!bytes) {
+    throw new Error(
+      "No editor track found. Open the track editor and choose Test drive first.",
+    );
+  }
+  try {
+    return await loadPackFromBytes(bytes);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Editor track is invalid: ${message}`);
   }
 }
 
@@ -252,6 +311,197 @@ function toggleCameraMode() {
   );
 }
 
+function setNetBadge(message: string, error = false): void {
+  netBadge.hidden = !mpMode;
+  netBadge.textContent = message;
+  netBadge.classList.toggle("error", error);
+}
+
+function removeRemotePlayer(playerId: number): void {
+  const remote = remotePlayers.get(playerId);
+  if (!remote) {
+    return;
+  }
+  remotePlayers.delete(playerId);
+  remoteAudio?.remove(remote.rig);
+  window.__driveViewer?.set_remote_visible(remote.rig, false);
+}
+
+function syncRemoteRoster(players: PlayerInfo[]): void {
+  if (!relay) {
+    return;
+  }
+  const ids = new Set(players.map((player) => player.id));
+  for (const playerId of [...remotePlayers.keys()]) {
+    if (playerId === relay.playerId || !ids.has(playerId)) {
+      removeRemotePlayer(playerId);
+    }
+  }
+  for (const player of players) {
+    if (player.id === relay.playerId || remotePlayers.has(player.id)) {
+      continue;
+    }
+    if (player.slot < 0 || player.slot > REMOTE_SLOTS) {
+      continue;
+    }
+    remotePlayers.set(player.id, {
+      id: player.id,
+      name: player.name,
+      rig: player.slot,
+      buffer: new RemoteStateBuffer(),
+    });
+  }
+  setNetBadge(
+    `Room ${relay.room} · ${players.length}/${relay.maxPlayers} · linked`,
+  );
+}
+
+function handleRelayState(message: StateMessage): void {
+  if (!relay || message.player_id === relay.playerId) {
+    return;
+  }
+  remotePlayers
+    .get(message.player_id)
+    ?.buffer.push(message.seq, message.tick, message.state, performance.now());
+}
+
+function renderRemotePlayers(
+  now: number,
+  localState: Float32Array,
+  deltaSeconds: number,
+): void {
+  const viewer = window.__driveViewer;
+  if (!viewer) {
+    return;
+  }
+  const localX = localState[SNAPSHOT_STATE.position];
+  const localZ = localState[SNAPSHOT_STATE.position + 2];
+  for (const remote of remotePlayers.values()) {
+    const frame = remote.buffer.frame(now);
+    if (frame) {
+      try {
+        viewer.set_remote_state(remote.rig, frame);
+      } catch (error) {
+        console.warn("remote car update failed", error);
+      }
+      const dx = frame[SNAPSHOT_STATE.position] - localX;
+      const dz = frame[SNAPSHOT_STATE.position + 2] - localZ;
+      remoteAudio?.update(
+        remote.rig,
+        {
+          rpm: frame[SNAPSHOT_STATE.engineRpm],
+          speedMps: Math.hypot(
+            frame[SNAPSHOT_STATE.velocity],
+            frame[SNAPSHOT_STATE.velocity + 2],
+          ),
+          gear: Math.round(frame[SNAPSHOT_STATE.gear]),
+          throttle: frame[SNAPSHOT_STATE.throttle],
+          brake: frame[SNAPSHOT_STATE.brake],
+          wheels: Array.from({ length: 4 }, (_, wheel) => ({
+            slipRatio: frame[SNAPSHOT_STATE.slipRatio + wheel],
+            slipAngle: frame[SNAPSHOT_STATE.slipAngle + wheel],
+            load: frame[SNAPSHOT_STATE.tireLoad + wheel],
+            contact: frame[SNAPSHOT_STATE.contactFlags + wheel] > 0.5,
+          })),
+        },
+        Math.hypot(dx, dz),
+        deltaSeconds,
+      );
+    } else if (remote.buffer.age(now) > 2000) {
+      remoteAudio?.silence(remote.rig);
+      viewer.set_remote_visible(remote.rig, false);
+    }
+  }
+}
+
+function startRelayUpload(): void {
+  stopRelayUpload();
+  relayUploadTimer = setInterval(() => {
+    if (!relay || !physics) {
+      return;
+    }
+    const snapshot = physics.reader.readLatest();
+    if (!snapshot || snapshot.tick === lastRelayTick) {
+      return;
+    }
+    lastRelayTick = snapshot.tick;
+    relay.sendState(relaySeq, snapshot.tick, snapshot.state);
+    relaySeq += 1;
+  }, 1000 / MULTIPLAYER_SEND_HZ);
+}
+
+function stopRelayUpload(): void {
+  if (relayUploadTimer !== null) {
+    clearInterval(relayUploadTimer);
+    relayUploadTimer = null;
+  }
+}
+
+async function setupMultiplayer(viewer: DriveViewer, info: any): Promise<void> {
+  if (!mpMode) {
+    netBadge.hidden = true;
+    return;
+  }
+  netBadge.hidden = false;
+  if (!physicsWorker || !physics) {
+    setNetBadge("Multiplayer needs the COI physics worker", true);
+    return;
+  }
+  const room = normalizeRoomCode(params.get("room"));
+  if (!room) {
+    setNetBadge("Invalid room code", true);
+    return;
+  }
+  const relayOverride = normalizeRelayUrl(params.get("ws"));
+  if (relayOverride) {
+    saveRelayUrl(relayOverride);
+  }
+  const client = new RelayClient({
+    room,
+    password: loadRoomPassword(),
+    name: loadPlayerName() || "Driver",
+    car: info.car.id,
+    track: info.asset.id,
+  });
+  relay = client;
+  window.__relay = client;
+  client.onRoster = syncRemoteRoster;
+  client.onState = handleRelayState;
+  client.onPlayerLeft = removeRemotePlayer;
+  client.onError = (message) => setNetBadge(`Multiplayer: ${message}`, true);
+  client.onClose = () => setNetBadge("Multiplayer disconnected", true);
+  setNetBadge(`Room ${room} · connecting…`);
+
+  try {
+    const welcome = await client.connect();
+    viewer.set_local_slot(welcome.slot);
+    viewer.place_on_grid(welcome.slot);
+    await physics?.placeOnGrid(welcome.slot);
+    for (const state of welcome.states) {
+      handleRelayState({
+        type: "state",
+        player_id: state.player_id,
+        seq: state.seq,
+        tick: state.tick,
+        state: state.state,
+      });
+    }
+    lastRelayTick = -1;
+    startRelayUpload();
+    setNetBadge(
+      `Room ${welcome.room} · ${client.players.length}/${welcome.max_players} · linked`,
+    );
+  } catch (error) {
+    setNetBadge(
+      `Multiplayer: ${error instanceof Error ? error.message : String(error)}`,
+      true,
+    );
+    stopRelayUpload();
+    client.close();
+    relay = null;
+  }
+}
+
 function reset() {
   const viewer = window.__driveViewer;
   if (!viewer) return;
@@ -273,6 +523,9 @@ function reset() {
   wheelButtons.clear();
   keys.clear();
   lastFrame = performance.now() / 1000;
+  if (relay && physics) {
+    void physics.placeOnGrid(relay.slot);
+  }
 }
 
 function telemetryRpm(): number {
@@ -562,6 +815,14 @@ async function startAudio() {
     }
     await audio.start();
     if (audio.status === "running") {
+      if (remoteAudio) {
+        try {
+          remoteAudio.setMuted(audioMuted);
+          await remoteAudio.start();
+        } catch {
+          // Local engine audio still works without remote voices.
+        }
+      }
       audioEnabled = true;
       audioMuted = audio.muted;
       saveAudioPreference();
@@ -603,6 +864,7 @@ function toggleAudio(): void {
     }
     audio.toggleMuted();
     audioMuted = audio.muted;
+    remoteAudio?.setMuted(audioMuted);
     audioEnabled = true;
     saveAudioPreference();
     updateAudioButton();
@@ -622,6 +884,7 @@ function toggleAudioMute(): void {
   } else {
     audioMuted = !audioMuted;
     audio.setMuted(audioMuted);
+    remoteAudio?.setMuted(audioMuted);
   }
   saveAudioPreference();
   updateAudioButton();
@@ -663,8 +926,10 @@ async function boot() {
   await init();
 
   status.textContent = "loading packs";
+  const trackPackPromise =
+    trackParam === EDITOR_TRACK_ID ? loadEditorTrackPack() : loadPack(TRACK_URL);
   const [trackPack, carPack] = await Promise.all([
-    loadPack(TRACK_URL),
+    trackPackPromise,
     loadPack(CAR_URL),
   ]);
 
@@ -676,6 +941,7 @@ async function boot() {
     carPack.bytes,
     carBay,
     storedDevTuning ?? undefined,
+    mpMode ? REMOTE_SLOTS : undefined,
   );
   saveSelectedBay(carBay);
 
@@ -715,7 +981,7 @@ async function boot() {
         console.warn("physics worker failed", message);
       };
       document.addEventListener("visibilitychange", () => {
-        if (!physics) {
+        if (!physics || mpMode) {
           return;
         }
         if (document.hidden) {
@@ -724,7 +990,11 @@ async function boot() {
           physics.resume();
         }
       });
-      window.addEventListener("pagehide", () => physics?.dispose());
+      window.addEventListener("pagehide", () => {
+        stopRelayUpload();
+        relay?.close();
+        physics?.dispose();
+      });
       driver = createDriveFacade(viewer, client);
     } catch (error) {
       console.warn("SAB physics unavailable; using main thread", error);
@@ -738,8 +1008,22 @@ async function boot() {
   }
   window.__driveViewer = driver;
 
+  if (mpMode) {
+    status.textContent = "joining room";
+    await setupMultiplayer(viewer, info);
+  }
+
   if (physicsWorker) {
-    audio = new EngineSimAudio();
+    const carOption = findCar(carPack.manifest.id);
+    const audioOptions = carOption
+      ? { engine: carOption.engine, vehicle: carOption.vehicle }
+      : undefined;
+    audio = new EngineSimAudio(audioOptions);
+    if (mpMode) {
+      remoteAudio = new RemoteEngineAudio(audioOptions);
+      window.__remoteAudio = remoteAudio;
+      remoteAudio.setMuted(audioMuted);
+    }
     if (storedTuning?.audio) {
       audio.applyTuning(storedTuning.audio);
     }
@@ -753,11 +1037,16 @@ async function boot() {
       }
       if (document.hidden) {
         audio.suspend();
+        remoteAudio?.suspend();
       } else {
         void audio.resume();
+        void remoteAudio?.resume();
       }
     });
-    window.addEventListener("pagehide", () => audio?.dispose());
+    window.addEventListener("pagehide", () => {
+      audio?.dispose();
+      remoteAudio?.dispose();
+    });
     audioButton.addEventListener("click", toggleAudio);
   } else {
     updateAudioButton();
@@ -1058,6 +1347,7 @@ async function boot() {
         smoother.update(renderNow);
         const remoteState = smoother.state(renderNow);
         if (remoteState) {
+          renderRemotePlayers(performance.now(), remoteState, delta);
           viewer.render_remote(remoteState);
           const telemetry = JSON.parse(driver.telemetry());
           lastSpeedMps = telemetry.speedMps;

@@ -45,6 +45,7 @@ export interface AssistSettings {
   antiAliasing: AntiAliasing;
   fpsCounter: boolean;
   renderScale: RenderScale;
+  saturation: number;
 }
 
 interface SettingsOptions {
@@ -85,6 +86,7 @@ const DEFAULTS: AssistSettings = {
   antiAliasing: "auto",
   fpsCounter: false,
   renderScale: 1,
+  saturation: 1.15,
 };
 
 const SETTINGS_STYLE = `
@@ -264,6 +266,11 @@ function settingsDialogHtml(): string {
         </select>
       </label>
       <label class="assist-slider">
+        <span>Color saturation</span>
+        <output id="color-saturation-value">115%</output>
+        <input id="color-saturation" type="range" min="0.75" max="2" step="0.05" value="1.15" />
+      </label>
+      <label class="assist-slider">
         <span>Environment shadows</span>
         <select id="environment-shadows">
           <option value="baked">Static</option>
@@ -399,6 +406,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     renderScale: RENDER_SCALES.includes(value?.renderScale as RenderScale)
       ? (value!.renderScale as RenderScale)
       : 1,
+    saturation: clamp(value?.saturation ?? 1.15, 0.75, 2, 1.15),
   };
 }
 
@@ -489,6 +497,8 @@ export function setupAssistsDialog(
   const msaaApplied = document.querySelector<HTMLOutputElement>("#msaa-applied");
   const renderScaleSelect = document.querySelector<HTMLSelectElement>("#render-scale");
   const renderScaleValue = document.querySelector<HTMLOutputElement>("#render-scale-value");
+  const saturation = document.querySelector<HTMLInputElement>("#color-saturation");
+  const saturationValue = document.querySelector<HTMLOutputElement>("#color-saturation-value");
   const tcValue = document.querySelector<HTMLOutputElement>("#tc-strength-value");
   const escValue = document.querySelector<HTMLOutputElement>("#esc-strength-value");
   const steeringValue = document.querySelector<HTMLOutputElement>("#steering-sensitivity-value");
@@ -511,6 +521,8 @@ export function setupAssistsDialog(
     !msaaApplied ||
     !renderScaleSelect ||
     !renderScaleValue ||
+    !saturation ||
+    !saturationValue ||
     !status
   ) {
     return null;
@@ -559,9 +571,18 @@ export function setupAssistsDialog(
     viewer.set_car_shadow_mode(settings.carShadow);
   };
 
+  const applySaturation = () => {
+    const view = document.querySelector<HTMLCanvasElement>("#view");
+    if (view) {
+      view.style.filter =
+        settings.saturation === 1 ? "" : `saturate(${settings.saturation})`;
+    }
+  };
+
   const apply = () => {
     applyAssists();
     applyModes();
+    applySaturation();
     viewer.set_debug_lines_visible(settings.debugLines);
     viewer.set_grass_texture_enabled?.(settings.grassTexture);
     viewer.set_grass_shader_enabled?.(settings.grassShader);
@@ -606,6 +627,8 @@ export function setupAssistsDialog(
     msaa.value = settings.antiAliasing;
     renderScaleSelect!.value = String(settings.renderScale);
     renderScaleValue!.textContent = `${Math.round(settings.renderScale * 100)}%`;
+    saturation!.value = String(settings.saturation);
+    saturationValue!.textContent = `${Math.round(settings.saturation * 100)}%`;
     const requested = requestedSamples(settings);
     const fallback = requested !== 1 && actualMsaa < requested;
     msaaApplied.textContent =
@@ -791,6 +814,13 @@ export function setupAssistsDialog(
   renderScaleSelect.addEventListener("change", () => {
     settings.renderScale = Number(renderScaleSelect.value) as RenderScale;
     apply();
+    refresh();
+    status.textContent = "Saved";
+  });
+  saturation.addEventListener("input", () => {
+    settings.saturation = Number(saturation.value);
+    applySaturation();
+    save(settings);
     refresh();
     status.textContent = "Saved";
   });

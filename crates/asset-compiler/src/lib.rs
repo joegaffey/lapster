@@ -5,3 +5,4 @@ pub mod glb_track;
 pub mod kn5;
 pub mod mesh;
 pub mod source;
+pub mod speed_dreams;

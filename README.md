@@ -14,25 +14,45 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 
 Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
-- **Drive** — Mazda RX-7 on the Skidpad 0.5 track by default. The launcher also offers the
-  Drift Tracks fixture; the last track chosen there becomes the default for Drive and the
-  garage's `Drive` button. Custom tracks can still be loaded with
-  `?track=../../fixtures/tracks/drift-sketchfab/pack.sima`. Throttle, brake,
-  edge-triggered reverse,
+- **Drive** — choose the Mazda RX-7 or Speed Dreams Deckard Conejo, then Skidpad 0.5 or
+  Drift Tracks. The RX-7 and Skidpad remain the defaults. The launcher remembers the last car
+  and track; both become the default for Drive and the garage's `Drive` button. Custom packs
+  can still be loaded with `?car=` and `?track=`. Throttle, brake, edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
-  500 Hz physics, and a
-  shareable tuning dialog.
-- **Garage** — ten RX-7 bays in two facing rows of five: red/blue/yellow/green/orange
-  opposite black/white/pink/navy/cyan. Each car sits centered in its canopy bay with a front
-  three-quarter start view; screen-side chevrons or arrow keys fly smoothly between bays.
-  The chevrons start hidden, fade in on mouse movement or touch, and fade out when idle.
-  Wheel steering/spin controls and an orbit/zoom camera follow the selection. The selected
-  car is remembered and drives with its showroom paint; the garage `Drive` button opens it
-  with the launcher's selected track (Skidpad by default), and the menu's Drive demo uses the
-  same car selection.
+  500 Hz physics, and a shareable tuning dialog.
+- **Garage** — browse a curated mixed showroom where the catalog cars alternate across ten
+  colour-keyed bays in two facing rows of five: red/blue/yellow/green/orange opposite
+  black/white/pink/navy/cyan. Chevrons or arrow keys step through the bays. Vertex-coloured
+  cars use the bay paint; the textured Deckard keeps its source livery. Each car sits centered in its canopy bay with a front
+  three-quarter start view. The chevrons start hidden, fade in on mouse movement or touch,
+  and fade out when idle. Wheel steering/spin controls and an orbit/zoom camera follow the
+  selection. The selected bay's car is remembered and drives with its showroom paint; the
+  garage `Drive` button opens it with the launcher's selected track (Skidpad by default),
+  and the menu's Drive demo uses the same car selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation. Camera height is capped at 60 m to avoid high-angle
   model artifacts.
+- **Style spike** — a dedicated painterly-toon validation page that loads the Skidpad or
+  Drift Tracks fixture, keeps the existing grass and grass/dirt texture reuse, and adds
+  procedurally placed leaf-card trees and bushes with spherical normals, wind sway, and
+  tiered density. Trees and bushes use the same grid-raycast grass-surface test as the grass
+  blades, constrained to the track verge and masked off road geometry, so they stay on grass
+  instead of distant terrain. Independent grass-density, tree-mass, and bush-mass sliders can
+  push the instanced foliage pool past 350k cards for GPU stress testing. Both fixtures now
+  grow grass, including Drift Tracks after its surface mapping was corrected. Grass and the
+  mass-foliage fade use a camera-centred window with near-plane and behind-camera culling;
+  quality presets and an adaptive auto tier adjust vegetation distance, shadows, MSAA, grass
+  density, and render scale without changing the silhouette language. The minimal test car
+  has no synthetic dials and can be driven from the chase, bonnet, cockpit, or isometric
+  views; those cameras reuse the pre-spike tuning. Orbit/pan is the default and supports
+  keyboard orbit/pan, while walk/fly adds mouse-look free movement. The spike currently
+  covers a track verge within roughly 800 m of spawn.
+- **Multiplayer** — relay-only rooms for up to four players on one car and track, with an
+  optional room password. Clients keep local physics and exchange 64-float snapshots at
+  30 Hz; the server does not simulate or arbitrate. Cars start in the garage bay positions
+  and are currently ghosts with no car-to-car collision. Remote cars emit tyre smoke and
+  distance-attenuated engine/tyre audio. Run it with
+  `cd web && npm run serve:multiplayer`; see [`docs/multiplayer.md`](docs/multiplayer.md).
 
 The demos load these assets by default; no query parameters are required. Custom packs can
 still be selected with `?car=` and `?track=`. Append `?dev=1` to Drive to enable the developer
@@ -64,6 +84,9 @@ isolation or worker startup fails.
 
 - Synthetic fixtures plus default GLB car and AC track assets with deterministic baking and
   validation.
+- Speed Dreams car import: tracked `.acc` source, Assimp/glTF Transform conversion, textured
+  pack, brake/reverse lights, cockpit interior, and per-car V8 audio. See
+  [`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md).
 - Versioned asset packs: JSON manifest, aligned rkyv chunks, SHA-256 chunk verification.
 - 500 Hz fixed-step vehicle physics:
   - raycast suspension with anti-roll bars, stiffer damping, and progressive bump stops,
@@ -96,8 +119,8 @@ isolation or worker startup fails.
   seven-segment sprite gear display for `N`, `1–6`, and `R`, and red needles calibrated to
   `7:30 → 4:30`; dial faces are recessed into their cylinders.
 - **Audio spike:** a vendored [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim)
-  `rotary2` AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo
-  audio. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,
+  AudioWorklet synthesiser drives engine, exhaust, intake, transmission, and turbo audio. The
+  RX-7 uses the `rotary2` profile; the Speed Dreams Deckard Conejo uses `v8cross`. A synthesized surface layer blends asphalt roar for the pad and banked outer ring,
   a low concrete rumble plus grit for the transition apron, kerb patter, and grass
   rumble/rustle from per-wheel surface names and speed. A tire-screech layer gates
   band-passed noise from lateral and longitudinal skid, load, and speed. Audio starts off on
@@ -144,6 +167,13 @@ The default RX-7 uses an FD3S baseline: 1,270 kg, 2.425 m wheelbase, 314 Nm / 27
 8,000 rpm redline, and Cd 0.29 with 1.85 m² frontal area. Suspension and inertia values are
 estimates until a licensed AC `.ini` source is available.
 
+The Deckard Conejo is imported from Speed Dreams with its source geometry and textures plus
+the XML setup mapped into runtime physics: 1,700 kg, 0.30 m CG height, 52/48 weight split,
+6.2 L V8 with the 21-point torque curve, six-speed RWD gearbox with 3.8 final drive, source
+steering lock, brake pressure/areas, spring/damper rates, anti-roll bars, tire mu, and aero
+coefficients. See [`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md) for the
+mapping assumptions, attribution, and remaining work.
+
 The RX-7 glass is imported as a separate mesh. External/garage views keep the original
 opaque glass; cockpit mode renders it at 6% alpha. The body is visible by default, wheels
 always stay visible, and `Body: Visible/Hidden` toggles the body and glass together. The bonnet
@@ -153,7 +183,9 @@ camera is centered on the car's longitudinal axis at 1.25 m; cockpit eye is 1.10
 ## Build and run
 
 Prerequisites: stable Rust, the `wasm32-unknown-unknown` target, `wasm-bindgen` 0.2.129,
-Node 24+, and Python 3 for the local server.
+Node 24+, and Python 3 for the local server. Rebuilding the Speed Dreams car also needs
+Assimp 5.3.x and the tool dependencies in `tools/speed-dreams/`; see
+[`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md).
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -166,6 +198,21 @@ npm run build:viewer
 cd ..
 python3 -m http.server 8123 --bind 127.0.0.1
 ```
+
+For relay multiplayer, build the Pages site and run the room server on one origin:
+
+```bash
+cd web
+npm run build:viewer
+bash scripts/build-pages.sh
+npm run serve:multiplayer
+```
+
+Then open the URL printed by the script, normally
+`http://127.0.0.1:3000/web/multiplayer/`. If port 3000 is occupied, the script uses
+the next free port. In Codespaces, only the relay runs; port `3000` redirects to the
+dev multiplayer client with the correct `ws=` URL. See
+[`docs/multiplayer.md`](docs/multiplayer.md).
 
 Open `http://127.0.0.1:8123/`.
 
@@ -191,7 +238,10 @@ from a conditioned version of the vehicle's RPM plus actual speed and gear throu
 external-state adapter.
 
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
-the NSS/NSPR libraries if the system does not have them. `npm run bench:physics` runs the
+the NSS/NSPR libraries if the system does not have them. CI shards the browser suite three
+ways. Locally it defaults to one worker so CPU-only physics timing stays stable; set
+`PLAYWRIGHT_WORKERS=2` (or higher) to opt into parallel workers, or pass a spec path to run
+only the affected tests. `npm run bench:physics` runs the
 opt-in main-thread vs worker A/B benchmark; set `PERF_CPU_THROTTLE=4` for a CPU-throttled run.
 Frame pacing is only meaningful on GPU-backed Chromium; the benchmark always asserts worker
 tick rate. Add `PERF_ASSERT_FPS=1` to gate frame pacing and `PERF_REQUIRE_MAIN_HZ=1` to require
@@ -208,17 +258,21 @@ crates/
   sim-worker/      Rust/Wasm physics worker entry and simulation wrapper
   sim-render/      wgpu renderer and wasm viewers
 web/               TypeScript glue, viewers, build scripts, tests
+tools/speed-dreams/ offline Speed Dreams car conversion helper
 fixtures/          synthetic car and track fixtures plus baked packs
+fixtures/sources/  tracked redistributable source assets and license notices
 ```
 
 Vehicle dynamics are intentionally first-party. General-purpose physics engines are optional
 collision/query backends only; they are not used as the vehicle model. See `SPEC.md` for the
 physics backend policy.
 
-The visual direction is a forward-rendered technical/papercraft toon style with simple
-geometry, vertex colors, object-space outlines, and textures only where they are the
-practical choice (gauges, signs, decals). Grass on the Skidpad uses an instanced,
-wind-animated toon blade pass. See [`docs/art-style.md`](docs/art-style.md).
+The visual direction is a forward-rendered hybrid painterly-toon style: crisp faceted cars
+and barriers, soft leaf-card vegetation, vertex colors, object-space outlines, and textures
+only where they are the practical choice (gauges, signs, decals, foliage cards). Grass on the
+Skidpad uses an instanced, wind-animated toon blade pass, and the style spike adds procedural
+trees and bushes. See [`docs/art-style.md`](docs/art-style.md) and
+[`web/style-spike/`](web/style-spike/).
 
 ## Credits
 
@@ -230,6 +284,13 @@ wind-animated toon blade pass. See [`docs/art-style.md`](docs/art-style.md).
   See `fixtures/tracks/drift-sketchfab/README.md` and `THIRD_PARTY_NOTICES.md`.
 - **Skidpad 0.5** is a temporary demo track. The source archive contained no license
   metadata; replace it or confirm redistribution rights before a public/commercial release.
+- **Deckard Conejo RR** by Tom_D3, W.E.C, Chad Phillips, and June Ravenmoon,
+  Free Art License 1.3, via
+  [Speed Dreams](https://forge.a-lec.org/speed-dreams/sc-deckard-conejo). The donor
+  wheel is from the Boxer 96 Carson Tuners Edition. See
+  [`fixtures/sources/cars/sc-deckard-conejo/README.md`](fixtures/sources/cars/sc-deckard-conejo/README.md),
+  [`docs/speed-dreams-pipeline.md`](docs/speed-dreams-pipeline.md), and
+  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 - **Engine_Sim** by Yigit Salih Emecen, MIT, powers Drive engine audio. See
   [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
   [`docs/audio.md`](docs/audio.md). No upstream audio samples are included.
@@ -240,9 +301,9 @@ wind-animated toon blade pass. See [`docs/art-style.md`](docs/art-style.md).
 
 Implementation status and resume instructions are in [`PROGRESS.md`](PROGRESS.md). The plan is
 in [`PLAN.md`](PLAN.md). Drive uses the SAB physics worker by default and an external-state
-Engine_Sim rotary2 audio spike. Next is listening/tuning and deciding whether to restore more
-EngineSim drivetrain transients or move the audio DSP directly onto SAB snapshots. Remaining
-work includes the HID/FFB worker, AC `.ini` physics mapping, full texture decoding,
+Engine_Sim audio spike with per-car profiles. Next is moving the audio DSP directly onto SAB
+snapshots and tuning the Speed Dreams V8 and rotary voices. Remaining work includes the
+HID/FFB worker, AC `.ini` physics mapping, generic Speed Dreams XML mapping, full texture decoding,
 KTX2/Basis texture compression, texture atlases, fence/tent collision policy, and hardening.
 
 ## License

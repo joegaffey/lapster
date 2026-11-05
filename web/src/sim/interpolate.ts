@@ -11,7 +11,11 @@ export class SnapshotSmoother {
   private previous: TimedSnapshot | null = null;
   private current: TimedSnapshot | null = null;
 
-  constructor(private readonly reader: SnapshotReader) {}
+  private readonly reader: SnapshotReader;
+
+  constructor(reader: SnapshotReader) {
+    this.reader = reader;
+  }
 
   update(now: number): boolean {
     const snapshot = this.reader.readLatest();
@@ -61,7 +65,7 @@ function lerp(a: number, b: number, alpha: number): number {
   return a + (b - a) * alpha;
 }
 
-function interpolateState(previous: Float32Array, current: Float32Array, alpha: number): Float32Array {
+export function interpolateState(previous: Float32Array, current: Float32Array, alpha: number): Float32Array {
   const output = new Float32Array(current.length);
   output.set(current);
 

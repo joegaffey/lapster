@@ -1,9 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 test("selected garage car becomes the driving car", async ({ page }) => {
-  const query =
-    "?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6";
-  await page.goto(`/web/garage/${query}`);
+  const trackQuery = "?track=../../fixtures/tracks/minimal/pack.sima&v=cp6";
+  await page.goto(`/web/garage/${trackQuery}`);
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,

@@ -90,7 +90,11 @@ test("audio follows the vehicle rpm and speed", async ({ page }) => {
   expect(state.audio.clutch).toBe(1);
   expect(Math.abs(state.audio.clutchSlip)).toBeLessThan(50);
   expect(
-    state.road.asphalt + state.road.concrete + state.road.kerb + state.road.grass,
+    state.road.asphalt +
+      state.road.concrete +
+      state.road.kerb +
+      state.road.grass +
+      state.road.dirt,
   ).toBeGreaterThan(0);
   expect(state.road.gain).toBeGreaterThan(0);
 });

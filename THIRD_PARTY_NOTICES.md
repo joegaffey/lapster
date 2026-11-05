@@ -105,3 +105,32 @@ SOFTWARE.
   (https://creativecommons.org/licenses/by/4.0/)
 - Purpose: Drift course visual geometry, embedded textures, and collision source. The baked
   pack selects the drivable meshes and barriers described in `track.json`.
+
+## Speed Dreams cars
+
+- **Deckard Conejo RR (2010 Chevrolet Camaro SS)**
+  - Source: https://forge.a-lec.org/speed-dreams/sc-deckard-conejo
+  - Source commit: `ba52857eac4d415510685403e06263de67bffee9`
+  - Authors: Tom_D3 (original model), W.E.C (2025 3D rework), Chad Phillips
+    (interior parts), June Ravenmoon (skins; 2025 rework by W.E.C).
+  - Used in: `fixtures/sources/cars/sc-deckard-conejo/` and
+    `fixtures/cars/sc-deckard-conejo/`.
+  - License: Free Art License 1.3
+    (https://artlibre.org/licence/lal/en/).
+- **Boxer 96 Carson Tuners Edition wheel**
+  - Source: https://forge.a-lec.org/speed-dreams/sc-carson-96
+  - Source commit: `df202bcb9df324384a4ef209420c104e689b2246`
+  - Authors/copyright: 2002 Eric Espie, Jean-Christophe Durieu; 2005 Olaf
+    Sassnick, Bernhard Wymann; 2007 Bernhard Wymann; 2009 Jean-Philippe Meuret;
+    2011, 2013, 2024 W.E.C; 2011 Eckhard M. Jäger; 2021 Chad Phillips.
+  - Used in: `fixtures/sources/cars/sc-deckard-conejo/wheel/`.
+  - License: Free Art License 1.3
+    (https://artlibre.org/licence/lal/en/).
+
+The complete Free Art License text is in
+`fixtures/sources/cars/sc-deckard-conejo/LICENSE-FAL-1.3.txt`. Lapster's
+modifications are listed in the source README and in
+`docs/speed-dreams-pipeline.md`.
+
+Chevrolet, Camaro, Porsche, and 911/996 are trademarks of their respective
+owners. Lapster does not imply manufacturer affiliation.

@@ -1,0 +1,23 @@
+{
+  "name": "Lapster relay multiplayer",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    }
+  },
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Lapster relay",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "cargo build -p relay-server",
+  "postStartCommand": "setsid -f bash web/scripts/serve-relay.sh >/tmp/lapster-relay.log 2>&1",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer", "ms-playwright.playwright"]
+    }
+  }
+}

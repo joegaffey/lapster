@@ -129,6 +129,7 @@ pub struct ParticleSurfaces {
     pub asphalt: ParticleSurface,
     pub concrete: ParticleSurface,
     pub grass: ParticleSurface,
+    pub dirt: ParticleSurface,
     pub kerb: ParticleSurface,
 }
 
@@ -199,7 +200,7 @@ impl Default for CameraTuning {
     fn default() -> Self {
         Self {
             bonnet: CameraShot {
-                eye: [0.0, 1.25, -0.1],
+                eye: [0.0, 1.25, -0.14],
                 target: [0.0, 1.05, -20.0],
                 fov_y: 1.0,
             },
@@ -291,7 +292,7 @@ impl Default for ShadowTuning {
 impl Default for ParticleTuning {
     fn default() -> Self {
         Self {
-            max_active: MAX_PARTICLES,
+            max_active: 1024,
             max_spawn_per_step: 8,
             min_speed: 1.5,
             max_dt: 0.05,
@@ -371,6 +372,25 @@ impl Default for ParticleSurfaces {
                 alpha: 0.90,
                 rise: 0.45,
                 drag: 2.2,
+            },
+            dirt: ParticleSurface {
+                rate_scale: 700.0,
+                rate_cap: 160.0,
+                rolling_speed: 12.0,
+                rolling_amount: 0.22,
+                rolling_rate: 700.0,
+                color: [0.46, 0.33, 0.20],
+                start_size_min: 0.05,
+                start_size_max: 0.09,
+                end_size_min: 0.35,
+                end_size_max: 0.80,
+                end_variance_min: 0.90,
+                end_variance_max: 1.20,
+                life_min: 0.80,
+                life_max: 1.30,
+                alpha: 0.55,
+                rise: 0.35,
+                drag: 1.5,
             },
             kerb: ParticleSurface {
                 rate_scale: 400.0,
@@ -1741,6 +1761,7 @@ fn schema_fields() -> Vec<Value> {
         ("asphalt", "Asphalt"),
         ("concrete", "Concrete"),
         ("grass", "Grass"),
+        ("dirt", "Dirt"),
         ("kerb", "Kerb"),
     ] {
         fields.extend(surface_fields(key, &format!("Particles / {label}")));

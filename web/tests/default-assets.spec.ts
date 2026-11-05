@@ -35,11 +35,15 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   const garage = await page.evaluate(() => ({
     error: (window as any).__garageViewerError,
     asset: document.querySelector("#asset")?.textContent,
-    stats: document.querySelector("#stats")?.textContent,
+    debug: JSON.parse((window as any).__garageViewer.debug_info()),
   }));
   expect(garage.error).toBeUndefined();
   expect(garage.asset).toContain("skidpad05 + mazda-rx7");
-  expect(garage.stats).toContain("draw calls89");
+  expect(garage.debug.cars.map((car: any) => car.id)).toEqual([
+    "mazda-rx7",
+    "sc-deckard-conejo",
+  ]);
+  expect(garage.debug.stats.carDrawCalls).toBeGreaterThan(100);
 
   await page.goto("/web/track-viewer/");
   await page.waitForFunction(

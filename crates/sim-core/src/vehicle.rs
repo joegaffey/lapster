@@ -345,6 +345,33 @@ impl Vehicle {
         self.steer_angle = 0.0;
     }
 
+    pub fn place_on_grid(&mut self, slot: usize) {
+        const BAY_SPACING: f32 = 8.0;
+        const ROW_GAP: f32 = 68.5;
+        const BAYS_PER_ROW: usize = 5;
+        let row = slot / BAYS_PER_ROW;
+        let column = slot % BAYS_PER_ROW;
+        let rotation = if row == 1 {
+            Quat::from_rotation_y(std::f32::consts::PI) * self.spawn_rotation
+        } else {
+            self.spawn_rotation
+        };
+        let forward = rotation * Vec3::NEG_Z;
+        let right = rotation * Vec3::X;
+        let mut position = self.spawn_position
+            + right * column as f32 * BAY_SPACING
+            + forward * row as f32 * ROW_GAP;
+        if let Some(hit) = self
+            .collider
+            .raycast(position + Vec3::Y * 10.0, Vec3::NEG_Y, 50.0)
+        {
+            position.y = hit.point.y + 0.25;
+        }
+        self.reset();
+        self.state.rotation = rotation;
+        self.state.position = position;
+    }
+
     pub fn step(&mut self, controls: Controls) {
         let dt = FIXED_DT;
         let wheel_count = self.physics.wheels.len().min(4);
@@ -2256,5 +2283,18 @@ mod tests {
         assert_eq!(vehicle.state.tick, 0);
         assert!(vehicle.state.velocity.length() < f32::EPSILON);
         assert!((vehicle.state.position.x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn grid_slots_follow_the_garage_layout() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        let start = vehicle.state.position;
+        vehicle.place_on_grid(0);
+        assert!((vehicle.state.position - start).length() < 1e-4);
+        vehicle.place_on_grid(1);
+        assert!((vehicle.state.position - start).length() > 7.0);
+        vehicle.place_on_grid(5);
+        assert!((vehicle.state.position - start).length() > 60.0);
+        assert_eq!(vehicle.state.tick, 0);
     }
 }

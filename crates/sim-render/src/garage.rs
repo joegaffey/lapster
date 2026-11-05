@@ -8,11 +8,17 @@ use std::collections::{HashMap, HashSet};
 
 use crate::camera::Camera;
 use crate::scene::{
-    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitGearSegment,
-    CockpitNeedle, CockpitNeedleSource, GarageBay, LineVertex, MeshData, MeshVertex, RigWheel,
-    Scene, SceneTexture, SceneWheel,
+    build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitCover,
+    CockpitGearSegment, CockpitNeedle, CockpitNeedleSource, GarageBay, LineVertex, MeshData,
+    MeshVertex, RigWheel, Scene, SceneTexture, SceneWheel,
 };
 use crate::shadow_decal_yaw;
+
+pub struct GarageCar<'a> {
+    pub physics: &'a CarPhysics,
+    pub visual: &'a CarVisual,
+    pub manifest: &'a AssetManifest,
+}
 
 impl Scene {
     #[allow(clippy::too_many_arguments)]
@@ -21,14 +27,15 @@ impl Scene {
         track_metadata: &TrackMetadata,
         track_collision: &TrackCollision,
         track_manifest: &AssetManifest,
-        car_physics: &CarPhysics,
-        car_visual: &CarVisual,
-        car_manifest: &AssetManifest,
+        cars: &[GarageCar<'_>],
         car_count: usize,
         color_offset: usize,
         static_car_shadows: bool,
         brake_lights: bool,
     ) -> Result<Scene, String> {
+        if cars.is_empty() {
+            return Err("garage requires at least one car".to_string());
+        }
         let mut scene = Scene::build(
             track_visual,
             track_metadata,
@@ -42,25 +49,40 @@ impl Scene {
         let car_forward = car_rotation * Vec3::NEG_Z;
         let car_right = car_rotation * Vec3::X;
         let car_start = scene.meshes.len();
-        let car_texture_base = scene.textures.len();
-        for texture in &car_visual.textures {
-            scene.textures.push(scene_texture(texture)?);
+        let mut car_texture_bases = Vec::with_capacity(cars.len());
+        for car in cars {
+            car_texture_bases.push(scene.textures.len());
+            for texture in &car.visual.textures {
+                scene.textures.push(scene_texture(texture)?);
+            }
         }
-        let silhouette = if static_car_shadows {
-            None
+        let silhouettes = if static_car_shadows {
+            cars.iter().map(|_| None).collect::<Vec<_>>()
         } else {
-            build_car_silhouette(car_visual)?
+            cars.iter()
+                .map(|car| build_car_silhouette(car.visual))
+                .collect::<Result<Vec<_>, _>>()?
         };
-        let decal_texture = silhouette.as_ref().map(|silhouette| {
-            let index = scene.textures.len();
-            scene.textures.push(silhouette.texture.clone());
-            index
-        });
+        let decal_textures = silhouettes
+            .iter()
+            .map(|silhouette| {
+                silhouette.as_ref().map(|silhouette| {
+                    let index = scene.textures.len();
+                    scene.textures.push(silhouette.texture.clone());
+                    index
+                })
+            })
+            .collect::<Vec<_>>();
 
         let bay_count = car_count.clamp(1, 10);
         let mut bays = Vec::with_capacity(bay_count);
         let mut first_bounds = None;
         for index in 0..bay_count {
+            let car_index = index % cars.len();
+            let car = &cars[car_index];
+            let car_texture_base = car_texture_bases[car_index];
+            let silhouette = &silhouettes[car_index];
+            let decal_texture = decal_textures[car_index];
             let color_index = (color_offset + index) % BAY_COLORS.len();
             let color = BAY_COLORS[color_index];
             let (translation, rotation) = if bay_count == 1 {
@@ -87,12 +109,13 @@ impl Scene {
             let car_mesh_start = scene.meshes.len();
             let built = build_car(
                 &mut scene,
-                car_visual,
+                car.visual,
                 car_texture_base,
                 transform,
                 color,
                 &format!("bay_{index}"),
                 brake_lights,
+                true,
             )?;
             if static_car_shadows {
                 for mesh in &mut scene.meshes[car_mesh_start..] {
@@ -109,7 +132,7 @@ impl Scene {
                 target: (translation + Vec3::Y * 0.6).to_array(),
                 fov_y: 0.85,
             };
-            let decal_mesh_index = match (&silhouette, decal_texture) {
+            let decal_mesh_index = match (silhouette.as_ref(), decal_texture) {
                 (Some(silhouette), Some(texture)) => Some(add_car_decal(
                     &mut scene,
                     texture,
@@ -118,21 +141,46 @@ impl Scene {
                 )?),
                 _ => None,
             };
+            let mut rig = built.rig.clone();
+            rig.decal_mesh_index = decal_mesh_index;
+            rig.decal_width = silhouette.as_ref().map(|s| s.width).unwrap_or(1.0);
+            rig.decal_length = silhouette.as_ref().map(|s| s.length).unwrap_or(1.0);
+            scene.car_rigs.push(rig.clone());
             if index == 0 {
                 scene.camera = camera;
-                let mut rig = built.rig.clone();
-                rig.decal_mesh_index = decal_mesh_index;
-                rig.decal_width = silhouette.as_ref().map(|s| s.width).unwrap_or(1.0);
-                rig.decal_length = silhouette.as_ref().map(|s| s.length).unwrap_or(1.0);
                 scene.car_rig = Some(rig);
                 scene.wheels = built.wheels.clone();
                 first_bounds = Some(built.bounds);
             }
             let decal_yaw = shadow_decal_yaw(row_forward);
+            let car_info = json!({
+                "id": car.manifest.id,
+                "mass": car.physics.mass,
+                "wheelbase": car.physics.wheelbase,
+                "trackWidth": car.physics.track_width,
+                "wheels": car.physics.wheels.iter().map(|wheel| json!({
+                    "name": wheel.name,
+                    "position": wheel.position,
+                    "radius": wheel.radius,
+                    "width": wheel.width,
+                    "front": wheel.is_front,
+                    "left": wheel.is_left,
+                    "driven": wheel.driven,
+                })).collect::<Vec<_>>(),
+                "meshCount": car.visual.meshes.len(),
+                "meshBufferCount": car.visual.mesh_buffers.len(),
+                "steeringWheel": car.visual.steering_wheel.is_some(),
+                "bounds": {
+                    "min": built.bounds.min,
+                    "max": built.bounds.max,
+                },
+            });
             bays.push(GarageBay {
                 wheels: built.wheels,
                 camera,
                 name: format!("Bay {}", index + 1),
+                car_id: car.manifest.id.clone(),
+                car: car_info,
                 color,
                 color_name: BAY_COLOR_NAMES[color_index],
                 decal_mesh_index,
@@ -162,20 +210,29 @@ impl Scene {
             .map(|mesh| mesh.indices.len() as u32 / 3)
             .sum::<u32>();
 
+        let car_texture_count = cars
+            .iter()
+            .map(|car| car.visual.textures.len() as u32)
+            .sum::<u32>();
+        let decal_texture_count = decal_textures
+            .iter()
+            .filter(|texture| texture.is_some())
+            .count() as u32;
+        let first_car = &cars[0];
+
         scene.stats.vertices += car_vertices;
         scene.stats.triangles += car_triangles;
         scene.stats.draw_calls += car_draw_calls as u32;
-        scene.stats.textures +=
-            car_visual.textures.len() as u32 + u32::from(decal_texture.is_some());
+        scene.stats.textures += car_texture_count + decal_texture_count;
 
         scene.debug_info = json!({
             "asset": { "id": track_manifest.id, "kind": "Track" },
             "car": {
-                "id": car_manifest.id,
-                "mass": car_physics.mass,
-                "wheelbase": car_physics.wheelbase,
-                "trackWidth": car_physics.track_width,
-                "wheels": car_physics.wheels.iter().map(|wheel| json!({
+                "id": first_car.manifest.id,
+                "mass": first_car.physics.mass,
+                "wheelbase": first_car.physics.wheelbase,
+                "trackWidth": first_car.physics.track_width,
+                "wheels": first_car.physics.wheels.iter().map(|wheel| json!({
                     "name": wheel.name,
                     "position": wheel.position,
                     "radius": wheel.radius,
@@ -184,14 +241,18 @@ impl Scene {
                     "left": wheel.is_left,
                     "driven": wheel.driven,
                 })).collect::<Vec<_>>(),
-                "meshCount": car_visual.meshes.len(),
-                "meshBufferCount": car_visual.mesh_buffers.len(),
-                "steeringWheel": car_visual.steering_wheel.is_some(),
+                "meshCount": first_car.visual.meshes.len(),
+                "meshBufferCount": first_car.visual.mesh_buffers.len(),
+                "steeringWheel": first_car.visual.steering_wheel.is_some(),
                 "bounds": {
                     "min": body_bounds.min,
                     "max": body_bounds.max,
                 },
             },
+            "cars": cars.iter().map(|car| json!({
+                "id": car.manifest.id,
+                "meshCount": car.visual.meshes.len(),
+            })).collect::<Vec<_>>(),
             "stats": {
                 "vertices": scene.stats.vertices,
                 "triangles": scene.stats.triangles,
@@ -228,7 +289,9 @@ impl Scene {
                 "vertices": mesh.vertices.len(),
                 "triangles": mesh.indices.len() / 3,
             })).collect::<Vec<_>>(),
-            "warnings": track_manifest.warnings.iter().chain(car_manifest.warnings.iter()).cloned().collect::<Vec<_>>(),
+            "warnings": track_manifest.warnings.iter().chain(
+                cars.iter().flat_map(|car| car.manifest.warnings.iter())
+            ).cloned().collect::<Vec<_>>(),
         })
         .to_string();
 
@@ -395,6 +458,7 @@ fn add_car_decal(
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0],
             uv: *uv,
+            wind: [0.0, 0.0],
         });
     }
     let _ = (width, length);
@@ -411,6 +475,7 @@ fn add_car_decal(
         casts_static_shadow: false,
         casts_dynamic_shadow: false,
         is_decal: true,
+        foliage: false,
     });
     Ok(scene.meshes.len() - 1)
 }
@@ -429,11 +494,11 @@ fn recolor_paint(buffers: &mut MeshBuffers, color: [f32; 3]) {
     }
 }
 
-struct CarBuild {
-    rig: CarRig,
-    wheels: Vec<SceneWheel>,
-    bounds: Aabb,
-    ground_y: f32,
+pub(crate) struct CarBuild {
+    pub(crate) rig: CarRig,
+    pub(crate) wheels: Vec<SceneWheel>,
+    pub(crate) bounds: Aabb,
+    pub(crate) ground_y: f32,
 }
 
 const BAY_SPACING: f32 = 8.0;
@@ -456,7 +521,9 @@ const BAY_COLORS: [[f32; 3]; 10] = [
     [0.02, 0.56, 0.55],
 ];
 
-const COCKPIT_DIALS: [(CockpitNeedleSource, [f32; 3], f32, f32); 3] = [
+type CockpitDial = (CockpitNeedleSource, [f32; 3], f32, f32);
+
+const COCKPIT_DIALS: [CockpitDial; 3] = [
     (
         CockpitNeedleSource::Speed,
         [-0.442, 0.935, -0.22],
@@ -477,7 +544,29 @@ const COCKPIT_DIALS: [(CockpitNeedleSource, [f32; 3], f32, f32); 3] = [
     ),
 ];
 
-fn build_car(
+const CAMARO_COCKPIT_DIALS: [CockpitDial; 3] = [
+    (
+        CockpitNeedleSource::Speed,
+        [-0.515, 0.945, -0.32],
+        0.0419,
+        0.0253,
+    ),
+    (
+        CockpitNeedleSource::Rpm,
+        [-0.315, 0.945, -0.32],
+        0.0448,
+        0.0253,
+    ),
+    (
+        CockpitNeedleSource::Gear,
+        [-0.415, 0.935, -0.305],
+        0.0361,
+        0.0217,
+    ),
+];
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_car(
     scene: &mut Scene,
     car_visual: &CarVisual,
     car_texture_base: usize,
@@ -485,6 +574,7 @@ fn build_car(
     body_color: [f32; 3],
     prefix: &str,
     brake_lights: bool,
+    cockpit_gauges: bool,
 ) -> Result<CarBuild, String> {
     let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
     let body_mesh = car_visual
@@ -496,8 +586,23 @@ fn build_car(
         .get(body_index)
         .ok_or_else(|| "car body mesh has no buffers".to_string())?
         .clone();
+    let textured_body = car_visual
+        .materials
+        .get(body_mesh.material as usize)
+        .is_some_and(|material| material.base_color_texture.is_some());
+    let has_interior = car_visual
+        .meshes
+        .iter()
+        .any(|mesh| mesh.name == "body_interior");
+    let synthetic_cockpit = cockpit_gauges && brake_lights && !has_interior;
+    let cockpit_dials: &[CockpitDial] = if has_interior {
+        &CAMARO_COCKPIT_DIALS
+    } else {
+        &COCKPIT_DIALS
+    };
+    let has_cockpit_gauges = synthetic_cockpit || has_interior;
     let (brake_light_buffers, reverse_light_buffers) = if brake_lights {
-        split_rear_lights(&mut body_buffers, &body_mesh.bounds)
+        split_rear_lights(&mut body_buffers, &body_mesh.bounds, textured_body)
     } else {
         (None, None)
     };
@@ -521,6 +626,33 @@ fn build_car(
     let body_bounds = world_bounds(&body_buffers, body_model);
     add_box_lines(&mut scene.lines, &body_bounds, [0.25, 0.75, 1.0]);
 
+    let mut extra_body_meshes = Vec::new();
+    for (index, mesh) in car_visual.meshes.iter().enumerate() {
+        if index == body_index || mesh.name == "body_glass" || !mesh.name.starts_with("body_") {
+            continue;
+        }
+        let buffers = car_visual
+            .mesh_buffers
+            .get(index)
+            .ok_or_else(|| format!("car mesh {} has no buffers", mesh.name))?;
+        let color = car_material_color(car_visual, mesh.material as usize);
+        let mesh_index = push_car_mesh(
+            scene,
+            &format!("{prefix}_{}", mesh.name),
+            mesh,
+            buffers,
+            color,
+            body_model,
+            CarMeshStyle {
+                texture: car_texture(car_visual, mesh, car_texture_base)?,
+                outline: car_outline(car_visual, mesh),
+                alpha: car_material_alpha(car_visual, mesh.material as usize),
+            },
+        )?;
+        extra_body_meshes.push(mesh_index);
+    }
+
+    let body_texture = car_texture(car_visual, body_mesh, car_texture_base)?;
     let brake_light_mesh_index = if let Some(buffers) = brake_light_buffers {
         Some(push_car_light_mesh(
             scene,
@@ -529,6 +661,7 @@ fn build_car(
             body_mesh,
             &buffers,
             body_model,
+            body_texture,
         )?)
     } else {
         None
@@ -541,6 +674,7 @@ fn build_car(
             body_mesh,
             &buffers,
             body_model,
+            body_texture,
         )?)
     } else {
         None
@@ -572,7 +706,7 @@ fn build_car(
         None
     };
 
-    let dashboard_mesh_index = if brake_lights {
+    let dashboard_mesh_index = if synthetic_cockpit {
         let dashboard = mesh_index_by_name(car_visual, "body_glass")
             .and_then(|index| car_visual.mesh_buffers.get(index))
             .and_then(cockpit_cowl_buffers);
@@ -618,21 +752,52 @@ fn build_car(
         None
     };
 
-    let has_dashboard_faces = brake_lights && dashboard_mesh_index.is_some();
-    let speedometer_face_mesh_index = if has_dashboard_faces {
-        push_dial_face(scene, prefix, CockpitNeedleSource::Speed, body_model)?
+    let mut cockpit_covers = Vec::new();
+    if has_cockpit_gauges {
+        for &(source, center, radius, depth) in cockpit_dials {
+            if source == CockpitNeedleSource::Gear {
+                continue;
+            }
+            cockpit_covers.push(CockpitCover {
+                mesh_index: push_dial_cover(
+                    scene,
+                    prefix,
+                    center,
+                    radius * 1.18,
+                    depth - 0.004,
+                    body_model,
+                )?,
+                source,
+            });
+        }
+    }
+
+    let speedometer_face_mesh_index = if has_cockpit_gauges {
+        push_dial_face(
+            scene,
+            prefix,
+            CockpitNeedleSource::Speed,
+            cockpit_dials,
+            body_model,
+        )?
     } else {
         None
     };
-    let rpm_face_mesh_index = if has_dashboard_faces {
-        push_dial_face(scene, prefix, CockpitNeedleSource::Rpm, body_model)?
+    let rpm_face_mesh_index = if has_cockpit_gauges {
+        push_dial_face(
+            scene,
+            prefix,
+            CockpitNeedleSource::Rpm,
+            cockpit_dials,
+            body_model,
+        )?
     } else {
         None
     };
 
     let mut cockpit_needles = Vec::new();
-    if brake_lights && dashboard_mesh_index.is_some() {
-        for (source, center, radius, depth) in COCKPIT_DIALS {
+    if has_cockpit_gauges {
+        for &(source, center, radius, depth) in cockpit_dials {
             if source == CockpitNeedleSource::Gear {
                 continue;
             }
@@ -676,8 +841,8 @@ fn build_car(
     }
 
     let mut gear_segments = Vec::new();
-    if brake_lights && dashboard_mesh_index.is_some() {
-        if let Some((_, center, radius, depth)) = COCKPIT_DIALS
+    if has_cockpit_gauges {
+        if let Some((_, center, radius, depth)) = cockpit_dials
             .iter()
             .find(|(source, _, _, _)| *source == CockpitNeedleSource::Gear)
         {
@@ -827,6 +992,7 @@ fn build_car(
     let rig = CarRig {
         body_mesh_index,
         body_local,
+        extra_body_meshes,
         glass_mesh_index,
         brake_light_mesh_index,
         reverse_light_mesh_index,
@@ -835,6 +1001,7 @@ fn build_car(
         speedometer_face_mesh_index,
         rpm_face_mesh_index,
         cockpit_needles,
+        cockpit_covers,
         gear_segments,
         wheels: rig_wheels,
         steering_mesh_index,
@@ -1031,14 +1198,55 @@ fn cockpit_cowl_buffers(glass: &MeshBuffers) -> Option<MeshBuffers> {
     Some(buffers)
 }
 
+fn push_dial_cover(
+    scene: &mut Scene,
+    prefix: &str,
+    center: [f32; 3],
+    radius: f32,
+    depth: f32,
+    body_model: Mat4,
+) -> Result<usize, String> {
+    let mut buffers = dial_face_buffers(center, radius, depth);
+    buffers.colors.fill([0.004, 0.005, 0.006]);
+    let mesh_ref = MeshRef {
+        name: format!("{}_dial_cover", prefix),
+        vertex_offset: 0,
+        vertex_count: buffers.positions.len() as u32,
+        index_offset: 0,
+        index_count: buffers.indices.len() as u32,
+        material: 0,
+        bounds: Aabb {
+            min: [center[0] - radius, center[1] - radius, center[2]],
+            max: [center[0] + radius, center[1] + radius, center[2]],
+        },
+        lod: 0,
+    };
+    let index = push_car_mesh(
+        scene,
+        &format!("{}_dial_cover_{}", prefix, scene.meshes.len()),
+        &mesh_ref,
+        &buffers,
+        [0.004, 0.005, 0.006],
+        body_model,
+        CarMeshStyle {
+            texture: None,
+            outline: false,
+            alpha: 1.0,
+        },
+    )?;
+    scene.meshes[index].casts_static_shadow = false;
+    scene.meshes[index].casts_dynamic_shadow = false;
+    Ok(index)
+}
+
 fn push_dial_face(
     scene: &mut Scene,
     prefix: &str,
     source: CockpitNeedleSource,
+    dials: &[CockpitDial],
     body_model: Mat4,
 ) -> Result<Option<usize>, String> {
-    let Some((_, center, radius, depth)) =
-        COCKPIT_DIALS.iter().find(|(dial, _, _, _)| *dial == source)
+    let Some((_, center, radius, depth)) = dials.iter().find(|(dial, _, _, _)| *dial == source)
     else {
         return Ok(None);
     };
@@ -1388,6 +1596,7 @@ fn push_car_mesh(
         casts_static_shadow: false,
         casts_dynamic_shadow: true,
         is_decal: false,
+        foliage: false,
     });
     Ok(scene.meshes.len() - 1)
 }
@@ -1399,6 +1608,7 @@ fn push_car_light_mesh(
     body_mesh: &MeshRef,
     buffers: &MeshBuffers,
     model: Mat4,
+    texture: Option<usize>,
 ) -> Result<usize, String> {
     let light_ref = MeshRef {
         name: format!("body_{name}"),
@@ -1418,7 +1628,7 @@ fn push_car_light_mesh(
         [1.0, 1.0, 1.0],
         model,
         CarMeshStyle {
-            texture: None,
+            texture,
             outline: false,
             alpha: 1.0,
         },
@@ -1431,6 +1641,7 @@ fn push_car_light_mesh(
 fn split_rear_lights(
     buffers: &mut MeshBuffers,
     bounds: &Aabb,
+    skip_plain_white: bool,
 ) -> (Option<MeshBuffers>, Option<MeshBuffers>) {
     let rear_start = bounds.max[2] - 0.35;
     let mut brake = new_light_buffers();
@@ -1445,6 +1656,17 @@ fn split_rear_lights(
                 .is_some_and(|position| position[2] >= rear_start)
         });
         if !rear {
+            body_indices.extend_from_slice(triangle);
+            continue;
+        }
+        if skip_plain_white
+            && triangle.iter().all(|index| {
+                buffers
+                    .colors
+                    .get(*index as usize)
+                    .is_some_and(|color| *color == [1.0, 1.0, 1.0])
+            })
+        {
             body_indices.extend_from_slice(triangle);
             continue;
         }
@@ -1468,7 +1690,19 @@ fn split_rear_lights(
                 max - min < 0.04 && color[0] > 0.15
             })
         });
-        if red_orange {
+        if skip_plain_white {
+            let lateral = triangle
+                .iter()
+                .filter_map(|index| buffers.positions.get(*index as usize))
+                .map(|position| position[0].abs())
+                .sum::<f32>()
+                / 3.0;
+            if lateral < 0.52 {
+                push_light_triangle(&mut reverse, buffers, triangle);
+            } else {
+                push_light_triangle(&mut brake, buffers, triangle);
+            }
+        } else if red_orange {
             push_light_triangle(&mut brake, buffers, triangle);
         } else if reverse_lens {
             push_light_triangle(&mut reverse, buffers, triangle);
@@ -1583,7 +1817,7 @@ fn mesh_index_by_name(car_visual: &CarVisual, name: &str) -> Option<usize> {
     car_visual.meshes.iter().position(|mesh| mesh.name == name)
 }
 
-fn car_transform(metadata: &TrackMetadata) -> Result<Mat4, String> {
+pub(crate) fn car_transform(metadata: &TrackMetadata) -> Result<Mat4, String> {
     let spawn = metadata
         .spawns
         .first()

@@ -1,8 +1,8 @@
 # Project Progress
 
-Last updated: 2026-10-31
+Last updated: 2026-11-03
 Repository root: the directory containing this file
-Current phase: **WebHID wheel/FFB feel spike and cockpit dial presentation (dev branch)**
+Current phase: **Relay multiplayer prototype**
 
 This file is the resumable project state. The conversation does not persist, but this file,
 `SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
@@ -93,9 +93,31 @@ Toolchain setup scripts:
 | PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
 | CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.5.0 (`1e20fba`), multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, Logitech G923/RS50/G Pro HID++ FFB, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; hardware validation pending |
 | Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
+| Speed Dreams car import | Working | Deckard Conejo `.acc`/XML/textures + Carson donor wheel; textured body/interior, glass, lights, cockpit camera, V8 audio, tracked source/license, rebuild script, mixed garage, XML physics mapping. See `docs/speed-dreams-pipeline.md` |
+| Relay multiplayer prototype | Working | Native `relay-server` rooms with optional password and 4-player cap; browser lobby, invite URL, 30 Hz full snapshots, tick-based interpolation timeline, garage-bay spawns, same-model remote rigs, remote tyre smoke, distance-attenuated remote engine and tyre audio, and room badge. Codespaces runs relay-only and redirects to the dev client. No server physics, collision, or automated two-browser test. See `docs/multiplayer.md` |
+| Style spike | Working | Dedicated `web/style-spike/` page; procedural leaf-card trees/bushes with spherical normals and wind, camera-centred grass and mass-foliage windows with near-plane/behind-camera fade, grid-raycast grass placement limited to track verges with road masking on both fixtures, corrected Drift Tracks grass surface mapping, near/mid/far vegetation tiers, independent grass/tree/bush mass sliders with a >350k-card GPU stress pool, quality presets plus adaptive auto tier, drivable minimal test car without synthetic dials, pre-spike-tuned orbit/pan, chase, bonnet, cockpit, isometric, and mouse-look walk/fly cameras, and WebGPU + WebGL2 Playwright coverage |
 
 ## Current capabilities
 
+- Style spike: `web/style-spike/` validates the hybrid painterly-toon direction on a real
+  track section. It reuses the Skidpad/Drift Tracks fixtures and grass textures, generates
+  alpha-tested leaf-card canopies with spherical normals, winds them in the vertex shader,
+  and places trees and bushes on visual grass while masking out road geometry. Vegetation
+  is merged into near/mid/far tiers so presets and the adaptive auto tier can drop density
+  and draw distance while preserving the painterly silhouette. Trees and bushes reuse the
+  grass strategy of raycasting a fixed grid and accepting only grass collision surfaces,
+  with a track-verge constraint so distant terrain is excluded. Grass and the mass-foliage fade
+  are camera-centred and include near-plane/behind-camera collapse to cut needless fill; the
+  mass pool fades out beyond 90 m. Separate sliders control grass density, tree mass, and bush
+  mass; the instanced mass pool reaches over 350k cards for GPU stress testing. Road-surface
+  masking keeps vegetation off the drivable track. Coverage is currently an 800 m radius around
+  spawn with a 35 m verge, so longer tracks need a chunked expansion later. See
+  `tests/style-spike.spec.ts`.
+- Relay-only multiplayer prototype: `relay-server` serves the built site and `/ws` on one port;
+  rooms hold up to four players on one car/track, with an optional password. Clients keep local
+  physics and upload the existing 64-float snapshot at 30 Hz; remote cars interpolate, spawn
+  in the garage bay layout, emit tyre smoke, and play distance-attenuated engine and tyre audio. No
+  server authority or car-to-car collision yet.
 - Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
 - 500 Hz fixed-step vehicle physics in the SAB worker by default (`?physics=main` selects the
   main-thread fallback):
@@ -113,8 +135,9 @@ Toolchain setup scripts:
   - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
   - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
   - automatic main-thread fallback if SAB/worker startup fails.
-- Audio spike: vendored Engine_Sim MIT synthesiser (`rotary2`) with combustion events,
-  exhaust/intake resonators, transmission, and optional turbo; toolbar mute; no sample assets
+- Audio spike: vendored Engine_Sim MIT synthesiser with per-car profiles (`rotary2` for the
+  RX-7, `v8cross` for the Deckard Conejo) with combustion events, exhaust/intake resonators,
+  transmission, and optional turbo; toolbar mute; no sample assets
   or track reverb yet. A small external-state adapter drives its RPM/speed/gear from the
   vehicle and locks the clutch, so the engine note follows the simulation instead of
   Engine_Sim's own drivetrain. A 60 ms RPM conditioner with a 12,000 rpm/s slew limit removes
@@ -173,17 +196,20 @@ Toolchain setup scripts:
   button. Track adds right/shift-drag panning and caps the camera at 60 m to avoid high-angle
   model artifacts; garage is orbit/zoom only. Garage starts from a front three-quarter view
   with the wheels turned slightly.
-- Garage showroom: two facing rows of five cars each (red/blue/yellow/green/orange opposite
-  black/white/pink/navy/cyan), aligned to the five canopy bays. Screen-side chevrons and
-  Left/Right arrow keys fly the camera between cars, with per-bay camera homes and wheel
-  controls following the selection. The chevrons start hidden, appear on mouse movement or
-  touch, and fade out when idle. The selected car persists in `localStorage` and becomes the
-  driving car, including its showroom paint; the garage `Drive` button and the menu Drive
-  demo both use it.
-- Track launcher: the app menu and public landing page offer Skidpad 0.5 and Drift Tracks as
-  Drive choices. The selection persists in `localStorage` (`lapster.track.v1`); Drive and the
-  garage `Drive` button default to it and fall back to Skidpad when nothing is selected.
-  Playwright coverage lives in `web/tests/track-launcher.spec.ts`.
+- Garage showroom: a curated mixed catalog across two facing rows of five bays
+  (red/blue/yellow/green/orange opposite black/white/pink/navy/cyan), with models alternating
+  by bay. Screen-side chevrons and Left/Right arrow keys fly the camera between cars, with
+  per-bay camera homes and wheel controls following the selection. The chevrons start hidden, appear on mouse movement or touch, and fade out when
+  idle. The selected bay's car persists in `localStorage` and becomes the driving car,
+  including its showroom paint; the garage `Drive` button and the menu Drive demo both use it.
+- Car and track launchers: the app menu and public landing page offer the RX-7 or Deckard
+  Conejo plus Skidpad 0.5 or Drift Tracks. Selections persist in `localStorage`
+  (`lapster.car.v1`, `lapster.track.v1`); Drive and the garage `Drive` button default to them
+  and fall back to RX-7/Skidpad. Speed Dreams source, FAL text, and rebuild instructions live
+  in `fixtures/sources/cars/sc-deckard-conejo/` and `docs/speed-dreams-pipeline.md`.
+  The garage loads every catalog pack into the mixed showroom; it does not use a car
+  dropdown, car menu, or `?car=` override. Playwright coverage lives in
+  `web/tests/track-launcher.spec.ts`.
 - Stylized grass: the Stylized Components GrassField shader was adapted to WGSL and a new
   instanced render pass. Scenes grow up to 240,000 wind-animated blades in clumps on GRASS
   collision within 90 m of the spawn, with toon shading, procedural dry patches, back-lit
@@ -453,10 +479,10 @@ matrix then expands to the other supported wheelbases.
 
 ## Next steps
 
-1. **Audio spike (next)**: listen to Engine_Sim's `rotary2` preset with the RPM conditioner.
-   If the drivetrain transients are missed, restore selected EngineSim shift/launch events
-   rather than returning to its independent drivetrain. Decide separately whether to smooth
-   engine RPM in `sim-core` and retune TC.
+1. **Speed Dreams physics (next)**: parse `sc-deckard-conejo.xml` into `CarPhysics`,
+   including mass, CG, torque curve, gears, final drive, brakes, aero, springs/dampers, and
+   tire mu. Confirm the reverse-light split visually. Move per-car audio and cockpit metadata
+   into the pack before adding more Speed Dreams cars.
 2. **CP6.5 — wheel/FFB validation**: run the CAMMUS C5 checklist, tune the feel mixer, and
    decide whether the main-thread adapter stays or moves into the HID worker.
 3. **Vendored `webhid-wheel` validation**: run multi-device profile, pedal/button mapping,

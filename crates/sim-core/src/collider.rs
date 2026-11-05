@@ -255,7 +255,7 @@ impl TrackCollider {
                 let end = start + node.count as usize;
                 for index in &self.order[start..end] {
                     let triangle = self.triangles[*index as usize];
-                    if triangle.normal.y.abs() > 0.7 {
+                    if !triangle.wall || triangle.normal.y.abs() > 0.7 {
                         continue;
                     }
                     let closest =
@@ -536,6 +536,28 @@ mod tests {
         let contacts = collider.wall_contacts(Vec3::new(-0.8, 1.0, 0.0), 0.5);
         assert!(!contacts.is_empty());
         assert!(contacts.iter().all(|contact| contact.normal.x > 0.9));
+    }
+
+    #[test]
+    fn steep_non_wall_surfaces_are_not_wall_contacts() {
+        let collision = TrackCollision {
+            vertices: vec![
+                [-1.0, 0.0, -1.0],
+                [-1.0, 2.0, -1.0],
+                [-1.0, 2.0, 1.0],
+                [-1.0, 0.0, 1.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            surface_ids: vec![0, 0],
+            bounds: Aabb {
+                min: [-1.0, 0.0, -1.0],
+                max: [-1.0, 2.0, 1.0],
+            },
+        };
+        let collider = TrackCollider::from_collision(&collision, &metadata());
+        assert!(collider
+            .wall_contacts(Vec3::new(-0.8, 1.0, 0.0), 0.5)
+            .is_empty());
     }
 
     #[test]

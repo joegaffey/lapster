@@ -11,8 +11,10 @@ web/pkg/
 web/src/version.generated.ts
 web/version.json
 web/track-viewer/main.js
+web/style-spike/main.js
 web/drive/main.js
 web/garage/main.js
+web/multiplayer/main.js
 web/worker/physics-worker.js
 web/audio/combustion-worklet.js
 *.log

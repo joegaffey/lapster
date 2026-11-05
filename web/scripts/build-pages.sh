@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$ROOT"
 DIST="$ROOT/dist"
 
 if [[ ! -f "$ROOT/web/pkg/sim_render_bg.wasm" ]]; then
@@ -34,7 +35,7 @@ cp "$ROOT/web/worker/physics-worker.js" "$DIST/web/worker/physics-worker.js"
 mkdir -p "$DIST/web/audio"
 cp "$ROOT/web/audio/combustion-worklet.js" "$DIST/web/audio/combustion-worklet.js"
 
-for viewer in drive garage track-viewer debug-viewer; do
+for viewer in drive garage track-viewer track-editor style-spike debug-viewer multiplayer; do
   mkdir -p "$DIST/web/$viewer"
   sed \
     -e "s#\./main\.js#./main.js?v=${VERSION}#g" \
@@ -70,6 +71,7 @@ fi
 
 cp -R "$ROOT/fixtures/cars" "$DIST/fixtures/cars"
 cp -R "$ROOT/fixtures/tracks" "$DIST/fixtures/tracks"
+cp -R "$ROOT/fixtures/sources" "$DIST/fixtures/sources"
 cp "$ROOT/fixtures/README.md" "$DIST/fixtures/README.md"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$DIST/THIRD_PARTY_NOTICES.md"
 touch "$DIST/.nojekyll"

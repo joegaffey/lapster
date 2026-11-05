@@ -114,6 +114,13 @@ impl Simulation {
         self.settle();
     }
 
+    pub fn place_on_grid(&mut self, slot: usize) {
+        self.vehicle.place_on_grid(slot);
+        self.last_throttle = 0.0;
+        self.last_brake = 0.0;
+        self.settle();
+    }
+
     fn settle(&mut self) {
         for _ in 0..500 {
             self.vehicle.step(Controls::default());

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   rust:
@@ -22,6 +23,11 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    name: web (shard ${{ matrix.shard }}/3)
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,4 +54,4 @@ jobs:
         working-directory: web
         env:
           CI: "true"
-        run: npm run test:viewer
+        run: npm run test:viewer -- --shard=${{ matrix.shard }}/3

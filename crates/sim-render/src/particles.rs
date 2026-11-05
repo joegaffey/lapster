@@ -5,7 +5,7 @@ use sim_core::VehicleState;
 use crate::scene::CarRig;
 use crate::tuning::{ParticleSurface, ParticleTuning};
 
-pub const MAX_PARTICLES: usize = 1024;
+pub const MAX_PARTICLES: usize = 2048;
 const TAU: f32 = std::f32::consts::TAU;
 
 #[repr(C)]
@@ -22,6 +22,7 @@ enum SurfaceKind {
     Asphalt,
     Concrete,
     Grass,
+    Dirt,
     Kerb,
 }
 
@@ -118,6 +119,7 @@ impl ParticleSystem {
                     SurfaceKind::Asphalt => &tuning.surfaces.asphalt,
                     SurfaceKind::Concrete => &tuning.surfaces.concrete,
                     SurfaceKind::Grass => &tuning.surfaces.grass,
+                    SurfaceKind::Dirt => &tuning.surfaces.dirt,
                     SurfaceKind::Kerb => &tuning.surfaces.kerb,
                 };
                 let front_gate = if rig_wheel.is_front {
@@ -323,6 +325,8 @@ fn surface_kind(name: &str) -> SurfaceKind {
     let upper = name.to_ascii_uppercase();
     if upper.contains("GRASS") {
         SurfaceKind::Grass
+    } else if upper.contains("DIRT") {
+        SurfaceKind::Dirt
     } else if upper.contains("KERB") {
         SurfaceKind::Kerb
     } else if upper.contains("ANELLO") {
@@ -342,6 +346,7 @@ mod tests {
         CarRig {
             body_mesh_index: 0,
             body_local: Mat4::IDENTITY,
+            extra_body_meshes: Vec::new(),
             glass_mesh_index: None,
             brake_light_mesh_index: None,
             reverse_light_mesh_index: None,
@@ -350,6 +355,7 @@ mod tests {
             speedometer_face_mesh_index: None,
             rpm_face_mesh_index: None,
             cockpit_needles: Vec::new(),
+            cockpit_covers: Vec::new(),
             gear_segments: Vec::new(),
             wheels: (0..4)
                 .map(|index| RigWheel {
@@ -489,6 +495,24 @@ mod tests {
                 particle.position.x
             );
         }
+    }
+
+    #[test]
+    fn dirt_surface_emits_brown_dust() {
+        let mut particles = ParticleSystem::new();
+        let state = sliding_state();
+        for _ in 0..4 {
+            particles.update(
+                1.0 / 60.0,
+                Mat4::IDENTITY,
+                &state,
+                &car_rig(),
+                &["DIRT".to_string()],
+                &ParticleTuning::default(),
+            );
+        }
+        let particle = particles.particles.last().expect("dirt particle");
+        assert!(particle.color.x > particle.color.z, "{:?}", particle.color);
     }
 
     #[test]
