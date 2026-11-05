@@ -22,6 +22,8 @@ const KERB_BOTTOM_OFFSET: f32 = 0.02;
 const KERB_SURFACE_OFFSET: f32 = 0.06;
 const KERB_TOP_OFFSET: f32 = 0.155;
 const OUTER_EDGE_RADIUS: f32 = 12.0;
+const ASPHALT_HALF_WIDTH: f32 = 6.0;
+const SURFACE_HEIGHT_OFFSET: f32 = 0.06;
 const PROP_OFFSET: f32 = 14.0;
 const BLOCK_HALF_WIDTH: f32 = 0.3;
 const BLOCK_HALF_HEIGHT: f32 = 0.4;
@@ -270,26 +272,27 @@ pub fn track_from_control_points_with_spans(
         instances: Vec::new(),
     };
 
-    let asphalt = ribbon(&points, -6.0, 6.0, 0.06, 0.0, 1.0);
-    let outer_shoulder = ribbon(&points, 6.0, 12.0, 0.05, 0.0, 1.0);
-    let inner_shoulder = ribbon(&points, -12.0, -6.0, 0.05, 1.0, 0.0);
+    let mut collision = TrackCollision {
+        vertices: Vec::new(),
+        indices: Vec::new(),
+        surface_ids: Vec::new(),
+        bounds: Aabb {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        },
+    };
+    let TrackRibbon {
+        buffers: track_buffers,
+        surface_ids: track_surface_ids,
+    } = track_ribbon(&points);
+    append_collision_surfaces(&mut collision, &track_buffers, |index| {
+        track_surface_ids
+            .get(index)
+            .copied()
+            .unwrap_or(TRACK_SURFACE)
+    });
     let terrain = terrain_grid(&points);
-
-    push_mesh(&mut visual, "asphalt", 0, asphalt, false);
-    push_mesh(
-        &mut visual,
-        "dither_shoulder_outer",
-        1,
-        outer_shoulder,
-        false,
-    );
-    push_mesh(
-        &mut visual,
-        "dither_shoulder_inner",
-        1,
-        inner_shoulder,
-        false,
-    );
+    push_mesh(&mut visual, "asphalt_dither", 1, track_buffers, false);
     push_mesh(&mut visual, "terrain", 2, terrain, false);
 
     let mut kerb_red = empty_buffers();
@@ -344,19 +347,8 @@ pub fn track_from_control_points_with_spans(
     push_mesh(&mut visual, "tires_blue", 6, tires_blue, true);
     push_mesh(&mut visual, "tires_white", 7, tires_white, true);
 
-    let mut collision = TrackCollision {
-        vertices: Vec::new(),
-        indices: Vec::new(),
-        surface_ids: Vec::new(),
-        bounds: Aabb {
-            min: [0.0; 3],
-            max: [0.0; 3],
-        },
-    };
     for (index, mesh) in visual.meshes.iter().enumerate() {
         let surface = match mesh.name.as_str() {
-            "asphalt" => TRACK_SURFACE,
-            "dither_shoulder_outer" | "dither_shoulder_inner" => DIRT_SURFACE,
             "terrain" => GRASS_SURFACE,
             "kerb_red" | "kerb_white" => KERB_SURFACE,
             _ => continue,
@@ -640,46 +632,57 @@ fn catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
     b1 * ((t2 - current) / (t2 - t1)) + b2 * ((current - t1) / (t2 - t1))
 }
 
-fn ribbon(
-    points: &[Vec3],
-    inner_radius: f32,
-    outer_radius: f32,
-    height_offset: f32,
-    inner_v: f32,
-    outer_v: f32,
-) -> MeshBuffers {
+struct TrackRibbon {
+    buffers: MeshBuffers,
+    surface_ids: Vec<u16>,
+}
+
+fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
     let mut buffers = empty_buffers();
+    let mut surface_ids = Vec::new();
     let count = points.len();
+    let radii = [
+        -OUTER_EDGE_RADIUS,
+        -ASPHALT_HALF_WIDTH,
+        ASPHALT_HALF_WIDTH,
+        OUTER_EDGE_RADIUS,
+    ];
+    let surfaces = [DIRT_SURFACE, TRACK_SURFACE, DIRT_SURFACE];
     for index in 0..=count {
         let sample = index % count;
         let point = points[sample];
         let next = points[(sample + 1) % count];
         let tangent = (next - point).normalize_or_zero();
         let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
-        let inner = point + binormal * inner_radius;
-        let outer = point + binormal * outer_radius;
-        let inner_y = terrain_height(inner.x, inner.z) + height_offset;
-        let outer_y = terrain_height(outer.x, outer.z) + height_offset;
-        buffers.positions.push([inner.x, inner_y, inner.z]);
-        buffers.positions.push([outer.x, outer_y, outer.z]);
-        buffers.normals.push(terrain_normal(inner.x, inner.z));
-        buffers.normals.push(terrain_normal(outer.x, outer.z));
         let u = index as f32 / count as f32;
-        buffers.uvs.push([u, inner_v]);
-        buffers.uvs.push([u, outer_v]);
+        for radius in radii {
+            let lateral = point + binormal * radius;
+            let y = terrain_height(lateral.x, lateral.z) + SURFACE_HEIGHT_OFFSET;
+            buffers.positions.push([lateral.x, y, lateral.z]);
+            buffers.normals.push(terrain_normal(lateral.x, lateral.z));
+            let v = (radius - radii[0]) / (radii[radii.len() - 1] - radii[0]);
+            buffers.uvs.push([u, v]);
+        }
         if index < count {
-            let base = (index * 2) as u32;
-            buffers.indices.extend_from_slice(&[
-                base,
-                base + 1,
-                base + 2,
-                base + 1,
-                base + 3,
-                base + 2,
-            ]);
+            for (band, surface) in surfaces.iter().enumerate() {
+                let base = (index * radii.len() + band) as u32;
+                let next_base = ((index + 1) * radii.len() + band) as u32;
+                buffers.indices.extend_from_slice(&[
+                    base,
+                    base + 1,
+                    next_base,
+                    base + 1,
+                    next_base + 1,
+                    next_base,
+                ]);
+                surface_ids.extend_from_slice(&[*surface, *surface]);
+            }
         }
     }
-    buffers
+    TrackRibbon {
+        buffers,
+        surface_ids,
+    }
 }
 
 fn terrain_grid(points: &[Vec3]) -> MeshBuffers {
@@ -1273,10 +1276,14 @@ fn push_triangle(buffers: &mut MeshBuffers, corners: [[f32; 3]; 3], normal: [f32
         .extend_from_slice(&[base, base + 1, base + 2]);
 }
 
-fn append_collision(collision: &mut TrackCollision, buffers: &MeshBuffers, surface: u16) {
+fn append_collision_surfaces(
+    collision: &mut TrackCollision,
+    buffers: &MeshBuffers,
+    surface_at: impl Fn(usize) -> u16,
+) {
     let base = collision.vertices.len() as u32;
     collision.vertices.extend_from_slice(&buffers.positions);
-    for [a, b, c] in buffers.indices.as_chunks::<3>().0 {
+    for (triangle, [a, b, c]) in buffers.indices.as_chunks::<3>().0.iter().enumerate() {
         let a = base + *a;
         let b = base + *b;
         let c = base + *c;
@@ -1289,8 +1296,12 @@ fn append_collision(collision: &mut TrackCollision, buffers: &MeshBuffers, surfa
         } else {
             collision.indices.extend_from_slice(&[a, b, c]);
         }
-        collision.surface_ids.push(surface);
+        collision.surface_ids.push(surface_at(triangle));
     }
+}
+
+fn append_collision(collision: &mut TrackCollision, buffers: &MeshBuffers, surface: u16) {
+    append_collision_surfaces(collision, buffers, |_| surface);
 }
 
 fn collision_bounds(vertices: &[[f32; 3]]) -> Aabb {
@@ -1478,6 +1489,25 @@ mod tests {
         let points = sample_track(&CONTROL_POINTS);
         let tangent = (points[1] - points[0]).normalize_or_zero();
         assert!(forward.dot(tangent) > 0.99);
+    }
+
+    #[test]
+    fn track_surface_uses_one_continuous_ribbon() {
+        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let surface_meshes = track
+            .visual
+            .meshes
+            .iter()
+            .filter(|mesh| mesh.name == "asphalt_dither")
+            .count();
+        assert_eq!(surface_meshes, 1);
+        assert!(!track
+            .visual
+            .meshes
+            .iter()
+            .any(|mesh| mesh.name.starts_with("dither_shoulder")));
+        assert!(track.collision.surface_ids.contains(&TRACK_SURFACE));
+        assert!(track.collision.surface_ids.contains(&DIRT_SURFACE));
     }
 
     #[test]

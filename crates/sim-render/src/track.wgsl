@@ -260,12 +260,12 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     if model.alpha.w > 0.5 {
         let asphalt = vec3<f32>(0.045, 0.045, 0.05);
         let grass = vec3<f32>(0.048, 0.111, 0.006);
-        let edge = clamp(input.uv.y, 0.0, 1.0);
+        let edge = abs(input.uv.y * 2.0 - 1.0);
         let threshold = bayer4(input.clip_position.xy);
-        let asphalt_center = 0.06;
-        let asphalt_half_width = 0.04;
-        let grass_center = 0.86;
-        let grass_half_width = 0.05;
+        let asphalt_center = 0.5;
+        let asphalt_half_width = 0.02;
+        let grass_center = 0.93;
+        let grass_half_width = 0.025;
         if edge <= asphalt_center - asphalt_half_width {
             base = asphalt;
         } else if edge < asphalt_center + asphalt_half_width {

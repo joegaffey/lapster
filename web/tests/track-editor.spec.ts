@@ -180,12 +180,13 @@ test("track editor renders the procedural example track", async ({ page }) => {
   expect(state.debug.stats.triangles).toBeGreaterThan(2000);
   expect(state.debug.stats.collisionTriangles).toBeGreaterThan(800);
   expect(state.debug.stats.grassBlades).toBeGreaterThan(0);
-  expect(state.debug.meshes.length).toBeGreaterThan(8);
+  expect(state.debug.meshes.length).toBeGreaterThanOrEqual(7);
   expect(state.draws).toBe(String(state.debug.stats.drawCalls));
   expect(state.surfaces).toContain("asphalt");
   expect(state.surfaces).toContain("grass");
   expect(state.surfaces).toContain("dirt");
-  expect(state.meshes).toContain("asphalt");
+  expect(state.meshes).toContain("asphalt_dither");
+  expect(state.meshes).not.toContain("dither_shoulder");
   expect(state.meshes).toContain("kerb_red");
   expect(state.meshes).toContain("barriers");
   expect(state.meshes).toContain("tires_blue");
