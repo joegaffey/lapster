@@ -1,12 +1,130 @@
 use core::fmt;
 
 use rkyv::bytecheck::CheckBytes;
+use rkyv::ser::serializers::AllocSerializer;
 use rkyv::validation::validators::DefaultValidator;
 use sha2::{Digest, Sha256};
 use sim_types::{
-    AssetKind, AssetManifest, CarPhysics, CarVisual, ChunkKind, ChunkRef, PackHeader,
+    AssetKind, AssetManifest, CarPhysics, CarVisual, ChunkKind, ChunkRef, Compression, PackHeader,
     TrackCollision, TrackMetadata, TrackVisual, MAGIC, PACK_FORMAT_VERSION, PACK_HEADER_SIZE,
+    SCHEMA_VERSION,
 };
+
+const CHUNK_ALIGN: usize = 64;
+
+pub struct ChunkSpec {
+    pub kind: ChunkKind,
+    pub bytes: Vec<u8>,
+}
+
+pub fn archive<T>(value: &T) -> Result<Vec<u8>, PackError>
+where
+    T: rkyv::Serialize<AllocSerializer<256>>,
+{
+    let bytes = rkyv::to_bytes::<_, 256>(value)
+        .map_err(|error| PackError::Build(format!("failed to serialize chunk: {error:?}")))?;
+    Ok(bytes.to_vec())
+}
+
+pub fn write_pack(
+    mut manifest: AssetManifest,
+    chunks: Vec<ChunkSpec>,
+) -> Result<Vec<u8>, PackError> {
+    manifest.chunks = chunks
+        .iter()
+        .map(|chunk| ChunkRef {
+            kind: chunk.kind,
+            offset: 0,
+            len: chunk.bytes.len() as u64,
+            align: CHUNK_ALIGN as u32,
+            hash: sha256(&chunk.bytes),
+            compression: Compression::None,
+            schema_version: SCHEMA_VERSION,
+        })
+        .collect();
+    manifest
+        .validate()
+        .map_err(|error| PackError::ManifestInvalid(error.to_string()))?;
+
+    let mut manifest_bytes =
+        serde_json::to_vec(&manifest).map_err(|error| PackError::Manifest(error.to_string()))?;
+    for _ in 0..8 {
+        let base = align_up(PACK_HEADER_SIZE + manifest_bytes.len(), CHUNK_ALIGN);
+        let mut offset = base;
+        for chunk in &mut manifest.chunks {
+            chunk.offset = offset as u64;
+            offset = align_up(offset + chunk.len as usize, CHUNK_ALIGN);
+        }
+        let next = serde_json::to_vec(&manifest)
+            .map_err(|error| PackError::Manifest(error.to_string()))?;
+        let stable = next.len() == manifest_bytes.len()
+            && align_up(PACK_HEADER_SIZE + next.len(), CHUNK_ALIGN) == base;
+        manifest_bytes = next;
+        if stable {
+            break;
+        }
+    }
+
+    let base = align_up(PACK_HEADER_SIZE + manifest_bytes.len(), CHUNK_ALIGN);
+    if manifest.chunks.first().map(|chunk| chunk.offset as usize) != Some(base)
+        && !manifest.chunks.is_empty()
+    {
+        return Err(PackError::Build(
+            "failed to stabilize pack chunk offsets".to_string(),
+        ));
+    }
+
+    let mut out = vec![0u8; PACK_HEADER_SIZE];
+    out.extend_from_slice(&manifest_bytes);
+    out.resize(base, 0);
+
+    for (chunk, spec) in manifest.chunks.iter().zip(chunks.iter()) {
+        let offset = chunk.offset as usize;
+        if out.len() > offset {
+            return Err(PackError::Build(
+                "chunk offset overlaps previous data".to_string(),
+            ));
+        }
+        out.resize(offset, 0);
+        out.extend_from_slice(&spec.bytes);
+    }
+
+    let pack_len = out.len() as u64;
+    let header = PackHeader {
+        magic: MAGIC,
+        format_version: PACK_FORMAT_VERSION,
+        header_size: PACK_HEADER_SIZE as u16,
+        manifest_offset: PACK_HEADER_SIZE as u64,
+        manifest_len: manifest_bytes.len() as u64,
+        pack_len,
+        reserved: [0; 32],
+    };
+    write_header(&mut out[..PACK_HEADER_SIZE], &header);
+
+    Pack::from_bytes(&out)?;
+    Ok(out)
+}
+
+fn write_header(out: &mut [u8], header: &PackHeader) {
+    out[0..4].copy_from_slice(&header.magic);
+    out[4..6].copy_from_slice(&header.format_version.to_le_bytes());
+    out[6..8].copy_from_slice(&header.header_size.to_le_bytes());
+    out[8..16].copy_from_slice(&header.manifest_offset.to_le_bytes());
+    out[16..24].copy_from_slice(&header.manifest_len.to_le_bytes());
+    out[24..32].copy_from_slice(&header.pack_len.to_le_bytes());
+    out[32..64].copy_from_slice(&header.reserved);
+}
+
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    let digest = Sha256::digest(bytes);
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&digest);
+    hash
+}
+
+fn align_up(value: usize, align: usize) -> usize {
+    (value + align - 1) & !(align - 1)
+}
 
 #[derive(Debug)]
 pub enum PackError {
@@ -23,6 +141,7 @@ pub enum PackError {
     HashMismatch { kind: ChunkKind },
     MissingEntryPoint(ChunkKind),
     MissingChunk(u32),
+    Build(String),
     Archive(String),
 }
 
@@ -52,6 +171,7 @@ impl fmt::Display for PackError {
             PackError::HashMismatch { kind } => write!(f, "chunk {kind} hash does not match"),
             PackError::MissingEntryPoint(kind) => write!(f, "missing entrypoint {kind}"),
             PackError::MissingChunk(index) => write!(f, "missing chunk {index}"),
+            PackError::Build(message) => write!(f, "failed to build pack: {message}"),
             PackError::Archive(message) => write!(f, "archive validation failed: {message}"),
         }
     }
@@ -255,4 +375,111 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     let mut value = [0u8; 8];
     value.copy_from_slice(&bytes[offset..offset + 8]);
     u64::from_le_bytes(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_types::{
+        Aabb, AssetStats, EntryPoints, MeshBuffers, TrackVisual, ENGINE_FRAME, ENGINE_UNITS,
+    };
+
+    fn empty_track() -> (TrackVisual, TrackCollision, TrackMetadata) {
+        (
+            TrackVisual {
+                meshes: Vec::new(),
+                materials: Vec::new(),
+                textures: Vec::new(),
+                mesh_buffers: vec![MeshBuffers {
+                    positions: vec![[0.0, 0.0, 0.0]],
+                    normals: vec![[0.0, 1.0, 0.0]],
+                    uvs: vec![[0.0, 0.0]],
+                    colors: Vec::new(),
+                    indices: Vec::new(),
+                }],
+                instances: Vec::new(),
+            },
+            TrackCollision {
+                vertices: Vec::new(),
+                indices: Vec::new(),
+                surface_ids: Vec::new(),
+                bounds: Aabb {
+                    min: [-1.0; 3],
+                    max: [1.0; 3],
+                },
+            },
+            TrackMetadata {
+                name: "tiny".to_string(),
+                length: 0.0,
+                spawns: Vec::new(),
+                pit_boxes: Vec::new(),
+                cameras: Vec::new(),
+                sectors: Vec::new(),
+                surfaces: Vec::new(),
+            },
+        )
+    }
+
+    #[test]
+    fn writes_and_parses_tiny_track_pack() {
+        let (visual, collision, metadata) = empty_track();
+        let chunks = vec![
+            ChunkSpec {
+                kind: ChunkKind::Visual,
+                bytes: archive(&visual).expect("visual archive"),
+            },
+            ChunkSpec {
+                kind: ChunkKind::Collision,
+                bytes: archive(&collision).expect("collision archive"),
+            },
+            ChunkSpec {
+                kind: ChunkKind::Metadata,
+                bytes: archive(&metadata).expect("metadata archive"),
+            },
+        ];
+        let manifest = AssetManifest {
+            magic: MAGIC,
+            schema_version: SCHEMA_VERSION,
+            kind: AssetKind::Track,
+            id: "tiny".to_string(),
+            source_hash: [0; 32],
+            units: ENGINE_UNITS,
+            frame: ENGINE_FRAME,
+            bounds: Aabb {
+                min: [-1.0; 3],
+                max: [1.0; 3],
+            },
+            chunks: Vec::new(),
+            entrypoints: EntryPoints {
+                physics: None,
+                visual: Some(0),
+                collision: Some(1),
+                metadata: Some(2),
+                audio: None,
+                texture: None,
+            },
+            stats: AssetStats {
+                vertices: 0,
+                triangles: 0,
+                materials: 0,
+                textures: 0,
+                draw_calls: 0,
+            },
+            warnings: Vec::new(),
+        };
+
+        let bytes = write_pack(manifest, chunks).expect("pack writes");
+        let pack = Pack::from_bytes(&bytes).expect("pack parses");
+        assert_eq!(pack.kind(), AssetKind::Track);
+        assert_eq!(pack.manifest().id, "tiny");
+        assert_eq!(pack.track_visual_owned().expect("visual"), visual);
+        assert_eq!(pack.track_collision_owned().expect("collision"), collision);
+        assert_eq!(pack.track_metadata_owned().expect("metadata"), metadata);
+        assert_eq!(
+            pack.chunk_bytes(ChunkKind::Visual)
+                .expect("visual chunk")
+                .len(),
+            archive(&visual).expect("archive").len()
+        );
+    }
 }

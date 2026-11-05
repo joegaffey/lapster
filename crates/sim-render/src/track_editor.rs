@@ -1,4 +1,4 @@
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,8 @@ const SEGMENTS: usize = 120;
 const TRACK_SURFACE: u16 = 0;
 const GRASS_SURFACE: u16 = 1;
 const DIRT_SURFACE: u16 = 2;
+const KERB_SURFACE: u16 = 3;
+const WALL_SURFACE: u16 = 4;
 const TERRAIN_SIZE: f32 = 300.0;
 const TERRAIN_CELLS: usize = 128;
 const KERB_INNER_RADIUS: f32 = 6.0;
@@ -21,6 +23,7 @@ const KERB_SURFACE_OFFSET: f32 = 0.06;
 const KERB_TOP_OFFSET: f32 = 0.155;
 const OUTER_EDGE_RADIUS: f32 = 12.0;
 const PROP_OFFSET: f32 = 14.0;
+const PROP_WALL_HEIGHT: f32 = 0.9;
 const MIN_TURN_RADIUS: f32 = OUTER_EDGE_RADIUS.max(PROP_OFFSET) + 1.0;
 const CURVATURE_RELAXATION: f32 = 0.5;
 const CURVATURE_RELAXATION_ITERATIONS: usize = 1024;
@@ -289,6 +292,7 @@ pub fn track_from_control_points_with_spans(
     let mut barriers = empty_buffers();
     let mut tires_blue = empty_buffers();
     let mut tires_white = empty_buffers();
+    let mut prop_walls = empty_buffers();
 
     let count = points.len();
     for span in &kerb_spans {
@@ -297,6 +301,7 @@ pub fn track_from_control_points_with_spans(
         if end - start <= 1e-4 {
             continue;
         }
+        let mut previous_end = None;
         for index in start.floor() as usize..end.ceil() as usize {
             let segment_start = (index as f32).max(start);
             let segment_end = ((index + 1) as f32).min(end);
@@ -310,7 +315,12 @@ pub fn track_from_control_points_with_spans(
             } else {
                 &mut kerb_white
             };
-            append_kerb(kerb, point, next, binormal, next_binormal, span.side as f32);
+            let (start_edge, end_edge) =
+                append_kerb(kerb, point, next, binormal, next_binormal, span.side as f32);
+            if let Some(previous_end) = previous_end {
+                append_kerb_riser(kerb, previous_end, start_edge, next - point);
+            }
+            previous_end = Some(end_edge);
         }
     }
 
@@ -321,6 +331,7 @@ pub fn track_from_control_points_with_spans(
         &mut tires_blue,
         &mut tires_white,
     );
+    append_prop_walls(&points, &prop_lines, &mut prop_walls);
 
     push_mesh(&mut visual, "kerb_red", 3, kerb_red, false);
     push_mesh(&mut visual, "kerb_white", 4, kerb_white, false);
@@ -337,15 +348,22 @@ pub fn track_from_control_points_with_spans(
             max: [0.0; 3],
         },
     };
-    append_collision(&mut collision, &visual.mesh_buffers[0], TRACK_SURFACE);
-    append_collision(&mut collision, &visual.mesh_buffers[1], DIRT_SURFACE);
-    append_collision(&mut collision, &visual.mesh_buffers[2], DIRT_SURFACE);
-    append_collision(&mut collision, &visual.mesh_buffers[3], GRASS_SURFACE);
+    for (index, mesh) in visual.meshes.iter().enumerate() {
+        let surface = match mesh.name.as_str() {
+            "asphalt" => TRACK_SURFACE,
+            "dither_shoulder_outer" | "dither_shoulder_inner" => DIRT_SURFACE,
+            "terrain" => GRASS_SURFACE,
+            "kerb_red" | "kerb_white" => KERB_SURFACE,
+            _ => continue,
+        };
+        append_collision(&mut collision, &visual.mesh_buffers[index], surface);
+    }
+    append_collision(&mut collision, &prop_walls, WALL_SURFACE);
     collision.bounds = collision_bounds(&collision.vertices);
 
     let tangent = (points[1] - points[0]).normalize_or_zero();
     let rotation = if tangent.length_squared() > 1e-6 {
-        Quat::from_rotation_arc(Vec3::NEG_Z, tangent)
+        Quat::from_rotation_y(PI) * Quat::from_rotation_arc(Vec3::NEG_Z, tangent)
     } else {
         Quat::IDENTITY
     };
@@ -394,6 +412,18 @@ pub fn track_from_control_points_with_spans(
                 id: DIRT_SURFACE,
                 name: "dirt".to_string(),
                 friction: 0.7,
+                roughness: 1.0,
+            },
+            SurfaceSpec {
+                id: KERB_SURFACE,
+                name: "kerb".to_string(),
+                friction: 0.9,
+                roughness: 0.2,
+            },
+            SurfaceSpec {
+                id: WALL_SURFACE,
+                name: "wall".to_string(),
+                friction: 0.8,
                 roughness: 1.0,
             },
         ],
@@ -446,6 +476,33 @@ pub fn track_from_control_points_with_spans(
         kerb_spans,
         prop_lines,
     })
+}
+
+pub fn pack_from_track(track: &EditorTrack) -> Result<Vec<u8>, String> {
+    let chunks = vec![
+        sim_asset::ChunkSpec {
+            kind: sim_types::ChunkKind::Visual,
+            bytes: sim_asset::archive(&track.visual).map_err(|error| error.to_string())?,
+        },
+        sim_asset::ChunkSpec {
+            kind: sim_types::ChunkKind::Collision,
+            bytes: sim_asset::archive(&track.collision).map_err(|error| error.to_string())?,
+        },
+        sim_asset::ChunkSpec {
+            kind: sim_types::ChunkKind::Metadata,
+            bytes: sim_asset::archive(&track.metadata).map_err(|error| error.to_string())?,
+        },
+    ];
+    let mut manifest = track.manifest.clone();
+    manifest.entrypoints = sim_types::EntryPoints {
+        physics: None,
+        visual: Some(0),
+        collision: Some(1),
+        metadata: Some(2),
+        audio: None,
+        texture: None,
+    };
+    sim_asset::write_pack(manifest, chunks).map_err(|error| error.to_string())
 }
 
 fn terrain_height(x: f32, z: f32) -> f32 {
@@ -813,6 +870,34 @@ fn append_prop_lines(
     }
 }
 
+fn append_prop_walls(points: &[Vec3], lines: &[PropLine], walls: &mut MeshBuffers) {
+    for line in lines {
+        if line.kind == PropKind::Off {
+            continue;
+        }
+        let vertices =
+            offset_path_vertices(points, line.start, line.end, PROP_OFFSET * line.side as f32);
+        for pair in vertices.windows(2) {
+            let start = pair[0];
+            let end = pair[1];
+            let tangent = (end - start).normalize_or_zero();
+            let normal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
+            let start_base = terrain_height(start.x, start.z);
+            let end_base = terrain_height(end.x, end.z);
+            push_quad(
+                walls,
+                [
+                    [start.x, start_base, start.z],
+                    [start.x, start_base + PROP_WALL_HEIGHT, start.z],
+                    [end.x, end_base + PROP_WALL_HEIGHT, end.z],
+                    [end.x, end_base, end.z],
+                ],
+                normal.to_array(),
+            );
+        }
+    }
+}
+
 fn append_kerb(
     buffers: &mut MeshBuffers,
     start: Vec3,
@@ -820,7 +905,7 @@ fn append_kerb(
     start_binormal: Vec3,
     end_binormal: Vec3,
     side: f32,
-) {
+) -> ([Vec3; 2], [Vec3; 2]) {
     let inner_start = start + start_binormal * (KERB_INNER_RADIUS * side);
     let inner_end = end + end_binormal * (KERB_INNER_RADIUS * side);
     let outer_start = start + start_binormal * (KERB_OUTER_RADIUS * side);
@@ -881,6 +966,31 @@ fn append_kerb(
             outer_bottom_start.to_array(),
         ],
         side_normal.to_array(),
+    );
+    (
+        [inner_top_start, outer_top_start],
+        [inner_top_end, outer_top_end],
+    )
+}
+
+fn append_kerb_riser(
+    buffers: &mut MeshBuffers,
+    previous_end: [Vec3; 2],
+    current_start: [Vec3; 2],
+    along: Vec3,
+) {
+    let corners = [previous_end[0], previous_end[1], current_start[1]];
+    let a = corners[0];
+    let b = corners[1];
+    let c = corners[2];
+    let mut normal = (b - a).cross(c - a).normalize_or_zero();
+    if normal.dot(-along) < 0.0 {
+        normal = -normal;
+    }
+    push_triangle(
+        buffers,
+        corners.map(|corner| corner.to_array()),
+        normal.to_array(),
     );
 }
 
@@ -1241,77 +1351,192 @@ mod tests {
     }
 
     #[test]
-    fn kerb_leading_edge_is_flush_and_slopes_up_to_outer_trailing_corner() {
+    fn spawn_faces_increasing_track_direction_after_drive_flip() {
+        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let spawn = &track.metadata.spawns[0];
+        let rotation = Quat::from_xyzw(
+            spawn.rotation_xyzw[0],
+            spawn.rotation_xyzw[1],
+            spawn.rotation_xyzw[2],
+            spawn.rotation_xyzw[3],
+        );
+        let drive_rotation = Quat::from_rotation_y(PI) * rotation;
+        let forward = drive_rotation * Vec3::NEG_Z;
         let points = sample_track(&CONTROL_POINTS);
-        let span_start = 10.25;
-        let span_end = 10.75;
+        let tangent = (points[1] - points[0]).normalize_or_zero();
+        assert!(forward.dot(tangent) > 0.99);
+    }
+
+    #[test]
+    fn editor_track_exports_a_valid_pack() {
+        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let bytes = pack_from_track(&track).expect("export pack");
+        let pack = sim_asset::Pack::from_bytes(&bytes).expect("parse pack");
+        assert_eq!(pack.kind(), sim_types::AssetKind::Track);
+        assert!(pack.chunk_bytes(sim_types::ChunkKind::Visual).is_ok());
+        assert!(pack.chunk_bytes(sim_types::ChunkKind::Collision).is_ok());
+        assert!(pack.chunk_bytes(sim_types::ChunkKind::Metadata).is_ok());
+        let metadata = pack.track_metadata_owned().expect("metadata");
+        assert!(metadata
+            .surfaces
+            .iter()
+            .any(|surface| surface.name == "kerb"));
+        assert!(metadata
+            .surfaces
+            .iter()
+            .any(|surface| surface.name == "wall"));
+        let collision = pack.track_collision_owned().expect("collision");
+        assert!(collision.surface_ids.contains(&KERB_SURFACE));
+        assert!(collision.surface_ids.contains(&WALL_SURFACE));
+        assert_eq!(pack.track_visual_owned().expect("visual"), track.visual);
+    }
+
+    #[test]
+    fn prop_lines_use_simplified_wall_collision() {
+        use sim_core::TrackCollider;
+
+        let points = sample_track(&CONTROL_POINTS);
+        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
+        let lines = default_prop_lines(&points);
+        assert!(lines.iter().any(|line| line.kind != PropKind::Off));
+        for line in lines.into_iter().filter(|line| line.kind != PropKind::Off) {
+            let (point, binormal) = track_frame(&points, (line.start + line.end) * 0.5);
+            let wall = point + binormal * (PROP_OFFSET * line.side as f32);
+            let contacts = collider.wall_contacts(
+                Vec3::new(wall.x, terrain_height(wall.x, wall.z) + 0.4, wall.z),
+                0.5,
+            );
+            assert!(!contacts.is_empty());
+        }
+    }
+
+    #[test]
+    fn kerb_top_is_driveable_collision() {
+        use sim_core::TrackCollider;
+
+        let points = sample_track(&CONTROL_POINTS);
         let spans = [KerbSpan {
-            start: span_start,
-            end: span_end,
+            start: 10.25,
+            end: 10.75,
             side: 1,
         }];
         let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&spans), Some(&[]))
             .expect("editor track");
-        let mesh_index = track
-            .visual
-            .meshes
+        assert!(track
+            .metadata
+            .surfaces
             .iter()
-            .position(|mesh| mesh.name == "kerb_red")
-            .expect("kerb mesh");
-        let corners = track.visual.mesh_buffers[mesh_index]
-            .positions
+            .any(|surface| surface.name == "kerb"));
+        let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
+
+        let (point, binormal) = track_frame(&points, 10.5);
+        let sample = point + binormal * 6.4;
+        let hit = collider
+            .raycast(
+                Vec3::new(sample.x, sample.y + 20.0, sample.z),
+                Vec3::NEG_Y,
+                50.0,
+            )
+            .expect("kerb raycast");
+        let kerb = track
+            .metadata
+            .surfaces
             .iter()
-            .map(|position| Vec3::from_array(*position))
-            .collect::<Vec<_>>();
-        assert_eq!(corners.len(), 8);
+            .find(|surface| surface.name == "kerb")
+            .expect("kerb surface");
+        assert_eq!(hit.surface, KERB_SURFACE);
+        assert!((hit.friction - kerb.friction).abs() < 1e-5);
+        assert!(hit.point.y > terrain_height(hit.point.x, hit.point.z) + 0.07);
+    }
 
-        let (start, start_binormal) = track_frame(&points, span_start);
-        let (end, end_binormal) = track_frame(&points, span_end);
-        let inner_top_start = corners[0];
-        let outer_top_start = corners[1];
-        let outer_top_end = corners[2];
-        let inner_top_end = corners[3];
-        assert!(((inner_top_start - start).dot(start_binormal) - KERB_INNER_RADIUS).abs() < 1e-3);
-        assert!(((outer_top_start - start).dot(start_binormal) - KERB_OUTER_RADIUS).abs() < 1e-3);
-        assert!(((inner_top_end - end).dot(end_binormal) - KERB_INNER_RADIUS).abs() < 1e-3);
-        assert!(((outer_top_end - end).dot(end_binormal) - KERB_OUTER_RADIUS).abs() < 1e-3);
-        assert!(
-            (inner_top_start.y
-                - (terrain_height(inner_top_start.x, inner_top_start.z) + KERB_SURFACE_OFFSET))
-                .abs()
-                < 1e-3
+    #[test]
+    fn jagged_kerb_segments_are_closed_by_risers() {
+        let points = sample_track(&CONTROL_POINTS);
+        let index = 10.0;
+        let (start, start_binormal) = track_frame(&points, index);
+        let (middle, middle_binormal) = track_frame(&points, index + 1.0);
+        let (end, end_binormal) = track_frame(&points, index + 2.0);
+        let mut buffers = empty_buffers();
+        let (_, first_end) = append_kerb(
+            &mut buffers,
+            start,
+            middle,
+            start_binormal,
+            middle_binormal,
+            1.0,
         );
-        assert!(
-            (outer_top_start.y
-                - (terrain_height(outer_top_start.x, outer_top_start.z) + KERB_SURFACE_OFFSET))
-                .abs()
-                < 1e-3
+        let (second_start, _) = append_kerb(
+            &mut buffers,
+            middle,
+            end,
+            middle_binormal,
+            end_binormal,
+            1.0,
         );
-        assert!(
-            (inner_top_end.y
-                - (terrain_height(inner_top_end.x, inner_top_end.z) + KERB_SURFACE_OFFSET))
-                .abs()
-                < 1e-3
-        );
-        assert!(
-            (outer_top_end.y
-                - (terrain_height(outer_top_end.x, outer_top_end.z) + KERB_TOP_OFFSET))
-                .abs()
-                < 1e-3
-        );
-        assert!(outer_top_end.y > inner_top_end.y);
-        assert!(outer_top_end.y > outer_top_start.y);
+        assert!(first_end[1].y > second_start[1].y + 0.01);
+        let before = buffers.positions.len();
+        append_kerb_riser(&mut buffers, first_end, second_start, end - middle);
+        assert_eq!(buffers.positions.len(), before + 3);
+        let riser = &buffers.positions[before..];
+        assert!(riser
+            .iter()
+            .any(|position| Vec3::from_array(*position).distance(first_end[1]) < 1e-5));
+        assert!(riser
+            .iter()
+            .any(|position| Vec3::from_array(*position).distance(second_start[1]) < 1e-5));
+    }
 
-        for (corner, point, binormal) in [
-            (inner_top_start, start, start_binormal),
-            (outer_top_start, start, start_binormal),
-            (inner_top_end, end, end_binormal),
-            (outer_top_end, end, end_binormal),
-        ] {
-            let lateral = (corner - point).dot(binormal);
-            assert!(lateral >= KERB_INNER_RADIUS - 1e-3);
-            assert!(lateral <= KERB_OUTER_RADIUS + 1e-3);
+    #[test]
+    fn low_speed_turn_can_cross_the_kerb() {
+        use sim_core::{Controls, Vehicle};
+
+        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let collider = sim_core::TrackCollider::from_collision(&track.collision, &track.metadata);
+        let car_bytes = include_bytes!("../../../fixtures/cars/mazda-rx7/mazda-rx7.sima").to_vec();
+        let pack = sim_asset::Pack::from_bytes(&car_bytes).expect("car pack");
+        let physics = pack.car_physics_owned().expect("car physics");
+        let mut spawn = track.metadata.spawns[0].clone();
+        let spawn_rotation = Quat::from_xyzw(
+            spawn.rotation_xyzw[0],
+            spawn.rotation_xyzw[1],
+            spawn.rotation_xyzw[2],
+            spawn.rotation_xyzw[3],
+        );
+        spawn.rotation_xyzw = (Quat::from_rotation_y(PI) * spawn_rotation).to_array();
+        let mut vehicle = Vehicle::new(physics, collider, &spawn);
+        for _ in 0..500 {
+            vehicle.step(Controls::default());
         }
+        let accelerate = Controls {
+            throttle: 0.35,
+            gear: 1,
+            ..Controls::default()
+        };
+        for _ in 0..1000 {
+            vehicle.step(accelerate);
+        }
+        let turn = Controls {
+            throttle: 0.35,
+            steering: 0.9,
+            gear: 1,
+            ..Controls::default()
+        };
+        let mut touched_kerb = false;
+        for _ in 0..2500 {
+            vehicle.step(turn);
+            touched_kerb |= vehicle
+                .state
+                .wheels
+                .iter()
+                .any(|wheel| wheel.surface_id == KERB_SURFACE);
+        }
+        assert!(touched_kerb);
+        assert!(
+            vehicle.state.velocity.length() * 3.6 > 10.0,
+            "car stalled on the kerb: {} kph",
+            vehicle.state.velocity.length() * 3.6
+        );
     }
 
     #[test]

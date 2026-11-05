@@ -1,4 +1,6 @@
 import init, { TrackViewer } from "../pkg/sim_render.js";
+import { IndexedDbPackCache } from "../src/assets/cache.ts";
+import { EDITOR_TRACK_ID, EDITOR_TRACK_CACHE_KEY } from "../src/assets/editor-track.ts";
 import { setupTrackCamera, type OrbitCameraController } from "../src/ui/track-camera.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { recordFrame } from "../src/ui/fps.ts";
@@ -97,6 +99,7 @@ const propKindButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>("[data-prop-kind]"),
 );
 const overlayToggle = document.querySelector<HTMLButtonElement>("#toggle-overlay")!;
+const testDriveButton = document.querySelector<HTMLButtonElement>("#test-drive")!;
 
 let editorViewer: TrackViewer | undefined;
 let cameraController: OrbitCameraController | undefined;
@@ -1023,6 +1026,33 @@ function refreshEditorState(): void {
   drawsLabel.textContent = String(debug.stats.drawCalls);
 }
 
+async function testDrive(): Promise<void> {
+  if (!editorViewer || rebuilding) {
+    return;
+  }
+  testDriveButton.disabled = true;
+  status.textContent = "exporting track";
+  status.className = "status";
+  try {
+    const bytes = editorViewer.editor_track_pack();
+    await new IndexedDbPackCache().put(EDITOR_TRACK_CACHE_KEY, bytes);
+    const target = new URL("../drive/", window.location.href);
+    target.searchParams.set("track", EDITOR_TRACK_ID);
+    const car = new URLSearchParams(window.location.search).get("car");
+    if (car) {
+      target.searchParams.set("car", car);
+    }
+    window.location.href = target.toString();
+  } catch (error) {
+    testDriveButton.disabled = false;
+    fail(error);
+  }
+}
+
+testDriveButton.addEventListener("click", () => {
+  void testDrive();
+});
+
 async function rebuildEditor(
   message: string,
   action: () => Promise<void>,
@@ -1032,6 +1062,7 @@ async function rebuildEditor(
   }
   rebuilding = true;
   suspended = true;
+  testDriveButton.disabled = true;
   cameraController?.setEnabled(false);
   status.textContent = message;
   status.className = "status";
@@ -1039,6 +1070,7 @@ async function rebuildEditor(
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     await action();
     refreshEditorState();
+    testDriveButton.disabled = false;
     status.textContent = "ready";
     status.className = "status ready";
   } catch (error) {
@@ -1440,6 +1472,7 @@ async function boot() {
     }
   };
 
+  testDriveButton.disabled = false;
   status.textContent = "ready";
   status.className = "status ready";
   window.__trackEditorReady = true;

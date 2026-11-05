@@ -271,6 +271,20 @@ impl TrackViewer {
         serde_json::to_string(&self.editor_prop_lines).unwrap_or_else(|_| "[]".to_string())
     }
 
+    pub fn editor_track_pack(&self) -> Result<Vec<u8>, JsValue> {
+        let points = self
+            .editor_control_points
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("editor control points unavailable"))?;
+        let track = crate::track_editor::track_from_control_points_with_spans(
+            points,
+            Some(&self.editor_kerb_spans),
+            Some(&self.editor_prop_lines),
+        )
+        .map_err(js_error)?;
+        crate::track_editor::pack_from_track(&track).map_err(|error| JsValue::from_str(&error))
+    }
+
     pub async fn set_editor_control_points(&mut self, points_json: &str) -> Result<(), JsValue> {
         let points = serde_json::from_str::<Vec<[f32; 3]>>(points_json).map_err(js_error)?;
         let points = crate::track_editor::control_points_with_heights(&points);

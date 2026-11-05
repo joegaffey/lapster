@@ -1,6 +1,59 @@
 // web/track-editor/main.ts
 import init, { TrackViewer } from "../pkg/sim_render.js";
 
+// web/src/assets/cache.ts
+var DB_NAME = "sim-assets";
+var DB_VERSION = 1;
+var STORE_NAME = "packs";
+var IndexedDbPackCache = class {
+  async get(key) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, "readonly");
+      const request = transaction.objectStore(STORE_NAME).get(key);
+      request.onsuccess = () => {
+        const value = request.result;
+        resolve(value instanceof Uint8Array ? value : void 0);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async put(key, bytes) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).put(bytes, key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+  async delete(key) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).delete(key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+};
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
+        request.result.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// web/src/assets/editor-track.ts
+var EDITOR_TRACK_ID = "editor";
+var EDITOR_TRACK_CACHE_KEY = "lapster.editor-track.v1";
+
 // web/src/ui/track-camera.ts
 var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 var add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -421,6 +474,7 @@ var propKindButtons = Array.from(
   document.querySelectorAll("[data-prop-kind]")
 );
 var overlayToggle = document.querySelector("#toggle-overlay");
+var testDriveButton = document.querySelector("#test-drive");
 var editorViewer;
 var cameraController;
 var controlPoints = [];
@@ -1195,12 +1249,38 @@ function refreshEditorState() {
   renderStats(debug);
   drawsLabel.textContent = String(debug.stats.drawCalls);
 }
+async function testDrive() {
+  if (!editorViewer || rebuilding) {
+    return;
+  }
+  testDriveButton.disabled = true;
+  status.textContent = "exporting track";
+  status.className = "status";
+  try {
+    const bytes = editorViewer.editor_track_pack();
+    await new IndexedDbPackCache().put(EDITOR_TRACK_CACHE_KEY, bytes);
+    const target = new URL("../drive/", window.location.href);
+    target.searchParams.set("track", EDITOR_TRACK_ID);
+    const car = new URLSearchParams(window.location.search).get("car");
+    if (car) {
+      target.searchParams.set("car", car);
+    }
+    window.location.href = target.toString();
+  } catch (error) {
+    testDriveButton.disabled = false;
+    fail(error);
+  }
+}
+testDriveButton.addEventListener("click", () => {
+  void testDrive();
+});
 async function rebuildEditor(message, action) {
   if (!editorViewer || rebuilding) {
     return;
   }
   rebuilding = true;
   suspended = true;
+  testDriveButton.disabled = true;
   cameraController?.setEnabled(false);
   status.textContent = message;
   status.className = "status";
@@ -1208,6 +1288,7 @@ async function rebuildEditor(message, action) {
     await new Promise((resolve) => requestAnimationFrame(() => resolve()));
     await action();
     refreshEditorState();
+    testDriveButton.disabled = false;
     status.textContent = "ready";
     status.className = "status ready";
   } catch (error) {
@@ -1563,6 +1644,7 @@ async function boot() {
       fail(error);
     }
   };
+  testDriveButton.disabled = false;
   status.textContent = "ready";
   status.className = "status ready";
   window.__trackEditorReady = true;

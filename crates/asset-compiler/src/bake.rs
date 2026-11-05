@@ -1,11 +1,10 @@
 use anyhow::{bail, Context, Result};
-use rkyv::ser::serializers::AllocSerializer;
 use sha2::{Digest, Sha256};
+use sim_asset::{archive, sha256, write_pack, ChunkSpec};
 use sim_types::{
-    Aabb, AssetKind, AssetManifest, AssetStats, CarVisual, ChunkKind, ChunkRef, Compression,
-    EntryPoints, MaterialRef, MeshBuffers, MeshRef, PackHeader, TextureRef, TrackCollision,
-    TrackVisual, WheelVisual, ENGINE_FRAME, ENGINE_UNITS, MAGIC, PACK_FORMAT_VERSION,
-    PACK_HEADER_SIZE, SCHEMA_VERSION,
+    Aabb, AssetKind, AssetManifest, AssetStats, CarVisual, ChunkKind, EntryPoints, MaterialRef,
+    MeshBuffers, MeshRef, TextureRef, TrackCollision, TrackVisual, WheelVisual, ENGINE_FRAME,
+    ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
 };
 use std::fs;
 use std::path::Path;
@@ -14,13 +13,6 @@ use crate::mesh::{bounds, build_box, build_cylinder, build_plane, merge_bounds};
 use crate::source::{
     validate_source_header, CarSource, CollisionPrimitive, Primitive, TextureSource, TrackSource,
 };
-
-const CHUNK_ALIGN: usize = 64;
-
-struct ChunkSpec {
-    kind: ChunkKind,
-    bytes: Vec<u8>,
-}
 
 pub fn bake_car(dir: &Path) -> Result<Vec<u8>> {
     let source_path = dir.join("car.json");
@@ -84,7 +76,7 @@ pub fn bake_car(dir: &Path) -> Result<Vec<u8>> {
         warnings: Vec::new(),
     };
 
-    write_pack(manifest, chunks)
+    Ok(write_pack(manifest, chunks)?)
 }
 
 pub fn bake_car_glb(path: &Path) -> Result<Vec<u8>> {
@@ -151,7 +143,7 @@ pub fn bake_car_glb_with_physics(
         warnings: imported.warnings,
     };
 
-    write_pack(manifest, chunks)
+    Ok(write_pack(manifest, chunks)?)
 }
 
 pub fn bake_ac_track(dir: &Path) -> Result<Vec<u8>> {
@@ -218,7 +210,7 @@ pub fn bake_ac_track_with_overrides(
         warnings: imported.warnings,
     };
 
-    write_pack(manifest, chunks)
+    Ok(write_pack(manifest, chunks)?)
 }
 
 pub fn bake_glb_track(dir: &Path) -> Result<Vec<u8>> {
@@ -273,7 +265,7 @@ pub fn bake_glb_track(dir: &Path) -> Result<Vec<u8>> {
         warnings: imported.warnings,
     };
 
-    write_pack(manifest, chunks)
+    Ok(write_pack(manifest, chunks)?)
 }
 
 pub fn bake_track(dir: &Path) -> Result<Vec<u8>> {
@@ -339,7 +331,7 @@ pub fn bake_track(dir: &Path) -> Result<Vec<u8>> {
         warnings: Vec::new(),
     };
 
-    write_pack(manifest, chunks)
+    Ok(write_pack(manifest, chunks)?)
 }
 
 fn build_textures(source: &[TextureSource]) -> Result<Vec<TextureRef>> {
@@ -718,104 +710,6 @@ fn stats(
         textures: textures.len() as u16,
         draw_calls: meshes.len() as u16,
     }
-}
-
-fn write_pack(manifest: AssetManifest, chunks: Vec<ChunkSpec>) -> Result<Vec<u8>> {
-    let mut manifest = manifest;
-    manifest.chunks = chunks
-        .iter()
-        .map(|chunk| ChunkRef {
-            kind: chunk.kind,
-            offset: 0,
-            len: chunk.bytes.len() as u64,
-            align: CHUNK_ALIGN as u32,
-            hash: sha256(&chunk.bytes),
-            compression: Compression::None,
-            schema_version: SCHEMA_VERSION,
-        })
-        .collect();
-    manifest.validate()?;
-
-    let mut manifest_bytes = serde_json::to_vec(&manifest)?;
-    for _ in 0..8 {
-        let base = align_up(PACK_HEADER_SIZE + manifest_bytes.len(), CHUNK_ALIGN);
-        let mut offset = base;
-        for chunk in &mut manifest.chunks {
-            chunk.offset = offset as u64;
-            offset = align_up(offset + chunk.len as usize, CHUNK_ALIGN);
-        }
-        let next = serde_json::to_vec(&manifest)?;
-        let stable = next.len() == manifest_bytes.len()
-            && align_up(PACK_HEADER_SIZE + next.len(), CHUNK_ALIGN) == base;
-        manifest_bytes = next;
-        if stable {
-            break;
-        }
-    }
-
-    let base = align_up(PACK_HEADER_SIZE + manifest_bytes.len(), CHUNK_ALIGN);
-    if manifest.chunks.first().map(|chunk| chunk.offset as usize) != Some(base)
-        && !manifest.chunks.is_empty()
-    {
-        bail!("failed to stabilize pack chunk offsets");
-    }
-
-    let mut out = vec![0u8; PACK_HEADER_SIZE];
-    out.extend_from_slice(&manifest_bytes);
-    out.resize(base, 0);
-
-    for (chunk, spec) in manifest.chunks.iter().zip(chunks.iter()) {
-        let offset = chunk.offset as usize;
-        if out.len() > offset {
-            bail!("chunk offset overlaps previous data");
-        }
-        out.resize(offset, 0);
-        out.extend_from_slice(&spec.bytes);
-    }
-
-    let pack_len = out.len() as u64;
-    let header = PackHeader {
-        magic: MAGIC,
-        format_version: PACK_FORMAT_VERSION,
-        header_size: PACK_HEADER_SIZE as u16,
-        manifest_offset: PACK_HEADER_SIZE as u64,
-        manifest_len: manifest_bytes.len() as u64,
-        pack_len,
-        reserved: [0; 32],
-    };
-    write_header(&mut out[..PACK_HEADER_SIZE], &header);
-
-    sim_asset::Pack::from_bytes(&out).context("baked pack failed round-trip validation")?;
-    Ok(out)
-}
-
-fn write_header(out: &mut [u8], header: &PackHeader) {
-    out[0..4].copy_from_slice(&header.magic);
-    out[4..6].copy_from_slice(&header.format_version.to_le_bytes());
-    out[6..8].copy_from_slice(&header.header_size.to_le_bytes());
-    out[8..16].copy_from_slice(&header.manifest_offset.to_le_bytes());
-    out[16..24].copy_from_slice(&header.manifest_len.to_le_bytes());
-    out[24..32].copy_from_slice(&header.pack_len.to_le_bytes());
-    out[32..64].copy_from_slice(&header.reserved);
-}
-
-fn archive<T>(value: &T) -> Result<Vec<u8>>
-where
-    T: rkyv::Serialize<AllocSerializer<256>>,
-{
-    let bytes = rkyv::to_bytes::<_, 256>(value)?;
-    Ok(bytes.to_vec())
-}
-
-fn sha256(bytes: &[u8]) -> [u8; 32] {
-    let digest = Sha256::digest(bytes);
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&digest);
-    hash
-}
-
-fn align_up(value: usize, align: usize) -> usize {
-    (value + align - 1) & !(align - 1)
 }
 
 fn empty_bounds() -> Aabb {

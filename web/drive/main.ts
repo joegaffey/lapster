@@ -1,6 +1,7 @@
 import init, { DriveViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
-import { loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
+import { EDITOR_TRACK_ID, EDITOR_TRACK_CACHE_KEY } from "../src/assets/editor-track.ts";
+import { loadPackFromBytes, loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
@@ -180,6 +181,21 @@ async function loadPack(url: string) {
     return await loadPackFromUrl(url, new IndexedDbPackCache());
   } catch {
     return await loadPackFromUrl(url);
+  }
+}
+
+async function loadEditorTrackPack() {
+  const bytes = await new IndexedDbPackCache().get(EDITOR_TRACK_CACHE_KEY);
+  if (!bytes) {
+    throw new Error(
+      "No editor track found. Open the track editor and choose Test drive first.",
+    );
+  }
+  try {
+    return await loadPackFromBytes(bytes);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Editor track is invalid: ${message}`);
   }
 }
 
@@ -910,8 +926,10 @@ async function boot() {
   await init();
 
   status.textContent = "loading packs";
+  const trackPackPromise =
+    trackParam === EDITOR_TRACK_ID ? loadEditorTrackPack() : loadPack(TRACK_URL);
   const [trackPack, carPack] = await Promise.all([
-    loadPack(TRACK_URL),
+    trackPackPromise,
     loadPack(CAR_URL),
   ]);
 
