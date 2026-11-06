@@ -2,6 +2,7 @@ import init, { TrackViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { EDITOR_TRACK_ID, EDITOR_TRACK_CACHE_KEY } from "../src/assets/editor-track.ts";
 import { setupTrackCamera, type OrbitCameraController } from "../src/ui/track-camera.ts";
+import { setupTrackDevMenu } from "../src/ui/dev-menu.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
@@ -82,6 +83,10 @@ const SURFACE_COLORS: Record<number, string> = {
   1: "#33ff59",
   2: "#b35933",
 };
+
+const devMode =
+  new URLSearchParams(window.location.search).has("dev") &&
+  new URLSearchParams(window.location.search).get("dev") !== "0";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 const overlay = document.querySelector<HTMLCanvasElement>("#control-points")!;
@@ -1422,6 +1427,9 @@ async function boot() {
   const viewer = await TrackViewer.create_editor(canvas);
   editorViewer = viewer;
   window.__trackEditor = viewer;
+  if (devMode) {
+    setupTrackDevMenu(viewer);
+  }
   controlPoints = JSON.parse(viewer.editor_control_points()) as Vec3[];
   centerline = JSON.parse(viewer.editor_centerline()) as Vec3[];
   kerbSpans = (

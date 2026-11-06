@@ -329,6 +329,465 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
   };
 }
 
+// web/src/ui/car-setup.ts
+var number = (path, label, min, max, step, unit) => ({ path, label, min, max, step, unit });
+var json = (path, label) => ({ path, label, kind: "json" });
+var axleSections = (axle, title) => {
+  const prefix = `${axle}`;
+  return [
+    {
+      title: `${title} suspension`,
+      fields: [
+        number(`${prefix}.suspension.travel`, "Travel", 0.02, 0.5, 0.01, "m"),
+        number(`${prefix}.suspension.springRate`, "Spring rate", 5e3, 3e5, 1e3, "N/m"),
+        number(`${prefix}.suspension.damperBump`, "Bump damping", 500, 5e4, 100, "N\xB7s/m"),
+        number(`${prefix}.suspension.damperRebound`, "Rebound damping", 500, 5e4, 100, "N\xB7s/m"),
+        number(`${prefix}.suspension.antiRoll`, "Anti-roll", 0, 1e5, 500, "N/m")
+      ]
+    },
+    {
+      title: `${title} tire`,
+      fields: [
+        number(`${prefix}.tire.lateral.b`, "Lateral B", 0.5, 30, 0.1),
+        number(`${prefix}.tire.lateral.c`, "Lateral C", 0.5, 3, 0.01),
+        number(`${prefix}.tire.lateral.d`, "Lateral D", 0.1, 2.5, 0.01),
+        number(`${prefix}.tire.lateral.e`, "Lateral E", 0, 2, 0.01),
+        number(`${prefix}.tire.longitudinal.b`, "Longitudinal B", 0.5, 30, 0.1),
+        number(`${prefix}.tire.longitudinal.c`, "Longitudinal C", 0.5, 3, 0.01),
+        number(`${prefix}.tire.longitudinal.d`, "Longitudinal D", 0.1, 2.5, 0.01),
+        number(`${prefix}.tire.longitudinal.e`, "Longitudinal E", 0, 2, 0.01),
+        number(`${prefix}.tire.relaxationLength`, "Relaxation length", 0.01, 3, 0.01, "m"),
+        number(`${prefix}.tire.peakSlipRatio`, "Peak slip ratio", 0.01, 1, 0.01),
+        number(`${prefix}.tire.frictionScale`, "Friction scale", 0.1, 2, 0.01)
+      ]
+    }
+  ];
+};
+var CAR_SETUP_SECTIONS = [
+  {
+    title: "Chassis",
+    fields: [
+      number("chassis.inertia.0", "Inertia X", 50, 1e4, 10, "kg\xB7m\xB2"),
+      number("chassis.inertia.1", "Inertia Y", 50, 1e4, 10, "kg\xB7m\xB2"),
+      number("chassis.inertia.2", "Inertia Z", 50, 1e4, 10, "kg\xB7m\xB2"),
+      number("chassis.centerOfGravity.0", "CG X", -2, 2, 0.01, "m"),
+      number("chassis.centerOfGravity.1", "CG height", -2, 2, 0.01, "m"),
+      number("chassis.centerOfGravity.2", "CG Z", -2, 2, 0.01, "m")
+    ]
+  },
+  ...axleSections("front", "Front"),
+  ...axleSections("rear", "Rear"),
+  {
+    title: "Engine",
+    fields: [
+      number("engine.idleRpm", "Idle", 400, 2500, 50, "rpm"),
+      number("engine.redlineRpm", "Redline", 1500, 15e3, 100, "rpm"),
+      json("engine.torqueCurve", "Torque curve [[rpm,Nm],\u2026]")
+    ]
+  },
+  {
+    title: "Drivetrain",
+    fields: [
+      number("drivetrain.finalDrive", "Final drive", 1, 8, 0.01, ":1"),
+      json("drivetrain.gearRatios", "Gear ratios [..]")
+    ]
+  },
+  {
+    title: "Brakes",
+    fields: [
+      number("brakes.front", "Front torque", 100, 1e4, 50, "Nm"),
+      number("brakes.rear", "Rear torque", 100, 1e4, 50, "Nm")
+    ]
+  },
+  {
+    title: "Steering",
+    fields: [
+      {
+        ...number("steering.maxAngle", "Maximum lock", 5, 70, 0.5, "\xB0"),
+        factor: 180 / Math.PI
+      }
+    ]
+  },
+  {
+    title: "Aero",
+    fields: [
+      number("aero.dragCoefficient", "Drag coefficient", 0.05, 2, 0.01, "Cd"),
+      number("aero.frontalArea", "Frontal area", 0.5, 5, 0.05, "m\xB2")
+    ]
+  }
+];
+
+// web/src/ui/dev-menu.ts
+var STYLE_ID = "lapster-dev-menu-style";
+var STYLE = `
+#dev-drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 94vw);
+  padding: 0;
+  border-right: 1px solid #2a303a;
+  background: rgba(8, 10, 13, 0.98);
+  color: #e6e8eb;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  visibility: hidden;
+  transform: translateX(calc(-100% - 8px));
+  transition: transform 180ms ease, visibility 0s linear 180ms;
+  box-shadow: 18px 0 48px rgba(0, 0, 0, 0.45);
+}
+#dev-drawer.dev-open {
+  visibility: visible;
+  transform: translateX(0);
+  transition: transform 180ms ease, visibility 0s;
+}
+#dev-drawer .dev-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border-bottom: 1px solid #2a303a;
+  background: rgba(8, 10, 13, 0.98);
+}
+#dev-drawer .dev-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+#dev-drawer .dev-head h2 {
+  margin: 0;
+  color: #e6e8eb;
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+#dev-drawer .dev-badge {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid #38bdf8;
+  border-radius: 3px;
+  color: #38bdf8;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+#dev-open {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  z-index: 31;
+  min-width: 44px;
+  padding: 6px 9px;
+  border: 1px solid #3a4350;
+  border-left: 0;
+  border-radius: 0 4px 4px 0;
+  background: rgba(8, 10, 13, 0.92);
+  color: #38bdf8;
+  font: 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  opacity: 0.82;
+  transform: translateY(-50%);
+  transition: transform 180ms ease, opacity 180ms ease, visibility 0s linear 0s;
+  cursor: pointer;
+}
+#dev-open:hover { background: #151a21; opacity: 1; }
+body.dev-menu-open #dev-open {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-100%, -50%);
+  transition: transform 180ms ease, opacity 180ms ease, visibility 0s linear 180ms;
+}
+#dev-drawer button,
+#dev-drawer select,
+#dev-drawer input[type="text"] {
+  border: 1px solid #3a4350;
+  border-radius: 3px;
+  background: #151a21;
+  color: #e6e8eb;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 10px;
+}
+#dev-drawer button { cursor: pointer; }
+#dev-drawer button:hover { background: #1c2430; }
+#dev-drawer button:disabled { cursor: default; opacity: 0.55; }
+#dev-drawer details {
+  border-bottom: 1px solid #202630;
+  padding: 0 0 8px;
+}
+#dev-drawer details > summary {
+  padding: 9px 0 6px;
+  color: #8f9bab;
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  user-select: none;
+}
+#dev-drawer details details {
+  border-bottom: 1px solid #202630;
+  padding: 0 0 6px 8px;
+}
+#dev-drawer details details:last-child { border-bottom: 0; }
+#dev-drawer details details > summary {
+  padding: 7px 0 5px;
+  color: #6f7b8b;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+#dev-drawer .dev-grid {
+  display: grid;
+  gap: 6px;
+}
+#dev-drawer .dev-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+#dev-drawer .dev-field > span { min-width: 0; }
+#dev-drawer .dev-field output {
+  color: #8f9bab;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+#dev-drawer .dev-field input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  accent-color: #38bdf8;
+}
+#dev-drawer .dev-field select,
+#dev-drawer .dev-field input[type="text"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+#dev-drawer .dev-field input[type="color"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 22px;
+  padding: 1px;
+  border: 1px solid #3a4350;
+  border-radius: 3px;
+  background: #151a21;
+}
+#dev-drawer .dev-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#dev-drawer .dev-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #38bdf8;
+}
+#dev-drawer .dev-footer {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  flex: none;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid #2a303a;
+  background: rgba(8, 10, 13, 0.98);
+}
+#dev-drawer .dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#dev-drawer .dev-status {
+  margin: 0;
+  color: #8f9bab;
+  font-size: 10px;
+  line-height: 1.4;
+}
+#dev-drawer .dev-status.error { color: #f87171; }
+#dev-drawer .dev-note {
+  margin: 0;
+  padding: 0 0 4px;
+  color: #6f7b8b;
+  font-size: 10px;
+  line-height: 1.35;
+}
+#dev-drawer .dev-audio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+#dev-drawer .dev-audio span {
+  flex: 1;
+  color: #8f9bab;
+}
+@media (min-width: 900px) {
+  body.dev-menu-open #hud {
+    left: 376px;
+    width: min(400px, calc(100vw - 408px));
+  }
+  body.dev-menu-open #fps-counter { left: 376px; }
+}
+#dev-drawer .dev-subhead {
+  margin: 8px 0 2px;
+  color: #cbd5e1;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+`;
+function fieldRow(labelText, control, output) {
+  const label = document.createElement("label");
+  label.className = "dev-field";
+  const name = document.createElement("span");
+  name.textContent = labelText;
+  label.append(name);
+  if (output) {
+    label.append(output);
+  } else {
+    const spacer = document.createElement("span");
+    label.append(spacer);
+  }
+  label.append(control);
+  return label;
+}
+function addSection(host, title) {
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = title;
+  const grid = document.createElement("div");
+  grid.className = "dev-grid";
+  details.append(summary, grid);
+  host.append(details);
+  return details;
+}
+function createDevMenuShell(titleText, onOpen) {
+  if (!document.querySelector(`#${STYLE_ID}`)) {
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = STYLE;
+    document.head.append(style);
+  }
+  const openButton = document.createElement("button");
+  openButton.id = "dev-open";
+  openButton.type = "button";
+  openButton.textContent = "DEV";
+  openButton.title = "Open developer settings";
+  openButton.setAttribute("aria-label", "Open developer settings");
+  openButton.setAttribute("aria-controls", "dev-drawer");
+  openButton.setAttribute("aria-expanded", "false");
+  document.body.append(openButton);
+  const drawer = document.createElement("aside");
+  drawer.id = "dev-drawer";
+  drawer.setAttribute("aria-label", "Developer settings");
+  drawer.setAttribute("aria-hidden", "true");
+  const head = document.createElement("header");
+  head.className = "dev-head";
+  const title = document.createElement("h2");
+  title.innerHTML = `${titleText} <span class="dev-badge">DEV</span>`;
+  const closeButton = document.createElement("button");
+  closeButton.id = "dev-close";
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  head.append(title, closeButton);
+  drawer.append(head);
+  const content = document.createElement("div");
+  content.className = "dev-body";
+  drawer.append(content);
+  const status2 = document.createElement("p");
+  status2.id = "dev-status";
+  status2.className = "dev-status";
+  status2.setAttribute("aria-live", "polite");
+  status2.textContent = "Changes apply live";
+  document.body.append(drawer);
+  const isOpen = () => drawer.classList.contains("dev-open");
+  const open = () => {
+    onOpen();
+    document.body.classList.add("dev-menu-open");
+    drawer.classList.add("dev-open");
+    drawer.setAttribute("aria-hidden", "false");
+    openButton.setAttribute("aria-expanded", "true");
+  };
+  const close = () => {
+    document.body.classList.remove("dev-menu-open");
+    drawer.classList.remove("dev-open");
+    drawer.setAttribute("aria-hidden", "true");
+    openButton.setAttribute("aria-expanded", "false");
+  };
+  const toggle = () => {
+    if (isOpen()) close();
+    else open();
+  };
+  openButton.addEventListener("click", toggle);
+  closeButton.addEventListener("click", close);
+  window.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+      return;
+    }
+    if (event.key === "\\") {
+      event.preventDefault();
+      toggle();
+    } else if (event.key === "Escape" && isOpen()) {
+      event.preventDefault();
+      close();
+    }
+  });
+  return { drawer, content, status: status2, openButton, closeButton, open, close, toggle };
+}
+function setupTrackDevMenu(viewer) {
+  const shell = createDevMenuShell("Track rendering", () => {
+    refreshBlend();
+    shell.status.className = "dev-status";
+    shell.status.textContent = "Changes apply live";
+  });
+  const { drawer, content, status: status2 } = shell;
+  const refreshBlend = () => {
+    blend.value = viewer.track_blend_mode();
+  };
+  const blend = document.createElement("select");
+  blend.id = "dev-track-blend";
+  for (const [value, label] of [
+    ["dither", "Dither"],
+    ["soft", "Soft"],
+    ["hard", "Hard cut"]
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    blend.append(option);
+  }
+  blend.addEventListener("change", () => {
+    viewer.set_track_blend_mode(blend.value);
+    status2.className = "dev-status";
+    status2.textContent = "Edge blend updated";
+  });
+  const visuals = addSection(content, "Track rendering").querySelector(".dev-grid");
+  visuals.append(fieldRow("Edge blend", blend));
+  const note = document.createElement("p");
+  note.className = "dev-note";
+  note.textContent = "Dither is the shipped look. Soft blends the edge with a smooth gradient. Hard cut keeps a crisp reference edge.";
+  visuals.append(note);
+  const footer = document.createElement("div");
+  footer.className = "dev-footer";
+  footer.append(status2);
+  drawer.append(footer);
+  refreshBlend();
+  return shell;
+}
+
 // web/src/ui/hud.ts
 function setupHud() {
   const hud = document.querySelector("#hud");
@@ -354,13 +813,13 @@ function setupHud() {
 }
 
 // web/src/ui/fps.ts
-var STYLE_ID = "lapster-fps-style";
+var STYLE_ID2 = "lapster-fps-style";
 var COUNTER_ID = "fps-counter";
 var counter = null;
 var enabled = false;
 var frames = 0;
 var elapsedMs = 0;
-var STYLE = `
+var STYLE2 = `
 #fps-counter {
   position: fixed;
   top: 16px;
@@ -386,10 +845,10 @@ function ensureCounter() {
   if (counter) {
     return counter;
   }
-  if (!document.querySelector(`#${STYLE_ID}`)) {
+  if (!document.querySelector(`#${STYLE_ID2}`)) {
     const style = document.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent = STYLE;
+    style.id = STYLE_ID2;
+    style.textContent = STYLE2;
     document.head.append(style);
   }
   counter = document.createElement("div");
@@ -458,6 +917,7 @@ var SURFACE_COLORS = {
   1: "#33ff59",
   2: "#b35933"
 };
+var devMode = new URLSearchParams(window.location.search).has("dev") && new URLSearchParams(window.location.search).get("dev") !== "0";
 var canvas = document.querySelector("#view");
 var overlay = document.querySelector("#control-points");
 var overlayContext = overlay.getContext("2d");
@@ -1601,6 +2061,9 @@ async function boot() {
   const viewer = await TrackViewer.create_editor(canvas);
   editorViewer = viewer;
   window.__trackEditor = viewer;
+  if (devMode) {
+    setupTrackDevMenu(viewer);
+  }
   controlPoints = JSON.parse(viewer.editor_control_points());
   centerline = JSON.parse(viewer.editor_centerline());
   kerbSpans = JSON.parse(viewer.editor_kerb_spans()).sort((a, b) => a.start - b.start);

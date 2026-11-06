@@ -134,6 +134,33 @@ fn toon_ramp(ndl: f32) -> f32 {
     return 0.40;
 }
 
+fn track_band_color(
+    edge: f32,
+    inner: vec3<f32>,
+    outer: vec3<f32>,
+    center: f32,
+    half_width: f32,
+    mode: f32,
+    pixel: vec2<f32>,
+) -> vec3<f32> {
+    let start = center - half_width;
+    let end = center + half_width;
+    if edge <= start {
+        return inner;
+    }
+    if edge >= end {
+        return outer;
+    }
+    let t = (edge - start) / (end - start);
+    if mode > 2.5 {
+        return select(inner, outer, t > 0.5);
+    }
+    if mode > 1.5 {
+        return mix(inner, outer, smoothstep(0.0, 1.0, t));
+    }
+    return select(inner, outer, t > bayer4(pixel));
+}
+
 fn sample_baked_shadow(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
     if camera.shadow_params.z <= 0.0 {
         return 1.0;
@@ -261,30 +288,33 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         discard;
     }
     var base = input.color * texel.rgb;
-    if model.alpha.w > 0.5 {
+    let blend_mode = model.alpha.w;
+    if blend_mode > 0.5 {
         let asphalt = vec3<f32>(0.045, 0.045, 0.05);
         let grass = vec3<f32>(0.048, 0.111, 0.006);
         let edge = abs(input.uv.y * 2.0 - 1.0);
-        let threshold = bayer4(input.clip_position.xy);
-        let asphalt_center = 0.5;
-        let asphalt_half_width = 0.02;
-        let grass_center = 0.93;
-        let grass_half_width = 0.025;
-        if edge <= asphalt_center - asphalt_half_width {
-            base = asphalt;
-        } else if edge < asphalt_center + asphalt_half_width {
-            let blend = (edge - (asphalt_center - asphalt_half_width))
-                / (asphalt_half_width * 2.0);
-            base = select(asphalt, input.color, blend > threshold);
-        } else if edge <= grass_center - grass_half_width {
-            base = input.color;
-        } else if edge < grass_center + grass_half_width {
-            let blend = (edge - (grass_center - grass_half_width))
-                / (grass_half_width * 2.0);
-            base = select(input.color, grass, blend > threshold);
-        } else {
-            base = grass;
-        }
+        let pixel = input.clip_position.xy;
+        let soft = blend_mode > 1.5;
+        let asphalt_half_width = select(0.02, 0.06, soft);
+        let grass_half_width = select(0.025, 0.07, soft);
+        base = track_band_color(
+            edge,
+            asphalt,
+            input.color,
+            0.5,
+            asphalt_half_width,
+            blend_mode,
+            pixel,
+        );
+        base = track_band_color(
+            edge,
+            base,
+            grass,
+            0.93,
+            grass_half_width,
+            blend_mode,
+            pixel,
+        );
     }
     if model.alpha.y > 0.5 {
         base = texel.rgb * GRASS_TEXTURE_GAIN;
