@@ -108,6 +108,7 @@ const propToggle = document.querySelector<HTMLButtonElement>("#prop-toggle")!;
 const deleteSegmentButton =
   document.querySelector<HTMLButtonElement>("#delete-segment")!;
 const overlayToggle = document.querySelector<HTMLButtonElement>("#toggle-overlay")!;
+const cameraViewButton = document.querySelector<HTMLButtonElement>("#camera-view")!;
 const testDriveButton = document.querySelector<HTMLButtonElement>("#test-drive")!;
 
 let editorViewer: TrackViewer | undefined;
@@ -133,6 +134,23 @@ let guideDrag: GuideDrag | null = null;
 let paintKind: PropKind = "blocks";
 let overlayVisible = true;
 const PROP_KINDS: PropKind[] = ["blocks", "tyres", "trees", "off"];
+const CAMERA_VIEWS = ["front", "back", "left", "right", "car"] as const;
+type CameraViewMode = (typeof CAMERA_VIEWS)[number];
+const CAMERA_VIEW_LABELS: Record<CameraViewMode, string> = {
+  front: "Front",
+  back: "Back",
+  left: "Left",
+  right: "Right",
+  car: "Car",
+};
+const CAR_MARKER_HEIGHT = 3.2;
+const CAR_MARKER_HIT_RADIUS = 16;
+const CAR_CAMERA_HEIGHT = 1.4;
+const CAR_LOOK_AHEAD = 7;
+const CAR_ARROW_STEP = 1;
+let cameraViewMode: CameraViewMode = "front";
+let carIndex = 0;
+let carDragPointerId: number | null = null;
 
 setupHud();
 
@@ -160,6 +178,174 @@ const lerp = (a: Vec3, b: Vec3, t: number): Vec3 => [
   a[1] + (b[1] - a[1]) * t,
   a[2] + (b[2] - a[2]) * t,
 ];
+
+function centerlinePoint(index: number): Vec3 {
+  const count = centerline.length;
+  if (count === 0) {
+    return [0, 0, 0];
+  }
+  const wrapped = ((index % count) + count) % count;
+  const base = Math.floor(wrapped) % count;
+  const next = (base + 1) % count;
+  return lerp(centerline[base], centerline[next], wrapped - Math.floor(wrapped));
+}
+
+function centerlineTangent(index: number): Vec3 {
+  const count = centerline.length;
+  if (count < 2) {
+    return [0, 0, -1];
+  }
+  const wrapped = ((index % count) + count) % count;
+  const base = Math.floor(wrapped) % count;
+  const t = wrapped - Math.floor(wrapped);
+  const previous = centerline[(base + count - 1) % count];
+  const current = centerline[base];
+  const next = centerline[(base + 1) % count];
+  const incoming = normalize(sub(current, previous));
+  const outgoing = normalize(sub(next, current));
+  return normalize(lerp(incoming, outgoing, t));
+}
+
+function carMarkerPoint(): Vec3 {
+  const point = centerlinePoint(carIndex);
+  return [point[0], point[1] + CAR_MARKER_HEIGHT, point[2]];
+}
+
+function carMarkerScreen(): [number, number] | null {
+  const camera = currentCamera();
+  if (!camera) {
+    return null;
+  }
+  return projectPoint(
+    carMarkerPoint(),
+    camera,
+    canvas.clientWidth,
+    canvas.clientHeight,
+  );
+}
+
+function hitTestCarMarker(x: number, y: number): boolean {
+  const projected = carMarkerScreen();
+  return (
+    !!projected &&
+    Math.hypot(projected[0] - x, projected[1] - y) <= CAR_MARKER_HIT_RADIUS
+  );
+}
+
+function nearestCenterlineIndex(x: number, y: number): number | null {
+  const camera = currentCamera();
+  if (!camera || centerline.length < 2) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const projected = centerline.map((point) =>
+    projectPoint(point, camera, width, height),
+  );
+  let bestDistance = Infinity;
+  let bestIndex: number | null = null;
+  for (let index = 0; index < projected.length; index += 1) {
+    const start = projected[index];
+    const end = projected[(index + 1) % projected.length];
+    if (!start || !end) {
+      continue;
+    }
+    const segmentX = end[0] - start[0];
+    const segmentY = end[1] - start[1];
+    const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+    const t =
+      lengthSquared > 1e-6
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              ((x - start[0]) * segmentX + (y - start[1]) * segmentY) /
+                lengthSquared,
+            ),
+          )
+        : 0;
+    const hitX = start[0] + segmentX * t;
+    const hitY = start[1] + segmentY * t;
+    const distance = Math.hypot(x - hitX, y - hitY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index + t;
+    }
+  }
+  return bestIndex;
+}
+
+function applyCameraView(): void {
+  if (!cameraController || centerline.length === 0) {
+    return;
+  }
+  if (cameraViewMode === "car") {
+    const point = centerlinePoint(carIndex);
+    const tangent = centerlineTangent(carIndex);
+    const eye = add(point, [0, CAR_CAMERA_HEIGHT, 0]);
+    const target = add(
+      add(point, scale(tangent, CAR_LOOK_AHEAD)),
+      [0, CAR_CAMERA_HEIGHT, 0],
+    );
+    cameraController.setView(eye, target);
+    return;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const point of centerline) {
+    minX = Math.min(minX, point[0]);
+    minY = Math.min(minY, point[1]);
+    minZ = Math.min(minZ, point[2]);
+    maxX = Math.max(maxX, point[0]);
+    maxY = Math.max(maxY, point[1]);
+    maxZ = Math.max(maxZ, point[2]);
+  }
+  const center: Vec3 = [
+    (minX + maxX) * 0.5,
+    (minY + maxY) * 0.5,
+    (minZ + maxZ) * 0.5,
+  ];
+  const span = Math.max(maxX - minX, maxZ - minZ);
+  const distance = Math.max(span * 1.25, 55);
+  const height = Math.max(span, 40);
+  let eye: Vec3 = [center[0], center[1] + height, center[2] + distance];
+  if (cameraViewMode === "back") {
+    eye = [center[0], center[1] + height, center[2] - distance];
+  } else if (cameraViewMode === "left") {
+    eye = [center[0] - distance, center[1] + height, center[2]];
+  } else if (cameraViewMode === "right") {
+    eye = [center[0] + distance, center[1] + height, center[2]];
+  }
+  cameraController.setView(eye, center);
+}
+
+function syncCameraViewButton(): void {
+  cameraViewButton.textContent = `View: ${CAMERA_VIEW_LABELS[cameraViewMode]}`;
+}
+
+function cycleCameraView(): void {
+  const index = CAMERA_VIEWS.indexOf(cameraViewMode);
+  cameraViewMode = CAMERA_VIEWS[(index + 1) % CAMERA_VIEWS.length];
+  syncCameraViewButton();
+  applyCameraView();
+  drawControlPoints();
+}
+
+function moveCar(delta: number): void {
+  const count = centerline.length;
+  if (count === 0) {
+    return;
+  }
+  carIndex = (((carIndex + delta) % count) + count) % count;
+  if (cameraViewMode === "car") {
+    applyCameraView();
+  }
+  drawControlPoints();
+}
 
 function currentCamera(): CameraView | null {
   if (!editorViewer) {
@@ -803,6 +989,7 @@ function updateHover(): void {
     !lastPointer ||
     dragIndex !== null ||
     guideDrag !== null ||
+    carDragPointerId !== null ||
     rebuilding ||
     cameraDragging
   ) {
@@ -813,6 +1000,10 @@ function updateHover(): void {
     const index = hitTestControlPoint(lastPointer[0], lastPointer[1]);
     hoverDeleteIndex = index >= 0 ? index : null;
     canvas.style.cursor = index >= 0 ? "crosshair" : "";
+    return;
+  }
+  if (hitTestCarMarker(lastPointer[0], lastPointer[1])) {
+    canvas.style.cursor = "grab";
     return;
   }
   const handle = hitGuideHandle(lastPointer[0], lastPointer[1]);
@@ -1108,6 +1299,50 @@ function drawControlPoints(): void {
     }
   }
 
+  const carMarker = carMarkerPoint();
+  const carProjected = projectPoint(carMarker, camera, width, height);
+  const carAheadProjected = projectPoint(
+    add(carMarker, scale(centerlineTangent(carIndex), 4)),
+    camera,
+    width,
+    height,
+  );
+  if (carProjected) {
+    const [carX, carY] = carProjected;
+    const selected = cameraViewMode === "car";
+    overlayContext.save();
+    overlayContext.beginPath();
+    overlayContext.arc(carX, carY, 11, 0, Math.PI * 2);
+    overlayContext.fillStyle = selected ? "#0ea5e9" : "#155e75";
+    overlayContext.fill();
+    overlayContext.lineWidth = 2;
+    overlayContext.strokeStyle = selected ? "#e0f2fe" : "#67e8f9";
+    overlayContext.stroke();
+    if (carAheadProjected) {
+      const dx = carAheadProjected[0] - carX;
+      const dy = carAheadProjected[1] - carY;
+      const headingLength = Math.hypot(dx, dy) || 1;
+      const ux = dx / headingLength;
+      const uy = dy / headingLength;
+      const px = -uy;
+      const py = ux;
+      overlayContext.beginPath();
+      overlayContext.moveTo(carX + ux * 7, carY + uy * 7);
+      overlayContext.lineTo(
+        carX - ux * 3 + px * 4,
+        carY - uy * 3 + py * 4,
+      );
+      overlayContext.lineTo(
+        carX - ux * 3 - px * 4,
+        carY - uy * 3 - py * 4,
+      );
+      overlayContext.closePath();
+      overlayContext.fillStyle = "#082f49";
+      overlayContext.fill();
+    }
+    overlayContext.restore();
+  }
+
   controlPoints.forEach((point, index) => {
     const projected = projectPoint(point, camera, width, height);
     if (!projected) {
@@ -1177,6 +1412,7 @@ function refreshEditorState(): void {
   propLines = JSON.parse(editorViewer.editor_prop_lines()) as PropLine[];
   resolveSelection();
   syncPaintControls();
+  applyCameraView();
   const debug = JSON.parse(editorViewer.debug_info());
   renderStats(debug);
   drawsLabel.textContent = String(debug.stats.drawCalls);
@@ -1275,6 +1511,26 @@ canvas.addEventListener(
       setDeleteMode(event.shiftKey);
     }
     const [x, y] = pointerPosition(event);
+    if (
+      overlayVisible &&
+      !deleteMode &&
+      carDragPointerId === null &&
+      hitTestCarMarker(x, y)
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cameraDragging = false;
+      carDragPointerId = event.pointerId;
+      cameraController?.setEnabled(false);
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic pointers may not support capture.
+      }
+      canvas.style.cursor = "grabbing";
+      drawControlPoints();
+      return;
+    }
     const index = overlayVisible ? hitTestControlPoint(x, y) : -1;
     if (deleteMode && index >= 0) {
       event.preventDefault();
@@ -1382,6 +1638,19 @@ canvas.addEventListener(
 window.addEventListener(
   "pointermove",
   (event) => {
+    if (carDragPointerId !== null && event.pointerId === carDragPointerId) {
+      event.preventDefault();
+      const [x, y] = pointerPosition(event);
+      const index = nearestCenterlineIndex(x, y);
+      if (index !== null) {
+        carIndex = index;
+        if (cameraViewMode === "car") {
+          applyCameraView();
+        }
+        drawControlPoints();
+      }
+      return;
+    }
     if (guideDrag && event.pointerId === guideDrag.pointerId) {
       event.preventDefault();
       const guide = guideFor(
@@ -1443,6 +1712,24 @@ const endGuideDrag = (event: PointerEvent) => {
   void (kind === "kerb" ? rebuildKerbSpans() : rebuildPropLines());
 };
 
+const endCarDrag = (event: PointerEvent) => {
+  if (carDragPointerId === null || event.pointerId !== carDragPointerId) {
+    return;
+  }
+  carDragPointerId = null;
+  try {
+    canvas.releasePointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture may already be released.
+  }
+  cameraController?.setEnabled(true);
+  canvas.style.cursor = "";
+  if (cameraViewMode === "car") {
+    applyCameraView();
+  }
+  drawControlPoints();
+};
+
 canvas.addEventListener("pointermove", (event) => {
   lastPointer = pointerPosition(event);
   if (event.shiftKey !== deleteMode) {
@@ -1480,6 +1767,18 @@ window.addEventListener("keydown", (event) => {
     deleteSelectedSegment();
     return;
   }
+  if (cameraViewMode === "car" && carDragPointerId === null && !guideDrag) {
+    if (event.key === "ArrowUp" || event.key === "ArrowRight") {
+      event.preventDefault();
+      moveCar(CAR_ARROW_STEP);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      moveCar(-CAR_ARROW_STEP);
+      return;
+    }
+  }
   if (event.key === "Shift") {
     setDeleteMode(true);
   }
@@ -1507,6 +1806,10 @@ propToggle.addEventListener("click", () => {
   setPaintKind(PROP_KINDS[(index + 1) % PROP_KINDS.length]);
 });
 
+cameraViewButton.addEventListener("click", () => {
+  cycleCameraView();
+});
+
 deleteSegmentButton.addEventListener("click", () => {
   deleteSelectedSegment();
 });
@@ -1523,6 +1826,8 @@ window.addEventListener("pointerup", endDrag, { capture: true });
 window.addEventListener("pointercancel", endDrag, { capture: true });
 window.addEventListener("pointerup", endGuideDrag, { capture: true });
 window.addEventListener("pointercancel", endGuideDrag, { capture: true });
+window.addEventListener("pointerup", endCarDrag, { capture: true });
+window.addEventListener("pointercancel", endCarDrag, { capture: true });
 window.addEventListener("pointerup", endCameraDrag, { capture: true });
 window.addEventListener("pointercancel", endCameraDrag, { capture: true });
 
@@ -1616,7 +1921,12 @@ async function boot() {
   ).sort((a, b) => a.start - b.start);
   propLines = JSON.parse(viewer.editor_prop_lines()) as PropLine[];
   syncPaintControls();
-  cameraController = setupTrackCamera(canvas, viewer, { maxHeight: MAX_CAMERA_HEIGHT });
+  cameraController = setupTrackCamera(canvas, viewer, {
+    maxHeight: MAX_CAMERA_HEIGHT,
+    attachResetButton: false,
+  });
+  syncCameraViewButton();
+  applyCameraView();
 
   const debug = JSON.parse(viewer.debug_info());
   renderStats(debug);

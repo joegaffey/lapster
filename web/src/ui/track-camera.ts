@@ -48,6 +48,7 @@ const prefersReducedMotion = () =>
 
 export interface OrbitCameraController {
   setHome(info: CameraInfo, animate?: boolean): void;
+  setView(eye: number[], target: number[]): void;
   setEnabled(enabled: boolean): void;
   nudge(
     deltaSeconds: number,
@@ -255,6 +256,15 @@ export function setupTrackCamera(
   }
 
   return {
+    setView(nextEye, nextTarget) {
+      const nextTargetVec = toVec3(nextTarget);
+      minTargetY = Math.min(minTargetY, nextTargetVec[1]);
+      minEyeY = Math.min(minEyeY, Math.max(nextTargetVec[1] + 0.2, 0.05));
+      cancelFlight();
+      eye = toVec3(nextEye);
+      target = nextTargetVec;
+      apply();
+    },
     nudge(deltaSeconds, orbitX, orbitY, panX, panY, zoom) {
       if (!enabled) {
         return;

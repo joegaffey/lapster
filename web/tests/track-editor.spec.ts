@@ -152,6 +152,59 @@ async function projectGuideIndex(
   return projected as [number, number] | null;
 }
 
+async function projectWorldPoint(
+  page: Page,
+  point: [number, number, number],
+): Promise<[number, number] | null> {
+  const projected = await page.evaluate(
+    ({ point }) => {
+      const viewer = (window as any).__trackEditor;
+      const canvas = document.querySelector("#view") as HTMLCanvasElement;
+      const camera = JSON.parse(viewer.camera_info()) as {
+        eye: number[];
+        target: number[];
+        fovY: number;
+      };
+      const sub = (a: number[], b: number[]) => [
+        a[0] - b[0],
+        a[1] - b[1],
+        a[2] - b[2],
+      ];
+      const dot = (a: number[], b: number[]) =>
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a: number[], b: number[]) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+      const normalize = (value: number[]) => {
+        const length = Math.hypot(value[0], value[1], value[2]);
+        return length > 1e-8
+          ? value.map((component) => component / length)
+          : [0, 0, 0];
+      };
+      const eye = camera.eye;
+      const forward = normalize(sub(camera.target, eye));
+      const right = normalize(cross(forward, [0, 1, 0]));
+      const up = normalize(cross(right, forward));
+      const offset = sub(point, eye);
+      const depth = dot(offset, forward);
+      if (depth <= 0.01) {
+        return null;
+      }
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      const tanHalf = Math.tan(camera.fovY * 0.5);
+      const aspect = width / Math.max(height, 1);
+      const ndcX = dot(offset, right) / (depth * tanHalf * aspect);
+      const ndcY = dot(offset, up) / (depth * tanHalf);
+      return [(ndcX * 0.5 + 0.5) * width, (0.5 - ndcY * 0.5) * height];
+    },
+    { point },
+  );
+  return projected as [number, number] | null;
+}
+
 test("track editor renders the procedural example track", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -245,6 +298,90 @@ test("track editor renders the procedural example track", async ({ page }) => {
   await expect(overlay).toBeVisible();
   await expect(overlayToggle).toHaveAttribute("aria-pressed", "true");
 
+  expect(pageErrors).toEqual([]);
+});
+
+test("camera view cycles and the draggable car follows the spline", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=camera-view");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const toggle = page.locator("#camera-view");
+  await expect(toggle).toHaveText("View: Front");
+  const centerline = await page.evaluate(
+    () =>
+      JSON.parse((window as any).__trackEditor.editor_centerline()) as number[][],
+  );
+
+  const targetIndex = 30;
+  const markerStart = await projectWorldPoint(page, [
+    centerline[0][0],
+    centerline[0][1] + 3.2,
+    centerline[0][2],
+  ]);
+  const dragEnd = await projectWorldPoint(page, [
+    centerline[targetIndex][0],
+    centerline[targetIndex][1],
+    centerline[targetIndex][2],
+  ]);
+  expect(markerStart).not.toBeNull();
+  expect(dragEnd).not.toBeNull();
+  await page.mouse.move(markerStart![0], markerStart![1]);
+  await page.mouse.down();
+  await page.mouse.move(dragEnd![0], dragEnd![1], { steps: 12 });
+  await page.mouse.up();
+
+  await toggle.click();
+  await expect(toggle).toHaveText("View: Back");
+  await toggle.click();
+  await expect(toggle).toHaveText("View: Left");
+  await toggle.click();
+  await expect(toggle).toHaveText("View: Right");
+  await toggle.click();
+  await expect(toggle).toHaveText("View: Car");
+
+  const nearest = async () => {
+    const camera = await page.evaluate(
+      () => JSON.parse((window as any).__trackEditor.camera_info()) as {
+        eye: number[];
+      },
+    );
+    let bestDistance = Infinity;
+    let bestIndex = -1;
+    for (let index = 0; index < centerline.length; index += 1) {
+      const point = centerline[index];
+      const distance = Math.hypot(
+        point[0] - camera.eye[0],
+        point[1] + 1.4 - camera.eye[1],
+        point[2] - camera.eye[2],
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    return { index: bestIndex, distance: bestDistance, camera };
+  };
+
+  const dragged = await nearest();
+  expect(dragged.distance).toBeLessThan(2);
+  expect(dragged.index).toBeGreaterThan(20);
+  expect(dragged.index).toBeLessThan(40);
+
+  await page.keyboard.press("ArrowUp");
+  const advanced = await nearest();
+  expect(advanced.distance).toBeLessThan(2);
+  expect(advanced.index).toBeGreaterThan(dragged.index);
+  expect(advanced.index - dragged.index).toBeLessThanOrEqual(2);
   expect(pageErrors).toEqual([]);
 });
 
