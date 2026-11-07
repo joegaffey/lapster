@@ -453,10 +453,6 @@ fn sanitize_kerb_spans(spans: &[KerbSpan], count: usize) -> Vec<KerbSpan> {
     sanitized
 }
 
-pub fn track_from_control_points(control_points: &[[f32; 3]]) -> Result<EditorTrack, String> {
-    track_from_control_points_with_spans(control_points, None, None)
-}
-
 pub fn track_from_control_points_with_spans(
     control_points: &[[f32; 3]],
     kerb_spans: Option<&[KerbSpan]>,
@@ -1932,7 +1928,8 @@ mod tests {
 
     #[test]
     fn spawn_faces_increasing_track_direction_after_drive_flip() {
-        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
         let spawn = &track.metadata.spawns[0];
         let rotation = Quat::from_xyzw(
             spawn.rotation_xyzw[0],
@@ -1949,7 +1946,8 @@ mod tests {
 
     #[test]
     fn editor_track_has_a_mountain_backdrop() {
-        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
         let index = track
             .visual
             .meshes
@@ -1971,7 +1969,8 @@ mod tests {
 
     #[test]
     fn track_surface_uses_one_continuous_ribbon() {
-        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
         let surface_meshes = track
             .visual
             .meshes
@@ -1993,7 +1992,8 @@ mod tests {
         use sim_core::TrackCollider;
 
         let points = sample_track(&CONTROL_POINTS);
-        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
         let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
         let (point, binormal) = track_frame(&points, 10.0);
         for lateral in [7.0, 8.0, 9.0, 10.0, 11.0] {
@@ -2017,7 +2017,8 @@ mod tests {
 
     #[test]
     fn editor_track_exports_a_valid_pack() {
-        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
         let bytes = pack_from_track(&track).expect("export pack");
         let pack = sim_asset::Pack::from_bytes(&bytes).expect("parse pack");
         assert_eq!(pack.kind(), sim_types::AssetKind::Track);
@@ -2044,7 +2045,8 @@ mod tests {
         use sim_core::TrackCollider;
 
         let points = sample_track(&CONTROL_POINTS);
-        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
         let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
         let lines = default_prop_lines(&points);
         assert!(lines.iter().any(|line| line.kind != PropKind::Off));
