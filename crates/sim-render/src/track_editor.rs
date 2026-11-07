@@ -32,17 +32,27 @@ const OUTER_EDGE_RADIUS: f32 = 12.0;
 const ASPHALT_HALF_WIDTH: f32 = 6.0;
 const SURFACE_HEIGHT_OFFSET: f32 = 0.06;
 const PROP_OFFSET: f32 = 14.0;
+const PROP_FAR_OFFSET: f32 = 19.0;
+const MIN_PROP_OFFSET: f32 = 1.0;
+const MAX_PROP_OFFSET: f32 = PROP_FAR_OFFSET;
 const BLOCK_HALF_WIDTH: f32 = 0.3;
 const BLOCK_HALF_HEIGHT: f32 = 0.4;
 const BLOCK_HALF_LENGTH: f32 = 0.9;
 const TYRE_RADIUS: f32 = 0.4;
 const TYRE_LAYER_HEIGHT: f32 = 0.3;
 const TYRE_LAYERS: usize = 3;
-const MIN_TURN_RADIUS: f32 = OUTER_EDGE_RADIUS.max(PROP_OFFSET) + 1.0;
+const TREE_SIDES: usize = 6;
+const TREE_TRUNK_COLOR: [f32; 3] = [0.32, 0.23, 0.15];
+const TREE_COMMON_COLOR: [f32; 3] = [0.34, 0.56, 0.21];
+const TREE_COMMON_COLOR_ALT: [f32; 3] = [0.43, 0.63, 0.25];
+const TREE_PINE_COLOR: [f32; 3] = [0.20, 0.42, 0.18];
+const TREE_PINE_COLOR_ALT: [f32; 3] = [0.27, 0.49, 0.21];
+const MIN_TURN_RADIUS: f32 = OUTER_EDGE_RADIUS.max(PROP_FAR_OFFSET) + 1.0;
 const CURVATURE_RELAXATION: f32 = 0.5;
 const CURVATURE_RELAXATION_ITERATIONS: usize = 1024;
 const BLOCK_SPACING: f32 = 2.0;
 const TYRE_SPACING: f32 = 0.8;
+const TREE_SPACING: f32 = 4.5;
 const PROP_LATERAL_JITTER: f32 = 0.03;
 const PROP_LONGITUDINAL_JITTER: f32 = 0.03;
 const PROP_YAW_JITTER: f32 = 0.025;
@@ -69,7 +79,12 @@ pub struct KerbSpan {
 pub enum PropKind {
     Blocks,
     Tyres,
+    Trees,
     Off,
+}
+
+fn default_prop_offset() -> f32 {
+    PROP_OFFSET
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
@@ -77,6 +92,8 @@ pub struct PropLine {
     pub start: f32,
     pub end: f32,
     pub side: i8,
+    #[serde(default = "default_prop_offset")]
+    pub offset: f32,
     pub kind: PropKind,
 }
 
@@ -119,12 +136,14 @@ fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
             start: 0.0,
             end,
             side: outside_side,
+            offset: PROP_OFFSET,
             kind: PropKind::Blocks,
         },
         PropLine {
             start: 0.0,
             end,
             side: -outside_side,
+            offset: PROP_OFFSET,
             kind: PropKind::Tyres,
         },
     ]
@@ -140,10 +159,16 @@ fn sanitize_prop_lines(lines: &[PropLine], count: usize) -> Vec<PropLine> {
         .filter_map(|line| {
             let start = line.start.clamp(0.0, limit);
             let end = line.end.clamp(0.0, limit);
+            let offset = if line.offset.is_finite() {
+                line.offset.clamp(MIN_PROP_OFFSET, MAX_PROP_OFFSET)
+            } else {
+                PROP_OFFSET
+            };
             (end - start > 1e-4).then_some(PropLine {
                 start,
                 end,
                 side: if line.side >= 0 { 1 } else { -1 },
+                offset,
                 kind: line.kind,
             })
         })
@@ -151,16 +176,24 @@ fn sanitize_prop_lines(lines: &[PropLine], count: usize) -> Vec<PropLine> {
     lines.sort_by(|a, b| {
         a.side
             .cmp(&b.side)
+            .then_with(|| a.offset.total_cmp(&b.offset))
             .then_with(|| a.start.total_cmp(&b.start))
     });
 
-    let mut last_end = [0.0f32; 2];
+    let mut lanes: Vec<(i8, f32, f32)> = Vec::new();
     let mut sanitized = Vec::with_capacity(lines.len());
     for line in lines {
-        let side_index = usize::from(line.side > 0);
-        let start = line.start.max(last_end[side_index]);
+        let lane = lanes.iter().position(|(side, offset, _)| {
+            *side == line.side && (*offset - line.offset).abs() < 1e-4
+        });
+        let start = line
+            .start
+            .max(lane.map(|index| lanes[index].2).unwrap_or(0.0));
         if start < line.end {
-            last_end[side_index] = line.end;
+            match lane {
+                Some(index) => lanes[index].2 = line.end,
+                None => lanes.push((line.side, line.offset, line.end)),
+            }
             sanitized.push(PropLine { start, ..line });
         }
     }
@@ -309,6 +342,8 @@ pub fn track_from_control_points_with_spans(
     let mut barriers = empty_buffers();
     let mut tires_blue = empty_buffers();
     let mut tires_white = empty_buffers();
+    let mut tree_trunks = empty_buffers();
+    let mut tree_foliage = empty_buffers();
     let mut prop_walls = empty_buffers();
 
     let count = points.len();
@@ -347,6 +382,8 @@ pub fn track_from_control_points_with_spans(
         &mut barriers,
         &mut tires_blue,
         &mut tires_white,
+        &mut tree_trunks,
+        &mut tree_foliage,
     );
     append_prop_walls(&points, &prop_lines, &mut prop_walls);
 
@@ -355,6 +392,9 @@ pub fn track_from_control_points_with_spans(
     push_mesh(&mut visual, "barriers", 5, barriers, true);
     push_mesh(&mut visual, "tires_blue", 6, tires_blue, true);
     push_mesh(&mut visual, "tires_white", 7, tires_white, true);
+    append_collision(&mut collision, &tree_trunks, WALL_SURFACE);
+    push_mesh(&mut visual, "tree_trunks", 9, tree_trunks, true);
+    push_mesh(&mut visual, "tree_foliage", 10, tree_foliage, true);
 
     for (index, mesh) in visual.meshes.iter().enumerate() {
         let surface = match mesh.name.as_str() {
@@ -568,6 +608,8 @@ fn materials() -> Vec<MaterialRef> {
         material("tire_blue", [0.133, 0.333, 0.667, 1.0], true),
         material("tire_white", [0.867, 0.867, 0.867, 1.0], true),
         material("mountain", [0.12, 0.16, 0.22, 1.0], false),
+        material("tree_trunk", [0.32, 0.23, 0.15, 1.0], true),
+        material("tree_foliage", [0.34, 0.56, 0.21, 1.0], true),
     ]
 }
 
@@ -858,10 +900,11 @@ fn prop_placements(points: &[Vec3], line: &PropLine) -> Vec<(Vec3, Vec3)> {
     let spacing = match line.kind {
         PropKind::Blocks => BLOCK_SPACING,
         PropKind::Tyres => TYRE_SPACING,
+        PropKind::Trees => TREE_SPACING,
         PropKind::Off => return Vec::new(),
     };
     let vertices =
-        offset_path_vertices(points, line.start, line.end, PROP_OFFSET * line.side as f32);
+        offset_path_vertices(points, line.start, line.end, line.offset * line.side as f32);
     let mut segments = Vec::with_capacity(vertices.len().saturating_sub(1));
     let mut total = 0.0;
     for pair in vertices.windows(2) {
@@ -897,10 +940,12 @@ fn prop_noise(line: &PropLine, index: usize, salt: u32) -> f32 {
     let kind_salt = match line.kind {
         PropKind::Blocks => 0x9e37_79b9,
         PropKind::Tyres => 0x85eb_ca6b,
+        PropKind::Trees => 0xc2b2_ae35,
         PropKind::Off => 0,
     };
     let mut seed = line.start.to_bits().wrapping_mul(0x9e37_79b9)
         ^ line.end.to_bits().wrapping_mul(0x85eb_ca6b)
+        ^ line.offset.to_bits().wrapping_mul(0x27d4_eb2d)
         ^ ((line.side as i32 as u32) << 8)
         ^ kind_salt
         ^ (index as u32).wrapping_mul(0xc2b2_ae35)
@@ -934,6 +979,8 @@ fn append_prop_lines(
     barriers: &mut MeshBuffers,
     tires_blue: &mut MeshBuffers,
     tires_white: &mut MeshBuffers,
+    tree_trunks: &mut MeshBuffers,
+    tree_foliage: &mut MeshBuffers,
 ) {
     for line in lines {
         for (index, (position, tangent)) in prop_placements(points, line).into_iter().enumerate() {
@@ -962,6 +1009,9 @@ fn append_prop_lines(
                         );
                     }
                 }
+                PropKind::Trees => {
+                    append_tree(tree_trunks, tree_foliage, position, line, index);
+                }
                 PropKind::Off => {}
             }
         }
@@ -972,7 +1022,7 @@ fn prop_wall_dimensions(kind: PropKind) -> Option<(f32, f32)> {
     match kind {
         PropKind::Blocks => Some((BLOCK_HALF_WIDTH, BLOCK_HALF_HEIGHT * 2.0)),
         PropKind::Tyres => Some((TYRE_RADIUS, TYRE_LAYER_HEIGHT * TYRE_LAYERS as f32)),
-        PropKind::Off => None,
+        PropKind::Trees | PropKind::Off => None,
     }
 }
 
@@ -1009,13 +1059,13 @@ fn append_prop_walls(points: &[Vec3], lines: &[PropLine], walls: &mut MeshBuffer
             points,
             line.start,
             line.end,
-            (PROP_OFFSET - half_width) * side,
+            (line.offset - half_width) * side,
         );
         let outer = offset_path_vertices(
             points,
             line.start,
             line.end,
-            (PROP_OFFSET + half_width) * side,
+            (line.offset + half_width) * side,
         );
         if inner.len() < 2 || inner.len() != outer.len() {
             continue;
@@ -1330,6 +1380,160 @@ fn append_cylinder(
             (-top_normal).to_array(),
         );
     }
+}
+
+fn lerp_color(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+fn append_tree(
+    trunks: &mut MeshBuffers,
+    foliage: &mut MeshBuffers,
+    position: Vec3,
+    line: &PropLine,
+    index: usize,
+) {
+    let variant = prop_noise(line, index, 0x4);
+    let scale = 0.85 + 0.3 * (prop_noise(line, index, 0x5) * 0.5 + 0.5);
+    let tint = prop_noise(line, index, 0x6) * 0.5 + 0.5;
+    let ground = terrain_height(position.x, position.z);
+    let base = Vec3::new(position.x, ground, position.z);
+    let pine = variant > 0.0;
+    let trunk_height = if pine { 2.4 } else { 2.0 } * scale;
+    let trunk_radius = if pine { 0.16 } else { 0.21 } * scale;
+    append_tree_trunk(trunks, base, trunk_radius, trunk_height);
+
+    let (color, tiers) = if pine {
+        (
+            lerp_color(TREE_PINE_COLOR, TREE_PINE_COLOR_ALT, tint),
+            [(0.0, 1.5, 2.2), (1.25, 1.15, 2.0), (2.35, 0.8, 1.8)],
+        )
+    } else {
+        (
+            lerp_color(TREE_COMMON_COLOR, TREE_COMMON_COLOR_ALT, tint),
+            [(0.0, 1.7, 2.4), (1.0, 1.35, 2.1), (1.9, 0.95, 1.7)],
+        )
+    };
+    let canopy_base = base + Vec3::Y * (trunk_height * 0.45);
+    for (offset, radius, height) in tiers {
+        append_tree_cone(
+            foliage,
+            canopy_base + Vec3::Y * (offset * scale),
+            radius * scale,
+            height * scale,
+            color,
+        );
+    }
+}
+
+fn append_tree_trunk(buffers: &mut MeshBuffers, base: Vec3, radius: f32, height: f32) {
+    let top = base + Vec3::Y * height;
+    let top_radius = radius * 0.55;
+    let top_normal = Vec3::Y.to_array();
+    for index in 0..TREE_SIDES {
+        let angle0 = index as f32 / TREE_SIDES as f32 * TAU;
+        let angle1 = (index + 1) as f32 / TREE_SIDES as f32 * TAU;
+        let direction0 = Vec3::new(angle0.cos(), 0.0, angle0.sin());
+        let direction1 = Vec3::new(angle1.cos(), 0.0, angle1.sin());
+        let bottom0 = base + direction0 * radius;
+        let bottom1 = base + direction1 * radius;
+        let top0 = top + direction0 * top_radius;
+        let top1 = top + direction1 * top_radius;
+        let mut normal = (bottom1 - bottom0)
+            .cross(top0 - bottom0)
+            .normalize_or_zero();
+        if normal.dot(direction0 + direction1) < 0.0 {
+            normal = -normal;
+        }
+        push_quad_colored(
+            buffers,
+            [
+                bottom0.to_array(),
+                top0.to_array(),
+                top1.to_array(),
+                bottom1.to_array(),
+            ],
+            normal.to_array(),
+            TREE_TRUNK_COLOR,
+        );
+        push_triangle_colored(
+            buffers,
+            [top.to_array(), top1.to_array(), top0.to_array()],
+            top_normal,
+            TREE_TRUNK_COLOR,
+        );
+    }
+}
+
+fn append_tree_cone(
+    buffers: &mut MeshBuffers,
+    base: Vec3,
+    radius: f32,
+    height: f32,
+    color: [f32; 3],
+) {
+    let apex = base + Vec3::Y * height;
+    for index in 0..TREE_SIDES {
+        let angle0 = index as f32 / TREE_SIDES as f32 * TAU;
+        let angle1 = (index + 1) as f32 / TREE_SIDES as f32 * TAU;
+        let direction0 = Vec3::new(angle0.cos(), 0.0, angle0.sin());
+        let direction1 = Vec3::new(angle1.cos(), 0.0, angle1.sin());
+        let bottom0 = base + direction0 * radius;
+        let bottom1 = base + direction1 * radius;
+        let mut normal = (apex - bottom0)
+            .cross(bottom1 - bottom0)
+            .normalize_or_zero();
+        let radial = direction0 + direction1;
+        if normal.dot(radial) < 0.0 {
+            normal = -normal;
+        }
+        push_triangle_colored(
+            buffers,
+            [bottom0.to_array(), apex.to_array(), bottom1.to_array()],
+            normal.to_array(),
+            color,
+        );
+    }
+}
+
+fn push_quad_colored(
+    buffers: &mut MeshBuffers,
+    corners: [[f32; 3]; 4],
+    normal: [f32; 3],
+    color: [f32; 3],
+) {
+    let base = buffers.positions.len() as u32;
+    for corner in corners {
+        buffers.positions.push(corner);
+        buffers.normals.push(normal);
+        buffers.uvs.push([0.0, 0.0]);
+        buffers.colors.push(color);
+    }
+    buffers
+        .indices
+        .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+fn push_triangle_colored(
+    buffers: &mut MeshBuffers,
+    corners: [[f32; 3]; 3],
+    normal: [f32; 3],
+    color: [f32; 3],
+) {
+    let base = buffers.positions.len() as u32;
+    for corner in corners {
+        buffers.positions.push(corner);
+        buffers.normals.push(normal);
+        buffers.uvs.push([0.0, 0.0]);
+        buffers.colors.push(color);
+    }
+    buffers
+        .indices
+        .extend_from_slice(&[base, base + 1, base + 2]);
 }
 
 fn push_quad(buffers: &mut MeshBuffers, corners: [[f32; 3]; 4], normal: [f32; 3]) {
@@ -1676,7 +1880,7 @@ mod tests {
             let (half_width, _) = prop_wall_dimensions(line.kind).expect("prop wall");
             let side = line.side as f32;
             let (point, binormal) = track_frame(&points, (line.start + line.end) * 0.5);
-            let center = point + binormal * (PROP_OFFSET * side);
+            let center = point + binormal * (line.offset * side);
             let contact = |position: Vec3, radius: f32| {
                 collider.wall_contacts(
                     Vec3::new(
@@ -1830,6 +2034,8 @@ mod tests {
         assert_eq!(offset_crossings(&points, -OUTER_EDGE_RADIUS), 0);
         assert_eq!(offset_crossings(&points, PROP_OFFSET), 0);
         assert_eq!(offset_crossings(&points, -PROP_OFFSET), 0);
+        assert_eq!(offset_crossings(&points, PROP_FAR_OFFSET), 0);
+        assert_eq!(offset_crossings(&points, -PROP_FAR_OFFSET), 0);
     }
 
     #[test]
@@ -1839,6 +2045,7 @@ mod tests {
             let spacing = match line.kind {
                 PropKind::Blocks => BLOCK_SPACING,
                 PropKind::Tyres => TYRE_SPACING,
+                PropKind::Trees => TREE_SPACING,
                 PropKind::Off => continue,
             };
             let placements = prop_placements(&points, &line);
@@ -1854,29 +2061,61 @@ mod tests {
     }
 
     #[test]
+    fn tree_prop_lines_build_canopies_and_trunk_collision() {
+        let lines = [PropLine {
+            start: 10.0,
+            end: 18.0,
+            side: 1,
+            offset: PROP_FAR_OFFSET,
+            kind: PropKind::Trees,
+        }];
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&[]), Some(&lines))
+            .expect("editor track");
+        let mesh = |name: &str| {
+            track
+                .visual
+                .meshes
+                .iter()
+                .position(|mesh| mesh.name == name)
+                .and_then(|index| track.visual.mesh_buffers.get(index))
+                .unwrap_or_else(|| panic!("missing {name} mesh"))
+        };
+        assert!(!mesh("tree_trunks").positions.is_empty());
+        assert!(!mesh("tree_foliage").positions.is_empty());
+        assert!(mesh("tree_foliage").colors.len() == mesh("tree_foliage").positions.len());
+        assert!(track.collision.surface_ids.contains(&WALL_SURFACE));
+        assert!(track
+            .visual
+            .meshes
+            .iter()
+            .all(|mesh| mesh.name != "barriers" && !mesh.name.starts_with("tires_")));
+    }
+
+    #[test]
     fn fractional_prop_range_follows_the_offset_path() {
         let points = sample_track(&CONTROL_POINTS);
         let line = PropLine {
             start: 10.25,
             end: 12.75,
             side: 1,
+            offset: PROP_FAR_OFFSET,
             kind: PropKind::Blocks,
         };
         let vertices = offset_path_vertices(
             &points,
             line.start,
             line.end,
-            PROP_OFFSET * line.side as f32,
+            line.offset * line.side as f32,
         );
         assert_eq!(vertices.len(), 4);
         let (start, start_binormal) = track_frame(&points, line.start);
         let (end, end_binormal) = track_frame(&points, line.end);
-        assert!(vertices[0].distance(start + start_binormal * PROP_OFFSET) < 1e-3);
+        assert!(vertices[0].distance(start + start_binormal * line.offset) < 1e-3);
         assert!(
             vertices
                 .last()
                 .expect("end vertex")
-                .distance(end + end_binormal * PROP_OFFSET)
+                .distance(end + end_binormal * line.offset)
                 < 1e-3
         );
         assert!(!prop_placements(&points, &line).is_empty());
@@ -1911,5 +2150,7 @@ mod tests {
         assert_eq!(offset_crossings(&points, -OUTER_EDGE_RADIUS), 0);
         assert_eq!(offset_crossings(&points, PROP_OFFSET), 0);
         assert_eq!(offset_crossings(&points, -PROP_OFFSET), 0);
+        assert_eq!(offset_crossings(&points, PROP_FAR_OFFSET), 0);
+        assert_eq!(offset_crossings(&points, -PROP_FAR_OFFSET), 0);
     }
 }

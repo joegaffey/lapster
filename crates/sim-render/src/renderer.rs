@@ -188,7 +188,7 @@ struct GpuMesh {
     shadow_dynamic_base: bool,
     is_decal: bool,
     foliage: bool,
-    dither: bool,
+    track_blend: Option<f32>,
     model: Mat4,
 }
 
@@ -201,7 +201,7 @@ fn model_alpha(mesh: &GpuMesh, grass_texture_enabled: bool) -> [f32; 4] {
             0.0
         },
         if mesh.foliage { 1.0 } else { 0.0 },
-        if mesh.dither { 1.0 } else { 0.0 },
+        mesh.track_blend.unwrap_or(0.0),
     ]
 }
 
@@ -924,18 +924,37 @@ impl Renderer {
 
     pub fn set_grass_texture_enabled(&mut self, enabled: bool) {
         self.grass_texture_enabled = enabled;
-        let value = if enabled { 1.0 } else { 0.0 };
         for mesh in &self.meshes {
             if mesh.grass_texture_bind_group.is_none() {
                 continue;
             }
+            let alpha = model_alpha(mesh, enabled);
             let offset = std::mem::offset_of!(ModelUniform, alpha) as u64;
-            self.queue.write_buffer(
-                &mesh.model_buffer,
-                offset,
-                bytemuck::bytes_of(&[mesh.alpha, value, if mesh.foliage { 1.0 } else { 0.0 }, 0.0]),
-            );
+            self.queue
+                .write_buffer(&mesh.model_buffer, offset, bytemuck::bytes_of(&alpha));
         }
+    }
+
+    pub fn set_track_blend_mode(&mut self, mode: f32) {
+        let mode = mode.clamp(0.0, 3.0);
+        let grass_texture_enabled = self.grass_texture_enabled;
+        for mesh in &mut self.meshes {
+            if mesh.track_blend.is_none() {
+                continue;
+            }
+            mesh.track_blend = Some(mode);
+            let alpha = model_alpha(mesh, grass_texture_enabled);
+            let offset = std::mem::offset_of!(ModelUniform, alpha) as u64;
+            self.queue
+                .write_buffer(&mesh.model_buffer, offset, bytemuck::bytes_of(&alpha));
+        }
+    }
+
+    pub fn track_blend_mode(&self) -> f32 {
+        self.meshes
+            .iter()
+            .find_map(|mesh| mesh.track_blend)
+            .unwrap_or(0.0)
     }
 
     pub fn set_grass_shader_enabled(&mut self, enabled: bool) {
@@ -2158,14 +2177,18 @@ fn create_mesh(
     } else {
         0.0
     };
-    let dither = mesh.name.to_ascii_lowercase().contains("dither");
+    let track_blend = mesh
+        .name
+        .to_ascii_lowercase()
+        .contains("dither")
+        .then_some(1.0);
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
         alpha: [
             mesh.alpha,
             grass_texture_enabled,
             if mesh.foliage { 1.0 } else { 0.0 },
-            if dither { 1.0 } else { 0.0 },
+            track_blend.unwrap_or(0.0),
         ],
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
     };
@@ -2236,7 +2259,7 @@ fn create_mesh(
         shadow_dynamic_base: mesh.casts_dynamic_shadow,
         is_decal: mesh.is_decal,
         foliage: mesh.foliage,
-        dither,
+        track_blend,
         model: mesh.model,
     }
 }

@@ -329,6 +329,465 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
   };
 }
 
+// web/src/ui/car-setup.ts
+var number = (path, label, min, max, step, unit) => ({ path, label, min, max, step, unit });
+var json = (path, label) => ({ path, label, kind: "json" });
+var axleSections = (axle, title) => {
+  const prefix = `${axle}`;
+  return [
+    {
+      title: `${title} suspension`,
+      fields: [
+        number(`${prefix}.suspension.travel`, "Travel", 0.02, 0.5, 0.01, "m"),
+        number(`${prefix}.suspension.springRate`, "Spring rate", 5e3, 3e5, 1e3, "N/m"),
+        number(`${prefix}.suspension.damperBump`, "Bump damping", 500, 5e4, 100, "N\xB7s/m"),
+        number(`${prefix}.suspension.damperRebound`, "Rebound damping", 500, 5e4, 100, "N\xB7s/m"),
+        number(`${prefix}.suspension.antiRoll`, "Anti-roll", 0, 1e5, 500, "N/m")
+      ]
+    },
+    {
+      title: `${title} tire`,
+      fields: [
+        number(`${prefix}.tire.lateral.b`, "Lateral B", 0.5, 30, 0.1),
+        number(`${prefix}.tire.lateral.c`, "Lateral C", 0.5, 3, 0.01),
+        number(`${prefix}.tire.lateral.d`, "Lateral D", 0.1, 2.5, 0.01),
+        number(`${prefix}.tire.lateral.e`, "Lateral E", 0, 2, 0.01),
+        number(`${prefix}.tire.longitudinal.b`, "Longitudinal B", 0.5, 30, 0.1),
+        number(`${prefix}.tire.longitudinal.c`, "Longitudinal C", 0.5, 3, 0.01),
+        number(`${prefix}.tire.longitudinal.d`, "Longitudinal D", 0.1, 2.5, 0.01),
+        number(`${prefix}.tire.longitudinal.e`, "Longitudinal E", 0, 2, 0.01),
+        number(`${prefix}.tire.relaxationLength`, "Relaxation length", 0.01, 3, 0.01, "m"),
+        number(`${prefix}.tire.peakSlipRatio`, "Peak slip ratio", 0.01, 1, 0.01),
+        number(`${prefix}.tire.frictionScale`, "Friction scale", 0.1, 2, 0.01)
+      ]
+    }
+  ];
+};
+var CAR_SETUP_SECTIONS = [
+  {
+    title: "Chassis",
+    fields: [
+      number("chassis.inertia.0", "Inertia X", 50, 1e4, 10, "kg\xB7m\xB2"),
+      number("chassis.inertia.1", "Inertia Y", 50, 1e4, 10, "kg\xB7m\xB2"),
+      number("chassis.inertia.2", "Inertia Z", 50, 1e4, 10, "kg\xB7m\xB2"),
+      number("chassis.centerOfGravity.0", "CG X", -2, 2, 0.01, "m"),
+      number("chassis.centerOfGravity.1", "CG height", -2, 2, 0.01, "m"),
+      number("chassis.centerOfGravity.2", "CG Z", -2, 2, 0.01, "m")
+    ]
+  },
+  ...axleSections("front", "Front"),
+  ...axleSections("rear", "Rear"),
+  {
+    title: "Engine",
+    fields: [
+      number("engine.idleRpm", "Idle", 400, 2500, 50, "rpm"),
+      number("engine.redlineRpm", "Redline", 1500, 15e3, 100, "rpm"),
+      json("engine.torqueCurve", "Torque curve [[rpm,Nm],\u2026]")
+    ]
+  },
+  {
+    title: "Drivetrain",
+    fields: [
+      number("drivetrain.finalDrive", "Final drive", 1, 8, 0.01, ":1"),
+      json("drivetrain.gearRatios", "Gear ratios [..]")
+    ]
+  },
+  {
+    title: "Brakes",
+    fields: [
+      number("brakes.front", "Front torque", 100, 1e4, 50, "Nm"),
+      number("brakes.rear", "Rear torque", 100, 1e4, 50, "Nm")
+    ]
+  },
+  {
+    title: "Steering",
+    fields: [
+      {
+        ...number("steering.maxAngle", "Maximum lock", 5, 70, 0.5, "\xB0"),
+        factor: 180 / Math.PI
+      }
+    ]
+  },
+  {
+    title: "Aero",
+    fields: [
+      number("aero.dragCoefficient", "Drag coefficient", 0.05, 2, 0.01, "Cd"),
+      number("aero.frontalArea", "Frontal area", 0.5, 5, 0.05, "m\xB2")
+    ]
+  }
+];
+
+// web/src/ui/dev-menu.ts
+var STYLE_ID = "lapster-dev-menu-style";
+var STYLE = `
+#dev-drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 94vw);
+  padding: 0;
+  border-right: 1px solid #2a303a;
+  background: rgba(8, 10, 13, 0.98);
+  color: #e6e8eb;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  visibility: hidden;
+  transform: translateX(calc(-100% - 8px));
+  transition: transform 180ms ease, visibility 0s linear 180ms;
+  box-shadow: 18px 0 48px rgba(0, 0, 0, 0.45);
+}
+#dev-drawer.dev-open {
+  visibility: visible;
+  transform: translateX(0);
+  transition: transform 180ms ease, visibility 0s;
+}
+#dev-drawer .dev-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border-bottom: 1px solid #2a303a;
+  background: rgba(8, 10, 13, 0.98);
+}
+#dev-drawer .dev-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+#dev-drawer .dev-head h2 {
+  margin: 0;
+  color: #e6e8eb;
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+#dev-drawer .dev-badge {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid #38bdf8;
+  border-radius: 3px;
+  color: #38bdf8;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+#dev-open {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  z-index: 31;
+  min-width: 44px;
+  padding: 6px 9px;
+  border: 1px solid #3a4350;
+  border-left: 0;
+  border-radius: 0 4px 4px 0;
+  background: rgba(8, 10, 13, 0.92);
+  color: #38bdf8;
+  font: 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  opacity: 0.82;
+  transform: translateY(-50%);
+  transition: transform 180ms ease, opacity 180ms ease, visibility 0s linear 0s;
+  cursor: pointer;
+}
+#dev-open:hover { background: #151a21; opacity: 1; }
+body.dev-menu-open #dev-open {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-100%, -50%);
+  transition: transform 180ms ease, opacity 180ms ease, visibility 0s linear 180ms;
+}
+#dev-drawer button,
+#dev-drawer select,
+#dev-drawer input[type="text"] {
+  border: 1px solid #3a4350;
+  border-radius: 3px;
+  background: #151a21;
+  color: #e6e8eb;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 10px;
+}
+#dev-drawer button { cursor: pointer; }
+#dev-drawer button:hover { background: #1c2430; }
+#dev-drawer button:disabled { cursor: default; opacity: 0.55; }
+#dev-drawer details {
+  border-bottom: 1px solid #202630;
+  padding: 0 0 8px;
+}
+#dev-drawer details > summary {
+  padding: 9px 0 6px;
+  color: #8f9bab;
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  user-select: none;
+}
+#dev-drawer details details {
+  border-bottom: 1px solid #202630;
+  padding: 0 0 6px 8px;
+}
+#dev-drawer details details:last-child { border-bottom: 0; }
+#dev-drawer details details > summary {
+  padding: 7px 0 5px;
+  color: #6f7b8b;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+#dev-drawer .dev-grid {
+  display: grid;
+  gap: 6px;
+}
+#dev-drawer .dev-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+#dev-drawer .dev-field > span { min-width: 0; }
+#dev-drawer .dev-field output {
+  color: #8f9bab;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+#dev-drawer .dev-field input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  accent-color: #38bdf8;
+}
+#dev-drawer .dev-field select,
+#dev-drawer .dev-field input[type="text"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+#dev-drawer .dev-field input[type="color"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 22px;
+  padding: 1px;
+  border: 1px solid #3a4350;
+  border-radius: 3px;
+  background: #151a21;
+}
+#dev-drawer .dev-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#dev-drawer .dev-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #38bdf8;
+}
+#dev-drawer .dev-footer {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  flex: none;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid #2a303a;
+  background: rgba(8, 10, 13, 0.98);
+}
+#dev-drawer .dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#dev-drawer .dev-status {
+  margin: 0;
+  color: #8f9bab;
+  font-size: 10px;
+  line-height: 1.4;
+}
+#dev-drawer .dev-status.error { color: #f87171; }
+#dev-drawer .dev-note {
+  margin: 0;
+  padding: 0 0 4px;
+  color: #6f7b8b;
+  font-size: 10px;
+  line-height: 1.35;
+}
+#dev-drawer .dev-audio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+#dev-drawer .dev-audio span {
+  flex: 1;
+  color: #8f9bab;
+}
+@media (min-width: 900px) {
+  body.dev-menu-open #hud {
+    left: 376px;
+    width: min(400px, calc(100vw - 408px));
+  }
+  body.dev-menu-open #fps-counter { left: 376px; }
+}
+#dev-drawer .dev-subhead {
+  margin: 8px 0 2px;
+  color: #cbd5e1;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+`;
+function fieldRow(labelText, control, output) {
+  const label = document.createElement("label");
+  label.className = "dev-field";
+  const name = document.createElement("span");
+  name.textContent = labelText;
+  label.append(name);
+  if (output) {
+    label.append(output);
+  } else {
+    const spacer = document.createElement("span");
+    label.append(spacer);
+  }
+  label.append(control);
+  return label;
+}
+function addSection(host, title) {
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = title;
+  const grid = document.createElement("div");
+  grid.className = "dev-grid";
+  details.append(summary, grid);
+  host.append(details);
+  return details;
+}
+function createDevMenuShell(titleText, onOpen) {
+  if (!document.querySelector(`#${STYLE_ID}`)) {
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = STYLE;
+    document.head.append(style);
+  }
+  const openButton = document.createElement("button");
+  openButton.id = "dev-open";
+  openButton.type = "button";
+  openButton.textContent = "DEV";
+  openButton.title = "Open developer settings";
+  openButton.setAttribute("aria-label", "Open developer settings");
+  openButton.setAttribute("aria-controls", "dev-drawer");
+  openButton.setAttribute("aria-expanded", "false");
+  document.body.append(openButton);
+  const drawer = document.createElement("aside");
+  drawer.id = "dev-drawer";
+  drawer.setAttribute("aria-label", "Developer settings");
+  drawer.setAttribute("aria-hidden", "true");
+  const head = document.createElement("header");
+  head.className = "dev-head";
+  const title = document.createElement("h2");
+  title.innerHTML = `${titleText} <span class="dev-badge">DEV</span>`;
+  const closeButton = document.createElement("button");
+  closeButton.id = "dev-close";
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  head.append(title, closeButton);
+  drawer.append(head);
+  const content = document.createElement("div");
+  content.className = "dev-body";
+  drawer.append(content);
+  const status2 = document.createElement("p");
+  status2.id = "dev-status";
+  status2.className = "dev-status";
+  status2.setAttribute("aria-live", "polite");
+  status2.textContent = "Changes apply live";
+  document.body.append(drawer);
+  const isOpen = () => drawer.classList.contains("dev-open");
+  const open = () => {
+    onOpen();
+    document.body.classList.add("dev-menu-open");
+    drawer.classList.add("dev-open");
+    drawer.setAttribute("aria-hidden", "false");
+    openButton.setAttribute("aria-expanded", "true");
+  };
+  const close = () => {
+    document.body.classList.remove("dev-menu-open");
+    drawer.classList.remove("dev-open");
+    drawer.setAttribute("aria-hidden", "true");
+    openButton.setAttribute("aria-expanded", "false");
+  };
+  const toggle = () => {
+    if (isOpen()) close();
+    else open();
+  };
+  openButton.addEventListener("click", toggle);
+  closeButton.addEventListener("click", close);
+  window.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+      return;
+    }
+    if (event.key === "\\") {
+      event.preventDefault();
+      toggle();
+    } else if (event.key === "Escape" && isOpen()) {
+      event.preventDefault();
+      close();
+    }
+  });
+  return { drawer, content, status: status2, openButton, closeButton, open, close, toggle };
+}
+function setupTrackDevMenu(viewer) {
+  const shell = createDevMenuShell("Track rendering", () => {
+    refreshBlend();
+    shell.status.className = "dev-status";
+    shell.status.textContent = "Changes apply live";
+  });
+  const { drawer, content, status: status2 } = shell;
+  const refreshBlend = () => {
+    blend.value = viewer.track_blend_mode();
+  };
+  const blend = document.createElement("select");
+  blend.id = "dev-track-blend";
+  for (const [value, label] of [
+    ["dither", "Dither"],
+    ["soft", "Soft"],
+    ["hard", "Hard cut"]
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    blend.append(option);
+  }
+  blend.addEventListener("change", () => {
+    viewer.set_track_blend_mode(blend.value);
+    status2.className = "dev-status";
+    status2.textContent = "Edge blend updated";
+  });
+  const visuals = addSection(content, "Track rendering").querySelector(".dev-grid");
+  visuals.append(fieldRow("Edge blend", blend));
+  const note = document.createElement("p");
+  note.className = "dev-note";
+  note.textContent = "Dither is the shipped look. Soft blends the edge with a smooth gradient. Hard cut keeps a crisp reference edge.";
+  visuals.append(note);
+  const footer = document.createElement("div");
+  footer.className = "dev-footer";
+  footer.append(status2);
+  drawer.append(footer);
+  refreshBlend();
+  return shell;
+}
+
 // web/src/ui/hud.ts
 function setupHud() {
   const hud = document.querySelector("#hud");
@@ -354,13 +813,13 @@ function setupHud() {
 }
 
 // web/src/ui/fps.ts
-var STYLE_ID = "lapster-fps-style";
+var STYLE_ID2 = "lapster-fps-style";
 var COUNTER_ID = "fps-counter";
 var counter = null;
 var enabled = false;
 var frames = 0;
 var elapsedMs = 0;
-var STYLE = `
+var STYLE2 = `
 #fps-counter {
   position: fixed;
   top: 16px;
@@ -386,10 +845,10 @@ function ensureCounter() {
   if (counter) {
     return counter;
   }
-  if (!document.querySelector(`#${STYLE_ID}`)) {
+  if (!document.querySelector(`#${STYLE_ID2}`)) {
     const style = document.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent = STYLE;
+    style.id = STYLE_ID2;
+    style.textContent = STYLE2;
     document.head.append(style);
   }
   counter = document.createElement("div");
@@ -448,16 +907,19 @@ var CONTROL_POINT_HIT_RADIUS = 18;
 var CENTERLINE_HIT_RADIUS = 12;
 var KERB_RADIUS = 6.4;
 var PROP_OFFSET = 14;
+var PROP_FAR_OFFSET = 19;
 var GUIDE_HIT_RADIUS = 12;
 var GUIDE_HANDLE_RADIUS = 7;
 var GUIDE_HANDLE_HIT_RADIUS = 16;
-var DEFAULT_SEGMENT_LENGTH = 6;
+var DEFAULT_KERB_SEGMENT_LENGTH = 6;
+var PROP_SEGMENT_LENGTH_METERS = 3;
 var MIN_SEGMENT_LENGTH = 0.5;
 var SURFACE_COLORS = {
   0: "#33a6ff",
   1: "#33ff59",
   2: "#b35933"
 };
+var devMode = new URLSearchParams(window.location.search).has("dev") && new URLSearchParams(window.location.search).get("dev") !== "0";
 var canvas = document.querySelector("#view");
 var overlay = document.querySelector("#control-points");
 var overlayContext = overlay.getContext("2d");
@@ -469,10 +931,8 @@ var meshes = document.querySelector("#meshes");
 var fpsLabel = document.querySelector("#fps");
 var frameLabel = document.querySelector("#frame-ms");
 var drawsLabel = document.querySelector("#draws");
-var propSectionLabel = document.querySelector("#prop-section-label");
-var propKindButtons = Array.from(
-  document.querySelectorAll("[data-prop-kind]")
-);
+var propToggle = document.querySelector("#prop-toggle");
+var deleteSegmentButton = document.querySelector("#delete-segment");
 var overlayToggle = document.querySelector("#toggle-overlay");
 var testDriveButton = document.querySelector("#test-drive");
 var editorViewer;
@@ -497,6 +957,7 @@ var selectedSegment = null;
 var guideDrag = null;
 var paintKind = "blocks";
 var overlayVisible = true;
+var PROP_KINDS = ["blocks", "tyres", "trees", "off"];
 setupHud();
 var add2 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 var sub2 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -607,7 +1068,9 @@ function guideDefinitions() {
     { kind: "kerb", side: -1, radius: KERB_RADIUS, color: "#fb7185" },
     { kind: "kerb", side: 1, radius: KERB_RADIUS, color: "#fb7185" },
     { kind: "prop", side: outside, radius: PROP_OFFSET, color: "#fb923c" },
-    { kind: "prop", side: -outside, radius: PROP_OFFSET, color: "#2dd4bf" }
+    { kind: "prop", side: -outside, radius: PROP_OFFSET, color: "#2dd4bf" },
+    { kind: "prop", side: outside, radius: PROP_FAR_OFFSET, color: "#f472b6" },
+    { kind: "prop", side: -outside, radius: PROP_FAR_OFFSET, color: "#c084fc" }
   ];
 }
 function binormalAt(sample) {
@@ -693,21 +1156,27 @@ function hitGuidePoint(x, y, guides = guideDefinitions()) {
   }
   return best;
 }
-function guideFor(kind, side) {
+function sameOffset(a, b) {
+  return Math.abs(a - b) < 1e-4;
+}
+function guideFor(kind, side, offset) {
   return guideDefinitions().find(
-    (guide) => guide.kind === kind && guide.side === side
+    (guide) => guide.kind === kind && guide.side === side && (kind === "kerb" || sameOffset(guide.radius, offset))
   ) ?? null;
 }
-function findRange(kind, side, index) {
+function matchesLane(kind, range, side, offset) {
+  return range.side === side && (kind === "kerb" || sameOffset(range.offset ?? PROP_OFFSET, offset));
+}
+function findRange(kind, side, offset, index) {
   const ranges = kind === "kerb" ? kerbSpans : propLines;
   return ranges.find(
-    (range) => range.side === side && index >= range.start - 1e-4 && index <= range.end + 1e-4
+    (range) => matchesLane(kind, range, side, offset) && index >= range.start - 1e-4 && index <= range.end + 1e-4
   ) ?? null;
 }
-function findRangeExact(kind, side, start, end) {
+function findRangeExact(kind, side, offset, start, end) {
   const ranges = kind === "kerb" ? kerbSpans : propLines;
   return ranges.find(
-    (range) => range.side === side && Math.abs(range.start - start) < 1e-4 && Math.abs(range.end - end) < 1e-4
+    (range) => matchesLane(kind, range, side, offset) && Math.abs(range.start - start) < 1e-4 && Math.abs(range.end - end) < 1e-4
   ) ?? null;
 }
 function selectedPropLine() {
@@ -715,7 +1184,12 @@ function selectedPropLine() {
     return void 0;
   }
   return propLines.find(
-    (line) => line.side === selectedSegment.side && Math.abs(line.start - selectedSegment.start) < 1e-4 && Math.abs(line.end - selectedSegment.end) < 1e-4
+    (line) => matchesLane(
+      "prop",
+      line,
+      selectedSegment.side,
+      selectedSegment.offset
+    ) && Math.abs(line.start - selectedSegment.start) < 1e-4 && Math.abs(line.end - selectedSegment.end) < 1e-4
   );
 }
 function resolveSelection() {
@@ -725,24 +1199,29 @@ function resolveSelection() {
   const range = findRangeExact(
     selectedSegment.kind,
     selectedSegment.side,
+    selectedSegment.offset,
     selectedSegment.start,
     selectedSegment.end
   ) ?? findRange(
     selectedSegment.kind,
     selectedSegment.side,
+    selectedSegment.offset,
     (selectedSegment.start + selectedSegment.end) * 0.5
   );
   if (range) {
     selectedSegment.start = range.start;
     selectedSegment.end = range.end;
+    if (range.offset !== void 0) {
+      selectedSegment.offset = range.offset;
+    }
   } else {
     selectedSegment = null;
   }
 }
-function subtractRanges(items, side, start, end) {
+function subtractRanges(items, kind, side, offset, start, end) {
   const result = [];
   for (const item of items) {
-    if (item.side !== side || item.end <= start || item.start >= end) {
+    if (!matchesLane(kind, item, side, offset) || item.end <= start || item.start >= end) {
       result.push(item);
     } else {
       if (item.start < start) {
@@ -755,20 +1234,21 @@ function subtractRanges(items, side, start, end) {
   }
   return result;
 }
-function selectSegment(kind, side, index) {
-  const range = findRange(kind, side, index);
+function selectSegment(kind, side, offset, index) {
+  const range = findRange(kind, side, offset, index);
   if (!range) {
     return false;
   }
   selectedSegment = {
     kind,
     side,
+    offset: range.offset ?? offset,
     start: range.start,
     end: range.end
   };
   if (kind === "prop") {
     const line = propLines.find(
-      (item) => item.side === range.side && Math.abs(item.start - range.start) < 1e-4 && Math.abs(item.end - range.end) < 1e-4
+      (item) => matchesLane("prop", item, range.side, offset) && Math.abs(item.start - range.start) < 1e-4 && Math.abs(item.end - range.end) < 1e-4
     );
     if (line) {
       paintKind = line.kind;
@@ -777,25 +1257,55 @@ function selectSegment(kind, side, index) {
   syncPaintControls();
   return true;
 }
+function propSegmentLength() {
+  const count = centerline.length;
+  if (count < 2) {
+    return MIN_SEGMENT_LENGTH;
+  }
+  let perimeter = 0;
+  for (let index = 0; index < count; index += 1) {
+    const point = centerline[index];
+    const next = centerline[(index + 1) % count];
+    perimeter += Math.hypot(
+      next[0] - point[0],
+      next[1] - point[1],
+      next[2] - point[2]
+    );
+  }
+  const sampleSpacing = perimeter / count;
+  return Math.max(
+    MIN_SEGMENT_LENGTH,
+    PROP_SEGMENT_LENGTH_METERS / Math.max(sampleSpacing, 1e-4)
+  );
+}
 function createSegment(guide, index) {
   const count = centerline.length;
   if (guide.kind === "prop" && paintKind === "off") {
-    flashStatus("Choose Blocks or Tyres to add props");
+    flashStatus("Choose a prop type to add props");
     return;
   }
-  const length2 = Math.min(DEFAULT_SEGMENT_LENGTH, count);
+  const defaultLength = guide.kind === "prop" ? propSegmentLength() : DEFAULT_KERB_SEGMENT_LENGTH;
+  const length2 = Math.min(defaultLength, count);
   const start = Math.max(0, Math.min(count - length2, index - length2 * 0.5));
   const end = Math.min(count, start + length2);
   if (end - start < MIN_SEGMENT_LENGTH) {
     return;
   }
   if (guide.kind === "kerb") {
-    kerbSpans = subtractRanges(kerbSpans, guide.side, start, end);
+    kerbSpans = subtractRanges(
+      kerbSpans,
+      "kerb",
+      guide.side,
+      guide.radius,
+      start,
+      end
+    );
     kerbSpans.push({ start, end, side: guide.side });
     kerbSpans.sort((a, b) => a.side - b.side || a.start - b.start);
     selectedSegment = {
       kind: "kerb",
       side: guide.side,
+      offset: guide.radius,
       start,
       end
     };
@@ -805,17 +1315,28 @@ function createSegment(guide, index) {
     void rebuildKerbSpans();
     return;
   }
-  propLines = subtractRanges(propLines, guide.side, start, end);
+  propLines = subtractRanges(
+    propLines,
+    "prop",
+    guide.side,
+    guide.radius,
+    start,
+    end
+  );
   propLines.push({
     start,
     end,
     side: guide.side,
+    offset: guide.radius,
     kind: paintKind
   });
-  propLines.sort((a, b) => a.side - b.side || a.start - b.start);
+  propLines.sort(
+    (a, b) => a.side - b.side || a.offset - b.offset || a.start - b.start
+  );
   selectedSegment = {
     kind: "prop",
     side: guide.side,
+    offset: guide.radius,
     start,
     end
   };
@@ -833,6 +1354,7 @@ function updateSelectedEdge(edge, index) {
   const range = findRangeExact(
     selectedSegment.kind,
     selectedSegment.side,
+    selectedSegment.offset,
     oldStart,
     oldEnd
   );
@@ -857,7 +1379,11 @@ function hitGuideHandle(x, y) {
   if (!selectedSegment) {
     return null;
   }
-  const guide = guideFor(selectedSegment.kind, selectedSegment.side);
+  const guide = guideFor(
+    selectedSegment.kind,
+    selectedSegment.side,
+    selectedSegment.offset
+  );
   const camera = currentCamera();
   if (!guide || !camera) {
     return null;
@@ -881,17 +1407,44 @@ function hitGuideHandle(x, y) {
   return best;
 }
 function paintLabel(kind) {
-  if (kind === "blocks") {
-    return "Blocks";
+  switch (kind) {
+    case "blocks":
+      return "Blocks";
+    case "tyres":
+      return "Tyres";
+    case "trees":
+      return "Trees";
+    default:
+      return "Off";
   }
-  return kind === "tyres" ? "Tyres" : "Off";
 }
 function syncPaintControls() {
-  propSectionLabel.textContent = `Painting: ${paintLabel(paintKind)}`;
-  for (const button of propKindButtons) {
-    button.disabled = false;
-    button.classList.toggle("active", button.dataset.propKind === paintKind);
+  propToggle.textContent = `Prop: ${paintLabel(paintKind)}`;
+  deleteSegmentButton.disabled = selectedSegment === null;
+}
+function deleteSelectedSegment() {
+  if (!selectedSegment || rebuilding) {
+    return;
   }
+  const { kind, side, offset, start, end } = selectedSegment;
+  selectedSegment = null;
+  hoverPoint = null;
+  hoverHandleEdge = null;
+  if (kind === "kerb") {
+    kerbSpans = kerbSpans.filter(
+      (span) => !(span.side === side && Math.abs(span.start - start) < 1e-4 && Math.abs(span.end - end) < 1e-4)
+    );
+    syncPaintControls();
+    drawControlPoints();
+    void rebuildKerbSpans();
+    return;
+  }
+  propLines = propLines.filter(
+    (line) => !(matchesLane("prop", line, side, offset) && Math.abs(line.start - start) < 1e-4 && Math.abs(line.end - end) < 1e-4)
+  );
+  syncPaintControls();
+  drawControlPoints();
+  void rebuildPropLines();
 }
 function setPaintKind(kind) {
   paintKind = kind;
@@ -949,6 +1502,7 @@ function updateHover() {
     canvas.style.cursor = findRange(
       point.guide.kind,
       point.guide.side,
+      point.guide.radius,
       point.index
     ) ? "pointer" : "copy";
     return;
@@ -1109,11 +1663,15 @@ function drawControlPoints() {
     overlayContext.restore();
   };
   const guides = guideDefinitions();
-  const selectedGuide = selectedSegment ? guideFor(selectedSegment.kind, selectedSegment.side) : null;
-  const draggedGuide = guideDrag ? guideFor(guideDrag.kind, guideDrag.side) : null;
+  const selectedGuide = selectedSegment ? guideFor(
+    selectedSegment.kind,
+    selectedSegment.side,
+    selectedSegment.offset
+  ) : null;
+  const draggedGuide = guideDrag ? guideFor(guideDrag.kind, guideDrag.side, guideDrag.offset) : null;
   const activeGuide = draggedGuide ?? hoverPoint?.guide ?? selectedGuide;
   for (const guide of guides) {
-    const active = activeGuide?.kind === guide.kind && activeGuide.side === guide.side;
+    const active = activeGuide?.kind === guide.kind && activeGuide.side === guide.side && (guide.kind === "kerb" || sameOffset(activeGuide.radius, guide.radius));
     drawGuide(guidePoints(guide), guide.color, active);
   }
   if (hoverPoint) {
@@ -1358,6 +1916,7 @@ canvas.addEventListener(
           guideDrag = {
             kind: selectedSegment.kind,
             side: selectedSegment.side,
+            offset: selectedSegment.offset,
             edge: handle.edge,
             pointerId: event.pointerId
           };
@@ -1376,7 +1935,12 @@ canvas.addEventListener(
           event.preventDefault();
           event.stopImmediatePropagation();
           cameraDragging = false;
-          if (selectSegment(point.guide.kind, point.guide.side, point.index)) {
+          if (selectSegment(
+            point.guide.kind,
+            point.guide.side,
+            point.guide.radius,
+            point.index
+          )) {
             hoverPoint = point;
             drawControlPoints();
           } else {
@@ -1430,7 +1994,11 @@ window.addEventListener(
   (event) => {
     if (guideDrag && event.pointerId === guideDrag.pointerId) {
       event.preventDefault();
-      const guide = guideFor(guideDrag.kind, guideDrag.side);
+      const guide = guideFor(
+        guideDrag.kind,
+        guideDrag.side,
+        guideDrag.offset
+      );
       if (guide) {
         const [x2, y2] = pointerPosition(event);
         const point = hitGuidePoint(x2, y2, [guide]);
@@ -1497,6 +2065,15 @@ canvas.addEventListener("pointerleave", () => {
   drawControlPoints();
 });
 window.addEventListener("keydown", (event) => {
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+    return;
+  }
+  if ((event.key === "Delete" || event.key === "Backspace") && selectedSegment && !guideDrag) {
+    event.preventDefault();
+    deleteSelectedSegment();
+    return;
+  }
   if (event.key === "Shift") {
     setDeleteMode(true);
   }
@@ -1516,14 +2093,13 @@ window.addEventListener("keyup", (event) => {
 window.addEventListener("blur", () => {
   setDeleteMode(false);
 });
-for (const button of propKindButtons) {
-  button.addEventListener("click", () => {
-    const kind = button.dataset.propKind;
-    if (kind) {
-      setPaintKind(kind);
-    }
-  });
-}
+propToggle.addEventListener("click", () => {
+  const index = PROP_KINDS.indexOf(paintKind);
+  setPaintKind(PROP_KINDS[(index + 1) % PROP_KINDS.length]);
+});
+deleteSegmentButton.addEventListener("click", () => {
+  deleteSelectedSegment();
+});
 overlayToggle.addEventListener("click", () => {
   setOverlayVisible(!overlayVisible);
 });
@@ -1601,6 +2177,9 @@ async function boot() {
   const viewer = await TrackViewer.create_editor(canvas);
   editorViewer = viewer;
   window.__trackEditor = viewer;
+  if (devMode) {
+    setupTrackDevMenu(viewer);
+  }
   controlPoints = JSON.parse(viewer.editor_control_points());
   centerline = JSON.parse(viewer.editor_centerline());
   kerbSpans = JSON.parse(viewer.editor_kerb_spans()).sort((a, b) => a.start - b.start);

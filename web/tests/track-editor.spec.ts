@@ -31,9 +31,10 @@ async function projectGuideIndex(
   page: Page,
   side: number,
   index: number,
+  radius = 6.4,
 ): Promise<[number, number] | null> {
   const projected = await page.evaluate(
-    ({ side, index }) => {
+    ({ side, index, radius }) => {
       const viewer = (window as any).__trackEditor;
       const canvas = document.querySelector("#view") as HTMLCanvasElement;
       const centerline = JSON.parse(viewer.editor_centerline()) as number[][];
@@ -92,7 +93,7 @@ async function projectGuideIndex(
       const t = position - Math.floor(position);
       const point = lerp(centerline[base], centerline[next], t);
       const binormal = normalize(lerp(binormalAt(base), binormalAt(next), t));
-      const guide = add(point, scale(binormal, 6.4 * side));
+      const guide = add(point, scale(binormal, radius * side));
       const eye = camera.eye;
       const forward = normalize(sub(camera.target, eye));
       const right = normalize(cross(forward, [0, 1, 0]));
@@ -110,7 +111,7 @@ async function projectGuideIndex(
       const ndcY = dot(offset, up) / (depth * tanHalf);
       return [(ndcX * 0.5 + 0.5) * width, (0.5 - ndcY * 0.5) * height];
     },
-    { side, index },
+    { side, index, radius },
   );
   return projected as [number, number] | null;
 }
@@ -152,6 +153,7 @@ test("track editor renders the procedural example track", async ({ page }) => {
     let pink = 0;
     let orange = 0;
     let teal = 0;
+    let purple = 0;
     for (let index = 0; index < pixels.length; index += 4) {
       const red = pixels[index];
       const green = pixels[index + 1];
@@ -164,9 +166,11 @@ test("track editor renders the procedural example track", async ({ page }) => {
         orange += 1;
       } else if (red < 100 && green > 170 && blue > 150) {
         teal += 1;
+      } else if (red > 160 && red < 220 && green > 90 && green < 170 && blue > 220) {
+        purple += 1;
       }
     }
-    return { pink, orange, teal };
+    return { pink, orange, teal, purple };
   });
 
   expect(state.error).toBeUndefined();
@@ -174,6 +178,7 @@ test("track editor renders the procedural example track", async ({ page }) => {
   expect(kerbHandlePixels.pink).toBeGreaterThan(20);
   expect(kerbHandlePixels.orange).toBeGreaterThan(20);
   expect(kerbHandlePixels.teal).toBeGreaterThan(20);
+  expect(kerbHandlePixels.purple).toBeGreaterThan(20);
   expect(state.status).toBe("ready");
   expect(state.debug.asset.id).toBe("procedural-drift-loop");
   expect(state.debug.stats.vertices).toBeGreaterThan(5000);
@@ -334,6 +339,285 @@ test("prop sections can switch between blocks, tyres, and off", async ({ page })
   expect(result.after[0].kind).toBe("off");
   expect(result.after[1].kind).toBe("tyres");
   expect(result.afterVertices).toBeLessThan(result.beforeVertices);
+  expect(pageErrors).toEqual([]);
+});
+
+test("prop sections can paint trees", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=prop-trees");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const result = await page.evaluate(async () => {
+    const viewer = (window as any).__trackEditor;
+    const before = JSON.parse(viewer.editor_prop_lines()) as Array<{
+      start: number;
+      end: number;
+      side: number;
+      offset: number;
+      kind: string;
+    }>;
+    const changed = before.map((line, index) =>
+      index === 0 ? { ...line, kind: "trees", offset: 19 } : line,
+    );
+    const requestFrame = window.requestAnimationFrame;
+    window.requestAnimationFrame = () => 0;
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    try {
+      await viewer.set_editor_prop_lines(JSON.stringify(changed));
+    } finally {
+      window.requestAnimationFrame = requestFrame;
+    }
+    const after = JSON.parse(viewer.editor_prop_lines()) as Array<{
+      start: number;
+      end: number;
+      side: number;
+      offset: number;
+      kind: string;
+    }>;
+    const meshes = JSON.parse(viewer.debug_info()).meshes as Array<{
+      name: string;
+      vertices: number;
+    }>;
+    return {
+      before,
+      after,
+      trees: meshes.filter((mesh) => mesh.name.startsWith("tree_")),
+    };
+  });
+
+  expect(result.before[0].kind).toBe("blocks");
+  expect(result.before.every((line) => line.offset === 14)).toBe(true);
+  expect(result.after[0].kind).toBe("trees");
+  expect(result.after[0].offset).toBe(19);
+  expect(result.trees.map((mesh) => mesh.name)).toEqual([
+    "tree_trunks",
+    "tree_foliage",
+  ]);
+  expect(result.trees.every((mesh) => mesh.vertices > 0)).toBe(true);
+  expect(pageErrors).toEqual([]);
+});
+
+test("prop type is a single toggle in the main controls", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=prop-toggle");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const toggle = page.locator("#prop-toggle");
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveText("Prop: Blocks");
+  await expect(page.locator("#hud [data-prop-kind]")).toHaveCount(0);
+  await expect(page.locator("#prop-section-label")).toHaveCount(0);
+
+  await toggle.click();
+  await expect(toggle).toHaveText("Prop: Tyres");
+  await toggle.click();
+  await expect(toggle).toHaveText("Prop: Trees");
+  await toggle.click();
+  await expect(toggle).toHaveText("Prop: Off");
+  await toggle.click();
+  await expect(toggle).toHaveText("Prop: Blocks");
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("new prop segments span about three metres", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=prop-short");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const index = 75;
+  const point = await projectGuideIndex(page, 1, index, 19);
+  expect(point).not.toBeNull();
+  await page.mouse.click(point![0], point![1]);
+
+  await page.waitForFunction(
+    ({ index }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const viewer = (window as any).__trackEditor;
+      const lines = JSON.parse(viewer.editor_prop_lines()) as Array<{
+        start: number;
+        end: number;
+        offset: number;
+      }>;
+      return lines.some(
+        (line) =>
+          Math.abs(line.offset - 19) < 1e-4 &&
+          line.start < index &&
+          line.end > index,
+      );
+    },
+    { index },
+    { timeout: 15_000 },
+  );
+
+  const result = await page.evaluate(
+    ({ index }) => {
+      const viewer = (window as any).__trackEditor;
+      const lines = JSON.parse(viewer.editor_prop_lines()) as Array<{
+        start: number;
+        end: number;
+        side: number;
+        offset: number;
+        kind: string;
+      }>;
+      const centerline = JSON.parse(viewer.editor_centerline()) as number[][];
+      let perimeter = 0;
+      for (let point = 0; point < centerline.length; point += 1) {
+        const current = centerline[point];
+        const next = centerline[(point + 1) % centerline.length];
+        perimeter += Math.hypot(
+          next[0] - current[0],
+          next[1] - current[1],
+          next[2] - current[2],
+        );
+      }
+      return {
+        lines,
+        sampleSpacing: perimeter / centerline.length,
+        created: lines.find(
+          (line) =>
+            Math.abs(line.offset - 19) < 1e-4 &&
+            line.start < index &&
+            line.end > index,
+        ),
+      };
+    },
+    { index },
+  );
+  expect(result.created, JSON.stringify(result.lines)).toBeTruthy();
+  const created = result.created;
+  const length = (created?.end ?? 0) - (created?.start ?? 0);
+  const metres = length * result.sampleSpacing;
+  expect(metres).toBeGreaterThan(2.5);
+  expect(metres).toBeLessThan(3.5);
+  expect(pageErrors).toEqual([]);
+});
+
+test("delete key and button remove the selected segment", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=segment-delete");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const deleteButton = page.locator("#delete-segment");
+  await expect(deleteButton).toBeDisabled();
+
+  const gap = await findKerbGap(page);
+  expect(gap.error).toBeUndefined();
+  const side = gap.side!;
+  const index = gap.index!;
+  const kerbPoint = await projectGuideIndex(page, side, index);
+  expect(kerbPoint).not.toBeNull();
+  await page.mouse.click(kerbPoint![0], kerbPoint![1]);
+  await page.waitForFunction(
+    ({ side, index }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const spans = JSON.parse(
+        (window as any).__trackEditor.editor_kerb_spans(),
+      ) as Array<{ start: number; end: number; side: number }>;
+      return spans.some(
+        (span) => span.side === side && span.start < index && span.end > index,
+      );
+    },
+    { side, index },
+    { timeout: 15_000 },
+  );
+  await expect(deleteButton).toBeEnabled();
+  await deleteButton.click();
+  await page.waitForFunction(
+    ({ side, index }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const spans = JSON.parse(
+        (window as any).__trackEditor.editor_kerb_spans(),
+      ) as Array<{ start: number; end: number; side: number }>;
+      return !spans.some(
+        (span) => span.side === side && span.start < index && span.end > index,
+      );
+    },
+    { side, index },
+    { timeout: 15_000 },
+  );
+  await expect(deleteButton).toBeDisabled();
+
+  const propIndex = 75;
+  const propPoint = await projectGuideIndex(page, 1, propIndex, 19);
+  expect(propPoint).not.toBeNull();
+  await page.mouse.click(propPoint![0], propPoint![1]);
+  await page.waitForFunction(
+    ({ index }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const lines = JSON.parse(
+        (window as any).__trackEditor.editor_prop_lines(),
+      ) as Array<{ start: number; end: number; offset: number }>;
+      return lines.some(
+        (line) =>
+          Math.abs(line.offset - 19) < 1e-4 &&
+          line.start < index &&
+          line.end > index,
+      );
+    },
+    { index: propIndex },
+    { timeout: 15_000 },
+  );
+  await expect(deleteButton).toBeEnabled();
+  await page.keyboard.press("Delete");
+  await page.waitForFunction(
+    () => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const lines = JSON.parse(
+        (window as any).__trackEditor.editor_prop_lines(),
+      ) as Array<{ offset: number }>;
+      return !lines.some((line) => Math.abs(line.offset - 19) < 1e-4);
+    },
+    undefined,
+    { timeout: 15_000 },
+  );
+  await expect(deleteButton).toBeDisabled();
   expect(pageErrors).toEqual([]);
 });
 

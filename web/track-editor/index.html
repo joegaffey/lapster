@@ -103,28 +103,6 @@
         gap: 1px 12px;
         margin: 0;
       }
-      .prop-type-buttons {
-        display: flex;
-        gap: 6px;
-        margin: 4px 0 6px;
-      }
-      .prop-type-buttons button {
-        flex: 1;
-        padding: 3px 6px;
-        border: 1px solid #2a303a;
-        background: #11161d;
-        color: #e6e8eb;
-        font: inherit;
-        cursor: pointer;
-      }
-      .prop-type-buttons button.active {
-        border-color: #fbbf24;
-        color: #fbbf24;
-      }
-      .prop-type-buttons button:disabled {
-        opacity: 0.45;
-        cursor: default;
-      }
       dt {
         color: #8f9bab;
       }
@@ -250,6 +228,12 @@
     <nav id="viewer-controls" aria-label="Editor controls">
       <a href="../">Exit</a>
       <button id="test-drive" type="button" disabled>Test drive</button>
+      <button id="prop-toggle" type="button" title="Cycle the prop type to paint">
+        Prop: Blocks
+      </button>
+      <button id="delete-segment" type="button" disabled title="Delete the selected kerb or prop segment">
+        Delete segment
+      </button>
       <button id="reset-camera" type="button">Reset camera</button>
       <button
         id="toggle-overlay"
@@ -291,15 +275,7 @@
       <p class="muted">Drag the numbered markers to reshape the track. Release to rebuild. Hold Shift and click a marker to delete it.</p>
 
       <h2>Guide lines</h2>
-      <p class="muted">Continuous light dotted lines show both kerb edges plus the outside and inside prop lines. Click an empty guide to create a short segment, then drag its start or end handle along the spline. Click an existing segment to select it.</p>
-
-      <h2>Prop type</h2>
-      <p class="muted" id="prop-section-label">Painting: Blocks</p>
-      <div class="prop-type-buttons">
-        <button type="button" data-prop-kind="blocks">Blocks</button>
-        <button type="button" data-prop-kind="tyres">Tyres</button>
-        <button type="button" data-prop-kind="off">Off</button>
-      </div>
+      <p class="muted">Continuous light dotted lines show both kerb edges plus near and far prop lines on the outside and inside. Paint far lines with trees to place them behind the near barriers. Use the Prop button in the top menu to cycle what you paint. Click an empty guide to create a short segment, then drag its start or end handle along the spline. Click an existing segment to select it.</p>
 
       <h2>Camera</h2>
       <p class="muted">Drag empty space to orbit · right/shift-drag to pan · wheel or pinch to zoom</p>

@@ -252,3 +252,41 @@ test("GPU tuning persists across a reload", async ({ page }) => {
       actualBakedHalfExtent: 60,
     });
 });
+
+test("track editor dev menu switches the edge blend mode", async ({ page }) => {
+  await page.goto("/web/track-editor/?dev=1&v=track-dev-blend");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const drawer = page.locator("#dev-drawer");
+  const sideButton = page.locator("#dev-open");
+  await expect(drawer).not.toHaveClass(/dev-open/);
+  await expect(sideButton).toBeVisible();
+  await sideButton.click();
+  await expect(drawer).toHaveClass(/dev-open/);
+
+  const mode = () =>
+    page.evaluate(() => (window as any).__trackEditor.track_blend_mode());
+  await drawer.locator("summary", { hasText: "Track rendering" }).click();
+  await expect.poll(mode).toBe("dither");
+
+  const blend = page.locator("#dev-track-blend");
+  await blend.selectOption("soft");
+  await expect.poll(mode).toBe("soft");
+
+  await blend.selectOption("hard");
+  await expect.poll(mode).toBe("hard");
+
+  await page.evaluate(async () => {
+    const viewer = (window as any).__trackEditor;
+    const spans = JSON.parse(viewer.editor_kerb_spans());
+    await viewer.set_editor_kerb_spans(JSON.stringify(spans));
+  });
+  await expect.poll(mode).toBe("hard");
+
+  await blend.selectOption("dither");
+  await expect.poll(mode).toBe("dither");
+});

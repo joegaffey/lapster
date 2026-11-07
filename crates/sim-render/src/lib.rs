@@ -55,6 +55,7 @@ pub struct TrackViewer {
     editor_control_points: Option<Vec<[f32; 3]>>,
     editor_kerb_spans: Vec<track_editor::KerbSpan>,
     editor_prop_lines: Vec<track_editor::PropLine>,
+    track_blend: f32,
 }
 
 #[wasm_bindgen]
@@ -226,6 +227,7 @@ impl TrackViewer {
             editor_control_points: None,
             editor_kerb_spans: Vec::new(),
             editor_prop_lines: Vec::new(),
+            track_blend: 1.0,
         })
     }
 
@@ -269,6 +271,27 @@ impl TrackViewer {
 
     pub fn editor_prop_lines(&self) -> String {
         serde_json::to_string(&self.editor_prop_lines).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn set_track_blend_mode(&mut self, mode: &str) -> Result<(), JsValue> {
+        self.track_blend = match mode {
+            "off" => 0.0,
+            "dither" => 1.0,
+            "soft" => 2.0,
+            "hard" => 3.0,
+            _ => return Err(JsValue::from_str("expected off, dither, soft, or hard")),
+        };
+        self.renderer.set_track_blend_mode(self.track_blend);
+        Ok(())
+    }
+
+    pub fn track_blend_mode(&self) -> String {
+        match self.renderer.track_blend_mode() {
+            mode if mode > 2.5 => "hard".to_string(),
+            mode if mode > 1.5 => "soft".to_string(),
+            mode if mode > 0.5 => "dither".to_string(),
+            _ => "off".to_string(),
+        }
     }
 
     pub fn editor_track_pack(&self) -> Result<Vec<u8>, JsValue> {
@@ -369,6 +392,7 @@ impl TrackViewer {
         renderer.set_baked_region(collision_center, region_half, ground_y);
         renderer.set_shadow_focus(camera.target, TRACK_SHADOW_EXTENT);
         renderer.set_grass_center_xz(camera.eye[0], camera.eye[2]);
+        renderer.set_track_blend_mode(self.track_blend);
         renderer.set_camera(camera);
         self.renderer = renderer;
         self.debug_info = debug_info;

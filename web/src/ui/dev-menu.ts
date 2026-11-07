@@ -58,10 +58,23 @@ interface DevMenuOptions {
   applyAudio?(tuning: any): void;
 }
 
+export interface TrackDevMenuViewer {
+  track_blend_mode(): string;
+  set_track_blend_mode(mode: string): void;
+}
+
 export interface DevMenu {
   open(): void;
   close(): void;
   toggle(): void;
+}
+
+interface DevMenuShell extends DevMenu {
+  drawer: HTMLDivElement;
+  content: HTMLDivElement;
+  status: HTMLParagraphElement;
+  openButton: HTMLButtonElement;
+  closeButton: HTMLButtonElement;
 }
 
 const STYLE_ID = "lapster-dev-menu-style";
@@ -382,7 +395,7 @@ function addSection(host: HTMLElement, title: string): HTMLDetailsElement {
   return details;
 }
 
-export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): DevMenu {
+function createDevMenuShell(titleText: string, onOpen: () => void): DevMenuShell {
   if (!document.querySelector(`#${STYLE_ID}`)) {
     const style = document.createElement("style");
     style.id = STYLE_ID;
@@ -408,7 +421,7 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
   const head = document.createElement("header");
   head.className = "dev-head";
   const title = document.createElement("h2");
-  title.innerHTML = 'Developer settings <span class="dev-badge">DEV</span>';
+  title.innerHTML = `${titleText} <span class="dev-badge">DEV</span>`;
   const closeButton = document.createElement("button");
   closeButton.id = "dev-close";
   closeButton.type = "button";
@@ -424,6 +437,64 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
   status.className = "dev-status";
   status.setAttribute("aria-live", "polite");
   status.textContent = "Changes apply live";
+
+  document.body.append(drawer);
+
+  const isOpen = () => drawer.classList.contains("dev-open");
+  const open = () => {
+    onOpen();
+    document.body.classList.add("dev-menu-open");
+    drawer.classList.add("dev-open");
+    drawer.setAttribute("aria-hidden", "false");
+    openButton.setAttribute("aria-expanded", "true");
+  };
+  const close = () => {
+    document.body.classList.remove("dev-menu-open");
+    drawer.classList.remove("dev-open");
+    drawer.setAttribute("aria-hidden", "true");
+    openButton.setAttribute("aria-expanded", "false");
+  };
+  const toggle = () => {
+    if (isOpen()) close();
+    else open();
+  };
+
+  openButton.addEventListener("click", toggle);
+  closeButton.addEventListener("click", close);
+  window.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "SELECT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    if (event.key === "\\") {
+      event.preventDefault();
+      toggle();
+    } else if (event.key === "Escape" && isOpen()) {
+      event.preventDefault();
+      close();
+    }
+  });
+
+  return { drawer, content, status, openButton, closeButton, open, close, toggle };
+}
+
+export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): DevMenu {
+  const shell = createDevMenuShell("Developer settings", () => {
+    refreshSettings();
+    refreshView();
+    refreshAudio();
+    refreshTuning();
+    refreshCarSetup();
+    status.className = "dev-status";
+    status.textContent = "Changes apply live";
+  });
+  const { drawer, content, status } = shell;
 
   let current = options.settings.get();
   let carSetup: any = JSON.parse(viewer.car_setup());
@@ -1075,56 +1146,54 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
   footer.append(restartActions, actions, status);
   drawer.append(footer);
 
-  document.body.append(drawer);
+  return shell;
+}
 
-  const isOpen = () => drawer.classList.contains("dev-open");
-  const open = () => {
-    refreshSettings();
-    refreshView();
-    refreshAudio();
-    refreshTuning();
-    refreshCarSetup();
-    document.body.classList.add("dev-menu-open");
-    drawer.classList.add("dev-open");
-    drawer.setAttribute("aria-hidden", "false");
-    openButton.setAttribute("aria-expanded", "true");
+export function setupTrackDevMenu(viewer: TrackDevMenuViewer): DevMenu {
+  const shell = createDevMenuShell("Track rendering", () => {
+    refreshBlend();
+    shell.status.className = "dev-status";
+    shell.status.textContent = "Changes apply live";
+  });
+  const { drawer, content, status } = shell;
+
+  const refreshBlend = () => {
+    blend.value = viewer.track_blend_mode();
+  };
+
+  const blend = document.createElement("select");
+  blend.id = "dev-track-blend";
+  for (const [value, label] of [
+    ["dither", "Dither"],
+    ["soft", "Soft"],
+    ["hard", "Hard cut"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    blend.append(option);
+  }
+  blend.addEventListener("change", () => {
+    viewer.set_track_blend_mode(blend.value);
     status.className = "dev-status";
-    status.textContent = "Changes apply live";
-  };
-  const close = () => {
-    document.body.classList.remove("dev-menu-open");
-    drawer.classList.remove("dev-open");
-    drawer.setAttribute("aria-hidden", "true");
-    openButton.setAttribute("aria-expanded", "false");
-  };
-  const toggle = () => {
-    if (isOpen()) close();
-    else open();
-  };
-
-  openButton.addEventListener("click", toggle);
-  closeButton.addEventListener("click", close);
-  window.addEventListener("keydown", (event) => {
-    const target = event.target;
-    if (
-      target instanceof HTMLElement &&
-      (target.tagName === "INPUT" ||
-        target.tagName === "SELECT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable)
-    ) {
-      return;
-    }
-    if (event.key === "\\") {
-      event.preventDefault();
-      toggle();
-    } else if (event.key === "Escape" && isOpen()) {
-      event.preventDefault();
-      close();
-    }
+    status.textContent = "Edge blend updated";
   });
 
-  return { open, close, toggle };
+  const visuals = addSection(content, "Track rendering").querySelector(".dev-grid")!;
+  visuals.append(fieldRow("Edge blend", blend));
+  const note = document.createElement("p");
+  note.className = "dev-note";
+  note.textContent =
+    "Dither is the shipped look. Soft blends the edge with a smooth gradient. Hard cut keeps a crisp reference edge.";
+  visuals.append(note);
+
+  const footer = document.createElement("div");
+  footer.className = "dev-footer";
+  footer.append(status);
+  drawer.append(footer);
+
+  refreshBlend();
+  return shell;
 }
 
 function findSetupField(path: string): CarSetupField | undefined {
