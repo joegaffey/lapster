@@ -1,5 +1,22 @@
 import { defineConfig } from "@playwright/test";
 
+const fastArgs = [
+  "--enable-unsafe-webgpu",
+  "--enable-features=Vulkan",
+  "--use-angle=swiftshader",
+  "--enable-unsafe-swiftshader",
+  "--disable-dev-shm-usage",
+];
+
+const trackEditorArgs = process.env.CI
+  ? [
+      "--use-gl=angle",
+      "--use-angle=swiftshader-webgl",
+      "--enable-unsafe-swiftshader",
+      "--disable-dev-shm-usage",
+    ]
+  : fastArgs;
+
 export default defineConfig({
   testDir: "./tests",
   testMatch: /.*\.spec\.ts/,
@@ -11,21 +28,19 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:8123",
     viewport: { width: 1280, height: 720 },
-    launchOptions: {
-      args: process.env.CI
-        ? [
-            "--use-gl=angle",
-            "--use-angle=swiftshader-webgl",
-            "--enable-unsafe-swiftshader",
-            "--disable-dev-shm-usage",
-          ]
-        : [
-            "--enable-unsafe-webgpu",
-            "--enable-features=Vulkan",
-            "--use-angle=swiftshader",
-          ],
-    },
   },
+  projects: [
+    {
+      name: "track-editor",
+      testMatch: /track-editor\.spec\.ts/,
+      use: { launchOptions: { args: trackEditorArgs } },
+    },
+    {
+      name: "default",
+      testIgnore: /track-editor\.spec\.ts/,
+      use: { launchOptions: { args: fastArgs } },
+    },
+  ],
   expect: {
     toHaveScreenshot: {
       maxDiffPixelRatio: 0.02,
