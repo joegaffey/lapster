@@ -46,8 +46,10 @@ Related code: `crates/sim-render/src/track_editor.rs`,
   editable prop lines.
 - Toon ramp with four steps, rim light, distance-scaled outlines, and collision surfaces
   exported with the visual pack for test drive.
-- No trees in the track editor. The style spike has procedural leaf-card vegetation, but
-  the editor builds its scene through the normal `Scene::build` path.
+- Trees are an editable prop kind alongside blocks and tyres: low-poly trunk cylinders
+  with layered cone canopies, inverted-hull outlines, deterministic variety, and
+  trunk-only collision. Near and far prop guide lines on each side let trees sit behind
+  the barrier lines.
 - Props are merged into vertex buffers; `TrackVisual.instances` is still empty.
 
 ## 4. Comparison summary
@@ -59,7 +61,7 @@ Related code: `crates/sim-render/src/track_editor.rs`,
 | Dirt/grass edge | Multi-band rings and/or Bayer dither | Bayer dither, now switchable with soft and hard modes |
 | Lighting | Two-step toon | Four-step toon ramp |
 | Kerbs | Curvature-based, red/white, raised | Curvature-based, separate red/white meshes, risers |
-| Trees | Low-poly trunk + cones with outlines | Not in editor; leaf-card vegetation only in style spike |
+| Trees | Low-poly trunk + cones with outlines | Editable tree prop lines with low-poly trunk + cone canopies and outlines |
 | Barriers/tyres | Recommended instancing | Merged prop geometry, no instancing yet |
 | Scope | Visual demo | Visuals, collision surfaces, spawn, cameras, pack export, test drive |
 
@@ -78,9 +80,9 @@ Related code: `crates/sim-render/src/track_editor.rs`,
 
 ## 6. Backlog to pick up later
 
-1. **Low-poly FR Legends trees in the track editor.** Five-sided trunk cylinders, cone
-   canopies, inverted-hull outlines, curvature/density-driven placement, and no trees on
-   the drivable surface. This is the largest remaining visual gap.
+1. **Density-driven tree placement.** Trees are now paintable prop lines with low-poly
+   trunk cylinders, cone canopies, and inverted-hull outlines. A later pass can place them
+   automatically from curvature or density while keeping them off the drivable surface.
 2. **More track-side props.** Clipping-point cones, banners/signs, and a start/finish
    gantry. Extend `PropKind` and the prop guide editor rather than adding a new placement
    system.

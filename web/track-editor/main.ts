@@ -29,12 +29,13 @@ interface KerbSpan {
   side: number;
 }
 
-type PropKind = "blocks" | "tyres" | "off";
+type PropKind = "blocks" | "tyres" | "trees" | "off";
 
 interface PropLine {
   start: number;
   end: number;
   side: number;
+  offset: number;
   kind: PropKind;
 }
 
@@ -56,6 +57,7 @@ type SegmentKind = "kerb" | "prop";
 interface SegmentSelection {
   kind: SegmentKind;
   side: number;
+  offset: number;
   start: number;
   end: number;
 }
@@ -63,6 +65,7 @@ interface SegmentSelection {
 interface GuideDrag {
   kind: "kerb" | "prop";
   side: number;
+  offset: number;
   edge: "start" | "end";
   pointerId: number;
 }
@@ -73,10 +76,12 @@ const CONTROL_POINT_HIT_RADIUS = 18;
 const CENTERLINE_HIT_RADIUS = 12;
 const KERB_RADIUS = 6.4;
 const PROP_OFFSET = 14;
+const PROP_FAR_OFFSET = 19;
 const GUIDE_HIT_RADIUS = 12;
 const GUIDE_HANDLE_RADIUS = 7;
 const GUIDE_HANDLE_HIT_RADIUS = 16;
-const DEFAULT_SEGMENT_LENGTH = 6;
+const DEFAULT_KERB_SEGMENT_LENGTH = 6;
+const PROP_SEGMENT_LENGTH_METERS = 3;
 const MIN_SEGMENT_LENGTH = 0.5;
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
@@ -99,10 +104,9 @@ const meshes = document.querySelector<HTMLElement>("#meshes")!;
 const fpsLabel = document.querySelector<HTMLElement>("#fps")!;
 const frameLabel = document.querySelector<HTMLElement>("#frame-ms")!;
 const drawsLabel = document.querySelector<HTMLElement>("#draws")!;
-const propSectionLabel = document.querySelector<HTMLElement>("#prop-section-label")!;
-const propKindButtons = Array.from(
-  document.querySelectorAll<HTMLButtonElement>("[data-prop-kind]"),
-);
+const propToggle = document.querySelector<HTMLButtonElement>("#prop-toggle")!;
+const deleteSegmentButton =
+  document.querySelector<HTMLButtonElement>("#delete-segment")!;
 const overlayToggle = document.querySelector<HTMLButtonElement>("#toggle-overlay")!;
 const testDriveButton = document.querySelector<HTMLButtonElement>("#test-drive")!;
 
@@ -128,6 +132,7 @@ let selectedSegment: SegmentSelection | null = null;
 let guideDrag: GuideDrag | null = null;
 let paintKind: PropKind = "blocks";
 let overlayVisible = true;
+const PROP_KINDS: PropKind[] = ["blocks", "tyres", "trees", "off"];
 
 setupHud();
 
@@ -261,6 +266,8 @@ function guideDefinitions(): GuideDef[] {
     { kind: "kerb", side: 1, radius: KERB_RADIUS, color: "#fb7185" },
     { kind: "prop", side: outside, radius: PROP_OFFSET, color: "#fb923c" },
     { kind: "prop", side: -outside, radius: PROP_OFFSET, color: "#2dd4bf" },
+    { kind: "prop", side: outside, radius: PROP_FAR_OFFSET, color: "#f472b6" },
+    { kind: "prop", side: -outside, radius: PROP_FAR_OFFSET, color: "#c084fc" },
   ];
 }
 
@@ -365,24 +372,48 @@ function hitGuidePoint(
   return best;
 }
 
-function guideFor(kind: SegmentKind, side: number): GuideDef | null {
+function sameOffset(a: number, b: number): boolean {
+  return Math.abs(a - b) < 1e-4;
+}
+
+function guideFor(
+  kind: SegmentKind,
+  side: number,
+  offset: number,
+): GuideDef | null {
   return (
     guideDefinitions().find(
-      (guide) => guide.kind === kind && guide.side === side,
+      (guide) =>
+        guide.kind === kind &&
+        guide.side === side &&
+        (kind === "kerb" || sameOffset(guide.radius, offset)),
     ) ?? null
+  );
+}
+
+function matchesLane(
+  kind: SegmentKind,
+  range: { side: number; offset?: number },
+  side: number,
+  offset: number,
+): boolean {
+  return (
+    range.side === side &&
+    (kind === "kerb" || sameOffset(range.offset ?? PROP_OFFSET, offset))
   );
 }
 
 function findRange(
   kind: SegmentKind,
   side: number,
+  offset: number,
   index: number,
-): { start: number; end: number; side: number } | null {
+): { start: number; end: number; side: number; offset?: number } | null {
   const ranges = kind === "kerb" ? kerbSpans : propLines;
   return (
     ranges.find(
       (range) =>
-        range.side === side &&
+        matchesLane(kind, range, side, offset) &&
         index >= range.start - 1e-4 &&
         index <= range.end + 1e-4,
     ) ?? null
@@ -392,14 +423,15 @@ function findRange(
 function findRangeExact(
   kind: SegmentKind,
   side: number,
+  offset: number,
   start: number,
   end: number,
-): { start: number; end: number; side: number } | null {
+): { start: number; end: number; side: number; offset?: number } | null {
   const ranges = kind === "kerb" ? kerbSpans : propLines;
   return (
     ranges.find(
       (range) =>
-        range.side === side &&
+        matchesLane(kind, range, side, offset) &&
         Math.abs(range.start - start) < 1e-4 &&
         Math.abs(range.end - end) < 1e-4,
     ) ?? null
@@ -412,7 +444,12 @@ function selectedPropLine(): PropLine | undefined {
   }
   return propLines.find(
     (line) =>
-      line.side === selectedSegment!.side &&
+      matchesLane(
+        "prop",
+        line,
+        selectedSegment!.side,
+        selectedSegment!.offset,
+      ) &&
       Math.abs(line.start - selectedSegment!.start) < 1e-4 &&
       Math.abs(line.end - selectedSegment!.end) < 1e-4,
   );
@@ -426,31 +463,44 @@ function resolveSelection(): void {
     findRangeExact(
       selectedSegment.kind,
       selectedSegment.side,
+      selectedSegment.offset,
       selectedSegment.start,
       selectedSegment.end,
     ) ??
     findRange(
       selectedSegment.kind,
       selectedSegment.side,
+      selectedSegment.offset,
       (selectedSegment.start + selectedSegment.end) * 0.5,
     );
   if (range) {
     selectedSegment.start = range.start;
     selectedSegment.end = range.end;
+    if (range.offset !== undefined) {
+      selectedSegment.offset = range.offset;
+    }
   } else {
     selectedSegment = null;
   }
 }
 
-function subtractRanges<T extends { start: number; end: number; side: number }>(
+function subtractRanges<
+  T extends { start: number; end: number; side: number; offset?: number },
+>(
   items: T[],
+  kind: SegmentKind,
   side: number,
+  offset: number,
   start: number,
   end: number,
 ): T[] {
   const result: T[] = [];
   for (const item of items) {
-    if (item.side !== side || item.end <= start || item.start >= end) {
+    if (
+      !matchesLane(kind, item, side, offset) ||
+      item.end <= start ||
+      item.start >= end
+    ) {
       result.push(item);
     } else {
       if (item.start < start) {
@@ -464,21 +514,27 @@ function subtractRanges<T extends { start: number; end: number; side: number }>(
   return result;
 }
 
-function selectSegment(kind: SegmentKind, side: number, index: number): boolean {
-  const range = findRange(kind, side, index);
+function selectSegment(
+  kind: SegmentKind,
+  side: number,
+  offset: number,
+  index: number,
+): boolean {
+  const range = findRange(kind, side, offset, index);
   if (!range) {
     return false;
   }
   selectedSegment = {
     kind,
     side,
+    offset: range.offset ?? offset,
     start: range.start,
     end: range.end,
   };
   if (kind === "prop") {
     const line = propLines.find(
       (item) =>
-        item.side === range.side &&
+        matchesLane("prop", item, range.side, offset) &&
         Math.abs(item.start - range.start) < 1e-4 &&
         Math.abs(item.end - range.end) < 1e-4,
     );
@@ -490,13 +546,39 @@ function selectSegment(kind: SegmentKind, side: number, index: number): boolean 
   return true;
 }
 
+function propSegmentLength(): number {
+  const count = centerline.length;
+  if (count < 2) {
+    return MIN_SEGMENT_LENGTH;
+  }
+  let perimeter = 0;
+  for (let index = 0; index < count; index += 1) {
+    const point = centerline[index];
+    const next = centerline[(index + 1) % count];
+    perimeter += Math.hypot(
+      next[0] - point[0],
+      next[1] - point[1],
+      next[2] - point[2],
+    );
+  }
+  const sampleSpacing = perimeter / count;
+  return Math.max(
+    MIN_SEGMENT_LENGTH,
+    PROP_SEGMENT_LENGTH_METERS / Math.max(sampleSpacing, 1e-4),
+  );
+}
+
 function createSegment(guide: GuideDef, index: number): void {
   const count = centerline.length;
   if (guide.kind === "prop" && paintKind === "off") {
-    flashStatus("Choose Blocks or Tyres to add props");
+    flashStatus("Choose a prop type to add props");
     return;
   }
-  const length = Math.min(DEFAULT_SEGMENT_LENGTH, count);
+  const defaultLength =
+    guide.kind === "prop"
+      ? propSegmentLength()
+      : DEFAULT_KERB_SEGMENT_LENGTH;
+  const length = Math.min(defaultLength, count);
   const start = Math.max(0, Math.min(count - length, index - length * 0.5));
   const end = Math.min(count, start + length);
   if (end - start < MIN_SEGMENT_LENGTH) {
@@ -504,12 +586,20 @@ function createSegment(guide: GuideDef, index: number): void {
   }
 
   if (guide.kind === "kerb") {
-    kerbSpans = subtractRanges(kerbSpans, guide.side, start, end);
+    kerbSpans = subtractRanges(
+      kerbSpans,
+      "kerb",
+      guide.side,
+      guide.radius,
+      start,
+      end,
+    );
     kerbSpans.push({ start, end, side: guide.side });
     kerbSpans.sort((a, b) => a.side - b.side || a.start - b.start);
     selectedSegment = {
       kind: "kerb",
       side: guide.side,
+      offset: guide.radius,
       start,
       end,
     };
@@ -520,17 +610,28 @@ function createSegment(guide: GuideDef, index: number): void {
     return;
   }
 
-  propLines = subtractRanges(propLines, guide.side, start, end);
+  propLines = subtractRanges(
+    propLines,
+    "prop",
+    guide.side,
+    guide.radius,
+    start,
+    end,
+  );
   propLines.push({
     start,
     end,
     side: guide.side,
+    offset: guide.radius,
     kind: paintKind,
   });
-  propLines.sort((a, b) => a.side - b.side || a.start - b.start);
+  propLines.sort(
+    (a, b) => a.side - b.side || a.offset - b.offset || a.start - b.start,
+  );
   selectedSegment = {
     kind: "prop",
     side: guide.side,
+    offset: guide.radius,
     start,
     end,
   };
@@ -549,6 +650,7 @@ function updateSelectedEdge(edge: "start" | "end", index: number): void {
   const range = findRangeExact(
     selectedSegment.kind,
     selectedSegment.side,
+    selectedSegment.offset,
     oldStart,
     oldEnd,
   );
@@ -577,7 +679,11 @@ function hitGuideHandle(
   if (!selectedSegment) {
     return null;
   }
-  const guide = guideFor(selectedSegment.kind, selectedSegment.side);
+  const guide = guideFor(
+    selectedSegment.kind,
+    selectedSegment.side,
+    selectedSegment.offset,
+  );
   const camera = currentCamera();
   if (!guide || !camera) {
     return null;
@@ -604,18 +710,56 @@ function hitGuideHandle(
 }
 
 function paintLabel(kind: PropKind): string {
-  if (kind === "blocks") {
-    return "Blocks";
+  switch (kind) {
+    case "blocks":
+      return "Blocks";
+    case "tyres":
+      return "Tyres";
+    case "trees":
+      return "Trees";
+    default:
+      return "Off";
   }
-  return kind === "tyres" ? "Tyres" : "Off";
 }
 
 function syncPaintControls(): void {
-  propSectionLabel.textContent = `Painting: ${paintLabel(paintKind)}`;
-  for (const button of propKindButtons) {
-    button.disabled = false;
-    button.classList.toggle("active", button.dataset.propKind === paintKind);
+  propToggle.textContent = `Prop: ${paintLabel(paintKind)}`;
+  deleteSegmentButton.disabled = selectedSegment === null;
+}
+
+function deleteSelectedSegment(): void {
+  if (!selectedSegment || rebuilding) {
+    return;
   }
+  const { kind, side, offset, start, end } = selectedSegment;
+  selectedSegment = null;
+  hoverPoint = null;
+  hoverHandleEdge = null;
+  if (kind === "kerb") {
+    kerbSpans = kerbSpans.filter(
+      (span) =>
+        !(
+          span.side === side &&
+          Math.abs(span.start - start) < 1e-4 &&
+          Math.abs(span.end - end) < 1e-4
+        ),
+    );
+    syncPaintControls();
+    drawControlPoints();
+    void rebuildKerbSpans();
+    return;
+  }
+  propLines = propLines.filter(
+    (line) =>
+      !(
+        matchesLane("prop", line, side, offset) &&
+        Math.abs(line.start - start) < 1e-4 &&
+        Math.abs(line.end - end) < 1e-4
+      ),
+  );
+  syncPaintControls();
+  drawControlPoints();
+  void rebuildPropLines();
 }
 
 function setPaintKind(kind: PropKind): void {
@@ -683,6 +827,7 @@ function updateHover(): void {
     canvas.style.cursor = findRange(
       point.guide.kind,
       point.guide.side,
+      point.guide.radius,
       point.index,
     )
       ? "pointer"
@@ -864,15 +1009,21 @@ function drawControlPoints(): void {
 
   const guides = guideDefinitions();
   const selectedGuide = selectedSegment
-    ? guideFor(selectedSegment.kind, selectedSegment.side)
+    ? guideFor(
+        selectedSegment.kind,
+        selectedSegment.side,
+        selectedSegment.offset,
+      )
     : null;
   const draggedGuide = guideDrag
-    ? guideFor(guideDrag.kind, guideDrag.side)
+    ? guideFor(guideDrag.kind, guideDrag.side, guideDrag.offset)
     : null;
   const activeGuide = draggedGuide ?? hoverPoint?.guide ?? selectedGuide;
   for (const guide of guides) {
     const active =
-      activeGuide?.kind === guide.kind && activeGuide.side === guide.side;
+      activeGuide?.kind === guide.kind &&
+      activeGuide.side === guide.side &&
+      (guide.kind === "kerb" || sameOffset(activeGuide.radius, guide.radius));
     drawGuide(guidePoints(guide), guide.color, active);
   }
 
@@ -1150,6 +1301,7 @@ canvas.addEventListener(
           guideDrag = {
             kind: selectedSegment.kind,
             side: selectedSegment.side,
+            offset: selectedSegment.offset,
             edge: handle.edge,
             pointerId: event.pointerId,
           };
@@ -1170,7 +1322,12 @@ canvas.addEventListener(
           event.stopImmediatePropagation();
           cameraDragging = false;
           if (
-            selectSegment(point.guide.kind, point.guide.side, point.index)
+            selectSegment(
+              point.guide.kind,
+              point.guide.side,
+              point.guide.radius,
+              point.index,
+            )
           ) {
             hoverPoint = point;
             drawControlPoints();
@@ -1227,7 +1384,11 @@ window.addEventListener(
   (event) => {
     if (guideDrag && event.pointerId === guideDrag.pointerId) {
       event.preventDefault();
-      const guide = guideFor(guideDrag.kind, guideDrag.side);
+      const guide = guideFor(
+        guideDrag.kind,
+        guideDrag.side,
+        guideDrag.offset,
+      );
       if (guide) {
         const [x, y] = pointerPosition(event);
         const point = hitGuidePoint(x, y, [guide]);
@@ -1301,6 +1462,24 @@ canvas.addEventListener("pointerleave", () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  const target = event.target;
+  if (
+    target instanceof HTMLElement &&
+    (target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  if (
+    (event.key === "Delete" || event.key === "Backspace") &&
+    selectedSegment &&
+    !guideDrag
+  ) {
+    event.preventDefault();
+    deleteSelectedSegment();
+    return;
+  }
   if (event.key === "Shift") {
     setDeleteMode(true);
   }
@@ -1323,14 +1502,14 @@ window.addEventListener("blur", () => {
   setDeleteMode(false);
 });
 
-for (const button of propKindButtons) {
-  button.addEventListener("click", () => {
-    const kind = button.dataset.propKind as PropKind | undefined;
-    if (kind) {
-      setPaintKind(kind);
-    }
-  });
-}
+propToggle.addEventListener("click", () => {
+  const index = PROP_KINDS.indexOf(paintKind);
+  setPaintKind(PROP_KINDS[(index + 1) % PROP_KINDS.length]);
+});
+
+deleteSegmentButton.addEventListener("click", () => {
+  deleteSelectedSegment();
+});
 
 overlayToggle.addEventListener("click", () => {
   setOverlayVisible(!overlayVisible);
