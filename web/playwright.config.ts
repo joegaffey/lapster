@@ -12,7 +12,12 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:8123",
     viewport: { width: 1280, height: 720 },
     launchOptions: {
-      args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan", "--use-angle=swiftshader"],
+      args: [
+        "--enable-unsafe-webgpu",
+        "--enable-features=Vulkan",
+        "--use-angle=swiftshader",
+        "--enable-unsafe-swiftshader",
+      ],
     },
   },
   expect: {
