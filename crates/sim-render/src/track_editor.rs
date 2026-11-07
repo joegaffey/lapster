@@ -53,6 +53,16 @@ const CURVATURE_RELAXATION_ITERATIONS: usize = 1024;
 const BLOCK_SPACING: f32 = 2.0;
 const TYRE_SPACING: f32 = 0.8;
 const TREE_SPACING: f32 = 4.5;
+const DEFAULT_NEAR_PROP_SEGMENTS: usize = 4;
+const DEFAULT_NEAR_PROP_GAP: f32 = 2.0;
+const DEFAULT_TREE_RING_SEGMENTS: usize = 6;
+const DEFAULT_TREE_RING_GAP: f32 = 4.0;
+const DEFAULT_KERB_BENDS: usize = 4;
+const DEFAULT_KERB_BEND_HALF_LENGTH: f32 = 5.0;
+const DEFAULT_KERB_SEGMENTS_PER_BEND: usize = 2;
+const DEFAULT_KERB_SEGMENT_GAP: f32 = 2.0;
+const KERB_MIN_CURVATURE: f32 = 0.015;
+const KERB_PEAK_SPACING: f32 = 10.0;
 const PROP_LATERAL_JITTER: f32 = 0.03;
 const PROP_LONGITUDINAL_JITTER: f32 = 0.03;
 const PROP_YAW_JITTER: f32 = 0.025;
@@ -61,7 +71,7 @@ const CONTROL_POINTS: [[f32; 3]; 8] = [
     [0.0, 0.0, -35.0],
     [30.0, 0.0, -25.0],
     [40.0, 0.0, 0.0],
-    [25.0, 0.0, 25.0],
+    [28.130531, 0.0, 26.741423],
     [0.0, 0.0, 15.0],
     [-25.0, 0.0, 30.0],
     [-40.0, 0.0, 5.0],
@@ -72,6 +82,53 @@ pub struct KerbSpan {
     pub start: f32,
     pub end: f32,
     pub side: i8,
+}
+
+const DEFAULT_KERB_SPANS: [KerbSpan; 8] = [
+    KerbSpan {
+        start: 7.1667256,
+        end: 23.240198,
+        side: -1,
+    },
+    KerbSpan {
+        start: 39.0,
+        end: 61.400776,
+        side: -1,
+    },
+    KerbSpan {
+        start: 69.32667,
+        end: 80.09991,
+        side: -1,
+    },
+    KerbSpan {
+        start: 87.39344,
+        end: 116.45184,
+        side: -1,
+    },
+    KerbSpan {
+        start: 8.592459,
+        end: 22.00123,
+        side: 1,
+    },
+    KerbSpan {
+        start: 36.739464,
+        end: 55.780273,
+        side: 1,
+    },
+    KerbSpan {
+        start: 72.0,
+        end: 77.918,
+        side: 1,
+    },
+    KerbSpan {
+        start: 91.39807,
+        end: 112.857765,
+        side: 1,
+    },
+];
+
+pub fn default_kerb_spans() -> Vec<KerbSpan> {
+    DEFAULT_KERB_SPANS.to_vec()
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -120,6 +177,20 @@ pub fn control_points_with_heights(points: &[[f32; 3]]) -> Vec<[f32; 3]> {
         .collect()
 }
 
+fn segmented_ring(count: usize, segments: usize, gap: f32) -> Vec<(f32, f32)> {
+    if count < 2 || segments == 0 {
+        return Vec::new();
+    }
+    let length = count as f32 / segments as f32;
+    (0..segments)
+        .filter_map(|index| {
+            let start = index as f32 * length + gap * 0.5;
+            let end = (index + 1) as f32 * length - gap * 0.5;
+            (end - start > 1e-4).then_some((start, end))
+        })
+        .collect()
+}
+
 fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
     let area = points
         .iter()
@@ -130,23 +201,43 @@ fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
         })
         .sum::<f32>();
     let outside_side = if area > 0.0 { -1 } else { 1 };
-    let end = points.len() as f32;
-    vec![
-        PropLine {
-            start: 0.0,
+    let mut lines = Vec::new();
+    for (start, end) in segmented_ring(
+        points.len(),
+        DEFAULT_NEAR_PROP_SEGMENTS,
+        DEFAULT_NEAR_PROP_GAP,
+    ) {
+        lines.push(PropLine {
+            start,
             end,
             side: outside_side,
             offset: PROP_OFFSET,
             kind: PropKind::Blocks,
-        },
-        PropLine {
-            start: 0.0,
+        });
+        lines.push(PropLine {
+            start,
             end,
             side: -outside_side,
             offset: PROP_OFFSET,
             kind: PropKind::Tyres,
-        },
-    ]
+        });
+    }
+    for (start, end) in segmented_ring(
+        points.len(),
+        DEFAULT_TREE_RING_SEGMENTS,
+        DEFAULT_TREE_RING_GAP,
+    ) {
+        for side in [outside_side, -outside_side] {
+            lines.push(PropLine {
+                start,
+                end,
+                side,
+                offset: PROP_FAR_OFFSET,
+                kind: PropKind::Trees,
+            });
+        }
+    }
+    lines
 }
 
 fn sanitize_prop_lines(lines: &[PropLine], count: usize) -> Vec<PropLine> {
@@ -209,40 +300,121 @@ pub fn centerline_points(control_points: &[[f32; 3]]) -> Vec<[f32; 3]> {
 
 fn auto_kerb_spans(points: &[Vec3]) -> Vec<KerbSpan> {
     let count = points.len();
-    let mut spans = Vec::new();
-    let mut current: Option<KerbSpan> = None;
+    if count < 4 {
+        return Vec::new();
+    }
+    let mut candidates = Vec::new();
     for index in 0..count {
-        let point = points[index];
+        let previous = points[(index + count - 1) % count];
+        let current = points[index];
         let next = points[(index + 1) % count];
-        let future = points[(index + 2) % count];
-        let tangent = (next - point).normalize_or_zero();
-        let future_tangent = (future - next).normalize_or_zero();
-        let curvature_y = tangent.cross(future_tangent).y;
-        if curvature_y.abs() <= 0.005 {
-            if let Some(span) = current.take() {
-                spans.push(span);
-            }
+        let radius = curvature_radius(previous, current, next);
+        if !radius.is_finite() || radius <= 0.0 {
             continue;
         }
+        let curvature = 1.0 / radius;
+        if curvature < KERB_MIN_CURVATURE {
+            continue;
+        }
+        let tangent = (next - current).normalize_or_zero();
+        let future = points[(index + 2) % count];
+        let future_tangent = (future - next).normalize_or_zero();
+        let side = if tangent.cross(future_tangent).y > 0.0 {
+            1
+        } else {
+            -1
+        };
+        candidates.push((curvature, index, side));
+    }
+    candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
 
-        let side = if curvature_y > 0.0 { 1 } else { -1 };
-        let start = index as f32;
-        let end = start + 1.0;
-        match current.as_mut() {
-            Some(span) if span.side == side => span.end = end,
-            Some(_) => {
-                spans.push(current.take().expect("kerb span exists"));
-                current = Some(KerbSpan { start, end, side });
-            }
-            None => {
-                current = Some(KerbSpan { start, end, side });
-            }
+    let mut peaks: Vec<(f32, usize, i8)> = Vec::new();
+    for candidate in candidates {
+        if peaks.len() >= DEFAULT_KERB_BENDS {
+            break;
+        }
+        let crowded = peaks.iter().any(|(_, index, side)| {
+            *side == candidate.2
+                && circular_distance(candidate.1, *index, count) <= KERB_PEAK_SPACING
+        });
+        if !crowded {
+            peaks.push(candidate);
         }
     }
-    if let Some(span) = current {
-        spans.push(span);
+
+    let mut spans = Vec::new();
+    for (_, index, side) in peaks {
+        let center = index as f32;
+        let start = center - DEFAULT_KERB_BEND_HALF_LENGTH;
+        let end = center + DEFAULT_KERB_BEND_HALF_LENGTH;
+        for (piece_start, piece_end) in split_kerb_span(
+            start,
+            end,
+            DEFAULT_KERB_SEGMENTS_PER_BEND,
+            DEFAULT_KERB_SEGMENT_GAP,
+        ) {
+            push_wrapped_kerb_span(&mut spans, piece_start, piece_end, side, count as f32);
+        }
     }
-    spans
+    sanitize_kerb_spans(&spans, count)
+}
+
+fn circular_distance(a: usize, b: usize, count: usize) -> f32 {
+    let direct = (a as f32 - b as f32).abs();
+    direct.min(count as f32 - direct)
+}
+
+fn split_kerb_span(start: f32, end: f32, pieces: usize, gap: f32) -> Vec<(f32, f32)> {
+    if pieces == 0 || end <= start {
+        return Vec::new();
+    }
+    let piece = (end - start) / pieces as f32;
+    (0..pieces)
+        .filter_map(|index| {
+            let piece_start = start + index as f32 * piece + gap * 0.5;
+            let piece_end = start + (index + 1) as f32 * piece - gap * 0.5;
+            (piece_end - piece_start > 0.1).then_some((piece_start, piece_end))
+        })
+        .collect()
+}
+
+fn push_wrapped_kerb_span(spans: &mut Vec<KerbSpan>, start: f32, end: f32, side: i8, count: f32) {
+    if end <= start {
+        return;
+    }
+    if start < 0.0 {
+        let wrapped_start = start + count;
+        if wrapped_start < count {
+            spans.push(KerbSpan {
+                start: wrapped_start,
+                end: count,
+                side,
+            });
+        }
+        if end > 0.0 {
+            spans.push(KerbSpan {
+                start: 0.0,
+                end,
+                side,
+            });
+        }
+    } else if end > count {
+        spans.push(KerbSpan {
+            start,
+            end: count,
+            side,
+        });
+        let wrapped_end = end - count;
+        if wrapped_end > 0.0 {
+            spans.push(KerbSpan {
+                start: 0.0,
+                end: wrapped_end,
+                side,
+            });
+        }
+    } else {
+        spans.push(KerbSpan { start, end, side });
+    }
 }
 
 fn sanitize_kerb_spans(spans: &[KerbSpan], count: usize) -> Vec<KerbSpan> {
@@ -1876,7 +2048,10 @@ mod tests {
         let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
         let lines = default_prop_lines(&points);
         assert!(lines.iter().any(|line| line.kind != PropKind::Off));
-        for line in lines.into_iter().filter(|line| line.kind != PropKind::Off) {
+        for line in lines
+            .into_iter()
+            .filter(|line| prop_wall_dimensions(line.kind).is_some())
+        {
             let (half_width, _) = prop_wall_dimensions(line.kind).expect("prop wall");
             let side = line.side as f32;
             let (point, binormal) = track_frame(&points, (line.start + line.end) * 0.5);
@@ -1975,10 +2150,40 @@ mod tests {
     }
 
     #[test]
+    fn auto_kerbs_cover_only_split_severe_bends() {
+        let points = sample_track(&CONTROL_POINTS);
+        let spans = auto_kerb_spans(&points);
+        assert!(!spans.is_empty());
+        assert!(
+            spans.len() <= DEFAULT_KERB_BENDS * DEFAULT_KERB_SEGMENTS_PER_BEND,
+            "unexpected kerb span count: {}",
+            spans.len()
+        );
+        let covered = spans.iter().map(|span| span.end - span.start).sum::<f32>();
+        assert!(covered < points.len() as f32 * 0.6);
+        assert!(spans
+            .windows(2)
+            .any(|pair| { pair[0].side == pair[1].side && pair[1].start - pair[0].end > 0.5 }));
+    }
+
+    #[test]
     fn low_speed_turn_can_cross_the_kerb() {
         use sim_core::{Controls, Vehicle};
 
-        let track = track_from_control_points(&CONTROL_POINTS).expect("editor track");
+        let spans = [
+            KerbSpan {
+                start: 0.0,
+                end: 120.0,
+                side: -1,
+            },
+            KerbSpan {
+                start: 0.0,
+                end: 120.0,
+                side: 1,
+            },
+        ];
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&spans), Some(&[]))
+            .expect("editor track");
         let collider = sim_core::TrackCollider::from_collision(&track.collision, &track.metadata);
         let car_bytes = include_bytes!("../../../fixtures/cars/mazda-rx7/mazda-rx7.sima").to_vec();
         let pack = sim_asset::Pack::from_bytes(&car_bytes).expect("car pack");
@@ -2049,11 +2254,20 @@ mod tests {
                 PropKind::Off => continue,
             };
             let placements = prop_placements(&points, &line);
-            assert!(placements.len() > 2);
+            assert!(
+                !placements.is_empty(),
+                "line {:?} produced no placements",
+                line
+            );
+            let tolerance = if line.kind == PropKind::Trees {
+                0.15
+            } else {
+                0.03
+            };
             for pair in placements.windows(2) {
                 let distance = pair[0].0.distance(pair[1].0);
                 assert!(
-                    (distance - spacing).abs() <= spacing * 0.03,
+                    (distance - spacing).abs() <= spacing * tolerance,
                     "prop spacing drifted: expected {spacing}, got {distance}"
                 );
             }

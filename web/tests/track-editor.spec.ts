@@ -27,6 +27,42 @@ async function findKerbGap(page: Page) {
   });
 }
 
+async function findPropGap(page: Page, offset: number) {
+  return page.evaluate(({ offset }) => {
+    const viewer = (window as any).__trackEditor;
+    const lines = JSON.parse(viewer.editor_prop_lines()) as Array<{
+      start: number;
+      end: number;
+      side: number;
+      offset: number;
+    }>;
+    const count = (JSON.parse(viewer.editor_centerline()) as number[][]).length;
+    for (const side of [-1, 1]) {
+      const ranges = lines
+        .filter(
+          (line) => line.side === side && Math.abs(line.offset - offset) < 1e-4,
+        )
+        .sort((a, b) => a.start - b.start);
+      let previous = 0;
+      for (const range of [...ranges, { start: count, end: count, side, offset }]) {
+        const gapStart = previous;
+        const gapEnd = range.start;
+        if (gapEnd - gapStart >= 3.5) {
+          return {
+            side,
+            index: (gapStart + gapEnd) * 0.5,
+            gapStart,
+            gapEnd,
+            count,
+          };
+        }
+        previous = Math.max(previous, range.end);
+      }
+    }
+    return { error: "no prop gap" };
+  }, { offset });
+}
+
 async function projectGuideIndex(
   page: Page,
   side: number,
@@ -250,13 +286,12 @@ test("kerb spans can be trimmed and rebuilt", async ({ page }) => {
         .reduce((sum, mesh) => sum + mesh.vertices, 0);
     };
     const beforeVertices = kerbVertices();
-    const requestFrame = window.requestAnimationFrame;
-    window.requestAnimationFrame = () => 0;
-    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    const render = viewer.render;
+    viewer.render = () => {};
     try {
       await viewer.set_editor_kerb_spans(JSON.stringify(trimmed));
     } finally {
-      window.requestAnimationFrame = requestFrame;
+      viewer.render = render;
     }
     const afterSpans = JSON.parse(viewer.editor_kerb_spans()) as Array<{
       start: number;
@@ -273,7 +308,7 @@ test("kerb spans can be trimmed and rebuilt", async ({ page }) => {
 
   expect(result.error).toBeUndefined();
   expect(result.trimmed?.start).toBe(result.first?.start);
-  expect(result.trimmed?.end).toBe((result.first?.start ?? 0) + 1);
+  expect(result.trimmed?.end).toBeCloseTo((result.first?.start ?? 0) + 1, 4);
   expect(result.afterVertices).toBeLessThan(result.beforeVertices);
   expect(pageErrors).toEqual([]);
 });
@@ -298,8 +333,10 @@ test("prop sections can switch between blocks, tyres, and off", async ({ page })
       start: number;
       end: number;
       side: number;
+      offset: number;
       kind: string;
     }>;
+    const blocksIndex = before.findIndex((line) => line.kind === "blocks");
     const acrossSectionVertices = () => {
       const meshes = JSON.parse(viewer.debug_info()).meshes as Array<{
         name: string;
@@ -311,38 +348,41 @@ test("prop sections can switch between blocks, tyres, and off", async ({ page })
     };
     const beforeVertices = acrossSectionVertices();
     const changed = before.map((line, index) =>
-      index === 0 ? { ...line, kind: "off" } : line,
+      index === blocksIndex ? { ...line, kind: "off" } : line,
     );
-    const requestFrame = window.requestAnimationFrame;
-    window.requestAnimationFrame = () => 0;
-    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    const render = viewer.render;
+    viewer.render = () => {};
     try {
       await viewer.set_editor_prop_lines(JSON.stringify(changed));
     } finally {
-      window.requestAnimationFrame = requestFrame;
+      viewer.render = render;
     }
     const after = JSON.parse(viewer.editor_prop_lines()) as Array<{
       start: number;
       end: number;
       side: number;
+      offset: number;
       kind: string;
     }>;
     return {
       before,
       after,
+      blocksIndex,
       beforeVertices,
       afterVertices: acrossSectionVertices(),
     };
   });
 
-  expect(result.before).toHaveLength(2);
-  expect(result.after[0].kind).toBe("off");
-  expect(result.after[1].kind).toBe("tyres");
+  expect(result.blocksIndex).toBeGreaterThanOrEqual(0);
+  expect(result.before.length).toBeGreaterThan(4);
+  expect(result.before.some((line) => line.kind === "trees")).toBe(true);
+  expect(result.after[result.blocksIndex].kind).toBe("off");
+  expect(result.after.some((line) => line.kind === "tyres")).toBe(true);
   expect(result.afterVertices).toBeLessThan(result.beforeVertices);
   expect(pageErrors).toEqual([]);
 });
 
-test("prop sections can paint trees", async ({ page }) => {
+test("default tree rings have gaps on both sides", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
@@ -356,27 +396,12 @@ test("prop sections can paint trees", async ({ page }) => {
     { timeout: 45_000 },
   );
 
-  const result = await page.evaluate(async () => {
+  const gap = await findPropGap(page, 19);
+  expect(gap.error).toBeUndefined();
+
+  const result = await page.evaluate(() => {
     const viewer = (window as any).__trackEditor;
-    const before = JSON.parse(viewer.editor_prop_lines()) as Array<{
-      start: number;
-      end: number;
-      side: number;
-      offset: number;
-      kind: string;
-    }>;
-    const changed = before.map((line, index) =>
-      index === 0 ? { ...line, kind: "trees", offset: 19 } : line,
-    );
-    const requestFrame = window.requestAnimationFrame;
-    window.requestAnimationFrame = () => 0;
-    await new Promise((resolve) => window.setTimeout(resolve, 500));
-    try {
-      await viewer.set_editor_prop_lines(JSON.stringify(changed));
-    } finally {
-      window.requestAnimationFrame = requestFrame;
-    }
-    const after = JSON.parse(viewer.editor_prop_lines()) as Array<{
+    const lines = JSON.parse(viewer.editor_prop_lines()) as Array<{
       start: number;
       end: number;
       side: number;
@@ -388,21 +413,21 @@ test("prop sections can paint trees", async ({ page }) => {
       vertices: number;
     }>;
     return {
-      before,
-      after,
-      trees: meshes.filter((mesh) => mesh.name.startsWith("tree_")),
+      trees: lines.filter((line) => line.kind === "trees"),
+      treeMeshes: meshes.filter((mesh) => mesh.name.startsWith("tree_")),
     };
   });
 
-  expect(result.before[0].kind).toBe("blocks");
-  expect(result.before.every((line) => line.offset === 14)).toBe(true);
-  expect(result.after[0].kind).toBe("trees");
-  expect(result.after[0].offset).toBe(19);
-  expect(result.trees.map((mesh) => mesh.name)).toEqual([
+  expect(result.trees.length).toBeGreaterThan(1);
+  expect(result.trees.every((line) => line.offset === 19)).toBe(true);
+  expect([...new Set(result.trees.map((line) => line.side))].sort()).toEqual([
+    -1, 1,
+  ]);
+  expect(result.treeMeshes.map((mesh) => mesh.name)).toEqual([
     "tree_trunks",
     "tree_foliage",
   ]);
-  expect(result.trees.every((mesh) => mesh.vertices > 0)).toBe(true);
+  expect(result.treeMeshes.every((mesh) => mesh.vertices > 0)).toBe(true);
   expect(pageErrors).toEqual([]);
 });
 
@@ -452,8 +477,10 @@ test("new prop segments span about three metres", async ({ page }) => {
     { timeout: 45_000 },
   );
 
-  const index = 75;
-  const point = await projectGuideIndex(page, 1, index, 19);
+  const gap = await findPropGap(page, 19);
+  expect(gap.error).toBeUndefined();
+  const index = gap.index!;
+  const point = await projectGuideIndex(page, gap.side!, index, 19);
   expect(point).not.toBeNull();
   await page.mouse.click(point![0], point![1]);
 
@@ -580,8 +607,10 @@ test("delete key and button remove the selected segment", async ({ page }) => {
   );
   await expect(deleteButton).toBeDisabled();
 
-  const propIndex = 75;
-  const propPoint = await projectGuideIndex(page, 1, propIndex, 19);
+  const propGap = await findPropGap(page, 19);
+  expect(propGap.error).toBeUndefined();
+  const propIndex = propGap.index!;
+  const propPoint = await projectGuideIndex(page, propGap.side!, propIndex, 19);
   expect(propPoint).not.toBeNull();
   await page.mouse.click(propPoint![0], propPoint![1]);
   await page.waitForFunction(
@@ -605,16 +634,21 @@ test("delete key and button remove the selected segment", async ({ page }) => {
   await expect(deleteButton).toBeEnabled();
   await page.keyboard.press("Delete");
   await page.waitForFunction(
-    () => {
+    ({ index }) => {
       if (document.querySelector("#status")?.textContent !== "ready") {
         return false;
       }
       const lines = JSON.parse(
         (window as any).__trackEditor.editor_prop_lines(),
-      ) as Array<{ offset: number }>;
-      return !lines.some((line) => Math.abs(line.offset - 19) < 1e-4);
+      ) as Array<{ start: number; end: number; offset: number }>;
+      return !lines.some(
+        (line) =>
+          Math.abs(line.offset - 19) < 1e-4 &&
+          line.start < index &&
+          line.end > index,
+      );
     },
-    undefined,
+    { index: propIndex },
     { timeout: 15_000 },
   );
   await expect(deleteButton).toBeDisabled();
