@@ -42,6 +42,69 @@ struct StyleDrive {
     last_time: Option<f64>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TreeDetail {
+    High,
+    Low,
+    Cards,
+}
+
+impl TreeDetail {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "high" => Some(Self::High),
+            "low" => Some(Self::Low),
+            "cards" => Some(Self::Cards),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Low => "low",
+            Self::Cards => "cards",
+        }
+    }
+}
+
+fn tree_mesh_indices(scene: &Scene) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    let mut high = Vec::new();
+    let mut low = Vec::new();
+    let mut cards = Vec::new();
+    for (index, mesh) in scene.meshes.iter().enumerate() {
+        if !mesh.name.starts_with("tree_") {
+            continue;
+        }
+        if mesh.name.starts_with("tree_cards") {
+            cards.push(index);
+        } else if mesh.name.ends_with("_high") {
+            high.push(index);
+        } else if mesh.name.ends_with("_low") {
+            low.push(index);
+        }
+    }
+    (high, low, cards)
+}
+
+fn set_tree_visibility(
+    renderer: &mut renderer::Renderer,
+    high: &[usize],
+    low: &[usize],
+    cards: &[usize],
+    detail: TreeDetail,
+) {
+    for &index in high {
+        renderer.set_mesh_visible(index, detail == TreeDetail::High);
+    }
+    for &index in low {
+        renderer.set_mesh_visible(index, detail == TreeDetail::Low);
+    }
+    for &index in cards {
+        renderer.set_mesh_visible(index, detail == TreeDetail::Cards);
+    }
+}
+
 #[wasm_bindgen]
 pub struct TrackViewer {
     renderer: renderer::Renderer,
@@ -55,6 +118,10 @@ pub struct TrackViewer {
     editor_control_points: Option<Vec<[f32; 3]>>,
     editor_kerb_spans: Vec<track_editor::KerbSpan>,
     editor_prop_lines: Vec<track_editor::PropLine>,
+    tree_high_meshes: Vec<usize>,
+    tree_low_meshes: Vec<usize>,
+    tree_card_meshes: Vec<usize>,
+    tree_detail: TreeDetail,
     track_blend: f32,
 }
 
@@ -155,6 +222,7 @@ impl TrackViewer {
     ) -> Result<TrackViewer, JsValue> {
         let canvas_handle = canvas.clone();
         let debug_info = scene.debug_info.clone();
+        let (tree_high_meshes, tree_low_meshes, tree_card_meshes) = tree_mesh_indices(&scene);
         let vegetation = scene.vegetation.clone();
         let style_car_transform = scene.style_car_transform;
         let style_car = style_car_transform
@@ -185,6 +253,13 @@ impl TrackViewer {
         renderer.set_lines_visible(false);
         renderer.set_baked_region(collision_center, region_half, ground_y);
         renderer.set_shadow_focus(shadow_focus, TRACK_SHADOW_EXTENT);
+        set_tree_visibility(
+            &mut renderer,
+            &tree_high_meshes,
+            &tree_low_meshes,
+            &tree_card_meshes,
+            TreeDetail::High,
+        );
         let style_drive = if let (Some(car_physics), Some(transform), Some(rig)) =
             (car_physics, style_car_transform, style_rig.as_ref())
         {
@@ -232,6 +307,10 @@ impl TrackViewer {
             editor_control_points: None,
             editor_kerb_spans: Vec::new(),
             editor_prop_lines: Vec::new(),
+            tree_high_meshes,
+            tree_low_meshes,
+            tree_card_meshes,
+            tree_detail: TreeDetail::High,
             track_blend: 1.0,
         })
     }
@@ -366,6 +445,7 @@ impl TrackViewer {
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let debug_info = scene.debug_info.clone();
+        let (tree_high_meshes, tree_low_meshes, tree_card_meshes) = tree_mesh_indices(&scene);
         let camera = self.camera;
         let (collision_center, region_half) = track_region(&track.collision, &track.metadata);
         let region_center = track
@@ -399,11 +479,48 @@ impl TrackViewer {
         renderer.set_grass_center_xz(camera.eye[0], camera.eye[2]);
         renderer.set_track_blend_mode(self.track_blend);
         renderer.set_camera(camera);
+        set_tree_visibility(
+            &mut renderer,
+            &tree_high_meshes,
+            &tree_low_meshes,
+            &tree_card_meshes,
+            self.tree_detail,
+        );
         self.renderer = renderer;
         self.debug_info = debug_info;
         self.editor_control_points = Some(points);
         self.editor_kerb_spans = track.kerb_spans;
         self.editor_prop_lines = track.prop_lines;
+        self.tree_high_meshes = tree_high_meshes;
+        self.tree_low_meshes = tree_low_meshes;
+        self.tree_card_meshes = tree_card_meshes;
+        Ok(())
+    }
+
+    pub fn tree_detail(&self) -> String {
+        self.tree_detail.as_str().to_string()
+    }
+
+    pub fn set_tree_detail(&mut self, detail: &str) -> Result<(), JsValue> {
+        let next = TreeDetail::parse(detail)
+            .ok_or_else(|| JsValue::from_str("expected high, low, or cards"))?;
+        if next == self.tree_detail {
+            return Ok(());
+        }
+        self.tree_detail = next;
+        let tree_high_meshes = std::mem::take(&mut self.tree_high_meshes);
+        let tree_low_meshes = std::mem::take(&mut self.tree_low_meshes);
+        let tree_card_meshes = std::mem::take(&mut self.tree_card_meshes);
+        set_tree_visibility(
+            &mut self.renderer,
+            &tree_high_meshes,
+            &tree_low_meshes,
+            &tree_card_meshes,
+            next,
+        );
+        self.tree_high_meshes = tree_high_meshes;
+        self.tree_low_meshes = tree_low_meshes;
+        self.tree_card_meshes = tree_card_meshes;
         Ok(())
     }
 
@@ -1522,6 +1639,10 @@ pub struct DriveViewer {
     cockpit_dial_offsets: [[f32; 3]; 3],
     track_shadow_center: Vec3,
     track_shadow_half: f32,
+    tree_high_meshes: Vec<usize>,
+    tree_low_meshes: Vec<usize>,
+    tree_card_meshes: Vec<usize>,
+    tree_detail: TreeDetail,
 }
 
 #[wasm_bindgen]
@@ -1604,6 +1725,7 @@ impl DriveViewer {
             return Err(JsValue::from_str("scene did not build enough car rigs"));
         }
         rigs.truncate(1 + remote_slots);
+        let (tree_high_meshes, tree_low_meshes, tree_card_meshes) = tree_mesh_indices(&scene);
         let info = scene.debug_info.clone();
         let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
         let mut spawn = track_metadata
@@ -1658,6 +1780,13 @@ impl DriveViewer {
         let mut renderer =
             renderer::Renderer::new(canvas, width, height, scene, &tuning.gpu).await?;
         renderer.set_baked_region(track_shadow_center, baked_half_extent, ground_y);
+        set_tree_visibility(
+            &mut renderer,
+            &tree_high_meshes,
+            &tree_low_meshes,
+            &tree_card_meshes,
+            TreeDetail::High,
+        );
 
         let previous_state = vehicle.state;
         let mut drive = DriveViewer {
@@ -1689,6 +1818,10 @@ impl DriveViewer {
             cockpit_dial_offsets: [[0.0; 3]; 3],
             track_shadow_center: Vec3::from_array(track_shadow_center),
             track_shadow_half,
+            tree_high_meshes,
+            tree_low_meshes,
+            tree_card_meshes,
+            tree_detail: TreeDetail::High,
         };
         drive.renderer.set_shadow_tuning(&drive.tuning.shadows);
         drive
@@ -1703,6 +1836,33 @@ impl DriveViewer {
 
     pub fn resize(&mut self, width: f32, height: f32) {
         self.renderer.resize(width, height);
+    }
+
+    pub fn tree_detail(&self) -> String {
+        self.tree_detail.as_str().to_string()
+    }
+
+    pub fn set_tree_detail(&mut self, detail: &str) -> Result<(), JsValue> {
+        let next = TreeDetail::parse(detail)
+            .ok_or_else(|| JsValue::from_str("expected high, low, or cards"))?;
+        if next == self.tree_detail {
+            return Ok(());
+        }
+        self.tree_detail = next;
+        let tree_high_meshes = std::mem::take(&mut self.tree_high_meshes);
+        let tree_low_meshes = std::mem::take(&mut self.tree_low_meshes);
+        let tree_card_meshes = std::mem::take(&mut self.tree_card_meshes);
+        set_tree_visibility(
+            &mut self.renderer,
+            &tree_high_meshes,
+            &tree_low_meshes,
+            &tree_card_meshes,
+            next,
+        );
+        self.tree_high_meshes = tree_high_meshes;
+        self.tree_low_meshes = tree_low_meshes;
+        self.tree_card_meshes = tree_card_meshes;
+        Ok(())
     }
 
     pub fn reset(&mut self) {

@@ -943,6 +943,10 @@ async function boot() {
     storedDevTuning ?? undefined,
     mpMode ? REMOTE_SLOTS : undefined,
   );
+  const treeDetail = new URLSearchParams(window.location.search).get("trees");
+  if (treeDetail === "high" || treeDetail === "low" || treeDetail === "cards") {
+    viewer.set_tree_detail(treeDetail);
+  }
   saveSelectedBay(carBay);
 
   const info = JSON.parse(viewer.info());

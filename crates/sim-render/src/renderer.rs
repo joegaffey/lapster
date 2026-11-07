@@ -188,6 +188,7 @@ struct GpuMesh {
     shadow_dynamic_base: bool,
     is_decal: bool,
     foliage: bool,
+    billboard: bool,
     track_blend: Option<f32>,
     model: Mat4,
 }
@@ -200,7 +201,13 @@ fn model_alpha(mesh: &GpuMesh, grass_texture_enabled: bool) -> [f32; 4] {
         } else {
             0.0
         },
-        if mesh.foliage { 1.0 } else { 0.0 },
+        if mesh.billboard {
+            2.0
+        } else if mesh.foliage {
+            1.0
+        } else {
+            0.0
+        },
         mesh.track_blend.unwrap_or(0.0),
     ]
 }
@@ -2187,7 +2194,13 @@ fn create_mesh(
         alpha: [
             mesh.alpha,
             grass_texture_enabled,
-            if mesh.foliage { 1.0 } else { 0.0 },
+            if mesh.billboard {
+                2.0
+            } else if mesh.foliage {
+                1.0
+            } else {
+                0.0
+            },
             track_blend.unwrap_or(0.0),
         ],
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
@@ -2259,6 +2272,7 @@ fn create_mesh(
         shadow_dynamic_base: mesh.casts_dynamic_shadow,
         is_decal: mesh.is_decal,
         foliage: mesh.foliage,
+        billboard: mesh.billboard,
         track_blend,
         model: mesh.model,
     }

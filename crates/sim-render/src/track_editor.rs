@@ -4,8 +4,8 @@ use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use sim_types::{
     Aabb, AssetKind, AssetManifest, AssetStats, CameraSpec, EntryPoints, MaterialRef, MeshBuffers,
-    MeshRef, SectorSpec, SpawnPoint, SurfaceSpec, TrackCollision, TrackMetadata, TrackVisual,
-    ENGINE_FRAME, ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
+    MeshRef, SectorSpec, SpawnPoint, SurfaceSpec, TextureRef, TrackCollision, TrackMetadata,
+    TrackVisual, ENGINE_FRAME, ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
 };
 
 const SEGMENTS: usize = 120;
@@ -42,11 +42,40 @@ const TYRE_RADIUS: f32 = 0.4;
 const TYRE_LAYER_HEIGHT: f32 = 0.3;
 const TYRE_LAYERS: usize = 3;
 const TREE_SIDES: usize = 6;
+const TREE_CONIFER_SIDES: usize = 6;
+const TREE_CONIFER_TRUNK_SIDES: usize = 5;
+const TREE_CONIFER_SIZE: f32 = 0.6;
+const TREE_CARD_VARIANTS: usize = 5;
+const TREE_CARD_ATLAS_WIDTH: usize = 640;
+const TREE_CARD_ATLAS_HEIGHT: usize = 256;
+const TREE_CARD_ATLAS_RGBA: &[u8] = include_bytes!("../assets/tree_cards.rgba");
 const TREE_TRUNK_COLOR: [f32; 3] = [0.32, 0.23, 0.15];
 const TREE_COMMON_COLOR: [f32; 3] = [0.34, 0.56, 0.21];
 const TREE_COMMON_COLOR_ALT: [f32; 3] = [0.43, 0.63, 0.25];
 const TREE_PINE_COLOR: [f32; 3] = [0.20, 0.42, 0.18];
 const TREE_PINE_COLOR_ALT: [f32; 3] = [0.27, 0.49, 0.21];
+const TREE_PINE_DARK: [f32; 3] = [0.12, 0.28, 0.12];
+const TREE_CONIFER_TALL: &[(f32, f32, f32)] = &[
+    (1.0, 2.0, 2.2),
+    (2.1, 1.65, 2.0),
+    (3.2, 1.3, 1.9),
+    (4.3, 1.0, 1.8),
+    (5.4, 0.7, 1.7),
+    (6.5, 0.4, 1.5),
+];
+const TREE_CONIFER_BROAD: &[(f32, f32, f32)] = &[
+    (1.1, 2.4, 2.4),
+    (2.3, 1.9, 2.2),
+    (3.5, 1.45, 2.0),
+    (4.7, 1.05, 1.8),
+    (5.9, 0.65, 1.6),
+];
+const TREE_CONIFER_YOUNG: &[(f32, f32, f32)] = &[
+    (0.5, 1.25, 1.5),
+    (1.4, 0.95, 1.4),
+    (2.3, 0.65, 1.3),
+    (3.2, 0.4, 1.2),
+];
 const MIN_TURN_RADIUS: f32 = OUTER_EDGE_RADIUS.max(PROP_FAR_OFFSET) + 1.0;
 const CURVATURE_RELAXATION: f32 = 0.5;
 const CURVATURE_RELAXATION_ITERATIONS: usize = 1024;
@@ -475,7 +504,7 @@ pub fn track_from_control_points_with_spans(
     let mut visual = TrackVisual {
         meshes: Vec::new(),
         materials: materials(),
-        textures: Vec::new(),
+        textures: vec![conifer_card_texture()],
         mesh_buffers: Vec::new(),
         instances: Vec::new(),
     };
@@ -510,8 +539,11 @@ pub fn track_from_control_points_with_spans(
     let mut barriers = empty_buffers();
     let mut tires_blue = empty_buffers();
     let mut tires_white = empty_buffers();
-    let mut tree_trunks = empty_buffers();
-    let mut tree_foliage = empty_buffers();
+    let mut tree_trunks_high = empty_buffers();
+    let mut tree_foliage_high = empty_buffers();
+    let mut tree_trunks_low = empty_buffers();
+    let mut tree_foliage_low = empty_buffers();
+    let mut tree_cards = empty_buffers();
     let mut prop_walls = empty_buffers();
 
     let count = points.len();
@@ -550,8 +582,11 @@ pub fn track_from_control_points_with_spans(
         &mut barriers,
         &mut tires_blue,
         &mut tires_white,
-        &mut tree_trunks,
-        &mut tree_foliage,
+        &mut tree_trunks_high,
+        &mut tree_foliage_high,
+        &mut tree_trunks_low,
+        &mut tree_foliage_low,
+        &mut tree_cards,
     );
     append_prop_walls(&points, &prop_lines, &mut prop_walls);
 
@@ -560,9 +595,18 @@ pub fn track_from_control_points_with_spans(
     push_mesh(&mut visual, "barriers", 5, barriers, true);
     push_mesh(&mut visual, "tires_blue", 6, tires_blue, true);
     push_mesh(&mut visual, "tires_white", 7, tires_white, true);
-    append_collision(&mut collision, &tree_trunks, WALL_SURFACE);
-    push_mesh(&mut visual, "tree_trunks", 9, tree_trunks, true);
-    push_mesh(&mut visual, "tree_foliage", 10, tree_foliage, true);
+    append_collision(&mut collision, &tree_trunks_low, WALL_SURFACE);
+    push_mesh(&mut visual, "tree_trunks_high", 9, tree_trunks_high, true);
+    push_mesh(
+        &mut visual,
+        "tree_foliage_high",
+        10,
+        tree_foliage_high,
+        true,
+    );
+    push_mesh(&mut visual, "tree_trunks_low", 9, tree_trunks_low, true);
+    push_mesh(&mut visual, "tree_foliage_low", 10, tree_foliage_low, true);
+    push_mesh(&mut visual, "tree_cards", 11, tree_cards, false);
 
     for (index, mesh) in visual.meshes.iter().enumerate() {
         let surface = match mesh.name.as_str() {
@@ -778,6 +822,14 @@ fn materials() -> Vec<MaterialRef> {
         material("mountain", [0.12, 0.16, 0.22, 1.0], false),
         material("tree_trunk", [0.32, 0.23, 0.15, 1.0], true),
         material("tree_foliage", [0.34, 0.56, 0.21, 1.0], true),
+        MaterialRef {
+            name: "tree_card".to_string(),
+            base_color: [1.0, 1.0, 1.0, 1.0],
+            metallic: 0.0,
+            roughness: 0.9,
+            base_color_texture: Some(0),
+            outline: false,
+        },
     ]
 }
 
@@ -1141,14 +1193,18 @@ fn jittered_prop_placement(
     (position, heading)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_prop_lines(
     points: &[Vec3],
     lines: &[PropLine],
     barriers: &mut MeshBuffers,
     tires_blue: &mut MeshBuffers,
     tires_white: &mut MeshBuffers,
-    tree_trunks: &mut MeshBuffers,
-    tree_foliage: &mut MeshBuffers,
+    tree_trunks_high: &mut MeshBuffers,
+    tree_foliage_high: &mut MeshBuffers,
+    tree_trunks_low: &mut MeshBuffers,
+    tree_foliage_low: &mut MeshBuffers,
+    tree_cards: &mut MeshBuffers,
 ) {
     for line in lines {
         for (index, (position, tangent)) in prop_placements(points, line).into_iter().enumerate() {
@@ -1178,7 +1234,9 @@ fn append_prop_lines(
                     }
                 }
                 PropKind::Trees => {
-                    append_tree(tree_trunks, tree_foliage, position, line, index);
+                    append_conifer_tree(tree_trunks_high, tree_foliage_high, position, line, index);
+                    append_simple_tree(tree_trunks_low, tree_foliage_low, position, line, index);
+                    append_conifer_card(tree_cards, position, line, index);
                 }
                 PropKind::Off => {}
             }
@@ -1558,7 +1616,7 @@ fn lerp_color(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
-fn append_tree(
+fn append_simple_tree(
     trunks: &mut MeshBuffers,
     foliage: &mut MeshBuffers,
     position: Vec3,
@@ -1594,6 +1652,244 @@ fn append_tree(
             radius * scale,
             height * scale,
             color,
+        );
+    }
+}
+
+fn conifer_card_texture() -> TextureRef {
+    TextureRef {
+        name: "tree_cards_atlas".to_string(),
+        mime: "image/png".to_string(),
+        hash: [0; 32],
+        width: TREE_CARD_ATLAS_WIDTH as u32,
+        height: TREE_CARD_ATLAS_HEIGHT as u32,
+        rgba8: TREE_CARD_ATLAS_RGBA.to_vec(),
+    }
+}
+
+fn append_conifer_card(buffers: &mut MeshBuffers, position: Vec3, line: &PropLine, index: usize) {
+    let profile = ((prop_noise(line, index, 0x4) * 0.5 + 0.5) * 3.0)
+        .floor()
+        .clamp(0.0, 2.0) as usize;
+    let base_height = match profile {
+        0 => 8.0,
+        1 => 7.5,
+        _ => 4.4,
+    };
+    let height = base_height
+        * TREE_CONIFER_SIZE
+        * (0.88 + 0.28 * (prop_noise(line, index, 0x5) * 0.5 + 0.5));
+    let width = height * 0.52;
+    let ground = terrain_height(position.x, position.z);
+    let base = Vec3::new(position.x, ground, position.z);
+    let center = base + Vec3::Y * (height * 0.5);
+    let tint = 0.92 + 0.12 * (prop_noise(line, index, 0xA) * 0.5 + 0.5);
+    let variant = ((prop_noise(line, index, 0xB) * 0.5 + 0.5) * TREE_CARD_VARIANTS as f32)
+        .floor()
+        .clamp(0.0, (TREE_CARD_VARIANTS - 1) as f32) as usize;
+    let u0 = variant as f32 / TREE_CARD_VARIANTS as f32;
+    let u1 = (variant + 1) as f32 / TREE_CARD_VARIANTS as f32;
+    push_billboard_card(
+        buffers,
+        center,
+        width,
+        height,
+        [[u0, 1.0], [u1, 1.0], [u1, 0.0], [u0, 0.0]],
+        tint,
+    );
+}
+
+fn push_billboard_card(
+    buffers: &mut MeshBuffers,
+    center: Vec3,
+    width: f32,
+    height: f32,
+    uvs: [[f32; 2]; 4],
+    tint: f32,
+) {
+    let base = buffers.positions.len() as u32;
+    let corners = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
+    for (corner, uv) in corners.into_iter().zip(uvs) {
+        buffers.positions.push(center.to_array());
+        buffers.normals.push([width, height, 0.0]);
+        buffers.uvs.push(uv);
+        buffers.colors.push([corner[0], corner[1], tint]);
+    }
+    buffers
+        .indices
+        .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+fn append_conifer_tree(
+    trunks: &mut MeshBuffers,
+    foliage: &mut MeshBuffers,
+    position: Vec3,
+    line: &PropLine,
+    index: usize,
+) {
+    let profile = ((prop_noise(line, index, 0x4) * 0.5 + 0.5) * 3.0)
+        .floor()
+        .clamp(0.0, 2.0) as usize;
+    let (trunk_height, trunk_radius, tiers) = match profile {
+        0 => (1.6, 0.18, TREE_CONIFER_TALL),
+        1 => (1.8, 0.24, TREE_CONIFER_BROAD),
+        _ => (1.0, 0.13, TREE_CONIFER_YOUNG),
+    };
+    let total_height = tiers.last().map(|tier| tier.0 + tier.2).unwrap_or(1.0);
+    let scale = TREE_CONIFER_SIZE * (0.88 + 0.28 * (prop_noise(line, index, 0x5) * 0.5 + 0.5));
+    let tint = prop_noise(line, index, 0x6) * 0.5 + 0.5;
+    let lean = Vec3::new(
+        prop_noise(line, index, 0x7) * 0.35,
+        0.0,
+        prop_noise(line, index, 0x8) * 0.35,
+    ) * scale;
+    let ground = terrain_height(position.x, position.z);
+    let base = Vec3::new(position.x, ground, position.z);
+    let canopy_color = lerp_color(TREE_PINE_COLOR, TREE_PINE_COLOR_ALT, tint);
+
+    append_conifer_trunk(
+        trunks,
+        base,
+        trunk_radius * scale,
+        trunk_height * scale,
+        lean * (trunk_height / total_height),
+        TREE_TRUNK_COLOR,
+    );
+
+    let tier_count = tiers.len();
+    for (tier_index, (offset, radius, height)) in tiers.iter().enumerate() {
+        let tier_lean = lean * ((offset + height * 0.5) / total_height);
+        append_conifer_tier(
+            foliage,
+            base,
+            *offset * scale,
+            *radius * scale,
+            *height * scale,
+            tier_index,
+            tier_count,
+            tier_lean,
+            canopy_color,
+            line,
+            index,
+        );
+    }
+
+    let last = tiers[tiers.len() - 1];
+    let last_lean = lean * ((last.0 + last.2) / total_height);
+    append_tree_cone(
+        foliage,
+        base + Vec3::Y * ((last.0 + last.2) * scale) + last_lean,
+        last.1 * scale * 0.10,
+        last.2 * scale * 0.5,
+        lerp_color(TREE_PINE_DARK, canopy_color, 0.85),
+    );
+}
+
+fn append_conifer_trunk(
+    buffers: &mut MeshBuffers,
+    base: Vec3,
+    radius: f32,
+    height: f32,
+    lean: Vec3,
+    color: [f32; 3],
+) {
+    let top = base + Vec3::Y * height + lean;
+    let top_radius = radius * 0.5;
+    for side in 0..TREE_CONIFER_TRUNK_SIDES {
+        let angle0 = side as f32 / TREE_CONIFER_TRUNK_SIDES as f32 * TAU;
+        let angle1 = (side + 1) as f32 / TREE_CONIFER_TRUNK_SIDES as f32 * TAU;
+        let direction0 = Vec3::new(angle0.cos(), 0.0, angle0.sin());
+        let direction1 = Vec3::new(angle1.cos(), 0.0, angle1.sin());
+        let bottom0 = base + direction0 * radius;
+        let bottom1 = base + direction1 * radius;
+        let top0 = top + direction0 * top_radius;
+        let top1 = top + direction1 * top_radius;
+        let mut normal = (bottom1 - bottom0)
+            .cross(top0 - bottom0)
+            .normalize_or_zero();
+        if normal.dot(direction0 + direction1) < 0.0 {
+            normal = -normal;
+        }
+        push_quad_colored(
+            buffers,
+            [
+                bottom0.to_array(),
+                top0.to_array(),
+                top1.to_array(),
+                bottom1.to_array(),
+            ],
+            normal.to_array(),
+            color,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_conifer_tier(
+    buffers: &mut MeshBuffers,
+    base: Vec3,
+    offset: f32,
+    radius: f32,
+    height: f32,
+    tier_index: usize,
+    tier_count: usize,
+    lean: Vec3,
+    color: [f32; 3],
+    line: &PropLine,
+    index: usize,
+) {
+    let center = base + Vec3::Y * offset + lean;
+    let top_center = center + Vec3::Y * height;
+    let top_radius = radius * 0.10;
+    let phase = tier_index as f32 * 0.37 + prop_noise(line, index, 0x20 + tier_index as u32) * 0.18;
+    let tier_t = if tier_count > 1 {
+        tier_index as f32 / (tier_count - 1) as f32
+    } else {
+        0.0
+    };
+    let tier_color = lerp_color(TREE_PINE_DARK, color, 0.5 + 0.5 * tier_t);
+    let mut ring_radius = [0.0_f32; TREE_CONIFER_SIDES];
+    let mut ring_droop = [0.0_f32; TREE_CONIFER_SIDES];
+    for (side, slot) in ring_radius.iter_mut().enumerate() {
+        let jitter = 0.88
+            + 0.24
+                * (prop_noise(line, index, 0x40 + tier_index as u32 * 8 + side as u32) * 0.5 + 0.5);
+        *slot = radius * jitter;
+        ring_droop[side] = height
+            * (0.06
+                + 0.12
+                    * (prop_noise(line, index, 0x80 + tier_index as u32 * 8 + side as u32) * 0.5
+                        + 0.5));
+    }
+    for (side, &radius0) in ring_radius.iter().enumerate() {
+        let next = (side + 1) % TREE_CONIFER_SIDES;
+        let radius1 = ring_radius[next];
+        let droop0 = ring_droop[side];
+        let droop1 = ring_droop[next];
+        let angle0 = phase + side as f32 / TREE_CONIFER_SIDES as f32 * TAU;
+        let angle1 = phase + next as f32 / TREE_CONIFER_SIDES as f32 * TAU;
+        let direction0 = Vec3::new(angle0.cos(), 0.0, angle0.sin());
+        let direction1 = Vec3::new(angle1.cos(), 0.0, angle1.sin());
+        let bottom0 = center + direction0 * radius0 - Vec3::Y * droop0;
+        let bottom1 = center + direction1 * radius1 - Vec3::Y * droop1;
+        let top0 = top_center + direction0 * top_radius;
+        let top1 = top_center + direction1 * top_radius;
+        let mut normal = (bottom1 - bottom0)
+            .cross(top0 - bottom0)
+            .normalize_or_zero();
+        if normal.dot(direction0 + direction1) < 0.0 {
+            normal = -normal;
+        }
+        push_quad_colored(
+            buffers,
+            [
+                bottom0.to_array(),
+                top0.to_array(),
+                top1.to_array(),
+                bottom1.to_array(),
+            ],
+            normal.to_array(),
+            tier_color,
         );
     }
 }
@@ -2296,9 +2592,41 @@ mod tests {
                 .and_then(|index| track.visual.mesh_buffers.get(index))
                 .unwrap_or_else(|| panic!("missing {name} mesh"))
         };
-        assert!(!mesh("tree_trunks").positions.is_empty());
-        assert!(!mesh("tree_foliage").positions.is_empty());
-        assert!(mesh("tree_foliage").colors.len() == mesh("tree_foliage").positions.len());
+        for name in [
+            "tree_trunks_high",
+            "tree_foliage_high",
+            "tree_trunks_low",
+            "tree_foliage_low",
+            "tree_cards",
+        ] {
+            assert!(!mesh(name).positions.is_empty(), "empty {name} mesh");
+            assert_eq!(
+                mesh(name).colors.len(),
+                mesh(name).positions.len(),
+                "{name} colors"
+            );
+        }
+        let placements = prop_placements(&sample_track(&CONTROL_POINTS), &lines[0]).len();
+        assert!(placements > 0);
+        let triangles = |name: &str| mesh(name).indices.len() / 3;
+        let high = triangles("tree_trunks_high") + triangles("tree_foliage_high");
+        let low = triangles("tree_trunks_low") + triangles("tree_foliage_low");
+        assert!(high > low);
+        assert!(
+            high <= placements * 120,
+            "high tree budget exceeded: {high} tris for {placements} trees"
+        );
+        assert!(
+            high >= placements * 50,
+            "high tree detail too low: {high} tris for {placements} trees"
+        );
+        assert!(!track.visual.textures.is_empty());
+        assert!(!mesh("tree_cards").uvs.is_empty());
+        let cards = triangles("tree_cards");
+        assert!(
+            cards <= placements * 8,
+            "card tree budget exceeded: {cards} tris for {placements} trees"
+        );
         assert!(track.collision.surface_ids.contains(&WALL_SURFACE));
         assert!(track
             .visual

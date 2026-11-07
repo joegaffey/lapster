@@ -82,7 +82,23 @@ struct MeshOut {
 fn vs_mesh(input: MeshIn) -> MeshOut {
     var output: MeshOut;
     var world = model.transform * vec4<f32>(input.position, 1.0);
-    if model.alpha.z > 0.5 {
+    var out_normal = normalize((model.transform * vec4<f32>(input.normal, 0.0)).xyz);
+    var out_color = input.color;
+    if model.alpha.z > 1.5 {
+        let width = input.normal.x;
+        let height = input.normal.y;
+        let corner = input.color.xy;
+        let tint = input.color.z;
+        let to_camera = normalize(camera.camera_pos.xyz - world.xyz);
+        let right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), to_camera));
+        let up = normalize(cross(to_camera, right));
+        world = vec4<f32>(
+            world.xyz + right * (corner.x * width) + up * (corner.y * height),
+            1.0,
+        );
+        out_normal = vec3<f32>(0.0, 1.0, 0.0);
+        out_color = vec3<f32>(tint, tint, tint);
+    } else if model.alpha.z > 0.5 {
         let phase = input.wind.y;
         let weight = input.wind.x;
         let sway = sin(
@@ -95,8 +111,8 @@ fn vs_mesh(input: MeshIn) -> MeshOut {
         );
     }
     output.clip_position = camera.view_proj * world;
-    output.normal = normalize((model.transform * vec4<f32>(input.normal, 0.0)).xyz);
-    output.color = input.color;
+    output.normal = out_normal;
+    output.color = out_color;
     output.uv = input.uv;
     output.world_position = world.xyz;
     output.alpha = model.alpha.x;
@@ -288,6 +304,9 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         discard;
     }
     var base = input.color * texel.rgb;
+    if model.alpha.z > 1.5 {
+        return vec4<f32>(linear_to_srgb(base), 1.0);
+    }
     let blend_mode = model.alpha.w;
     if blend_mode > 0.5 {
         let asphalt = vec3<f32>(0.045, 0.045, 0.05);

@@ -35,6 +35,9 @@ test("track editor can test drive the procedural track", async ({ page }) => {
     return [dx / length, dz / length];
   });
   await expect(page.locator("#test-drive")).toBeEnabled();
+  await page.locator("#tree-detail").click();
+  await page.locator("#tree-detail").click();
+  await expect(page.locator("#tree-detail")).toHaveText("Trees: Cards");
   await page.locator("#test-drive").click();
   await page.waitForURL(/\/web\/drive\/\?[^#]*track=editor/, { timeout: 30_000 });
   await waitForDrive(page);
@@ -52,6 +55,9 @@ test("track editor can test drive the procedural track", async ({ page }) => {
 
   expect(result.error).toBeUndefined();
   expect(result.status).toBe("ready");
+  expect(
+    await page.evaluate(() => (window as any).__driveViewer.tree_detail()),
+  ).toBe("cards");
   expect(result.debug.asset.id).toBe("procedural-drift-loop");
   expect(result.telemetry.track).toBe("procedural-drift-loop");
   expect(

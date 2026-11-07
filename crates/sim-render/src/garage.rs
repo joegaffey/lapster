@@ -476,6 +476,7 @@ fn add_car_decal(
         casts_dynamic_shadow: false,
         is_decal: true,
         foliage: false,
+        billboard: false,
     });
     Ok(scene.meshes.len() - 1)
 }
@@ -1597,6 +1598,7 @@ fn push_car_mesh(
         casts_dynamic_shadow: true,
         is_decal: false,
         foliage: false,
+        billboard: false,
     });
     Ok(scene.meshes.len() - 1)
 }

@@ -63,6 +63,7 @@ pub struct MeshData {
     pub casts_dynamic_shadow: bool,
     pub is_decal: bool,
     pub foliage: bool,
+    pub billboard: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -287,6 +288,7 @@ impl Scene {
                     || material.is_some_and(|material| {
                         material.name.to_ascii_lowercase().contains("grass")
                     }));
+            let is_tree_card = mesh_ref.name.starts_with("tree_cards");
             let material_texture = material
                 .and_then(|material| material.base_color_texture)
                 .map(|index| index as usize);
@@ -340,10 +342,11 @@ impl Scene {
                     .map(|material| material.base_color[3])
                     .unwrap_or(1.0),
                 emissive: [0.0; 3],
-                casts_static_shadow: true,
+                casts_static_shadow: !is_tree_card,
                 casts_dynamic_shadow: false,
                 is_decal: false,
-                foliage: false,
+                foliage: is_tree_card,
+                billboard: is_tree_card,
             });
         }
 

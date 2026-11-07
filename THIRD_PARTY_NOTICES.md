@@ -96,6 +96,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Pixel Pine Tree Assets
+
+- Source: https://opengameart.org/content/pixel-pine-tree-assets-10-pack
+- Author: pistachio
+- Used in: `fixtures/sources/trees/iso_pines.png`,
+  `crates/sim-render/assets/tree_cards.png`, and
+  `crates/sim-render/assets/tree_cards.rgba`
+- License: CC0 1.0 Universal
+  (https://creativecommons.org/publicdomain/zero/1.0/)
+- Purpose: Source art for the track editor's cross-quad conifer cards.
+
 ## Drift Tracks
 
 - Source: https://sketchfab.com/3d-models/drift-tracks-90a78772873b462aab3ed5fc5fc0c65e

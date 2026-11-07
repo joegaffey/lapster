@@ -548,6 +548,7 @@ test("default tree rings have gaps on both sides", async ({ page }) => {
     const meshes = JSON.parse(viewer.debug_info()).meshes as Array<{
       name: string;
       vertices: number;
+      triangles: number;
     }>;
     return {
       trees: lines.filter((line) => line.kind === "trees"),
@@ -561,10 +562,65 @@ test("default tree rings have gaps on both sides", async ({ page }) => {
     -1, 1,
   ]);
   expect(result.treeMeshes.map((mesh) => mesh.name)).toEqual([
-    "tree_trunks",
-    "tree_foliage",
+    "tree_trunks_high",
+    "tree_foliage_high",
+    "tree_trunks_low",
+    "tree_foliage_low",
+    "tree_cards",
   ]);
   expect(result.treeMeshes.every((mesh) => mesh.vertices > 0)).toBe(true);
+  const highTriangles = result.treeMeshes
+    .filter((mesh) => mesh.name.endsWith("_high"))
+    .reduce((sum, mesh) => sum + mesh.triangles, 0);
+  const lowTriangles = result.treeMeshes
+    .filter((mesh) => mesh.name.endsWith("_low"))
+    .reduce((sum, mesh) => sum + mesh.triangles, 0);
+  expect(highTriangles).toBeGreaterThan(lowTriangles * 1.5);
+  const cardTriangles = result.treeMeshes
+    .filter((mesh) => mesh.name === "tree_cards")
+    .reduce((sum, mesh) => sum + mesh.triangles, 0);
+  expect(cardTriangles).toBeGreaterThan(0);
+  expect(cardTriangles).toBeLessThan(lowTriangles);
+  expect(pageErrors).toEqual([]);
+});
+
+test("tree detail toggle switches between high, low, and card trees", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=tree-detail");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const button = page.locator("#tree-detail");
+  await expect(button).toHaveText("Trees: High");
+  expect(
+    await page.evaluate(() => (window as any).__trackEditor.tree_detail()),
+  ).toBe("high");
+
+  await button.click();
+  await expect(button).toHaveText("Trees: Low");
+  expect(
+    await page.evaluate(() => (window as any).__trackEditor.tree_detail()),
+  ).toBe("low");
+
+  await button.click();
+  await expect(button).toHaveText("Trees: Cards");
+  expect(
+    await page.evaluate(() => (window as any).__trackEditor.tree_detail()),
+  ).toBe("cards");
+
+  await button.click();
+  await expect(button).toHaveText("Trees: High");
+  expect(
+    await page.evaluate(() => (window as any).__trackEditor.tree_detail()),
+  ).toBe("high");
   expect(pageErrors).toEqual([]);
 });
 

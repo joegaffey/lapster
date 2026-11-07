@@ -93,6 +93,7 @@ impl MeshBuilder {
             casts_dynamic_shadow: false,
             is_decal: false,
             foliage,
+            billboard: false,
         }
     }
 

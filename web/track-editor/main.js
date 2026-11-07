@@ -941,6 +941,7 @@ var fpsLabel = document.querySelector("#fps");
 var frameLabel = document.querySelector("#frame-ms");
 var drawsLabel = document.querySelector("#draws");
 var propToggle = document.querySelector("#prop-toggle");
+var treeDetailButton = document.querySelector("#tree-detail");
 var deleteSegmentButton = document.querySelector("#delete-segment");
 var overlayToggle = document.querySelector("#toggle-overlay");
 var cameraViewButton = document.querySelector("#camera-view");
@@ -966,6 +967,13 @@ var hoverHandleEdge = null;
 var selectedSegment = null;
 var guideDrag = null;
 var paintKind = "blocks";
+var TREE_DETAIL_MODES = ["high", "low", "cards"];
+var TREE_DETAIL_LABELS = {
+  high: "High",
+  low: "Low",
+  cards: "Cards"
+};
+var treeDetailMode = "high";
 var overlayVisible = true;
 var PROP_KINDS = ["blocks", "tyres", "trees", "off"];
 var CAMERA_VIEWS = ["front", "back", "left", "right", "car"];
@@ -1599,6 +1607,9 @@ function syncPaintControls() {
   propToggle.textContent = `Prop: ${paintLabel(paintKind)}`;
   deleteSegmentButton.disabled = selectedSegment === null;
 }
+function syncTreeDetailButton() {
+  treeDetailButton.textContent = `Trees: ${TREE_DETAIL_LABELS[treeDetailMode]}`;
+}
 function deleteSelectedSegment() {
   if (!selectedSegment || rebuilding) {
     return;
@@ -2048,6 +2059,7 @@ async function testDrive() {
     if (car) {
       target.searchParams.set("car", car);
     }
+    target.searchParams.set("trees", treeDetailMode);
     window.location.href = target.toString();
   } catch (error) {
     testDriveButton.disabled = false;
@@ -2377,6 +2389,12 @@ propToggle.addEventListener("click", () => {
   const index = PROP_KINDS.indexOf(paintKind);
   setPaintKind(PROP_KINDS[(index + 1) % PROP_KINDS.length]);
 });
+treeDetailButton.addEventListener("click", () => {
+  const index = TREE_DETAIL_MODES.indexOf(treeDetailMode);
+  treeDetailMode = TREE_DETAIL_MODES[(index + 1) % TREE_DETAIL_MODES.length];
+  editorViewer?.set_tree_detail(treeDetailMode);
+  syncTreeDetailButton();
+});
 cameraViewButton.addEventListener("click", () => {
   cycleCameraView();
 });
@@ -2475,6 +2493,7 @@ async function boot() {
     attachResetButton: false
   });
   syncCameraViewButton();
+  syncTreeDetailButton();
   applyCameraView();
   const debug = JSON.parse(viewer.debug_info());
   renderStats(debug);
