@@ -11,7 +11,7 @@ RGBA_OUT = ROOT / "crates/sim-render/assets/tree_cards.rgba"
 CELL_WIDTH = 128
 CELL_HEIGHT = 256
 MARGIN = 3
-OUTLINE_PX = 2
+OUTLINE_PX = 0
 
 CROPS = [
     (0, 8, 96, 254),

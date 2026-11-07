@@ -125,6 +125,38 @@ fn vs_shadow(input: MeshIn) -> @builtin(position) vec4<f32> {
     return camera.light_view_proj * world;
 }
 
+struct ShadowCardOut {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_shadow_card(input: MeshIn) -> ShadowCardOut {
+    var world = model.transform * vec4<f32>(input.position, 1.0);
+    let width = input.normal.x;
+    let height = input.normal.y;
+    let corner = input.color.xy;
+    let to_camera = normalize(camera.camera_pos.xyz - world.xyz);
+    let right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), to_camera));
+    let up = normalize(cross(to_camera, right));
+    world = vec4<f32>(
+        world.xyz + right * (corner.x * width) + up * (corner.y * height),
+        1.0,
+    );
+    var output: ShadowCardOut;
+    output.clip_position = camera.light_view_proj * world;
+    output.uv = input.uv;
+    return output;
+}
+
+@fragment
+fn fs_shadow_card(input: ShadowCardOut) {
+    let texel = textureSample(base_texture, base_sampler, input.uv);
+    if texel.a < 0.45 {
+        discard;
+    }
+}
+
 fn bayer4(coord: vec2<f32>) -> f32 {
     let x = u32(coord.x) & 3u;
     let y = u32(coord.y) & 3u;

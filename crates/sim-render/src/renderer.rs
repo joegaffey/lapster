@@ -230,6 +230,7 @@ pub struct Renderer {
     mesh_pipeline: wgpu::RenderPipeline,
     transparent_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
+    shadow_card_pipeline: wgpu::RenderPipeline,
     decal_pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
@@ -706,7 +707,19 @@ impl Renderer {
             format,
             sample_count,
         );
+        let shadow_card_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("shadow card pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&camera_bind_group_layout),
+                    Some(&model_bind_group_layout),
+                    Some(&texture_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
         let shadow_pipeline = create_shadow_pipeline(&device, &shader, &shadow_pipeline_layout);
+        let shadow_card_pipeline =
+            create_shadow_card_pipeline(&device, &shader, &shadow_card_pipeline_layout);
         let grass_pipeline = create_grass_pipeline(
             &device,
             &grass_shader,
@@ -820,6 +833,7 @@ impl Renderer {
             mesh_pipeline: pipelines.mesh,
             transparent_pipeline: pipelines.transparent,
             shadow_pipeline,
+            shadow_card_pipeline,
             decal_pipeline,
             outline_pipeline: pipelines.outline,
             line_pipeline: pipelines.line,
@@ -1333,11 +1347,16 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             for mesh in &self.meshes {
                 if !self.mesh_required_in_high_shadow(mesh) {
                     continue;
+                }
+                if mesh.billboard {
+                    pass.set_pipeline(&self.shadow_card_pipeline);
+                    pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
+                } else {
+                    pass.set_pipeline(&self.shadow_pipeline);
                 }
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -1936,11 +1955,16 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.bake_camera_bind_group, &[]);
             for mesh in &self.meshes {
                 if !mesh.visible || !mesh.casts_static_shadow || mesh.is_decal {
                     continue;
+                }
+                if mesh.billboard {
+                    pass.set_pipeline(&self.shadow_card_pipeline);
+                    pass.set_bind_group(2, &mesh.texture_bind_group, &[]);
+                } else {
+                    pass.set_pipeline(&self.shadow_pipeline);
                 }
                 pass.set_bind_group(1, &mesh.model_bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -3286,6 +3310,56 @@ fn create_shadow_pipeline(
             ..Default::default()
         },
         fragment: None,
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn create_shadow_card_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("shadow card pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_shadow_card"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<MeshVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &MESH_ATTRIBUTES,
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_shadow_card"),
+            compilation_options: Default::default(),
+            targets: &[],
+        }),
         multiview_mask: None,
         cache: None,
     })

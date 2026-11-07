@@ -342,8 +342,8 @@ impl Scene {
                     .map(|material| material.base_color[3])
                     .unwrap_or(1.0),
                 emissive: [0.0; 3],
-                casts_static_shadow: !is_tree_card,
-                casts_dynamic_shadow: false,
+                casts_static_shadow: true,
+                casts_dynamic_shadow: is_tree_card,
                 is_decal: false,
                 foliage: is_tree_card,
                 billboard: is_tree_card,
