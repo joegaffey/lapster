@@ -15,8 +15,10 @@ export default defineConfig({
       args: [
         "--enable-unsafe-webgpu",
         "--enable-features=Vulkan",
+        "--use-gl=angle",
         "--use-angle=swiftshader",
         "--enable-unsafe-swiftshader",
+        "--disable-dev-shm-usage",
       ],
     },
   },
