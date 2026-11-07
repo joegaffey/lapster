@@ -238,7 +238,7 @@ from a conditioned version of the vehicle's RPM plus actual speed and gear throu
 external-state adapter.
 
 `npm run test:viewer` builds the wasm and runs Playwright in Chromium. On Linux it provides
-the NSS/NSPR libraries if the system does not have them. CI shards the browser suite three
+the NSS/NSPR libraries if the system does not have them. CI shards the browser suite five
 ways. Locally it defaults to one worker so CPU-only physics timing stays stable; set
 `PLAYWRIGHT_WORKERS=2` (or higher) to opt into parallel workers, or pass a spec path to run
 only the affected tests. `npm run bench:physics` runs the

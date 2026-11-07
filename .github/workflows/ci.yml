@@ -26,8 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
-    name: web (shard ${{ matrix.shard }}/3)
+        shard: [1, 2, 3, 4, 5]
+    name: web (shard ${{ matrix.shard }}/5)
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -54,4 +54,4 @@ jobs:
         working-directory: web
         env:
           CI: "true"
-        run: npm run test:viewer -- --shard=${{ matrix.shard }}/3
+        run: npm run test:viewer -- --shard=${{ matrix.shard }}/5
