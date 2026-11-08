@@ -95,9 +95,18 @@ export function parsePack(bytes: Uint8Array): LoadedPack {
 }
 
 export async function verifyPackHashes(pack: LoadedPack): Promise<void> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    // SubtleCrypto is only available in secure contexts (HTTPS or localhost).
+    // LAN HTTP is an accepted dev path, so rely on structural validation there.
+    console.warn(
+      "Pack hash verification skipped: SubtleCrypto is unavailable. Use HTTPS or localhost for integrity checks.",
+    );
+    return;
+  }
   for (const chunk of pack.manifest.chunks) {
     const bytes = pack.bytes.subarray(chunk.offset, chunk.offset + chunk.len);
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
     if (!equalBytes(digest, chunk.hash)) {
       throw new PackLoadError(`chunk ${chunk.kind} hash does not match`);
     }

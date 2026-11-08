@@ -21,3 +21,6 @@ web/audio/combustion-worklet.js
 *.pid
 .env
 .env.*
+.opencode/package.json
+.opencode/package-lock.json
+.opencode/bun.lock
