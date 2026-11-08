@@ -31,6 +31,17 @@ const KERB_TOP_OFFSET: f32 = 0.155;
 const OUTER_EDGE_RADIUS: f32 = 12.0;
 const ASPHALT_HALF_WIDTH: f32 = 6.0;
 const SURFACE_HEIGHT_OFFSET: f32 = 0.06;
+const RACING_LINE_MATERIAL: u16 = 12;
+const RACING_LINE_HALF_WIDTH: f32 = 1.6;
+const RACING_LINE_EDGE_MARGIN: f32 = 0.3;
+const RACING_LINE_MAX_OFFSET: f32 =
+    ASPHALT_HALF_WIDTH - RACING_LINE_HALF_WIDTH - RACING_LINE_EDGE_MARGIN;
+const RACING_LINE_REFERENCE_CURVATURE: f32 = 1.0 / 42.0;
+const RACING_LINE_SMOOTHING_PASSES: usize = 16;
+const RACING_LINE_LIFT: f32 = 0.02;
+const RACING_LINE_ASPHALT_COLOR: [f32; 3] = [0.045, 0.045, 0.05];
+const RACING_LINE_DARK_COLOR: [f32; 3] = [0.016, 0.016, 0.021];
+const RACING_LINE_PROFILE: [f32; 7] = [-1.0, -0.8, -0.5, 0.0, 0.5, 0.8, 1.0];
 const PROP_OFFSET: f32 = 14.0;
 const PROP_FAR_OFFSET: f32 = 19.0;
 const MIN_PROP_OFFSET: f32 = 1.0;
@@ -531,6 +542,14 @@ pub fn track_from_control_points_with_spans(
     let terrain = terrain_grid(&points);
     let mountains = mountain_grid();
     push_mesh(&mut visual, "asphalt_dither", 1, track_buffers, false);
+    let racing_line = racing_line_ribbon(&points, &racing_line_offsets(&points));
+    push_mesh(
+        &mut visual,
+        "racing_line",
+        RACING_LINE_MATERIAL,
+        racing_line,
+        false,
+    );
     push_mesh(&mut visual, "terrain", 2, terrain, false);
     push_mesh(&mut visual, "mountains", 8, mountains, false);
 
@@ -830,6 +849,7 @@ fn materials() -> Vec<MaterialRef> {
             base_color_texture: Some(0),
             outline: false,
         },
+        material("racing_line", [0.02, 0.02, 0.025, 1.0], false),
     ]
 }
 
@@ -990,6 +1010,106 @@ fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
         buffers,
         surface_ids,
     }
+}
+
+fn racing_line_offsets(points: &[Vec3]) -> Vec<f32> {
+    let count = points.len();
+    if count < 3 {
+        return vec![0.0; count];
+    }
+
+    let mut target = vec![0.0f32; count];
+    for index in 0..count {
+        let previous = points[(index + count - 1) % count];
+        let current = points[index];
+        let next = points[(index + 1) % count];
+        let incoming = Vec3::new(current.x - previous.x, 0.0, current.z - previous.z);
+        let outgoing = Vec3::new(next.x - current.x, 0.0, next.z - current.z);
+        let incoming_length = incoming.length();
+        let outgoing_length = outgoing.length();
+        if incoming_length < 1e-4 || outgoing_length < 1e-4 {
+            continue;
+        }
+        let sin_turn = (incoming.x * outgoing.z - incoming.z * outgoing.x)
+            / (incoming_length * outgoing_length);
+        let turn = sin_turn.clamp(-1.0, 1.0).asin();
+        let spacing = (incoming_length + outgoing_length) * 0.5;
+        let curvature = turn / spacing.max(1e-3);
+        let strength = (curvature.abs() / RACING_LINE_REFERENCE_CURVATURE).clamp(0.0, 1.0);
+        target[index] = RACING_LINE_MAX_OFFSET * strength * curvature.signum();
+    }
+
+    // Circular 1-2-1 smoothing removes per-sample curvature kinks while keeping
+    // the loop continuous. Straight samples relax back toward the centreline.
+    let mut offsets = target;
+    for _ in 0..RACING_LINE_SMOOTHING_PASSES {
+        let previous = offsets.clone();
+        for index in 0..count {
+            offsets[index] = (previous[(index + count - 1) % count]
+                + 2.0 * previous[index]
+                + previous[(index + 1) % count])
+                * 0.25;
+        }
+    }
+    for offset in &mut offsets {
+        *offset = offset.clamp(-RACING_LINE_MAX_OFFSET, RACING_LINE_MAX_OFFSET);
+    }
+    offsets
+}
+
+fn racing_line_ribbon(points: &[Vec3], offsets: &[f32]) -> MeshBuffers {
+    let mut buffers = empty_buffers();
+    let count = points.len();
+    if count == 0 {
+        return buffers;
+    }
+
+    let asphalt = Vec3::from_array(RACING_LINE_ASPHALT_COLOR);
+    let dark = Vec3::from_array(RACING_LINE_DARK_COLOR);
+    let profile_count = RACING_LINE_PROFILE.len();
+    for station in 0..=count {
+        let sample = station % count;
+        let point = points[sample];
+        let binormal = binormal_at(points, sample);
+        let offset = offsets.get(sample).copied().unwrap_or(0.0);
+        let left = point - binormal * ASPHALT_HALF_WIDTH;
+        let right = point + binormal * ASPHALT_HALF_WIDTH;
+        let left_y = terrain_height(left.x, left.z) + SURFACE_HEIGHT_OFFSET;
+        let right_y = terrain_height(right.x, right.z) + SURFACE_HEIGHT_OFFSET;
+        let u = station as f32 / count as f32;
+        for (profile_index, profile) in RACING_LINE_PROFILE.iter().enumerate() {
+            let lateral = offset + profile * RACING_LINE_HALF_WIDTH;
+            let position = point + binormal * lateral;
+            // The asphalt band is a flat quad between its -6 m and +6 m edge
+            // vertices. Interpolate those edge heights so the line follows the
+            // rendered surface instead of the underlying terrain curve.
+            let t = ((lateral + ASPHALT_HALF_WIDTH) / (2.0 * ASPHALT_HALF_WIDTH)).clamp(0.0, 1.0);
+            let y = left_y + (right_y - left_y) * t + RACING_LINE_LIFT;
+            buffers.positions.push([position.x, y, position.z]);
+            buffers.normals.push(terrain_normal(position.x, position.z));
+            buffers
+                .uvs
+                .push([u, profile_index as f32 / (profile_count - 1) as f32]);
+            // Keep a wide dark core, then feather into the asphalt at the edges.
+            let color = dark.lerp(asphalt, smoothstep(0.6, 1.0, profile.abs()));
+            buffers.colors.push(color.to_array());
+        }
+        if station < count {
+            for band in 0..profile_count - 1 {
+                let base = (station * profile_count + band) as u32;
+                let next_base = ((station + 1) * profile_count + band) as u32;
+                buffers.indices.extend_from_slice(&[
+                    base,
+                    base + 1,
+                    next_base,
+                    base + 1,
+                    next_base + 1,
+                    next_base,
+                ]);
+            }
+        }
+    }
+    buffers
 }
 
 fn mountain_grid() -> MeshBuffers {
@@ -2281,6 +2401,135 @@ mod tests {
             .any(|mesh| mesh.name.starts_with("dither_shoulder")));
         assert!(track.collision.surface_ids.contains(&TRACK_SURFACE));
         assert!(track.collision.surface_ids.contains(&DIRT_SURFACE));
+    }
+
+    fn signed_turn(points: &[Vec3], index: usize) -> f32 {
+        let count = points.len();
+        let previous = points[(index + count - 1) % count];
+        let current = points[index];
+        let next = points[(index + 1) % count];
+        let incoming = Vec3::new(current.x - previous.x, 0.0, current.z - previous.z);
+        let outgoing = Vec3::new(next.x - current.x, 0.0, next.z - current.z);
+        incoming.x * outgoing.z - incoming.z * outgoing.x
+    }
+
+    #[test]
+    fn racing_line_offsets_stay_inside_the_asphalt() {
+        for control_points in [&CONTROL_POINTS[..], &TIGHT_CONTROL_POINTS[..]] {
+            let points = sample_track(control_points);
+            let offsets = racing_line_offsets(&points);
+            assert_eq!(offsets.len(), points.len());
+            assert!(offsets.iter().all(|offset| offset.is_finite()));
+            assert!(offsets
+                .iter()
+                .all(|offset| offset.abs() <= RACING_LINE_MAX_OFFSET + 1e-5));
+        }
+    }
+
+    #[test]
+    fn racing_line_biases_into_corners_and_centres_on_straights() {
+        let points = sample_track(&CONTROL_POINTS);
+        let offsets = racing_line_offsets(&points);
+        let count = points.len();
+        let (corner, turn) = (0..count)
+            .map(|index| (index, signed_turn(&points, index)))
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .expect("a corner");
+        assert!(turn.abs() > 1e-3);
+        assert!(
+            offsets[corner].abs() > 1.0,
+            "corner offset {} is too small",
+            offsets[corner]
+        );
+        assert_eq!(
+            offsets[corner].signum(),
+            turn.signum(),
+            "line should move toward the inside of the corner"
+        );
+
+        let (straight, _) = (0..count)
+            .map(|index| (index, signed_turn(&points, index).abs()))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .expect("a straight");
+        assert!(
+            offsets[straight].abs() < 1.0,
+            "straight offset {} should stay near centre",
+            offsets[straight]
+        );
+    }
+
+    #[test]
+    fn racing_line_mesh_sits_above_asphalt_within_the_lane() {
+        let points = sample_track(&CONTROL_POINTS);
+        let offsets = racing_line_offsets(&points);
+        let buffers = racing_line_ribbon(&points, &offsets);
+        let profile_count = RACING_LINE_PROFILE.len();
+        assert_eq!(buffers.positions.len(), (points.len() + 1) * profile_count);
+        assert_eq!(buffers.colors.len(), buffers.positions.len());
+        assert_eq!(buffers.normals.len(), buffers.positions.len());
+        assert_eq!(buffers.uvs.len(), buffers.positions.len());
+        assert_eq!(
+            buffers.indices.len() / 3,
+            points.len() * (profile_count - 1) * 2
+        );
+
+        for station in 0..points.len() {
+            let center = points[station];
+            let binormal = binormal_at(&points, station);
+            let left = center - binormal * ASPHALT_HALF_WIDTH;
+            let right = center + binormal * ASPHALT_HALF_WIDTH;
+            let left_y = terrain_height(left.x, left.z) + SURFACE_HEIGHT_OFFSET;
+            let right_y = terrain_height(right.x, right.z) + SURFACE_HEIGHT_OFFSET;
+            for column in 0..profile_count {
+                let position =
+                    Vec3::from_array(buffers.positions[station * profile_count + column]);
+                let lateral = (position - center).dot(binormal);
+                assert!(
+                    lateral.abs() <= ASPHALT_HALF_WIDTH,
+                    "racing line vertex outside asphalt: {lateral}"
+                );
+                let t =
+                    ((lateral + ASPHALT_HALF_WIDTH) / (2.0 * ASPHALT_HALF_WIDTH)).clamp(0.0, 1.0);
+                let asphalt_y = left_y + (right_y - left_y) * t;
+                assert!(
+                    position.y > asphalt_y,
+                    "racing line vertex is not above the asphalt: {} <= {}",
+                    position.y,
+                    asphalt_y
+                );
+                assert!((position.y - asphalt_y - RACING_LINE_LIFT).abs() < 1e-4);
+            }
+        }
+
+        let first_station = &buffers.colors[..profile_count];
+        assert!(first_station[profile_count / 2][0] < first_station[0][0]);
+        assert_eq!(first_station[0], RACING_LINE_ASPHALT_COLOR);
+    }
+
+    #[test]
+    fn editor_track_includes_a_racing_line_mesh() {
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
+        let index = track
+            .visual
+            .meshes
+            .iter()
+            .position(|mesh| mesh.name == "racing_line")
+            .expect("racing line mesh");
+        let mesh = &track.visual.meshes[index];
+        assert_eq!(
+            track.visual.materials[mesh.material as usize].name,
+            "racing_line"
+        );
+        let buffers = &track.visual.mesh_buffers[index];
+        assert!(!buffers.positions.is_empty());
+        assert!(!buffers.indices.is_empty());
+        assert_eq!(buffers.colors.len(), buffers.positions.len());
+        assert!(track
+            .metadata
+            .surfaces
+            .iter()
+            .all(|surface| surface.name != "racing_line"));
     }
 
     #[test]

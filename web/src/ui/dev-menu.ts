@@ -16,6 +16,8 @@ interface DevMenuViewer {
   tuning(): string;
   apply_tuning(json: string): void;
   reset_tuning(): void;
+  racing_line_visible?(): boolean;
+  set_racing_line_visible?(visible: boolean): void;
 }
 
 interface TuningField {
@@ -61,6 +63,8 @@ interface DevMenuOptions {
 export interface TrackDevMenuViewer {
   track_blend_mode(): string;
   set_track_blend_mode(mode: string): void;
+  racing_line_visible?(): boolean;
+  set_racing_line_visible?(visible: boolean): void;
 }
 
 export interface DevMenu {
@@ -647,6 +651,16 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
   fps.addEventListener("change", () => updateSetting({ fpsCounter: fps.checked }));
   viewBody.append(toggleRow("FPS counter", fps));
 
+  const racingLine = document.createElement("input");
+  racingLine.id = "dev-racing-line";
+  racingLine.type = "checkbox";
+  racingLine.addEventListener("change", () => {
+    viewer.set_racing_line_visible?.(racingLine.checked);
+    status.className = "dev-status";
+    status.textContent = racingLine.checked ? "Racing line shown" : "Racing line hidden";
+  });
+  viewBody.append(toggleRow("Racing line", racingLine));
+
   const antiAliasing = document.createElement("select");
   antiAliasing.id = "dev-anti-aliasing";
   for (const [value, label] of [
@@ -905,6 +919,7 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
   const refreshView = () => {
     camera.value = options.getCameraMode();
     bodyVisible.checked = options.getBodyVisible();
+    racingLine.checked = viewer.racing_line_visible?.() ?? true;
   };
 
   const refreshAudio = () => {
@@ -1152,6 +1167,7 @@ export function setupDevMenu(viewer: DevMenuViewer, options: DevMenuOptions): De
 export function setupTrackDevMenu(viewer: TrackDevMenuViewer): DevMenu {
   const shell = createDevMenuShell("Track rendering", () => {
     refreshBlend();
+    refreshRacingLine();
     shell.status.className = "dev-status";
     shell.status.textContent = "Changes apply live";
   });
@@ -1159,6 +1175,19 @@ export function setupTrackDevMenu(viewer: TrackDevMenuViewer): DevMenu {
 
   const refreshBlend = () => {
     blend.value = viewer.track_blend_mode();
+  };
+
+  const racingLine = document.createElement("input");
+  racingLine.id = "dev-racing-line";
+  racingLine.type = "checkbox";
+  racingLine.addEventListener("change", () => {
+    viewer.set_racing_line_visible?.(racingLine.checked);
+    status.className = "dev-status";
+    status.textContent = racingLine.checked ? "Racing line shown" : "Racing line hidden";
+  });
+
+  const refreshRacingLine = () => {
+    racingLine.checked = viewer.racing_line_visible?.() ?? true;
   };
 
   const blend = document.createElement("select");
@@ -1181,6 +1210,7 @@ export function setupTrackDevMenu(viewer: TrackDevMenuViewer): DevMenu {
 
   const visuals = addSection(content, "Track rendering").querySelector(".dev-grid")!;
   visuals.append(fieldRow("Edge blend", blend));
+  visuals.append(toggleRow("Racing line", racingLine));
   const note = document.createElement("p");
   note.className = "dev-note";
   note.textContent =
@@ -1193,6 +1223,7 @@ export function setupTrackDevMenu(viewer: TrackDevMenuViewer): DevMenu {
   drawer.append(footer);
 
   refreshBlend();
+  refreshRacingLine();
   return shell;
 }
 

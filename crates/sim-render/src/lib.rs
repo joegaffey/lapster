@@ -68,6 +68,10 @@ impl TreeDetail {
     }
 }
 
+fn mesh_index_by_name(scene: &Scene, name: &str) -> Option<usize> {
+    scene.meshes.iter().position(|mesh| mesh.name == name)
+}
+
 fn tree_mesh_indices(scene: &Scene) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
     let mut high = Vec::new();
     let mut low = Vec::new();
@@ -123,6 +127,8 @@ pub struct TrackViewer {
     tree_card_meshes: Vec<usize>,
     tree_detail: TreeDetail,
     track_blend: f32,
+    racing_line_mesh: Option<usize>,
+    racing_line_visible: bool,
 }
 
 #[wasm_bindgen]
@@ -229,6 +235,7 @@ impl TrackViewer {
             .zip(scene.style_car_bounds)
             .map(|(transform, bounds)| StyleCar { transform, bounds });
         let style_rig = scene.car_rig.clone();
+        let racing_line_mesh = mesh_index_by_name(&scene, "racing_line");
         let camera = scene.camera;
         let shadow_focus = camera.target;
         let (collision_center, region_half) = track_region(collision, metadata);
@@ -312,6 +319,8 @@ impl TrackViewer {
             tree_card_meshes,
             tree_detail: TreeDetail::High,
             track_blend: 1.0,
+            racing_line_mesh,
+            racing_line_visible: true,
         })
     }
 
@@ -446,6 +455,7 @@ impl TrackViewer {
         .map_err(|error| JsValue::from_str(&error))?;
         let debug_info = scene.debug_info.clone();
         let (tree_high_meshes, tree_low_meshes, tree_card_meshes) = tree_mesh_indices(&scene);
+        let racing_line_mesh = mesh_index_by_name(&scene, "racing_line");
         let camera = self.camera;
         let (collision_center, region_half) = track_region(&track.collision, &track.metadata);
         let region_center = track
@@ -486,8 +496,14 @@ impl TrackViewer {
             &tree_card_meshes,
             self.tree_detail,
         );
+        if !self.racing_line_visible {
+            if let Some(index) = racing_line_mesh {
+                renderer.set_mesh_visible(index, false);
+            }
+        }
         self.renderer = renderer;
         self.debug_info = debug_info;
+        self.racing_line_mesh = racing_line_mesh;
         self.editor_control_points = Some(points);
         self.editor_kerb_spans = track.kerb_spans;
         self.editor_prop_lines = track.prop_lines;
@@ -522,6 +538,17 @@ impl TrackViewer {
         self.tree_low_meshes = tree_low_meshes;
         self.tree_card_meshes = tree_card_meshes;
         Ok(())
+    }
+
+    pub fn racing_line_visible(&self) -> bool {
+        self.racing_line_visible
+    }
+
+    pub fn set_racing_line_visible(&mut self, visible: bool) {
+        self.racing_line_visible = visible;
+        if let Some(index) = self.racing_line_mesh {
+            self.renderer.set_mesh_visible(index, visible);
+        }
     }
 
     pub fn set_environment_shadow_mode(&mut self, mode: &str) {
@@ -1643,6 +1670,8 @@ pub struct DriveViewer {
     tree_low_meshes: Vec<usize>,
     tree_card_meshes: Vec<usize>,
     tree_detail: TreeDetail,
+    racing_line_mesh: Option<usize>,
+    racing_line_visible: bool,
 }
 
 #[wasm_bindgen]
@@ -1777,6 +1806,7 @@ impl DriveViewer {
         };
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
+        let racing_line_mesh = mesh_index_by_name(&scene, "racing_line");
         let mut renderer =
             renderer::Renderer::new(canvas, width, height, scene, &tuning.gpu).await?;
         renderer.set_baked_region(track_shadow_center, baked_half_extent, ground_y);
@@ -1822,6 +1852,8 @@ impl DriveViewer {
             tree_low_meshes,
             tree_card_meshes,
             tree_detail: TreeDetail::High,
+            racing_line_mesh,
+            racing_line_visible: true,
         };
         drive.renderer.set_shadow_tuning(&drive.tuning.shadows);
         drive
@@ -1863,6 +1895,17 @@ impl DriveViewer {
         self.tree_low_meshes = tree_low_meshes;
         self.tree_card_meshes = tree_card_meshes;
         Ok(())
+    }
+
+    pub fn racing_line_visible(&self) -> bool {
+        self.racing_line_visible
+    }
+
+    pub fn set_racing_line_visible(&mut self, visible: bool) {
+        self.racing_line_visible = visible;
+        if let Some(index) = self.racing_line_mesh {
+            self.renderer.set_mesh_visible(index, visible);
+        }
     }
 
     pub fn reset(&mut self) {

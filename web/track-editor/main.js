@@ -672,6 +672,14 @@ function fieldRow(labelText, control, output) {
   label.append(control);
   return label;
 }
+function toggleRow(labelText, input) {
+  const label = document.createElement("label");
+  label.className = "dev-toggle";
+  const name = document.createElement("span");
+  name.textContent = labelText;
+  label.append(name, input);
+  return label;
+}
 function addSection(host, title) {
   const details = document.createElement("details");
   const summary = document.createElement("summary");
@@ -759,12 +767,24 @@ function createDevMenuShell(titleText, onOpen) {
 function setupTrackDevMenu(viewer) {
   const shell = createDevMenuShell("Track rendering", () => {
     refreshBlend();
+    refreshRacingLine();
     shell.status.className = "dev-status";
     shell.status.textContent = "Changes apply live";
   });
   const { drawer, content, status: status2 } = shell;
   const refreshBlend = () => {
     blend.value = viewer.track_blend_mode();
+  };
+  const racingLine = document.createElement("input");
+  racingLine.id = "dev-racing-line";
+  racingLine.type = "checkbox";
+  racingLine.addEventListener("change", () => {
+    viewer.set_racing_line_visible?.(racingLine.checked);
+    status2.className = "dev-status";
+    status2.textContent = racingLine.checked ? "Racing line shown" : "Racing line hidden";
+  });
+  const refreshRacingLine = () => {
+    racingLine.checked = viewer.racing_line_visible?.() ?? true;
   };
   const blend = document.createElement("select");
   blend.id = "dev-track-blend";
@@ -785,6 +805,7 @@ function setupTrackDevMenu(viewer) {
   });
   const visuals = addSection(content, "Track rendering").querySelector(".dev-grid");
   visuals.append(fieldRow("Edge blend", blend));
+  visuals.append(toggleRow("Racing line", racingLine));
   const note = document.createElement("p");
   note.className = "dev-note";
   note.textContent = "Dither is the shipped look. Soft blends the edge with a smooth gradient. Hard cut keeps a crisp reference edge.";
@@ -794,6 +815,7 @@ function setupTrackDevMenu(viewer) {
   footer.append(status2);
   drawer.append(footer);
   refreshBlend();
+  refreshRacingLine();
   return shell;
 }
 
