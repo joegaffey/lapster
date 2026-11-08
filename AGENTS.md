@@ -98,7 +98,14 @@ Full detail: `agents/protocol.md`.
 ## Durable state
 
 `PROGRESS.md`, `SPEC.md`, `PLAN.md`, and `README.md` are the resumable project
-state. Do not rely on chat history.
+state. `docs/adr/` records decision history. Do not rely on chat history.
+
+## Architecture decisions
+
+Significant decisions are recorded as ADRs in `docs/adr/`. The architect owns
+the directory and accepts ADRs. Required for breaking contract changes, new
+contract layers, topology changes, cross-domain architecture decisions, and
+spike promotions that change architecture. See `docs/adr/README.md`.
 
 ## Branching and gate
 

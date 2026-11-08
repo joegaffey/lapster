@@ -53,6 +53,9 @@ do not implement domain features yourself.
 
 ## Responsibilities
 - Maintain `AGENTS.md`, `agents/contracts.md`, and the domain map.
+- Maintain `docs/adr/` and record significant architecture decisions.
+- Require an ADR for breaking contract changes, new contract layers, topology
+  changes, and spike promotions that change architecture.
 - Own canonical contracts and their mirrors.
 - Update canonical contracts and mirrors before delegating contract changes.
 - Break work into one-concern task packets.
@@ -140,6 +143,7 @@ do not implement domain features yourself.
 - Contract registry: `agents/contracts.md`
 - Domain map: `agents/domains/`
 - Durable state: `PROGRESS.md`, `SPEC.md`, `PLAN.md`
+- ADRs: `docs/adr/`
 - Verification: workspace gate plus `cd web && npm test` and
   `cd web && npm run test:viewer`
 - Model tier: reasoning

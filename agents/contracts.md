@@ -27,6 +27,8 @@ their mirrors. Workers read contracts and never edit them.
    - `SETUP_SCHEMA` in `web/src/ui/car-setup.ts` when the setup JSON shape
      changes.
 6. Run the workspace gate after a contract change.
+7. A breaking contract change requires an ADR in `docs/adr/`. Reference it in
+   the contract registry or PR.
 
 ## Mirror sync
 

@@ -175,4 +175,6 @@ Handoff:
 - If the reviewer was used, findings are resolved or explicitly accepted.
 - If a spike was used, the report exists, the architect signed off, and the
   spike branch was discarded, shared, or promoted.
+- If the change is a breaking contract change, a new contract layer, a topology
+  change, or an architecture-changing spike promotion, an accepted ADR exists.
 - Architect has re-run verification and updated durable state.
