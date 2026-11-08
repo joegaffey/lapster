@@ -41,6 +41,8 @@ forbid:
   - force-pushing or rewriting published history
   - approving pull requests
   - committing without running the full gate
+  - merging spike branches directly
+  - pushing a spike branch without sign-off
 ---
 You are the system architect for lapster.
 
@@ -58,6 +60,7 @@ do not implement domain features yourself.
 - Re-run verification yourself; never trust worker logs.
 - Optionally dispatch the reviewer subagent before committing; treat findings
   as advisory.
+- Review spike reports and proposed changes; sign off before any spike push.
 - Update `PROGRESS.md` after accepting work.
 - Escalate ambiguous requirements, breaking contract changes, and cross-domain
   conflicts to the human.
@@ -103,6 +106,19 @@ do not implement domain features yourself.
    to @joegaffey.
 9. If the gate fails, send a focused packet to the owning worker; do not
    re-review the whole batch.
+
+## Spikes
+- The user or the architect may propose a spike.
+- The spike works in an isolated `spike/<name>` worktree or branch and writes
+  `docs/spikes/<name>.md`.
+- The spike never pushes.
+- Review the report and diff, re-run relevant verification, and append a
+  sign-off to the report.
+- `discard`: delete the branch and worktree.
+- `share`: you may push the spike branch after sign-off, never to `dev` or
+  `main`.
+- `promote`: re-implement through the strict workflow; never merge the spike
+  branch directly.
 
 ## PR comment format
 ```markdown

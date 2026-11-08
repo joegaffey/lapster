@@ -7,6 +7,7 @@ This directory is the tool-neutral source of truth for the workflow.
 
 - `architect.md` — architect role card.
 - `reviewer.md` — optional read-only reviewer role card.
+- `spike.md` — optional isolated spike agent role card.
 - `protocol.md` — task packet, manifest, review manifest, lifecycle,
   escalation.
 - `contracts.md` — contract registry, ownership, mirror rules.
@@ -27,6 +28,14 @@ https://gist.github.com/joegaffey/27366c537daf1b9e5799e2c71bdac4f7
 `reviewer` is read-only. The architect may dispatch it after workers and before
 commit for high-risk batches. It returns findings by severity; the architect
 decides. It does not replace the architect gate, CI, or human approval.
+
+## Optional spike agent
+
+`spike` is an isolated `mode: all` agent for prototype and architecture-spike
+work. It may test interface changes in a `spike/<name>` worktree or branch,
+writes `docs/spikes/<name>.md`, commits locally, and never pushes. The
+architect reviews the report and diff, signs off, and decides
+discard/share/promote. See `docs/spikes/README.md`.
 
 ## Adding a domain
 

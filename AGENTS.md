@@ -18,6 +18,7 @@ architect (primary)
   -> contracts (architect-owned)
     -> physics | render | assets | multiplayer | web (short-lived workers)
   -> reviewer (optional, read-only)
+  -> spike (optional, isolated, no push)
 ```
 
 - **Architect** owns contracts, mirrors, docs, workspace/build/CI config, and
@@ -52,6 +53,14 @@ Full detail: `agents/contracts.md`.
 `reviewer` is an optional read-only subagent. The architect may dispatch it
 after workers and before commit for high-risk batches. It returns findings by
 severity; the architect decides. See `agents/reviewer.md`.
+
+## Spike mode
+
+`spike` is an optional `mode: all` agent for isolated prototype and
+architecture-spike work. It may test interface/contract changes only in a
+`spike/<name>` worktree or branch, writes `docs/spikes/<name>.md`, commits
+locally, and never pushes. The architect reviews the report and diff, signs
+off, and decides discard/share/promote. See `agents/spike.md`.
 
 ## Context protocol
 

@@ -7,6 +7,9 @@
 - **Worker** (subagent): owns one domain. Short-lived. One task per session.
 - **Reviewer** (optional subagent): read-only. Reviews a batch diff against
   contracts and acceptance criteria. Advisory only.
+- **Spike** (optional, mode all): isolated prototype and architecture-spike
+  agent. May test interface changes in a spike worktree or branch. Never
+  pushes.
 
 ## Task packet
 
@@ -84,6 +87,46 @@ The reviewer returns only this JSON object:
 The reviewer never edits, commits, or pushes. Findings are advisory; the
 architect decides. Blocking findings go back to the owning worker.
 
+## Spike report
+
+The spike writes `docs/spikes/<name>.md` and commits it locally on the spike
+branch. The Markdown report is required. The JSON manifest is recommended for
+machine-readable handoff:
+
+```json
+{
+  "spike": "<name>",
+  "status": "COMPLETE | BLOCKED",
+  "objective": "<...>",
+  "interfaces_tested": ["<path>"],
+  "changes": {
+    "branch": "spike/<name>",
+    "commits": ["<sha>"],
+    "files": ["<path>"],
+    "summary": "<...>"
+  },
+  "verification": [{ "cmd": "<command>", "passed": true }],
+  "findings": ["<...>"],
+  "risks": ["<...>"],
+  "recommendation": "discard | share | promote",
+  "open_questions": ["<...>"]
+}
+```
+
+Handoff:
+
+- The user or the architect may propose a spike.
+- The spike works in an isolated `spike/<name>` worktree or branch.
+- It may test interface and contract changes there.
+- It never pushes.
+- The architect reviews the report and diff, re-runs relevant verification, and
+  appends a sign-off to the report.
+- `discard`: delete the branch and worktree.
+- `share`: the architect may push the spike branch after sign-off, never to
+  `dev` or `main`.
+- `promote`: the architect re-implements through the strict workflow. The spike
+  branch is never merged directly.
+
 ## Lifecycle
 
 1. Architect updates canonical contracts and mirrors first, if needed.
@@ -130,4 +173,6 @@ architect decides. Blocking findings go back to the owning worker.
 - No contract files edited by a worker.
 - Manifest returned.
 - If the reviewer was used, findings are resolved or explicitly accepted.
+- If a spike was used, the report exists, the architect signed off, and the
+  spike branch was discarded, shared, or promoted.
 - Architect has re-run verification and updated durable state.
