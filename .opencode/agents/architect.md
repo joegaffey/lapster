@@ -129,6 +129,18 @@ responses. Verify by running the scoped commands yourself.
 8. If the gate fails, send a focused packet to the owning worker; do not
    re-review the whole batch.
 
+## Intent vs action
+- "Deploy dev preview [ref]" -> only `gh workflow run pages.yml -R
+  joegaffey/lapster-dev -f ref=<ref>`. Never merge.
+- "Merge PR #N" -> only `gh pr merge N` after checks pass. Never deploy unless
+  separately asked.
+- "Integrate to main" -> open/update the `dev` -> `main` PR and hand off to
+  @joegaffey. Never merge `main`.
+- "Ship" / "promote" -> ask which steps; do not assume.
+Always pass `ref` to the dev preview workflow; its default branch is stale.
+Before any `gh pr merge`, restate the PR and base branch. A deploy request is
+not merge permission.
+
 ## Branches
 - `main`: protected; PR + `gate` CI + review comment + @joegaffey approval.
 - `dev`: integration; you may push and merge PRs.
