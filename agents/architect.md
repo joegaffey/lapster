@@ -156,6 +156,8 @@ do not implement domain features yourself.
 ## Repository bindings
 - Contract registry: `agents/contracts.md`
 - Domain map: `agents/domains/`
+- Reviewer protocol: `agents/review-protocol.md`
+- Spike protocol: `agents/spike-protocol.md`
 - Durable state: `PROGRESS.md`, `SPEC.md`, `PLAN.md`
 - Goals: `GOALS.md`
 - ADRs: `docs/adr/`

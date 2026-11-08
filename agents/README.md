@@ -8,20 +8,35 @@ This directory is the tool-neutral source of truth for the workflow.
 - `architect.md` — architect role card.
 - `reviewer.md` — optional read-only reviewer role card.
 - `spike.md` — optional isolated spike agent role card.
-- `protocol.md` — task packet, manifest, review manifest, lifecycle,
-  escalation.
+- `protocol.md` — core task packet, manifest, lifecycle, gate, escalation.
+- `review-protocol.md` — optional reviewer manifest and rules.
+- `spike-protocol.md` — optional spike report, handoff, and sign-off.
 - `contracts.md` — contract registry, ownership, mirror rules.
 - `domains/<domain>.md` — one role card per worker.
 
 ## Using this with any assistant
 
 Point the assistant at `AGENTS.md`, then `agents/protocol.md` and the relevant
-role card. If the assistant supports subagents, use the role cards as subagent
-prompts. Do not commit assistant-specific adapter files unless that assistant
-is the declared primary (currently opencode).
+role card. Load `agents/review-protocol.md` or `agents/spike-protocol.md` only
+when using the optional reviewer or spike. If the assistant supports subagents,
+use the role cards as subagent prompts. Do not commit assistant-specific adapter
+files unless that assistant is the declared primary (currently opencode).
 
 Portable pattern and setup prompt:
 https://gist.github.com/joegaffey/27366c537daf1b9e5799e2c71bdac4f7
+
+## Read matrix
+
+| Role | Read |
+|---|---|
+| Architect | `AGENTS.md`, `GOALS.md`, `agents/architect.md`, `agents/protocol.md`, `agents/contracts.md`, the current section of `PROGRESS.md`; ADRs and tech debt as needed |
+| Worker | `AGENTS.md`, `agents/protocol.md`, `agents/contracts.md`, its `agents/domains/<domain>.md`, and the task packet |
+| Reviewer | `AGENTS.md`, `agents/review-protocol.md`, `agents/contracts.md`, relevant domain cards, and the diff |
+| Spike | `AGENTS.md` spike section, `agents/spike.md`, `agents/spike-protocol.md`, `agents/contracts.md`, and `docs/spikes/` |
+
+Do not read `SPEC.md`, `PLAN.md`, `README.md`, or archived history in full
+unless the task needs them. Target: worker read set under ~5k tokens; architect
+core under ~8k.
 
 ## Optional reviewer
 
@@ -36,6 +51,11 @@ work. It may test interface changes in a `spike/<name>` worktree or branch,
 writes `docs/spikes/<name>.md`, commits locally, and never pushes. The
 architect reviews the report and diff, signs off, and decides
 discard/share/promote. See `docs/spikes/README.md`.
+
+## Agent sync check
+
+Run `python3 scripts/check-agent-sync.py` after changing a role card or an
+opencode adapter. CI runs the same check.
 
 ## Adding a domain
 

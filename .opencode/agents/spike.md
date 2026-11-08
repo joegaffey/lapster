@@ -97,10 +97,10 @@ configs, `AGENTS.md`, or shared build config. Do not merge to `dev` or `main`.
 The architect may deploy a signed-off spike branch to the dev preview.
 
 Write `docs/spikes/<name>.md` with objective, interfaces tested, proposed
-changes, verification, findings, risks, recommendation (discard | share |
-promote), and open questions. Commit the report and changes locally. Return
+changes, verification, findings, risks, recommendation (discard | test | share
+| promote), and open questions. Commit the report and changes locally. Return
 the report path and, if invoked by the architect, the JSON spike manifest from
-`agents/protocol.md`.
+`agents/spike-protocol.md`.
 
 You may create a git bundle for rig transfer, but you must not push. The
 architect reviews the report and diff, signs off, and decides. Promotion goes

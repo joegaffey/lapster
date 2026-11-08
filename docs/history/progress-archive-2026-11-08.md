@@ -1,0 +1,536 @@
+# Archived Project Progress — 2026-11-08
+
+> Archived detailed progress from 2026-11-08. The current resumable state is
+> in `PROGRESS.md`.
+
+Last updated: 2026-11-03
+Repository root: the directory containing this file
+Current phase: **Relay multiplayer prototype**
+
+This file is the resumable project state. The conversation does not persist, but this file,
+`SPEC.md`, `PLAN.md`, and the working tree do. Read all three before continuing.
+
+## Resume checklist
+
+```bash
+# Run these from the repository root.
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker \
+  --target wasm32-unknown-unknown
+
+cd web
+npm ci
+npm test
+npm run test:viewer
+```
+
+Build the browser wasm and pages:
+
+```bash
+cd web
+npm run build:viewer
+```
+
+Run the local site:
+
+```bash
+# From the repository root:
+python3 -m http.server 8123 --bind 127.0.0.1
+```
+
+Pages:
+
+- Drive: `http://127.0.0.1:8123/web/drive/`
+- Garage: `http://127.0.0.1:8123/web/garage/`
+- Track: `http://127.0.0.1:8123/web/track-viewer/`
+
+Expected browser: Chromium/Chrome. WebGPU is used when available; WebGL2 is the fallback.
+
+Deployment:
+
+- Repository: https://github.com/joegaffey/lapster
+- CI: `.github/workflows/ci.yml`
+- Pages: `.github/workflows/pages.yml`
+- Live site: https://joegaffey.com/lapster/
+- Dev preview: https://joegaffey.com/lapster-dev/ (`workflow_dispatch` with `ref=feature/wheel-ffb`)
+
+## Environment
+
+| Tool | Version / location |
+| --- | --- |
+| Rust | 1.99.1 via rustup |
+| Cargo | 1.99.1 |
+| wasm-bindgen | 0.2.129 |
+| wgpu | 30.0.1 |
+| wasm-opt | Binaryen 123, cached in `web/.cache/binaryen` |
+| Node | v26.1.0 |
+| Playwright | 1.64.1 |
+| Git | `origin` → https://github.com/joegaffey/lapster |
+
+Toolchain setup scripts:
+
+- `web/scripts/ensure-wasm-opt.sh` — downloads Binaryen if `wasm-opt` is absent.
+- `web/scripts/setup-playwright-linux.sh` — downloads the NSS/NSPR libs needed by Playwright Chromium on this Linux image.
+- `web/scripts/build-viewer.sh` — release wasm build, wasm-bindgen, wasm-opt, esbuild.
+- `web/scripts/test-viewer.sh` — Playwright with the local library path.
+
+## Completed work
+
+| Checkpoint | Status | Notes |
+| --- | --- | --- |
+| CP0 — contracts/fixtures | Done | `sim-types` SAB ABI, asset manifest, synthetic car/track fixtures, layout tests |
+| CP1 — bake/load round trip | Done | `asset-compiler bake/inspect/validate`, `sim-asset`, pack loader, Worker test |
+| CP2 — track render slice | Done | `sim-render`, `web/track-viewer`, screenshot test, cache reload test |
+| CP3 — car render slice | Done | `web/garage`, body/wheels/steering wheel, wheel controls, screenshot test |
+| CP4 — drivable slice | Done | `sim-core`, 500 Hz physics, collider, suspension, Pacejka tires, engine/brakes, `web/drive`, soak test |
+| CP4.5 — toon style slice | Done | Toon ramp/rim shader, welded inverted-hull outlines, UV/base-color texture path, generated gauge sign, WebGPU + WebGL2 verified |
+| CP5a — GLB car import | Working | `asset-compiler bake-glb`, node transform flattening, wheel extraction, palette-to-vertex-colour bake, generic physics, garage/drive query URLs |
+| CP6a — AC track import | Working | `asset-compiler bake-ac-track`, KN5 node/material parser, `surfaces.ini`, `AC_START_*` spawn, drivable collision subset, solid wall collision, track/garage/drive query URLs |
+| Collider BVH | Done | Median-split BVH over collision triangles; shared ray and sphere queries; Skidpad p99 4.5 ms → 0.2 ms |
+| Default demo assets | Done | RX-7 and Skidpad 0.5 checked in; no query parameters required; custom `?car=`/`?track=` still supported |
+| Renderer upgrade | Done | wgpu 30.0.1, WebGPU (`BrowserWebGpu`), WebGL2 fallback, sRGB output fix, wasm-opt/LTO pipeline |
+| GitHub Actions | In repo | `.github/workflows/ci.yml` tests Rust, Node, wasm, and Playwright |
+| GitHub Pages | In repo | `.github/workflows/pages.yml` publishes `dist/`; dev preview deploys branch builds separately |
+| PWA + COI | Done | Manifest/icons, service worker, COOP/COEP injection, one-time controlled reload, cross-origin isolation verified |
+| CP6.5 — WebHID wheel/FFB | Working | Vendored `webhid-wheel` 0.5.0 (`1e20fba`), multi-device `WheelManager`, shared config panel and profiles, mapped pedals/buttons, Logitech G923/RS50/G Pro HID++ FFB, SAB FFB mailbox, 200 Hz constant force, Settings → Controls; hardware validation pending |
+| Cockpit dial presentation | Working | Generated cowl, runtime texture faces, 7-segment sprite gear/N/R display, calibrated needles, centered bonnet camera |
+| Speed Dreams car import | Working | Deckard Conejo `.acc`/XML/textures + Carson donor wheel; textured body/interior, glass, lights, cockpit camera, V8 audio, tracked source/license, rebuild script, mixed garage, XML physics mapping. See `docs/speed-dreams-pipeline.md` |
+| Relay multiplayer prototype | Working | Native `relay-server` rooms with optional password and 4-player cap; browser lobby, invite URL, 30 Hz full snapshots, tick-based interpolation timeline, garage-bay spawns, same-model remote rigs, remote tyre smoke, distance-attenuated remote engine and tyre audio, and room badge. Codespaces runs relay-only and redirects to the dev client. No server physics, collision, or automated two-browser test. See `docs/multiplayer.md` |
+| Style spike | Working | Dedicated `web/style-spike/` page; procedural leaf-card trees/bushes with spherical normals and wind, camera-centred grass and mass-foliage windows with near-plane/behind-camera fade, grid-raycast grass placement limited to track verges with road masking on both fixtures, corrected Drift Tracks grass surface mapping, near/mid/far vegetation tiers, independent grass/tree/bush mass sliders with a >350k-card GPU stress pool, quality presets plus adaptive auto tier, drivable minimal test car without synthetic dials, pre-spike-tuned orbit/pan, chase, bonnet, cockpit, isometric, and mouse-look walk/fly cameras, and WebGPU + WebGL2 Playwright coverage |
+
+## Current capabilities
+
+- Style spike: `web/style-spike/` validates the hybrid painterly-toon direction on a real
+  track section. It reuses the Skidpad/Drift Tracks fixtures and grass textures, generates
+  alpha-tested leaf-card canopies with spherical normals, winds them in the vertex shader,
+  and places trees and bushes on visual grass while masking out road geometry. Vegetation
+  is merged into near/mid/far tiers so presets and the adaptive auto tier can drop density
+  and draw distance while preserving the painterly silhouette. Trees and bushes reuse the
+  grass strategy of raycasting a fixed grid and accepting only grass collision surfaces,
+  with a track-verge constraint so distant terrain is excluded. Grass and the mass-foliage fade
+  are camera-centred and include near-plane/behind-camera collapse to cut needless fill; the
+  mass pool fades out beyond 90 m. Separate sliders control grass density, tree mass, and bush
+  mass; the instanced mass pool reaches over 350k cards for GPU stress testing. Road-surface
+  masking keeps vegetation off the drivable track. Coverage is currently an 800 m radius around
+  spawn with a 35 m verge, so longer tracks need a chunked expansion later. See
+  `tests/style-spike.spec.ts`.
+- Relay-only multiplayer prototype: `relay-server` serves the built site and `/ws` on one port;
+  rooms hold up to four players on one car/track, with an optional password. Clients keep local
+  physics and upload the existing 64-float snapshot at 30 Hz; remote cars interpolate, spawn
+  in the garage bay layout, emit tyre smoke, and play distance-attenuated engine and tyre audio. No
+  server authority or car-to-car collision yet.
+- Synthetic car + track asset packs with deterministic baking, validation, and IndexedDB caching.
+- 500 Hz fixed-step vehicle physics in the SAB worker by default (`?physics=main` selects the
+  main-thread fallback):
+  - triangle raycast suspension with anti-roll bars, progressive bump stops, and a rear grip
+    bias to reduce power oversteer,
+  - CG-based load transfer,
+  - Pacejka longitudinal/lateral forces with tire relaxation,
+  - tangent-plane tire forces and body contact probes for raised/sloped collision surfaces,
+  - optional ABS, shared rear traction control and stability control defaulting to 50%
+    strength, plus speed-sensitive steering for keyboard input,
+  - ESC uses rear tire slip for oversteer detection, avoiding false low-speed interventions,
+  - engine/gearbox/brake model with closed-throttle engine braking,
+  - traction-control launch torque limiting and raw-slip feedback at low speed,
+  - wall contacts and finite-state reset,
+  - SAB input/snapshot seqlocks, four-slot snapshot history, and interpolated visual pose;
+  - `Atomics.wait` deadline scheduling, bounded catch-up, and rate diagnostics;
+  - automatic main-thread fallback if SAB/worker startup fails.
+- Audio spike: vendored Engine_Sim MIT synthesiser with per-car profiles (`rotary2` for the
+  RX-7, `v8cross` for the Deckard Conejo) with combustion events, exhaust/intake resonators,
+  transmission, and optional turbo; toolbar mute; no sample assets
+  or track reverb yet. A small external-state adapter drives its RPM/speed/gear from the
+  vehicle and locks the clutch, so the engine note follows the simulation instead of
+  Engine_Sim's own drivetrain. A 60 ms RPM conditioner with a 12,000 rpm/s slew limit removes
+  pitch judder from wheelspin/TC oscillation while preserving launch flare. Load uses a fast
+  attack and 320 ms release, with an overrun load floor and reduced overrun attenuation, so
+  lift-off does not cut the sound abruptly. Continuous lash rattle is disabled in external
+  mode; a single click/thump cue is triggered immediately on forward gear changes. The audio
+  RPM conditioner shortens its time constant during a shift so pitch and cue stay together.
+  A separate tire-screech layer uses two band-passed noise bands, gated by per-wheel lateral
+  and longitudinal slip, load, contact, and speed; it fires for cornering scrub, wheelspin,
+  and lockup; its threshold is skid excess rather than ordinary cornering slip, and its gain
+  is exposed for diagnostics/tests. A road/surface bed blends asphalt roar for the pad and
+  banked outer ring, concrete apron rumble/grit, kerb patter, and grass rumble/rustle from
+  per-wheel surface names and speed; tire squeal is suppressed on grass. The HUD exposes the current wheel
+  surface and road-noise gain. Audio starts off on first use and remains on after the toolbar
+  button is used; the enabled/muted preference is remembered across reloads and resumes on the
+  first gesture. EngineSim's transmission mesh whine is disabled for now (`mix.transmission = 0`).
+- Automatic gearbox by default: forward gears shift using throttle/RPM thresholds from the
+  car setup; reverse remains the edge-triggered brake action. The box selects neutral (`N`)
+  at rest and re-engages first or reverse when throttle/brake is applied. Gameplay settings
+  can disable auto gears for manual shifting and disable auto clutch for the mapped clutch
+  axis or the Shift key. Numbered gear buttons are momentary: holding one selects that gear
+  and releasing it returns to neutral. `sim-core` models clutch disengagement for drive torque
+  and engine RPM, and neutral or a disengaged clutch allows free revving to redline. Generic
+  HID layout parsing now splits multi-axis report items, covering Arduino handbrakes that send
+  several axes in one report. The handbrake is a separate input and applies braking torque to
+  the rear wheels only; `Space` is the keyboard fallback. Shift scheduling still lives in
+  `web/drive/main.ts`.
+- Keyboard controls:
+  - `W` / `↑` throttle,
+  - `S` / `↓` brake; release and press again at rest to engage reverse,
+  - `A` / `D` or `←` / `→` steer; left/right direction is verified,
+  - `W` / `↑` brakes while reversing,
+  - `E` / `Q` shift up/down, `N` neutral, `Z` reverse when stopped,
+  - `Shift` clutch when auto clutch is disabled,
+  - automatic forward gearbox (upshift/downshift with 0.35 s anti-hunt), `R` reset.
+- HUD: speed, RPM, gear, contact count, rack torque, wheel loads/slip, tick, step p50/p99, FPS.
+- Tuning dialog: native top-layer setup for inertia/CG, per-axle suspension and tires, engine
+  curve, gearing, brakes, steering lock, and aero; persisted per car with reset and copy/paste
+  JSON (`lapster/setup@1`). Mass and geometry remain fixed.
+- Settings dialog: split Gameplay/Graphics tabs in all viewers. Gameplay covers TC/ESC/ABS,
+  strengths, and steering sensitivity. Graphics covers render scale, anti-aliasing,
+  environment shadows, car shadows, time of day, a debug overlay toggle, and an
+  off-by-default FPS counter.
+  Settings persist globally; Reset and Camera remain top-level toolbar actions. Drive hides
+  debug lines/bounds by default.
+- Native MSAA through wgpu: auto 4× desktop / 2× mobile, with Off/2×/4× overrides. Unsupported
+  counts fall back to the highest supported count not above the request (usually 1× for 2× on
+  WebGPU).
+- Responsive UI: collapsible HUD on all demos, pre-collapsed in markup so it cannot flash
+  before boot. Every demo keeps Info and Exit in a detached toolbar; drive adds Reset, Camera,
+  Body, TC, and ESC, and track adds Reset camera. Touch devices get non-selectable
+  steering/throttle/brake controls. Debug
+  lines/bounds are off by default in drive, garage, and track viewer.
+- Track and garage cameras: drag to orbit and wheel or pinch to zoom, with a reset-camera
+  button. Track adds right/shift-drag panning and caps the camera at 60 m to avoid high-angle
+  model artifacts; garage is orbit/zoom only. Garage starts from a front three-quarter view
+  with the wheels turned slightly.
+- Garage showroom: a curated mixed catalog across two facing rows of five bays
+  (red/blue/yellow/green/orange opposite black/white/pink/navy/cyan), with models alternating
+  by bay. Screen-side chevrons and Left/Right arrow keys fly the camera between cars, with
+  per-bay camera homes and wheel controls following the selection. The chevrons start hidden, appear on mouse movement or touch, and fade out when
+  idle. The selected bay's car persists in `localStorage` and becomes the driving car,
+  including its showroom paint; the garage `Drive` button and the menu Drive demo both use it.
+- Car and track launchers: the app menu and public landing page offer the RX-7 or Deckard
+  Conejo plus Skidpad 0.5 or Drift Tracks. Selections persist in `localStorage`
+  (`lapster.car.v1`, `lapster.track.v1`); Drive and the garage `Drive` button default to them
+  and fall back to RX-7/Skidpad. Speed Dreams source, FAL text, and rebuild instructions live
+  in `fixtures/sources/cars/sc-deckard-conejo/` and `docs/speed-dreams-pipeline.md`.
+  The garage loads every catalog pack into the mixed showroom; it does not use a car
+  dropdown, car menu, or `?car=` override. Playwright coverage lives in
+  `web/tests/track-launcher.spec.ts`.
+- Stylized grass: the Stylized Components GrassField shader was adapted to WGSL and a new
+  instanced render pass. Scenes grow up to 240,000 wind-animated blades in clumps on GRASS
+  collision within 90 m of the spawn, with toon shading, procedural dry patches, back-lit
+  translucency, and the existing environment shadows. The window follows the car in 16 m
+  chunks and recenters every 12 m; each chunk caches a 16×16 grass/height grid so blade placement does not raycast,
+  and newly exposed chunks are built within a fixed per-frame clump budget. Stale chunks are
+  evicted with hysteresis, so recentering never rebuilds the whole field at once. New chunks
+  grow in over 450 ms, and blades shrink and blend toward the blade-base ground color over
+  the last ~28 m to hide streaming pop-in. Grass meshes default to that flat background
+  color, while Graphics settings expose independent grass texture and grass shader toggles
+  (texture on, shader off by default; both can be enabled). The grass blade palette follows
+  the Drift grass texture, and enabling the texture drops the flat-color tint so the source
+  texture shows through. The optional texture is slightly darkened while the blade/flat-ground
+  palette is lightened, so the texture reads a touch darker than the blades; the
+  texture-enable flag is preserved when mesh transforms and alpha are updated. The flat background stays close to
+  the blade base color. The Skidpad grass tile is twice the previous world size. Blade tips
+  use the texture-mean color and reduced translucency so the grass has less internal
+  contrast and fades more smoothly. Scene textures get a linear-light CPU-generated mip
+  chain with trilinear filtering and anisotropy, removing the grazing-angle grass banding.
+  Covered by `web/tests/grass.spec.ts`, including a forced WebGL2 run; attribution is
+  recorded in `THIRD_PARTY_NOTICES.md`.
+- Skidpad backdrop: the distant `0GRASSext` terrain mesh uses a blue-grey color instead of
+  grass green, matching the mountain backdrop.
+- Grass-surface tire particles use a small, tapered blade-shaped billboard with the grass
+  shader's blade-base/tip palette instead of the round dust puff; asphalt/concrete/kerb keep
+  the puff shape. The particle shader branches on a per-instance shape flag, and the grass
+  particle tuning uses a much smaller size and shorter life.
+- Low-speed rolling resistance settles the car and stops wheel idle-spin when stationary.
+- Glass: GLB glass is split into a separate mesh. External/garage views use opaque glass;
+  cockpit mode switches it to 6% alpha in a transparent forward pass; bonnet and external
+  views keep it opaque. Body and glass hide together; wheels remain visible.
+- Drive camera: chase → bonnet → cockpit → isometric (`C` / button), persisted across reloads.
+  The isometric view is a fixed-world-orientation, high-angle follow camera. The bonnet camera is centered on the
+  car's longitudinal axis at 1.25 m; cockpit eye is 1.10 m and 0.25 m rearward. Body defaults
+  visible; `Body: Visible/Hidden` toggles body and glass.
+- Cockpit dial cluster: a three-dial cowl is generated from the glass lower edge. The
+  speedometer and RPM faces use browser-decoded runtime textures, the gear display samples a
+  4×3 seven-segment sprite atlas for `N`, `1–6`, and `R`, and red needles follow calibrated
+  `7:30 → 4:30` scales. Dial faces, needles, and gear textures are recessed into their
+  cylinders. A full interior model is still required.
+- Renderer reports backend and surface format in telemetry:
+  - backend: `BrowserWebGpu` in Chromium,
+  - format: `Bgra8Unorm`,
+  - manual sRGB encoding in the shader; sky/ground match the pre-upgrade look.
+- Forward toon renderer with a pale-horizon/blue-zenith sky gradient:
+  - quantized diffuse ramp and rim light,
+  - object-space inverted-hull outlines with welded/averaged normals,
+  - optional UV/base-color textures with a 1x1 white fallback,
+  - generated 64x64 gauge texture on the synthetic track sign,
+  - asset schema version 3.
+- Shadow modes: **High** dynamic focused map (2048² desktop, 1024² mobile/WebGL2) with
+  4-tap PCF; **Baked** startup-baked static light-space shadow map (4096² desktop,
+  2048² mobile/WebGL2) using the same 4-tap PCF without a per-frame depth pass; **Off**.
+  Independent car shadow setting selects dynamic, generated silhouette decal, or off.
+  Dynamic car shadows use a dedicated 4096² desktop / 2048² mobile car-only map with
+  32-tap PCF and a tight car-plus-shadow focus. Car silhouette follows car yaw and stretches
+  from the footprint at low sun angles. Garage cars are static and cast from the environment
+  shadow map.
+  Time of day uses a slider plus Apply, tints the sky, updates sun direction, and rebakes
+  Baked maps. Settings are global across all viewers. All desktop and mobile builds default
+  to Baked environment shadows and the Dynamic car shadow. Auto is not offered; legacy
+  stored Auto shadow values are coerced to Hybrid and Dynamic, while explicit modes are
+  preserved.
+- Drive brake and reverse lights: rear-lamp lens geometry is split from the body and lit
+  emissively by brake-pedal input or reverse gear only. Garage remains unchanged.
+- GLB car import:
+  - `cargo run -p asset-compiler -- bake-glb <car.glb>`
+  - Bakes node transforms, palette textures into vertex colours, and derives four wheel transforms.
+  - Supports custom `?car=`/`?track=` paths in the garage and drive viewers.
+  - First local fixture: Mazda RX-7, 18,322 triangles after removing logo geometry.
+- GLB track import:
+  - `cargo run -p asset-compiler -- bake-glb-track <track-dir> [out]`
+  - `track.json` selects visual and collision meshes by node/material name with wildcard
+    patterns, maps materials to surfaces, and supplies spawn/camera metadata.
+  - First fixture: Drift Tracks, CC BY 4.0, 6,940 visual triangles, 5,160 collision
+    triangles, 12 draw calls, 10 GLB base-colour textures after pruning unused
+    checkpoint/metal-box materials, asphalt/kerb/grass/concrete surfaces.
+  - Kerbs are mountable: collision keeps their top faces but omits vertical faces so the
+    car can drive over them instead of hitting an invisible wall.
+  - Repaired the Drift Tracks T1 road UV seam in the source GLB; the lane marking now
+    stays continuous through the corner exit. Covered by the round-trip fixture test.
+- AC track import:
+  - `cargo run -p asset-compiler -- bake-ac-track <track-dir> [out] [--scale <factor>]`
+  - Parses unencrypted KN5 v6 geometry/materials, AC `surfaces.ini`, spawn markers, and the
+    drivable collision subset.
+  - First local fixture: Skidpad 0.5, 76,543 visual triangles, 72,393 collision triangles,
+    29 draw calls, 10 base-colour textures at a maximum of 512 px, at original scale
+    (UI length 150 m). Grass and dirt/transition reuse the Drift Tracks grass/dirt textures
+    via `texture-overrides.json` with world X/Z UV projection to avoid stretching;
+    terrain/mountains, metal barriers, and tent fabric use approximated colours, and the
+    AC logo mesh is omitted.
+  - Collision includes the central pad, ASP surfaces, banked outer asphalt ring, grass, and
+    the solid main `wall` mesh; the tan `TRANSITION` concrete apron is tagged `ANELLO` so
+    the concrete audio layer engages. Grass friction is capped at 0.35. Normal/detail maps are ignored. The
+    multilayer tarmac shader is approximated with the `tracknew.DDS` diffuse map, terrain
+    meshes are lowered 5 cm to avoid z-fighting with the banked rings, and concrete apron
+    UVs are scaled to 0.25 to keep the texture from looking too fine. AC track baking
+    accepts an optional `--texture-overrides <json>` file for external material textures;
+    overrides can use `uvMode: "worldXz"` with a per-metre `uvScale`. Solid `wall` material
+    is collidable; fences, tents, and poles remain visual-only.
+  - Visual coplanar layers are offset: the concrete apron sits 1.5 cm below the tarmac, and
+    thin road overlays sit 5 mm above it.
+- Build freshness: generated build version in default pack URLs, `version.json` checks on
+  load/resume/focus, stale IndexedDB pack clearing, versioned `main.js` and `pkg/` URLs, and
+  no-store navigation/version responses from the service worker.
+- PWA/COI: installable manifest/icons and a same-origin service worker that injects
+  COOP/COEP and no-store caching on demo navigations. `crossOriginIsolated` and
+  `SharedArrayBuffer` verified. The installed menu checks `version.json` on open/resume.
+- PWA navigation: installed app launches the `/web/` demo menu; every demo links back to it.
+- Wasm: **2.83 MiB raw / 1.06 MiB gzip**.
+- Local warm startup measured at roughly **300–480 ms** in headless Chromium.
+
+## Verified checks
+
+- `cargo fmt --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace` — 54 tests
+- Rust stability tests cover combined acceleration/cornering/braking, a high-speed lane
+  change, outside-wheel load transfer, anti-roll roll reduction, a hard landing, traction
+  control, ESC yaw/body-slip reduction, powered-cornering balance, speed-sensitive steering,
+  braking to a stop while steering, setup apply/reset/round-trip, assist strength controls,
+  slope settling/maneuvering, and ABS wheel-lock prevention.
+- `cargo check ... --target wasm32-unknown-unknown`
+- `npm test` — 22 tests
+- `npm run test:viewer` — 37 Playwright tests plus an opt-in physics benchmark
+- `npm run bench:physics` — main-thread vs worker tick rate and frame pacing; set
+  `PERF_CPU_THROTTLE=4` for a throttled run
+- Playwright uses Chromium with WebGPU; drive test asserts `rendererBackend == "BrowserWebGpu"`.
+- WebGL2 fallback checked separately: `rendererBackend == "Gl"`, no page/console errors.
+- Manual GLB check: Mazda RX-7 imported, rendered in garage, and driven on WebGPU and
+  WebGL2 without page/console errors.
+- Manual AC track check: Skidpad 0.5 imported, rendered in the track/garage viewers, and
+  driven with the Mazda RX-7 on WebGPU without page/console errors.
+
+## Wheel and FFB workstream
+
+**Status:** dev spike implemented. `webhid-wheel` is vendored at 0.5.0 (`1e20fba`) with
+multi-device `WheelManager` sessions, portable setup profiles, Logitech G923/RS50/G Pro
+HID++ constant force with multi-interface grouping, and the shared
+`<webhid-config-panel>`. Drive mounts the panel under Settings → Controls and keeps the
+main-thread feel mixer in its `extra-settings` slot. Mapped steering, throttle, brake,
+clutch, handbrake, and gear buttons feed the drive input alongside keyboard and touch. The
+physics worker publishes normalized FFB torque through the SAB mailbox, and the adapter keeps
+the 200 Hz constant-force path with its watchdog. Browsers without WebHID boot normally and
+hide the wheel controls. Hardware acceptance, surface-specific dirt/grass mapping, and
+worker-side HID acquisition remain.
+
+**Decisions:**
+
+- Target every wheelbase supported by [`webhid-wheel`](https://github.com/joegaffey/webhid-wheel),
+  not a CAMMUS-only path.
+- Test CAMMUS C5 first, then CAMMUS C12 and FFBeast; generic USB-PID wheels are best effort.
+- Logitech G29/DFGT classic force, G923 PlayStation classic force, and G923 Xbox/RS50/G Pro
+  HID++ force are supported by the vendored profiles; T248/T300 remain input-only, and other
+  Fanatec/Logitech vendor protocols remain future work.
+- CP6.5 runs the FFB adapter on the **main thread**. Move it to the HID worker later as an
+  optimization if measurements show frame-pacing or `sendReport` jitter problems.
+- Keep `webhid-wheel` behind an input/FFB adapter so the worker migration does not change the
+  physics or UI contracts.
+- Do not reimplement HID descriptors, USB-PID encoding, or vendor reports in this repository.
+
+**CP6.5 scope:**
+
+1. Input abstraction for WebHID, Gamepad API, keyboard, and touch, with device hot-plug and
+   calibration.
+2. Direct-wheel steering through the vehicle steering ratio and lock, bypassing the keyboard
+   speed-sensitive aid.
+3. Front-axle self-aligning torque feeding a normalized FFB request and telemetry.
+4. Main-thread constant-force output at 100-250 Hz with clamp, strength/invert, watchdog, and
+   stop on hide/pause/disconnect.
+5. Device/FFB controls in the detached toolbar and assist settings with independent
+   strength and steering sensitivity.
+6. Unit, Rust, and Playwright coverage; manual CAMMUS C5 hardware checklist.
+
+**Upstream `webhid-wheel` work tracked separately:** see the
+[package, setup profiles and Lapster integration plan](https://github.com/joegaffey/webhid-wheel/blob/main/docs/lapster-integration-plan.md).
+
+- Generic multi-device sessions (`WebHIDDevice` + `mapChannels`); the `WebHIDRig` proposal is
+  dropped. Implemented and wired into Drive.
+- Dual-entry package with optional `webhid-wheel/ui` custom elements and
+  `<webhid-config-panel>`. Implemented and mounted in Settings → Controls.
+- Portable setup profiles with hardware matching and lazy reconnect. Implemented with the
+  `lapster.wheel.v3` store and `metadata.lapster` feel round-trip.
+- High-frequency constant-force path with coalescing and backpressure. Implemented.
+- Worker-compatible acquisition and reconnect. Core remains DOM-free for CP7.
+- Expanded profiles and recorded report fixtures. CAMMUS C5/C12, FFBeast, G29/DFGT,
+  G923 PlayStation/Xbox, RS50 and G Pro HID++.
+- CAMMUS C5 primary verification, then C12/FFBeast.
+
+**Hardware acceptance:** CAMMUS C5 steering and FFB, with watchdog/stop behavior. The device
+matrix then expands to the other supported wheelbases.
+
+## Known issues / carry-forward
+
+- **Git:** initialized with `origin` at https://github.com/joegaffey/lapster.
+- Drive defaults to the SAB worker. `?physics=main` selects the main-thread fallback. Garage
+  and Track Viewer have no physics loop.
+- Audio is a spike only: the external-state adapter bypasses Engine_Sim's own clutch/shift
+  transients. Continuous gear rattle is disabled; a synthetic click/thump covers forward gear
+  changes. This external mode is a set of compensations around library tuning that assumes
+  EngineSim's own drivetrain (load floor, overrun attenuation, rattle suppression, and shift
+  cue). Launch slip and some overrun pops are reduced. The conditioned audio RPM lags the raw
+  signal by roughly 60 ms outside shifts. There is no per-car profile, sample layer, Doppler,
+  reverb zones, or mobile listening test yet. Tire screech is a first-pass centered noise layer
+  with no per-axle panning or sample layer. Surface noise uses per-wheel surface names
+  (`ASPHALT`/`ASP*`, `KERB`, `ANELLO`, `GRASS`). Skidpad's banked outer asphalt ring maps to
+  `ASPHALT`; its tan `TRANSITION` concrete apron maps to `ANELLO` so the concrete layer
+  engages. The ANELLO case uses a low-pass rumble plus grit and amplitude modulation; grass
+  uses a lower rumble plus a low rustle band.
+  Noise is centered mono. Audio is unavailable when physics falls back to the main thread
+  because there is no SAB producer.
+- The raw `sim-core` engine RPM is still wheel-speed-derived and visibly oscillates during
+  wheelspin/TC intervention (observed 0.0-0.7 slip and large rpm swings). Audio is smoothed,
+  but the HUD and engine torque still see the raw signal; add engine/clutch inertia or a
+  sim-core RPM filter if this needs fixing at the source.
+- Traction control now limits launch torque from current raw slip below 8 m/s; above that it
+  relies on the filtered slip controller. Engine braking is a simple rpm-scaled negative
+  driveline torque, not a full engine-inertia/clutch model.
+- Engine_Sim declares MIT in its README/package.json but had no license file upstream; the
+  vendored copy includes the MIT text and provenance in `web/src/audio/engine-sim/NOTICE.md`;
+  `THIRD_PARTY_NOTICES.md` is copied into the Pages output. Ask upstream to add a LICENSE file
+  before relying on this for a release.
+- The worker uses an `Atomics.wait` deadline loop with bounded catch-up. In a local 4× CPU
+  throttling run at 1280×720 it held ~500 Hz and ~17 fps while main-thread physics fell to
+  ~298 Hz and ~9 fps; under no throttling both modes held 60 fps. Headless SwiftShader cannot
+  measure frame pacing meaningfully, but the benchmark still checks worker tick rate.
+- Keep the worker opt-in until CPU-throttled results are reproduced on the target hardware.
+- EngineSim's transmission mesh whine is muted pending retuning; gear changes use the
+  click/thump cue instead.
+- Gear selection is still a UI-layer spike. `sim-core` takes an explicit gear, so `simulate()`
+  tests and any future AI must supply gears themselves until the shift scheduler moves into
+  Rust. Clutch torque and RPM blending are implemented in `sim-core`.
+- Collider uses a median-split BVH for ray and wall sphere queries; the Skidpad p99 physics step dropped from ~4.5 ms to ~0.2 ms.
+- No Rapier/Jolt integration yet; the spec now treats them as optional collision backends.
+- Renderer now samples one base-color texture per mesh with linear-light CPU-generated mipmaps, but has no image decoder/KTX2, culling, LOD, or instancing yet.
+- GLB importer keeps full mesh density, applies the RX-7 FD3S baseline to imported cars,
+  ignores glTF extensions beyond baseColor, and has no decimation or steering/interior
+  extraction. AC `.ini` physics import remains pending.
+- Imported body paint is currently forced to a demo red; source material colours are baked
+  for other parts.
+- AC track importer has no texture decoding, uses approximated material colours, skips
+  trees/fences, includes solid `wall` material in collision, and includes the central pad,
+  ASP surfaces, outer banked asphalt ring, and grass in collision. Fences, tents, and poles
+  remain visual-only.
+- Car setup must be re-checked against the AC `.ini` importer when that lands; the current
+  editable set is based on the GLB-derived physics model.
+- The Skidpad 0.5 source archive had no bundled license/readme metadata. Its baked pack is
+  checked in as a temporary demo fixture; confirm redistribution rights or replace it before
+  a public/commercial release.
+- Asset cache is keyed by URL; pack URLs pick up the generated build version automatically,
+  including explicit custom `?track=`/`?car=` URLs, and the Pages build versions the Wasm
+  package directory. An explicit pack `?v=` value is preserved.
+- `.ini` physics mapping and full texture decoding remain; GLB/AC importers are first-pass.
+- Wheel/FFB currently runs on the main thread during the CP6.5 spike; move it to the HID
+  worker after hardware validation if frame pacing or report jitter requires it.
+- The speedometer, RPM, and seven-segment gear images in `web/assets` are user-supplied.
+  Confirm redistribution rights or replace them before a public/commercial release.
+- `web/pkg`, generated page JS, `web/.cache`, `web/test-results`, and `web/node_modules` are generated/ignored.
+- Temporary caches and local server processes are not part of the repository and do not survive a machine/session restart.
+- Playwright screenshot baselines are Linux/Chromium-specific and are skipped in CI.
+- Headless Playwright captures the WebGPU canvas as white in this environment; renderer
+  stats and debug counters are asserted, and the flat-screen look was checked manually.
+- GitHub Pages supplies no COOP/COEP headers; the PWA service worker injects them for demo
+  navigations and worker script/Wasm responses. The first controlled load needs one reload.
+  Worker responses need the same COOP/COEP/CORP headers; the service worker supplies them.
+- The live Pages URL is https://joegaffey.com/lapster/ (the github.io URL redirects there).
+
+## Next steps
+
+1. **Speed Dreams physics (next)**: parse `sc-deckard-conejo.xml` into `CarPhysics`,
+   including mass, CG, torque curve, gears, final drive, brakes, aero, springs/dampers, and
+   tire mu. Confirm the reverse-light split visually. Move per-car audio and cockpit metadata
+   into the pack before adding more Speed Dreams cars.
+2. **CP6.5 — wheel/FFB validation**: run the CAMMUS C5 checklist, tune the feel mixer, and
+   decide whether the main-thread adapter stays or moves into the HID worker.
+3. **Vendored `webhid-wheel` validation**: run multi-device profile, pedal/button mapping,
+   and worker-compatibility checks; then complete the CAMMUS C5 hardware checklist.
+4. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID worker, add
+   per-car audio profiles / an optional sample layer, expand the hardware matrix, and run
+   performance traces. The physics worker, input mailbox, snapshot ring, FFB mailbox, and
+   audio worklet spike are already in place.
+5. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour tuning,
+   wheel geometry cleanup, and licensed AC `.ini` physics when a suitable pack is available.
+   - Add a simple steering-wheel/interior placeholder.
+   - Add real image decoding/KTX2 only where textures are the right choice.
+   - WebXR remains a later phase.
+6. **CP6 — real track**: finish the AC path with full texture decoding (PNG/JPEG/DDS/KTX2
+   where useful), fence/tent collision policy, outer-ring collision or streaming, and
+   performance measurement.
+7. **Texture pipeline**:
+   - Add full texture decoding to the GLB and AC importers instead of approximated material
+     colours.
+   - Add bake-time texture compression (KTX2/Basis with format fallbacks) where supported.
+   - Add texture atlases for compatible materials to reduce texture switches, bind groups,
+     and draw calls.
+8. Replace per-frame JSON telemetry with typed arrays/SAB.
+9. Add content-hash cache invalidation.
+10. Add Rapier or Jolt only as a collision/query backend if the custom BVH becomes limiting.
+11. Benchmark a real converted track: draw calls, triangles, texture memory, load time, p99 physics.
+
+## Key files
+
+- `SPEC.md` — architecture, contracts, engine policy.
+- `PLAN.md` — checkpoint plan.
+- `crates/sim-core` — custom vehicle physics and collider.
+- `crates/sim-asset` — runtime pack validation/access.
+- `crates/asset-compiler` — bake/inspect/validate.
+- `crates/sim-render` — wgpu renderer and wasm viewers.
+- `crates/sim-worker` — Rust/Wasm physics worker simulation wrapper.
+- `web/src/audio/engine-sim/` — vendored Engine_Sim MIT DSP; see `NOTICE.md` and `LICENSE`.
+- `docs/audio.md` — current audio architecture, surface model, credits, and deferred work.
+- `web/drive`, `web/garage`, `web/track-viewer` — browser pages.
+- `web/tests` — Node and Playwright tests.
+- `fixtures/cars/minimal`, `fixtures/tracks/minimal` — synthetic fixtures and baked packs.
+
+## Next-agent prompt
+
+> Read `SPEC.md`, `PLAN.md`, and `PROGRESS.md`. Run the resume checklist. Continue at
+> **CP5: real car model and physics**, starting with a glTF/GLB car importer and `.ini`
+> mapping. Do not switch the vehicle model to a general-purpose engine's vehicle
+> controller; treat Rapier/Jolt as optional collision backends.

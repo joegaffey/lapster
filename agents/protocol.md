@@ -5,11 +5,8 @@
 - **Architect** (primary): owns contracts, mirrors, docs, workspace/build/CI
   config. Delegates implementation. Verifies results.
 - **Worker** (subagent): owns one domain. Short-lived. One task per session.
-- **Reviewer** (optional subagent): read-only. Reviews a batch diff against
-  contracts and acceptance criteria. Advisory only.
-- **Spike** (optional, mode all): isolated prototype and architecture-spike
-  agent. May test interface changes in a spike worktree or branch. Never
-  pushes.
+- Optional reviewer: see `agents/review-protocol.md`.
+- Optional spike: see `agents/spike-protocol.md`.
 
 ## Task packet
 
@@ -67,76 +64,6 @@ Rules:
 - `status` is `BLOCKED` when a contract change or human decision is required.
 - `tests.passed` must reflect the actual scoped verification.
 
-## Review manifest
-
-The reviewer returns only this JSON object:
-
-```json
-{
-  "status": "APPROVE | REQUEST_CHANGES | BLOCKED",
-  "scope": "batch | <domain>",
-  "findings": [
-    {
-      "severity": "blocking | major | minor | nit",
-      "file": "<path>",
-      "line": 123,
-      "issue": "<...>",
-      "suggestion": "<...>"
-    }
-  ],
-  "contracts_checked": ["<path>"],
-  "tests_checked": ["<command>"],
-  "summary": "<1-2 sentences>"
-}
-```
-
-The reviewer never edits, commits, or pushes. Findings are advisory; the
-architect decides. Blocking findings go back to the owning worker.
-
-## Spike report
-
-The spike writes `docs/spikes/<name>.md` and commits it locally on the spike
-branch. The Markdown report is required. The JSON manifest is recommended for
-machine-readable handoff:
-
-```json
-{
-  "spike": "<name>",
-  "status": "COMPLETE | BLOCKED",
-  "objective": "<...>",
-  "interfaces_tested": ["<path>"],
-  "changes": {
-    "branch": "spike/<name>",
-    "commits": ["<sha>"],
-    "files": ["<path>"],
-    "summary": "<...>"
-  },
-  "verification": [{ "cmd": "<command>", "passed": true }],
-  "findings": ["<...>"],
-  "risks": ["<...>"],
-  "recommendation": "discard | share | promote",
-  "open_questions": ["<...>"]
-}
-```
-
-Handoff:
-
-- The user or the architect may propose a spike.
-- The spike works in an isolated `spike/<name>` worktree or branch.
-- It may test interface and contract changes there.
-- It never pushes or triggers deployments.
-- The architect reviews the report and diff, re-runs relevant verification, and
-  appends a sign-off to the report.
-- `discard`: delete the branch and worktree.
-- `test`: the architect authorizes a test share for external validation. For
-  browser validation, use the dev preview with `ref=spike/<name>`. For local or
-  hardware tests, use a dedicated spike remote or a git bundle. This is not a
-  merge or promotion.
-- `share`: the architect may push the spike branch after sign-off and trigger
-  the dev preview, never to `dev` or `main`.
-- `promote`: the architect re-implements through the strict workflow. The spike
-  branch is never merged directly.
-
 ## Lifecycle
 
 1. Architect updates canonical contracts and mirrors first, if needed.
@@ -187,7 +114,7 @@ Handoff:
 - Manifest returned.
 - If the reviewer was used, findings are resolved or explicitly accepted.
 - If a spike was used, the report exists, the architect signed off, and the
-  spike branch was discarded, shared, or promoted.
+  spike branch was discarded, tested, shared, or promoted.
 - If the change is a breaking contract change, a new contract layer, a topology
   change, or an architecture-changing spike promotion, an accepted ADR exists.
 - New debt is recorded in `docs/tech-debt.md`; accepted debt has a review date.

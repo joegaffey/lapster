@@ -11,6 +11,8 @@ then the canonical layer under `agents/`.
    - Architect: `agents/architect.md`
    - Worker: `agents/domains/<domain>.md`
 
+Per-role read matrix: `agents/README.md`.
+
 ## Topology
 
 ```text
@@ -52,7 +54,8 @@ Full detail: `agents/contracts.md`.
 
 `reviewer` is an optional read-only subagent. The architect may dispatch it
 after workers and before commit for high-risk batches. It returns findings by
-severity; the architect decides. See `agents/reviewer.md`.
+severity; the architect decides. See `agents/reviewer.md` and
+`agents/review-protocol.md`.
 
 ## Spike mode
 
@@ -64,7 +67,7 @@ reviews the report and diff, signs off, and decides discard/test/share/promote.
 After sign-off, the architect may push a shared spike branch and deploy it to
 the dev preview. For rig testing, the architect may authorize a test share to a
 dedicated spike remote or a git bundle; the spike agent never pushes. See
-`agents/spike.md`.
+`agents/spike.md` and `agents/spike-protocol.md`.
 
 ## Context protocol
 
@@ -139,25 +142,11 @@ The architect runs the full gate once per batch and posts a PR comment. See
 
 ## Deployment and preview
 
-- Production: `main` deploys via `.github/workflows/pages.yml` to
-  https://joegaffey.com/lapster/.
-- Dev preview: any branch or tag can be deployed to
-  https://joegaffey.com/lapster-dev/ through the separate
-  `joegaffey/lapster-dev` repository:
-
-  ```bash
-  gh workflow run pages.yml -R joegaffey/lapster-dev -f ref=<branch-or-tag>
-  ```
-
-- The dev preview checks out `joegaffey/lapster` at the requested ref and builds
-  with `LAPSTER_BUILD_CHANNEL=dev`. It is for manual/browser validation and is
-  not a separate source of truth.
-- For external browser validation of a signed-off spike, push the spike branch
-  to `joegaffey/lapster` and trigger the dev preview with `ref=spike/<name>`.
-- For local or hardware tests that need the code on the target machine, use a
-  dedicated spike remote or a git bundle.
-- The architect triggers the dev preview for browser or UI changes before
-  merging to `main`. Workers do not trigger deployments.
+- Production: https://joegaffey.com/lapster/ from `main`.
+- Dev preview: https://joegaffey.com/lapster-dev/ via
+  `gh workflow run pages.yml -R joegaffey/lapster-dev -f ref=<branch-or-tag>`.
+- The architect triggers previews for browser/UI validation; workers do not
+  deploy. See `agents/architect.md` for spike external-validation paths.
 
 ## Commands
 
