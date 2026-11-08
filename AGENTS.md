@@ -157,6 +157,9 @@ Path classification (CI mirrors this):
 Do not skip web tests for wasm crates (`sim-types`, `sim-asset`, `sim-core`,
 `sim-render`, `sim-worker`) or `fixtures/**`; the viewer tests exercise them.
 
+PR CI runs a four-test `track-editor` smoke subset. Run the full editor suite
+on demand with `npm --prefix web run test:viewer -- --project=track-editor`.
+
 The architect posts a PR comment with the gate result. See
 `agents/architect.md`.
 

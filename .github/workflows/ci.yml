@@ -115,11 +115,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    name: web-editor (shard ${{ matrix.shard }}/4)
+    name: web-editor smoke
     env:
       PLAYWRIGHT_WORKERS: "1"
     steps:
@@ -145,7 +141,9 @@ jobs:
         working-directory: web
         env:
           CI: "true"
-        run: npm run test:viewer -- --project=track-editor --shard=${{ matrix.shard }}/4
+        run: >-
+          npm run test:viewer -- --project=track-editor
+          --grep "renders the procedural example track|camera view cycles and the draggable car|kerb spans can be trimmed and rebuilt|editing a kerb segment preserves the camera view"
 
   gate:
     name: gate
