@@ -12,7 +12,7 @@ permission:
     "web/src/assets/types.ts": deny
     "web/src/net/protocol.ts": deny
   bash:
-    "*": deny
+    "*": ask
     "cd web && npm test*": allow
     "cd web && npm run test*": allow
     "cd web && npm run build*": allow
@@ -20,11 +20,16 @@ permission:
     "cd web && npx playwright test*": allow
     "cd web && node --test*": allow
     "cd web && bash scripts/*": allow
+    "cd web && npx playwright install*": allow
     "npm --prefix web test*": allow
     "npm --prefix web run test*": allow
+    "npm --prefix web run build*": allow
+    "npm --prefix web run bench*": allow
     "npx playwright test*": allow
+    "npx playwright install*": allow
     "node --test*": allow
     "bash scripts/*": allow
+    "bash web/scripts/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow

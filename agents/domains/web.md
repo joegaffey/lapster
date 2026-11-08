@@ -13,8 +13,8 @@ read_paths:
   - agents/contracts.md
   - agents/protocol.md
 verify:
-  - cd web && npm test
-  - cd web && npm run test:viewer
+  - npm --prefix web test
+  - npm --prefix web run test:viewer
 forbid:
   - editing web/src/types/asset-layout.ts
   - editing web/src/types/asset-layout.test.ts
@@ -32,8 +32,12 @@ sources before acting. Implement within `web/` except the contract files:
 `SETUP_SCHEMA` tag in `web/src/ui/car-setup.ts` without architect approval.
 Run the scoped verification commands. Return only the manifest JSON.
 
-Use the bash tool's `workdir` set to `web/` for web commands, or run
-`cd web && ...` exactly as listed in the verify commands.
+Prefer `npm --prefix web ...` for commands. If the bash tool splits compound
+commands, use its `workdir` set to `web/` instead of `cd web && ...`.
+
+If Playwright browsers or Linux dependencies are missing, run
+`npx playwright install chromium` or `bash web/scripts/setup-playwright-linux.sh`
+before the viewer tests.
 
 If a contract change is needed, return `BLOCKED` with `contract_change`; do not
 edit contracts.

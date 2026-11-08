@@ -21,8 +21,8 @@
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
 - [ ] `cargo test --workspace`
 - [ ] wasm check
-- [ ] `cd web && npm test`
-- [ ] `cd web && npm run test:viewer`
+- [ ] `npm --prefix web test`
+- [ ] `npm --prefix web run test:viewer`
 
 ## Architect gate
 

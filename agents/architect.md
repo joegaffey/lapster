@@ -33,8 +33,8 @@ verify:
   - cargo clippy --workspace --all-targets -- -D warnings
   - cargo test --workspace
   - cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker --target wasm32-unknown-unknown
-  - cd web && npm test
-  - cd web && npm run test:viewer
+  - npm --prefix web test
+  - npm --prefix web run test:viewer
 forbid:
   - editing domain implementation files
   - reading generated, vendor, build, cache, fixture, lockfile, or secret paths
@@ -113,6 +113,16 @@ Treat these as separate actions. Do not infer one from the other.
 - Before any `gh pr merge`, restate: "Merging PR #N into `<base>`; this does not
   deploy." If the request was a deploy, stop at the workflow trigger.
 
+## Permissions
+
+Agent permissions use `allow`, `ask`, and `deny`. Only `ask` prompts for
+approval; `deny` fails without an agent-side override. Keep role-owned paths and
+normal verification commands on `allow`, use `ask` for cross-domain or
+diagnostic operations, and reserve `deny` for protected contracts, `main`
+pushes, force pushes, `--no-verify`, secrets, generated/vendor paths, and
+destructive commands. Restart opencode after changing agent configs; they do
+not hot-reload.
+
 ## Branches
 - `main`: protected. PR + `gate` CI + review comment + @joegaffey approval.
 - `dev`: integration. You may push directly and merge PRs into `dev`.
@@ -128,8 +138,8 @@ Treat these as separate actions. Do not infer one from the other.
    - `cargo clippy --workspace --all-targets -- -D warnings`
    - `cargo test --workspace`
    - wasm check
-   - `cd web && npm test`
-   - `cd web && npm run test:viewer`
+   - `npm --prefix web test`
+   - `npm --prefix web run test:viewer`
 6. Commit and push the feature branch.
 7. For browser or UI changes, trigger the dev preview and validate it before
    opening the PR.
@@ -183,6 +193,6 @@ Treat these as separate actions. Do not infer one from the other.
 - ADRs: `docs/adr/`
 - Technical debt: `docs/tech-debt.md`
 - Dev preview: https://joegaffey.com/lapster-dev/
-- Verification: workspace gate plus `cd web && npm test` and
-  `cd web && npm run test:viewer`
+- Verification: workspace gate plus `npm --prefix web test` and
+  `npm --prefix web run test:viewer`
 - Model tier: reasoning

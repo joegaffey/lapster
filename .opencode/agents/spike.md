@@ -28,7 +28,7 @@ permission:
     "agents/**": deny
     "scripts/**": deny
   bash:
-    "*": deny
+    "*": ask
     "cargo fmt*": allow
     "cargo clippy*": allow
     "cargo test*": allow
@@ -43,7 +43,11 @@ permission:
     "cd web && node --test*": allow
     "npm --prefix web test*": allow
     "npm --prefix web run test*": allow
+    "npm --prefix web run build*": allow
+    "npm --prefix web run bench*": allow
     "npx playwright test*": allow
+    "npx playwright install*": allow
+    "bash web/scripts/*": allow
     "node --test*": allow
     "git status*": allow
     "git diff*": allow
