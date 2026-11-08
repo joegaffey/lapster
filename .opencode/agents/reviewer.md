@@ -1,7 +1,7 @@
 ---
 description: Independent advisory review of a batch diff. Read-only.
 mode: subagent
-model: opencode/claude-sonnet-4-6
+model: opencode-go/deepseek-v4.1-flash
 steps: 30
 permission:
   edit:

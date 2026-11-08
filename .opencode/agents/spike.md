@@ -1,7 +1,7 @@
 ---
 description: Isolated prototype and architecture-spike agent. Tests interface changes, reports to the architect, never pushes.
 mode: all
-model: opencode/deepseek-v4.1-flash
+model: opencode-go/deepseek-v4.1-flash
 steps: 40
 permission:
   edit:

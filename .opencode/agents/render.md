@@ -1,7 +1,7 @@
 ---
 description: wgpu renderer and wasm rendering entry points.
 mode: subagent
-model: opencode/deepseek-v4.1-flash
+model: opencode-go/deepseek-v4.1-flash
 steps: 30
 permission:
   edit:

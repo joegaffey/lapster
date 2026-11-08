@@ -1,7 +1,7 @@
 ---
 description: System architect. Owns contracts, docs, workspace config, and delegation.
 mode: primary
-model: opencode/deepseek-v4-pro
+model: opencode-go/deepseek-v4.1-flash
 steps: 50
 permission:
   edit:
