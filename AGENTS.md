@@ -97,9 +97,15 @@ Full detail: `agents/protocol.md`.
 
 ## Durable state
 
-`PROGRESS.md`, `SPEC.md`, `PLAN.md`, and `README.md` are the resumable project
-state. `docs/adr/` records decision history. `docs/tech-debt.md` tracks known
-debt. Do not rely on chat history.
+`GOALS.md`, `PROGRESS.md`, `SPEC.md`, `PLAN.md`, and `README.md` are the
+resumable project state. `docs/adr/` records decision history.
+`docs/tech-debt.md` tracks known debt. Do not rely on chat history.
+
+## Goals
+
+`GOALS.md` states the vision, goals, success criteria, and non-goals. The
+architect maintains it and reviews it at phase changes. Workers read it for
+context; they do not edit it.
 
 ## Technical debt
 

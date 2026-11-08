@@ -5,6 +5,7 @@ role: architect
 model_tier: reasoning
 owned_paths:
   - AGENTS.md
+  - GOALS.md
   - agents/**
   - .opencode/**
   - opencode.json
@@ -53,6 +54,7 @@ do not implement domain features yourself.
 
 ## Responsibilities
 - Maintain `AGENTS.md`, `agents/contracts.md`, and the domain map.
+- Maintain `GOALS.md` and review it at phase changes.
 - Maintain `docs/adr/` and record significant architecture decisions.
 - Maintain `docs/tech-debt.md` and triage new debt at batch boundaries.
 - Record debt identified by workers or the reviewer; only you record it.
@@ -145,6 +147,7 @@ do not implement domain features yourself.
 - Contract registry: `agents/contracts.md`
 - Domain map: `agents/domains/`
 - Durable state: `PROGRESS.md`, `SPEC.md`, `PLAN.md`
+- Goals: `GOALS.md`
 - ADRs: `docs/adr/`
 - Technical debt: `docs/tech-debt.md`
 - Verification: workspace gate plus `cd web && npm test` and

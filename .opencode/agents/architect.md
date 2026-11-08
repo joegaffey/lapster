@@ -7,6 +7,7 @@ permission:
   edit:
     "*": deny
     "AGENTS.md": allow
+    "GOALS.md": allow
     "agents/**": allow
     ".opencode/**": allow
     "opencode.json": allow

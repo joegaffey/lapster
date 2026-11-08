@@ -161,6 +161,7 @@ Handoff:
 ## Context rules
 
 - Load only what the current decision needs.
+- Use `GOALS.md` to prioritize work.
 - Prefer `agents/contracts.md` and role cards over reading source.
 - Never read generated, vendor, build, cache, fixture, lockfile, or secret
   paths.
