@@ -6,7 +6,8 @@ locally and never pushes. The architect reviews the report and diff, signs off,
 and decides `discard`, `share`, or `promote`.
 
 If a promoted spike changes architecture, the architect writes an ADR in
-`docs/adr/` as part of the strict implementation.
+`docs/adr/` as part of the strict implementation. If it leaves debt, the
+architect records it in `docs/tech-debt.md`.
 
 ## Template
 
@@ -33,6 +34,10 @@ If a promoted spike changes architecture, the architect writes an ADR in
 ## Findings
 
 ## Risks
+
+## Debt
+
+- New debt introduced by the spike:
 
 ## Recommendation
 

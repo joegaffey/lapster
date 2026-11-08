@@ -21,6 +21,6 @@ and the relevant `agents/domains/<domain>.md` cards.
 
 Review the provided diff against the contract registry, acceptance criteria,
 and gate results. Flag contract drift, security issues, missing tests,
-cross-domain breakage, and spec violations. Report findings by severity with
-file:line references. Return only the review manifest from
+cross-domain breakage, new technical debt, and spec violations. Report findings
+by severity with file:line references. Return only the review manifest from
 `agents/protocol.md`.

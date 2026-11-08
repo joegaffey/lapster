@@ -38,9 +38,15 @@ The worker returns only this JSON object:
   "contract_change": null,
   "tests": { "cmd": "<command>", "passed": true },
   "files": ["<path>"],
-  "summary": "<1-2 sentences>"
+  "summary": "<1-2 sentences>",
+  "debt": [
+    { "area": "<domain>", "summary": "<...>", "severity": "P0 | P1 | P2 | P3", "reason": "<...>" }
+  ]
 }
 ```
+
+`debt` is optional. Workers identify debt; only the architect records it in
+`docs/tech-debt.md`.
 
 Contract change request:
 
@@ -177,4 +183,5 @@ Handoff:
   spike branch was discarded, shared, or promoted.
 - If the change is a breaking contract change, a new contract layer, a topology
   change, or an architecture-changing spike promotion, an accepted ADR exists.
+- New debt is recorded in `docs/tech-debt.md`; accepted debt has a review date.
 - Architect has re-run verification and updated durable state.

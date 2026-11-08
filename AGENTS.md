@@ -98,7 +98,14 @@ Full detail: `agents/protocol.md`.
 ## Durable state
 
 `PROGRESS.md`, `SPEC.md`, `PLAN.md`, and `README.md` are the resumable project
-state. `docs/adr/` records decision history. Do not rely on chat history.
+state. `docs/adr/` records decision history. `docs/tech-debt.md` tracks known
+debt. Do not rely on chat history.
+
+## Technical debt
+
+The architect owns `docs/tech-debt.md`. Workers and the reviewer may identify
+debt; only the architect records it. Triage at batch boundaries: fix now,
+schedule, accept, or escalate. See `docs/tech-debt.md`.
 
 ## Architecture decisions
 
