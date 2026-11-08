@@ -42,6 +42,15 @@ const RACING_LINE_LIFT: f32 = 0.02;
 const RACING_LINE_ASPHALT_COLOR: [f32; 3] = [0.045, 0.045, 0.05];
 const RACING_LINE_DARK_COLOR: [f32; 3] = [0.016, 0.016, 0.021];
 const RACING_LINE_PROFILE: [f32; 7] = [-1.0, -0.8, -0.5, 0.0, 0.5, 0.8, 1.0];
+const TARMAC_TEXTURE_INDEX: u32 = 1;
+const TARMAC_TEXTURE_SIZE: usize = 256;
+const TARMAC_TILE_METERS: f32 = 7.0;
+// Keep in sync with TARMAC_GAIN and TARMAC_UV_ACROSS in track.wgsl.
+const TARMAC_GAIN: f32 = 2.2;
+const TARMAC_UV_ACROSS: f32 = 4.0;
+const GRASS_TEXTURE_INDEX: u32 = 2;
+const GRASS_TEXTURE_SIZE: usize = 256;
+const TERRAIN_TILE_METERS: f32 = 8.0;
 const PROP_OFFSET: f32 = 14.0;
 const PROP_FAR_OFFSET: f32 = 19.0;
 const MIN_PROP_OFFSET: f32 = 1.0;
@@ -515,7 +524,7 @@ pub fn track_from_control_points_with_spans(
     let mut visual = TrackVisual {
         meshes: Vec::new(),
         materials: materials(),
-        textures: vec![conifer_card_texture()],
+        textures: vec![conifer_card_texture(), tarmac_texture(), grass_texture()],
         mesh_buffers: Vec::new(),
         instances: Vec::new(),
     };
@@ -739,7 +748,7 @@ pub fn track_from_control_points_with_spans(
             vertices,
             triangles,
             materials: visual.materials.len() as u16,
-            textures: 0,
+            textures: visual.textures.len() as u16,
             draw_calls: visual.meshes.len() as u16,
         },
         warnings: vec!["procedural track editor preview".to_string()],
@@ -831,8 +840,22 @@ fn distant_terrain_normal(x: f32, z: f32) -> [f32; 3] {
 fn materials() -> Vec<MaterialRef> {
     vec![
         material("asphalt", [0.045, 0.045, 0.05, 1.0], false),
-        material("dither_shoulder", [0.48, 0.345, 0.208, 1.0], false),
-        material("grass", [0.302, 0.431, 0.208, 1.0], false),
+        MaterialRef {
+            name: "dither_shoulder".to_string(),
+            base_color: [0.48, 0.345, 0.208, 1.0],
+            metallic: 0.0,
+            roughness: 0.9,
+            base_color_texture: Some(TARMAC_TEXTURE_INDEX),
+            outline: false,
+        },
+        MaterialRef {
+            name: "grass".to_string(),
+            base_color: [0.302, 0.431, 0.208, 1.0],
+            metallic: 0.0,
+            roughness: 0.9,
+            base_color_texture: Some(GRASS_TEXTURE_INDEX),
+            outline: false,
+        },
         material("kerb_red", [0.702, 0.141, 0.141, 1.0], false),
         material("kerb_white", [0.933, 0.933, 0.933, 1.0], false),
         material("concrete", [0.667, 0.667, 0.667, 1.0], true),
@@ -849,7 +872,14 @@ fn materials() -> Vec<MaterialRef> {
             base_color_texture: Some(0),
             outline: false,
         },
-        material("racing_line", [0.02, 0.02, 0.025, 1.0], false),
+        MaterialRef {
+            name: "racing_line".to_string(),
+            base_color: [0.02, 0.02, 0.025, 1.0],
+            metallic: 0.0,
+            roughness: 0.9,
+            base_color_texture: Some(TARMAC_TEXTURE_INDEX),
+            outline: false,
+        },
     ]
 }
 
@@ -975,19 +1005,28 @@ fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
         OUTER_EDGE_RADIUS,
     ];
     let surfaces = [DIRT_SURFACE, TRACK_SURFACE, DIRT_SURFACE];
+    let total_length = (0..count)
+        .map(|index| points[index].distance(points[(index + 1) % count]))
+        .sum::<f32>();
+    let tiles_along = (total_length / TARMAC_TILE_METERS).round().max(1.0);
+    let mut distance = 0.0;
     for index in 0..=count {
         let sample = index % count;
         let point = points[sample];
         let next = points[(sample + 1) % count];
         let tangent = (next - point).normalize_or_zero();
         let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
-        let u = index as f32 / count as f32;
+        let u = if total_length > 1e-4 {
+            (distance / total_length) * tiles_along
+        } else {
+            index as f32
+        };
         for radius in radii {
             let lateral = point + binormal * radius;
             let y = terrain_height(lateral.x, lateral.z) + SURFACE_HEIGHT_OFFSET;
             buffers.positions.push([lateral.x, y, lateral.z]);
             buffers.normals.push(terrain_normal(lateral.x, lateral.z));
-            let v = (radius - radii[0]) / (radii[radii.len() - 1] - radii[0]);
+            let v = ((radius - radii[0]) / (radii[radii.len() - 1] - radii[0])) * TARMAC_UV_ACROSS;
             buffers.uvs.push([u, v]);
         }
         if index < count {
@@ -1004,6 +1043,9 @@ fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
                 ]);
                 surface_ids.extend_from_slice(&[*surface, *surface]);
             }
+        }
+        if index < count {
+            distance += point.distance(next);
         }
     }
     TrackRibbon {
@@ -1067,17 +1109,27 @@ fn racing_line_ribbon(points: &[Vec3], offsets: &[f32]) -> MeshBuffers {
     let asphalt = Vec3::from_array(RACING_LINE_ASPHALT_COLOR);
     let dark = Vec3::from_array(RACING_LINE_DARK_COLOR);
     let profile_count = RACING_LINE_PROFILE.len();
+    let total_length = (0..count)
+        .map(|index| points[index].distance(points[(index + 1) % count]))
+        .sum::<f32>();
+    let tiles_along = (total_length / TARMAC_TILE_METERS).round().max(1.0);
+    let mut distance = 0.0;
     for station in 0..=count {
         let sample = station % count;
         let point = points[sample];
+        let next = points[(sample + 1) % count];
         let binormal = binormal_at(points, sample);
         let offset = offsets.get(sample).copied().unwrap_or(0.0);
         let left = point - binormal * ASPHALT_HALF_WIDTH;
         let right = point + binormal * ASPHALT_HALF_WIDTH;
         let left_y = terrain_height(left.x, left.z) + SURFACE_HEIGHT_OFFSET;
         let right_y = terrain_height(right.x, right.z) + SURFACE_HEIGHT_OFFSET;
-        let u = station as f32 / count as f32;
-        for (profile_index, profile) in RACING_LINE_PROFILE.iter().enumerate() {
+        let u = if total_length > 1e-4 {
+            (distance / total_length) * tiles_along
+        } else {
+            station as f32
+        };
+        for profile in RACING_LINE_PROFILE.iter() {
             let lateral = offset + profile * RACING_LINE_HALF_WIDTH;
             let position = point + binormal * lateral;
             // The asphalt band is a flat quad between its -6 m and +6 m edge
@@ -1087,11 +1139,12 @@ fn racing_line_ribbon(points: &[Vec3], offsets: &[f32]) -> MeshBuffers {
             let y = left_y + (right_y - left_y) * t + RACING_LINE_LIFT;
             buffers.positions.push([position.x, y, position.z]);
             buffers.normals.push(terrain_normal(position.x, position.z));
-            buffers
-                .uvs
-                .push([u, profile_index as f32 / (profile_count - 1) as f32]);
+            let v = ((lateral + OUTER_EDGE_RADIUS) / (2.0 * OUTER_EDGE_RADIUS)) * TARMAC_UV_ACROSS;
+            buffers.uvs.push([u, v]);
             // Keep a wide dark core, then feather into the asphalt at the edges.
-            let color = dark.lerp(asphalt, smoothstep(0.6, 1.0, profile.abs()));
+            // The gain matches the road shader so the feathered edge lands on
+            // exactly the same textured colour as the surrounding asphalt.
+            let color = dark.lerp(asphalt, smoothstep(0.6, 1.0, profile.abs())) * TARMAC_GAIN;
             buffers.colors.push(color.to_array());
         }
         if station < count {
@@ -1107,6 +1160,7 @@ fn racing_line_ribbon(points: &[Vec3], offsets: &[f32]) -> MeshBuffers {
                     next_base,
                 ]);
             }
+            distance += point.distance(next);
         }
     }
     buffers
@@ -1151,6 +1205,7 @@ fn terrain_grid(points: &[Vec3]) -> MeshBuffers {
     let mut buffers = empty_buffers();
     let half = TERRAIN_SIZE * 0.5;
     let step = TERRAIN_SIZE / TERRAIN_CELLS as f32;
+    let uv_tiles = TERRAIN_SIZE / TERRAIN_TILE_METERS;
     for iz in 0..=TERRAIN_CELLS {
         for ix in 0..=TERRAIN_CELLS {
             let x = -half + ix as f32 * step;
@@ -1158,8 +1213,8 @@ fn terrain_grid(points: &[Vec3]) -> MeshBuffers {
             buffers.positions.push([x, terrain_height(x, z), z]);
             buffers.normals.push(terrain_normal(x, z));
             buffers.uvs.push([
-                ix as f32 / TERRAIN_CELLS as f32,
-                iz as f32 / TERRAIN_CELLS as f32,
+                ix as f32 / TERRAIN_CELLS as f32 * uv_tiles,
+                iz as f32 / TERRAIN_CELLS as f32 * uv_tiles,
             ]);
         }
     }
@@ -1774,6 +1829,98 @@ fn append_simple_tree(
             color,
         );
     }
+}
+
+fn tarmac_texture() -> TextureRef {
+    let size = TARMAC_TEXTURE_SIZE;
+    let mut rgba8 = Vec::with_capacity(size * size * 4);
+    for y in 0..size {
+        for x in 0..size {
+            let u = x as f32 / size as f32;
+            let v = y as f32 / size as f32;
+            let coarse = tarmac_value_noise(u, v, 6, 0x1a2b_3c4d);
+            let medium = tarmac_value_noise(u, v, 18, 0x5e6f_7a8b);
+            let fine = tarmac_value_noise(u, v, 54, 0x9c0d_1e2f);
+            let grain = tarmac_hash(x as u32, y as u32, 0x3141_5926);
+            let patches = smoothstep(0.52, 0.82, coarse);
+            let shade = (medium - 0.5) * 0.09 + (fine - 0.5) * 0.045 + (grain - 0.5) * 0.025
+                - patches * 0.03;
+            let value = (0.71 + shade).clamp(0.62, 0.79);
+            let cool = (medium - 0.5) * 0.02;
+            let r = ((value - cool).clamp(0.0, 1.0) * 255.0).round() as u8;
+            let g = (value * 255.0).round() as u8;
+            let b = ((value + cool).clamp(0.0, 1.0) * 255.0).round() as u8;
+            rgba8.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+    TextureRef {
+        name: "tarmac_procedural".to_string(),
+        mime: "image/png".to_string(),
+        hash: [0; 32],
+        width: size as u32,
+        height: size as u32,
+        rgba8,
+    }
+}
+
+fn grass_texture() -> TextureRef {
+    let size = GRASS_TEXTURE_SIZE;
+    let mut rgba8 = Vec::with_capacity(size * size * 4);
+    for y in 0..size {
+        for x in 0..size {
+            let u = x as f32 / size as f32;
+            let v = y as f32 / size as f32;
+            let coarse = tarmac_value_noise(u, v, 5, 0x2b3c_4d5e);
+            let medium = tarmac_value_noise(u, v, 17, 0x6f7a_8b9c);
+            let fine = tarmac_value_noise(u, v, 48, 0xa1b2_c3d4);
+            let grain = tarmac_hash(x as u32, y as u32, 0x0f1e_2d3c);
+            let shade = (coarse - 0.5) * 0.12
+                + (medium - 0.5) * 0.07
+                + (fine - 0.5) * 0.04
+                + (grain - 0.5) * 0.025;
+            let r = (72.0 * (1.0 + shade)).clamp(0.0, 255.0).round() as u8;
+            let g = (107.0 * (1.0 + shade)).clamp(0.0, 255.0).round() as u8;
+            let b = (22.0 * (1.0 + shade)).clamp(0.0, 255.0).round() as u8;
+            rgba8.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+    TextureRef {
+        name: "grass_procedural".to_string(),
+        mime: "image/png".to_string(),
+        hash: [0; 32],
+        width: size as u32,
+        height: size as u32,
+        rgba8,
+    }
+}
+
+fn tarmac_hash(x: u32, y: u32, seed: u32) -> f32 {
+    let mut hash = x.wrapping_mul(0x9e37_79b1) ^ y.wrapping_mul(0x85eb_ca77) ^ seed;
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x2c1b_3c6d);
+    hash ^= hash >> 12;
+    hash = hash.wrapping_mul(0x297a_2d39);
+    hash ^= hash >> 15;
+    hash as f32 / u32::MAX as f32
+}
+
+fn tarmac_value_noise(u: f32, v: f32, cells: u32, seed: u32) -> f32 {
+    let x = u * cells as f32;
+    let y = v * cells as f32;
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let tx = x - x0 as f32;
+    let ty = y - y0 as f32;
+    let sx = tx * tx * (3.0 - 2.0 * tx);
+    let sy = ty * ty * (3.0 - 2.0 * ty);
+    let wrap = |value: i32| value.rem_euclid(cells as i32) as u32;
+    let a = tarmac_hash(wrap(x0), wrap(y0), seed);
+    let b = tarmac_hash(wrap(x0 + 1), wrap(y0), seed);
+    let c = tarmac_hash(wrap(x0), wrap(y0 + 1), seed);
+    let d = tarmac_hash(wrap(x0 + 1), wrap(y0 + 1), seed);
+    let ab = a + (b - a) * sx;
+    let cd = c + (d - c) * sx;
+    ab + (cd - ab) * sy
 }
 
 fn conifer_card_texture() -> TextureRef {
@@ -2503,7 +2650,9 @@ mod tests {
 
         let first_station = &buffers.colors[..profile_count];
         assert!(first_station[profile_count / 2][0] < first_station[0][0]);
-        assert_eq!(first_station[0], RACING_LINE_ASPHALT_COLOR);
+        let expected = Vec3::from_array(RACING_LINE_ASPHALT_COLOR) * TARMAC_GAIN;
+        let actual = Vec3::from_array(first_station[0]);
+        assert!((actual - expected).length() < 1e-5);
     }
 
     #[test]
@@ -2530,6 +2679,118 @@ mod tests {
             .surfaces
             .iter()
             .all(|surface| surface.name != "racing_line"));
+    }
+
+    #[test]
+    fn tarmac_texture_is_deterministic_and_opaque() {
+        let first = tarmac_texture();
+        let second = tarmac_texture();
+        assert_eq!(first, second);
+        assert_eq!(first.name, "tarmac_procedural");
+        assert_eq!(first.width as usize, TARMAC_TEXTURE_SIZE);
+        assert_eq!(first.height as usize, TARMAC_TEXTURE_SIZE);
+        assert_eq!(
+            first.rgba8.len(),
+            TARMAC_TEXTURE_SIZE * TARMAC_TEXTURE_SIZE * 4
+        );
+        let (pixels, remainder) = first.rgba8.as_chunks::<4>();
+        assert!(remainder.is_empty());
+        assert!(pixels.iter().all(|pixel| pixel[3] == 255));
+        assert!(pixels
+            .iter()
+            .any(|pixel| pixel[0] != pixel[1] || pixel[1] != pixel[2]));
+        let min = pixels.iter().map(|pixel| pixel[0]).min().unwrap_or(0);
+        let max = pixels.iter().map(|pixel| pixel[0]).max().unwrap_or(0);
+        assert!(
+            (15..70).contains(&(max - min)),
+            "tarmac texture contrast is not subtle: {min}..{max}"
+        );
+    }
+
+    #[test]
+    fn grass_texture_is_deterministic_subtle_and_opaque() {
+        let first = grass_texture();
+        let second = grass_texture();
+        assert_eq!(first, second);
+        assert_eq!(first.name, "grass_procedural");
+        assert_eq!(first.width as usize, GRASS_TEXTURE_SIZE);
+        assert_eq!(first.height as usize, GRASS_TEXTURE_SIZE);
+        assert_eq!(
+            first.rgba8.len(),
+            GRASS_TEXTURE_SIZE * GRASS_TEXTURE_SIZE * 4
+        );
+        let (pixels, remainder) = first.rgba8.as_chunks::<4>();
+        assert!(remainder.is_empty());
+        assert!(pixels.iter().all(|pixel| pixel[3] == 255));
+        let min = pixels.iter().map(|pixel| pixel[1]).min().unwrap_or(0);
+        let max = pixels.iter().map(|pixel| pixel[1]).max().unwrap_or(0);
+        assert!(
+            (10..60).contains(&(max - min)),
+            "grass texture variation is not subtle: {min}..{max}"
+        );
+        assert!(pixels.iter().all(|pixel| pixel[1] >= pixel[0]));
+        assert!(pixels.iter().all(|pixel| pixel[0] >= pixel[2]));
+    }
+
+    #[test]
+    fn tarmac_noise_wraps_at_the_tile_edge() {
+        for v in [0.0, 0.25, 0.5, 0.75] {
+            let left = tarmac_value_noise(0.0, v, 18, 0x5e6f_7a8b);
+            let right = tarmac_value_noise(1.0, v, 18, 0x5e6f_7a8b);
+            assert!((left - right).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn editor_track_assigns_the_tarmac_texture() {
+        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
+            .expect("editor track");
+        let tarmac_index = track
+            .visual
+            .textures
+            .iter()
+            .position(|texture| texture.name == "tarmac_procedural")
+            .expect("tarmac texture");
+        let material = &track.visual.materials[1];
+        assert_eq!(material.name, "dither_shoulder");
+        assert_eq!(material.base_color_texture, Some(tarmac_index as u32));
+        let racing = track
+            .visual
+            .materials
+            .iter()
+            .find(|material| material.name == "racing_line")
+            .expect("racing line material");
+        assert_eq!(racing.base_color_texture, Some(tarmac_index as u32));
+        let grass = track
+            .visual
+            .materials
+            .iter()
+            .find(|material| material.name == "grass")
+            .expect("grass material");
+        assert_eq!(grass.base_color_texture, Some(GRASS_TEXTURE_INDEX));
+        let terrain = track
+            .visual
+            .meshes
+            .iter()
+            .position(|mesh| mesh.name == "terrain")
+            .expect("terrain mesh");
+        let terrain_uvs = &track.visual.mesh_buffers[terrain].uvs;
+        assert!(terrain_uvs.iter().any(|uv| uv[0] > 1.0));
+        assert!(terrain_uvs.iter().any(|uv| uv[1] > 1.0));
+        assert_eq!(
+            track.manifest.stats.textures,
+            track.visual.textures.len() as u16
+        );
+        let road = track
+            .visual
+            .meshes
+            .iter()
+            .position(|mesh| mesh.name == "asphalt_dither")
+            .expect("road mesh");
+        assert_eq!(track.visual.meshes[road].material, 1);
+        let uvs = &track.visual.mesh_buffers[road].uvs;
+        assert!(uvs.iter().any(|uv| uv[0] > 2.0));
+        assert!(uvs.iter().any(|uv| uv[1] > 2.0));
     }
 
     #[test]

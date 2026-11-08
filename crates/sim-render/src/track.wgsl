@@ -22,6 +22,9 @@ struct Model {
 @group(1) @binding(0) var<uniform> model: Model;
 const GRASS_TEXTURE_GAIN: f32 = 0.75;
 const GRASS_TEXTURE_LIFT: f32 = 1.0;
+// Keep in sync with TARMAC_GAIN and TARMAC_UV_ACROSS in track_editor.rs.
+const TARMAC_GAIN: f32 = 2.2;
+const TARMAC_UV_ACROSS: f32 = 4.0;
 @group(2) @binding(0) var base_texture: texture_2d<f32>;
 @group(2) @binding(1) var base_sampler: sampler;
 @group(3) @binding(0) var shadow_map: texture_depth_2d;
@@ -341,9 +344,10 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     }
     let blend_mode = model.alpha.w;
     if blend_mode > 0.5 {
-        let asphalt = vec3<f32>(0.045, 0.045, 0.05);
+        let asphalt = vec3<f32>(0.045, 0.045, 0.05) * (TARMAC_GAIN * texel.rgb);
+        let shoulder = input.color * (0.75 + 0.25 * texel.rgb);
         let grass = vec3<f32>(0.048, 0.111, 0.006);
-        let edge = abs(input.uv.y * 2.0 - 1.0);
+        let edge = abs((input.uv.y / TARMAC_UV_ACROSS) * 2.0 - 1.0);
         let pixel = input.clip_position.xy;
         let soft = blend_mode > 1.5;
         let asphalt_half_width = select(0.02, 0.06, soft);
@@ -351,7 +355,7 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         base = track_band_color(
             edge,
             asphalt,
-            input.color,
+            shoulder,
             0.5,
             asphalt_half_width,
             blend_mode,
