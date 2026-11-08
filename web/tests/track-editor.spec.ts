@@ -955,3 +955,110 @@ test("kerb segments are created and dragged without snapping", async ({ page }) 
   expect(Math.abs(moved!.end - Math.round(moved!.end))).toBeGreaterThan(0.05);
   expect(pageErrors).toEqual([]);
 });
+
+test("editing a kerb segment preserves the camera view", async ({ page }) => {
+  test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=camera-preserve");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const canvas = page.locator("#view");
+  const bounds = await canvas.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(
+    bounds!.x + bounds!.width * 0.5,
+    bounds!.y + bounds!.height * 0.5,
+  );
+  await page.mouse.wheel(0, -300);
+
+  const cameraBefore = await page.evaluate(
+    () => JSON.parse((window as any).__trackEditor.camera_info()) as {
+      eye: number[];
+      target: number[];
+      fovY: number;
+    },
+  );
+
+  const gap = await findKerbGap(page);
+  expect(gap.error).toBeUndefined();
+  const side = gap.side!;
+  const index = gap.index!;
+  const kerbPoint = await projectGuideIndex(page, side, index);
+  expect(kerbPoint).not.toBeNull();
+  await page.mouse.click(kerbPoint![0], kerbPoint![1]);
+
+  await page.waitForFunction(
+    ({ side, index }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const spans = JSON.parse(
+        (window as any).__trackEditor.editor_kerb_spans(),
+      ) as Array<{ start: number; end: number; side: number }>;
+      return spans.some(
+        (span) => span.side === side && span.start < index && span.end > index,
+      );
+    },
+    { side, index },
+    { timeout: 15_000 },
+  );
+
+  const assertCameraPreserved = async (label: string) => {
+    const cameraAfter = await page.evaluate(
+      () => JSON.parse((window as any).__trackEditor.camera_info()) as {
+        eye: number[];
+        target: number[];
+        fovY: number;
+      },
+    );
+    expect(cameraAfter.eye, `${label} eye`).toHaveLength(3);
+    expect(cameraAfter.target, `${label} target`).toHaveLength(3);
+    for (let axis = 0; axis < 3; axis += 1) {
+      expect(
+        Math.abs(cameraAfter.eye[axis] - cameraBefore.eye[axis]),
+        `${label} eye[${axis}]`,
+      ).toBeLessThanOrEqual(0.01);
+      expect(
+        Math.abs(cameraAfter.target[axis] - cameraBefore.target[axis]),
+        `${label} target[${axis}]`,
+      ).toBeLessThanOrEqual(0.01);
+    }
+    expect(
+      Math.abs(cameraAfter.fovY - cameraBefore.fovY),
+      `${label} fovY`,
+    ).toBeLessThanOrEqual(0.01);
+  };
+
+  await assertCameraPreserved("after create");
+
+  const deleteButton = page.locator("#delete-segment");
+  await expect(deleteButton).toBeEnabled();
+  await deleteButton.click();
+  await page.waitForFunction(
+    ({ side, index }) => {
+      if (document.querySelector("#status")?.textContent !== "ready") {
+        return false;
+      }
+      const spans = JSON.parse(
+        (window as any).__trackEditor.editor_kerb_spans(),
+      ) as Array<{ start: number; end: number; side: number }>;
+      return !spans.some(
+        (span) => span.side === side && span.start < index && span.end > index,
+      );
+    },
+    { side, index },
+    { timeout: 15_000 },
+  );
+
+  await assertCameraPreserved("after delete");
+  expect(pageErrors).toEqual([]);
+});
