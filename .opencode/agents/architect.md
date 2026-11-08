@@ -60,6 +60,11 @@ permission:
     "gh pr list*": allow
     "gh pr status*": allow
     "gh pr merge*": allow
+    "gh workflow run*": allow
+    "gh workflow view*": allow
+    "gh run list*": allow
+    "gh run view*": allow
+    "gh run watch*": allow
     "git commit --no-verify*": deny
     "git push --no-verify*": deny
     "git push --force*": deny

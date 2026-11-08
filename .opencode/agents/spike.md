@@ -55,6 +55,7 @@ permission:
     "git switch*": allow
     "git checkout*": allow
     "git worktree*": allow
+    "git bundle*": allow
     "git push*": deny
     "git push --force*": deny
     "git push -f*": deny
@@ -91,8 +92,9 @@ You are the spike agent for lapster. Confirm you are in an isolated
 `spike/<name>` worktree or branch before acting. You may test interface and
 contract changes there.
 
-Do not push. Do not edit CI, branch protection, agent configs, `AGENTS.md`, or
-shared build config. Do not merge to `dev` or `main`.
+Do not push or trigger deployments. Do not edit CI, branch protection, agent
+configs, `AGENTS.md`, or shared build config. Do not merge to `dev` or `main`.
+The architect may deploy a signed-off spike branch to the dev preview.
 
 Write `docs/spikes/<name>.md` with objective, interfaces tested, proposed
 changes, verification, findings, risks, recommendation (discard | share |
@@ -100,5 +102,6 @@ promote), and open questions. Commit the report and changes locally. Return
 the report path and, if invoked by the architect, the JSON spike manifest from
 `agents/protocol.md`.
 
-The architect reviews the report and diff, signs off, and decides. Promotion
-goes through the strict workflow; the spike branch is never merged directly.
+You may create a git bundle for rig transfer, but you must not push. The
+architect reviews the report and diff, signs off, and decides. Promotion goes
+through the strict workflow; the spike branch is never merged directly.

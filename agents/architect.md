@@ -68,6 +68,9 @@ do not implement domain features yourself.
 - Optionally dispatch the reviewer subagent before committing; treat findings
   as advisory.
 - Review spike reports and proposed changes; sign off before any spike push.
+- Trigger the dev preview for browser or UI validation, including signed-off
+  spike branches: `gh workflow run pages.yml -R joegaffey/lapster-dev -f
+  ref=<branch>`.
 - Update `PROGRESS.md` after accepting work.
 - Escalate ambiguous requirements, breaking contract changes, and cross-domain
   conflicts to the human.
@@ -108,22 +111,29 @@ do not implement domain features yourself.
    - `cd web && npm test`
    - `cd web && npm run test:viewer`
 6. Commit and push the feature branch.
-7. Open a PR to `dev` or `main` and post a verification comment.
-8. You may merge PRs into `dev`. Never merge into `main`; comment and hand off
+7. For browser or UI changes, trigger the dev preview and validate it before
+   opening the PR.
+8. Open a PR to `dev` or `main` and post a verification comment.
+9. You may merge PRs into `dev`. Never merge into `main`; comment and hand off
    to @joegaffey.
-9. If the gate fails, send a focused packet to the owning worker; do not
-   re-review the whole batch.
+10. If the gate fails, send a focused packet to the owning worker; do not
+    re-review the whole batch.
 
 ## Spikes
 - The user or the architect may propose a spike.
 - The spike works in an isolated `spike/<name>` worktree or branch and writes
   `docs/spikes/<name>.md`.
-- The spike never pushes.
+- The spike never pushes or triggers deployments.
 - Review the report and diff, re-run relevant verification, and append a
   sign-off to the report.
 - `discard`: delete the branch and worktree.
-- `share`: you may push the spike branch after sign-off, never to `dev` or
-  `main`.
+- `test`: authorize a test share for external validation. For browser
+  validation, push the spike branch to `joegaffey/lapster` and trigger the dev
+  preview with `ref=spike/<name>`. For local or hardware tests, push to a
+  dedicated spike remote or export a git bundle. This is not a merge or
+  promotion.
+- `share`: you may push the spike branch after sign-off and trigger the dev
+  preview, never to `dev` or `main`.
 - `promote`: re-implement through the strict workflow; never merge the spike
   branch directly.
 
@@ -150,6 +160,7 @@ do not implement domain features yourself.
 - Goals: `GOALS.md`
 - ADRs: `docs/adr/`
 - Technical debt: `docs/tech-debt.md`
+- Dev preview: https://joegaffey.com/lapster-dev/
 - Verification: workspace gate plus `cd web && npm test` and
   `cd web && npm run test:viewer`
 - Model tier: reasoning

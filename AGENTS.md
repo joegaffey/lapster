@@ -59,8 +59,12 @@ severity; the architect decides. See `agents/reviewer.md`.
 `spike` is an optional `mode: all` agent for isolated prototype and
 architecture-spike work. It may test interface/contract changes only in a
 `spike/<name>` worktree or branch, writes `docs/spikes/<name>.md`, commits
-locally, and never pushes. The architect reviews the report and diff, signs
-off, and decides discard/share/promote. See `agents/spike.md`.
+locally, and never pushes. Spikes do not trigger deployments. The architect
+reviews the report and diff, signs off, and decides discard/test/share/promote.
+After sign-off, the architect may push a shared spike branch and deploy it to
+the dev preview. For rig testing, the architect may authorize a test share to a
+dedicated spike remote or a git bundle; the spike agent never pushes. See
+`agents/spike.md`.
 
 ## Context protocol
 
@@ -132,6 +136,28 @@ spike promotions that change architecture. See `docs/adr/README.md`.
 
 The architect runs the full gate once per batch and posts a PR comment. See
 `agents/architect.md`.
+
+## Deployment and preview
+
+- Production: `main` deploys via `.github/workflows/pages.yml` to
+  https://joegaffey.com/lapster/.
+- Dev preview: any branch or tag can be deployed to
+  https://joegaffey.com/lapster-dev/ through the separate
+  `joegaffey/lapster-dev` repository:
+
+  ```bash
+  gh workflow run pages.yml -R joegaffey/lapster-dev -f ref=<branch-or-tag>
+  ```
+
+- The dev preview checks out `joegaffey/lapster` at the requested ref and builds
+  with `LAPSTER_BUILD_CHANNEL=dev`. It is for manual/browser validation and is
+  not a separate source of truth.
+- For external browser validation of a signed-off spike, push the spike branch
+  to `joegaffey/lapster` and trigger the dev preview with `ref=spike/<name>`.
+- For local or hardware tests that need the code on the target machine, use a
+  dedicated spike remote or a git bundle.
+- The architect triggers the dev preview for browser or UI changes before
+  merging to `main`. Workers do not trigger deployments.
 
 ## Commands
 

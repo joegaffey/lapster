@@ -124,12 +124,16 @@ Handoff:
 - The user or the architect may propose a spike.
 - The spike works in an isolated `spike/<name>` worktree or branch.
 - It may test interface and contract changes there.
-- It never pushes.
+- It never pushes or triggers deployments.
 - The architect reviews the report and diff, re-runs relevant verification, and
   appends a sign-off to the report.
 - `discard`: delete the branch and worktree.
-- `share`: the architect may push the spike branch after sign-off, never to
-  `dev` or `main`.
+- `test`: the architect authorizes a test share for external validation. For
+  browser validation, use the dev preview with `ref=spike/<name>`. For local or
+  hardware tests, use a dedicated spike remote or a git bundle. This is not a
+  merge or promotion.
+- `share`: the architect may push the spike branch after sign-off and trigger
+  the dev preview, never to `dev` or `main`.
 - `promote`: the architect re-implements through the strict workflow. The spike
   branch is never merged directly.
 
@@ -154,6 +158,8 @@ Handoff:
 - Optional: dispatch the reviewer after workers and before commit; treat
   findings as advisory.
 - The architect commits and pushes the feature branch.
+- For browser or UI changes, the architect validates the dev preview before
+  merging to `main`.
 - PRs to `main` require `gate` CI and @joegaffey approval.
 - The architect may merge to `dev`; never to `main`.
 - If the gate fails, send a focused packet to the owning worker.
