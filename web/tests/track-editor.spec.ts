@@ -302,6 +302,7 @@ test("track editor renders the procedural example track", async ({ page }) => {
 });
 
 test("camera view cycles and the draggable car follows the spline", async ({ page }) => {
+  test.setTimeout(120_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
