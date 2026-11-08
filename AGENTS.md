@@ -48,7 +48,7 @@ Full detail: `agents/contracts.md`.
 | `render` | `crates/sim-render/**` | `cargo test -p sim-render`, clippy, wasm check |
 | `assets` | `crates/sim-asset/**`, `crates/asset-compiler/**`, `tools/speed-dreams/**`, `fixtures/**` | `cargo test -p sim-asset -p asset-compiler`, clippy |
 | `multiplayer` | `crates/relay-server/**` except `protocol.rs` | `cargo test -p relay-server`, clippy |
-| `web` | `web/**` except the three contract files and generated outputs | `cd web && npm test && npm run test:viewer` |
+| `web` | `web/**` except the three contract files and generated outputs | `npm --prefix web test`, `npm --prefix web run test:viewer` |
 
 ## Review
 
@@ -157,11 +157,13 @@ cargo test --workspace
 cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker \
   --target wasm32-unknown-unknown
 
-cd web
-npm test
-npm run test:viewer
-npm run bench:physics
+npm --prefix web test
+npm --prefix web run test:viewer
+npm --prefix web run bench:physics
 ```
+
+Prefer `npm --prefix web ...` over `cd web && ...`; the bash tool may split
+compound commands into separate checks and reject the `cd`.
 
 ## Context exclusions
 

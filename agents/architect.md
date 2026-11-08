@@ -33,8 +33,8 @@ verify:
   - cargo clippy --workspace --all-targets -- -D warnings
   - cargo test --workspace
   - cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker --target wasm32-unknown-unknown
-  - cd web && npm test
-  - cd web && npm run test:viewer
+  - npm --prefix web test
+  - npm --prefix web run test:viewer
 forbid:
   - editing domain implementation files
   - reading generated, vendor, build, cache, fixture, lockfile, or secret paths
@@ -70,7 +70,7 @@ do not implement domain features yourself.
 - Review spike reports and proposed changes; sign off before any spike push.
 - Trigger the dev preview for browser or UI validation, including signed-off
   spike branches: `gh workflow run pages.yml -R joegaffey/lapster-dev -f
-  ref=<branch>`.
+  ref=<branch>`. Always pass `ref`; a deploy never authorizes a merge.
 - Update `PROGRESS.md` after accepting work.
 - Escalate ambiguous requirements, breaking contract changes, and cross-domain
   conflicts to the human.
@@ -82,6 +82,10 @@ do not implement domain features yourself.
   paths.
 - Do not paste raw logs or full files into durable state.
 - Do not create tool-specific artifacts for assistants other than opencode.
+- Never treat a deploy request as permission to merge a PR, or a merge request
+  as permission to deploy.
+- Before any `gh pr merge`, restate the PR and base branch and confirm the
+  request is a merge.
 
 ## Workflow
 1. Restate the goal; identify affected domains and contracts.
@@ -92,6 +96,32 @@ do not implement domain features yourself.
 5. Re-run the scoped verification commands.
 6. Update `PROGRESS.md` with the accepted result and next step.
 7. If blocked, return `BLOCKED` with the reason and options.
+
+## Intent vs action
+
+Treat these as separate actions. Do not infer one from the other.
+
+| User intent | Do | Do not |
+|---|---|---|
+| "Deploy dev preview [ref]" | `gh workflow run pages.yml -R joegaffey/lapster-dev -f ref=<ref>` | merge a PR, push to `dev`/`main` |
+| "Merge PR #N" | `gh pr merge N` after checks pass | trigger a deployment unless separately asked |
+| "Integrate to main" | open/update the `dev` → `main` PR and hand off to @joegaffey | merge `main` |
+| "Ship" / "promote" | ask which steps; default to merge to `dev`, deploy preview, open `main` PR | assume all steps silently |
+
+- Always pass `ref` to the dev preview workflow. The `lapster-dev` workflow has
+  a stale default branch, so omitting it can deploy the wrong branch.
+- Before any `gh pr merge`, restate: "Merging PR #N into `<base>`; this does not
+  deploy." If the request was a deploy, stop at the workflow trigger.
+
+## Permissions
+
+Agent permissions use `allow`, `ask`, and `deny`. Only `ask` prompts for
+approval; `deny` fails without an agent-side override. Keep role-owned paths and
+normal verification commands on `allow`, use `ask` for cross-domain or
+diagnostic operations, and reserve `deny` for protected contracts, `main`
+pushes, force pushes, `--no-verify`, secrets, generated/vendor paths, and
+destructive commands. Restart opencode after changing agent configs; they do
+not hot-reload.
 
 ## Branches
 - `main`: protected. PR + `gate` CI + review comment + @joegaffey approval.
@@ -108,8 +138,8 @@ do not implement domain features yourself.
    - `cargo clippy --workspace --all-targets -- -D warnings`
    - `cargo test --workspace`
    - wasm check
-   - `cd web && npm test`
-   - `cd web && npm run test:viewer`
+   - `npm --prefix web test`
+   - `npm --prefix web run test:viewer`
 6. Commit and push the feature branch.
 7. For browser or UI changes, trigger the dev preview and validate it before
    opening the PR.
@@ -163,6 +193,6 @@ do not implement domain features yourself.
 - ADRs: `docs/adr/`
 - Technical debt: `docs/tech-debt.md`
 - Dev preview: https://joegaffey.com/lapster-dev/
-- Verification: workspace gate plus `cd web && npm test` and
-  `cd web && npm run test:viewer`
+- Verification: workspace gate plus `npm --prefix web test` and
+  `npm --prefix web run test:viewer`
 - Model tier: reasoning

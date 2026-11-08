@@ -29,7 +29,7 @@ permission:
     "web/src/assets/types.ts": allow
     "web/src/net/protocol.ts": allow
   bash:
-    "*": deny
+    "*": ask
     "cargo fmt*": allow
     "cargo clippy*": allow
     "cargo test*": allow
@@ -39,6 +39,13 @@ permission:
     "cd web && npm run build*": allow
     "cd web && npm run bench*": allow
     "cd web && npx playwright test*": allow
+    "npm --prefix web test*": allow
+    "npm --prefix web run test*": allow
+    "npm --prefix web run build*": allow
+    "npm --prefix web run bench*": allow
+    "node --test*": allow
+    "npx playwright test*": allow
+    "npx playwright install*": allow
     "bash web/scripts/*": allow
     "git status*": allow
     "git diff*": allow
@@ -120,14 +127,26 @@ responses. Verify by running the scoped commands yourself.
    `cargo clippy --workspace --all-targets -- -D warnings`,
    `cargo test --workspace`,
    the wasm check,
-   `cd web && npm test`,
-   `cd web && npm run test:viewer`.
+   `npm --prefix web test`,
+   `npm --prefix web run test:viewer`.
 5. Commit and push the feature branch.
 6. Open a PR to `dev` or `main` and post a verification comment.
 7. You may merge PRs into `dev`. Never merge into `main`; comment and hand off
    to @joegaffey.
 8. If the gate fails, send a focused packet to the owning worker; do not
    re-review the whole batch.
+
+## Intent vs action
+- "Deploy dev preview [ref]" -> only `gh workflow run pages.yml -R
+  joegaffey/lapster-dev -f ref=<ref>`. Never merge.
+- "Merge PR #N" -> only `gh pr merge N` after checks pass. Never deploy unless
+  separately asked.
+- "Integrate to main" -> open/update the `dev` -> `main` PR and hand off to
+  @joegaffey. Never merge `main`.
+- "Ship" / "promote" -> ask which steps; do not assume.
+Always pass `ref` to the dev preview workflow; its default branch is stale.
+Before any `gh pr merge`, restate the PR and base branch. A deploy request is
+not merge permission.
 
 ## Branches
 - `main`: protected; PR + `gate` CI + review comment + @joegaffey approval.

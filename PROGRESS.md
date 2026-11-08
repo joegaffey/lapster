@@ -17,17 +17,15 @@ cargo test --workspace
 cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker \
   --target wasm32-unknown-unknown
 
-cd web
-npm ci
-npm test
-npm run test:viewer
+npm --prefix web ci
+npm --prefix web test
+npm --prefix web run test:viewer
 ```
 
 Build the browser wasm and pages:
 
 ```bash
-cd web
-npm run build:viewer
+npm --prefix web run build:viewer
 ```
 
 Run the local site:

@@ -1425,7 +1425,6 @@ function refreshEditorState(): void {
   propLines = JSON.parse(editorViewer.editor_prop_lines()) as PropLine[];
   resolveSelection();
   syncPaintControls();
-  applyCameraView();
   const debug = JSON.parse(editorViewer.debug_info());
   renderStats(debug);
   drawsLabel.textContent = String(debug.stats.drawCalls);
