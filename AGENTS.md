@@ -135,9 +135,17 @@ spike promotions that change architecture. See `docs/adr/README.md`.
   PRs.
 - `feat/<name>` branches: the architect pushes and opens a PR to `dev` (or
   `main` for hotfixes).
-- Workers never commit or push. The architect commits after the full gate.
+- Workers never commit or push. The architect commits after the applicable
+  gate.
 
-The architect runs the full gate once per batch and posts a PR comment. See
+Gate scope:
+
+- Code or contract changes: run the full gate once per batch.
+- Docs, agent config, or workspace metadata only: run `git diff --check` and any
+  relevant doc/sync check; do not run cargo or web builds.
+- After a `main` merge, sync `dev` with `main` (`/sync-dev`) before new work.
+
+The architect posts a PR comment with the gate result. See
 `agents/architect.md`.
 
 ## Deployment and preview

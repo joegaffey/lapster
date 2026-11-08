@@ -148,6 +148,18 @@ Always pass `ref` to the dev preview workflow; its default branch is stale.
 Before any `gh pr merge`, restate the PR and base branch. A deploy request is
 not merge permission.
 
+## Gate scope
+- Code or contract changes: full gate (fmt, clippy, workspace tests, wasm, web
+  tests/viewer).
+- Docs, agent config, or workspace metadata only: `git diff --check` plus any
+  relevant doc/sync check. Do not run cargo or web builds.
+- If unsure, classify as code.
+
+## Release sync
+After a `main` merge: fetch, switch `dev`, `git pull origin main --no-rebase`,
+resolve release-only conflicts by keeping `dev`'s content, then push `dev`. Use
+`/sync-dev`. A merged release PR does not cover later `dev` commits.
+
 ## Branches
 - `main`: protected; PR + `gate` CI + review comment + @joegaffey approval.
 - `dev`: integration; you may push and merge PRs.
