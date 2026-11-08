@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
@@ -55,3 +55,16 @@ jobs:
         env:
           CI: "true"
         run: npm run test:viewer -- --shard=${{ matrix.shard }}/5
+
+  gate:
+    name: gate
+    if: always()
+    needs: [rust, web]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require rust and web
+        run: |
+          echo "rust=${{ needs.rust.result }}"
+          echo "web=${{ needs.web.result }}"
+          test "${{ needs.rust.result }}" = "success"
+          test "${{ needs.web.result }}" = "success"
