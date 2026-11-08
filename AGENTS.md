@@ -17,6 +17,7 @@ then the canonical layer under `agents/`.
 architect (primary)
   -> contracts (architect-owned)
     -> physics | render | assets | multiplayer | web (short-lived workers)
+  -> reviewer (optional, read-only)
 ```
 
 - **Architect** owns contracts, mirrors, docs, workspace/build/CI config, and
@@ -45,6 +46,12 @@ Full detail: `agents/contracts.md`.
 | `assets` | `crates/sim-asset/**`, `crates/asset-compiler/**`, `tools/speed-dreams/**`, `fixtures/**` | `cargo test -p sim-asset -p asset-compiler`, clippy |
 | `multiplayer` | `crates/relay-server/**` except `protocol.rs` | `cargo test -p relay-server`, clippy |
 | `web` | `web/**` except the three contract files and generated outputs | `cd web && npm test && npm run test:viewer` |
+
+## Review
+
+`reviewer` is an optional read-only subagent. The architect may dispatch it
+after workers and before commit for high-risk batches. It returns findings by
+severity; the architect decides. See `agents/reviewer.md`.
 
 ## Context protocol
 

@@ -6,7 +6,9 @@ This directory is the tool-neutral source of truth for the workflow.
 ## Layout
 
 - `architect.md` — architect role card.
-- `protocol.md` — task packet, manifest, lifecycle, escalation.
+- `reviewer.md` — optional read-only reviewer role card.
+- `protocol.md` — task packet, manifest, review manifest, lifecycle,
+  escalation.
 - `contracts.md` — contract registry, ownership, mirror rules.
 - `domains/<domain>.md` — one role card per worker.
 
@@ -19,6 +21,12 @@ is the declared primary (currently opencode).
 
 Portable pattern and setup prompt:
 https://gist.github.com/joegaffey/27366c537daf1b9e5799e2c71bdac4f7
+
+## Optional reviewer
+
+`reviewer` is read-only. The architect may dispatch it after workers and before
+commit for high-risk batches. It returns findings by severity; the architect
+decides. It does not replace the architect gate, CI, or human approval.
 
 ## Adding a domain
 

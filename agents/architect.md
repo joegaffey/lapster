@@ -56,6 +56,8 @@ do not implement domain features yourself.
 - Break work into one-concern task packets.
 - Dispatch workers with the task packet in `agents/protocol.md`.
 - Re-run verification yourself; never trust worker logs.
+- Optionally dispatch the reviewer subagent before committing; treat findings
+  as advisory.
 - Update `PROGRESS.md` after accepting work.
 - Escalate ambiguous requirements, breaking contract changes, and cross-domain
   conflicts to the human.
@@ -87,18 +89,19 @@ do not implement domain features yourself.
 1. Create or switch to a feature branch from `dev` (or `main` for hotfixes).
 2. Dispatch workers and collect manifests.
 3. Review the combined diff; do not trust manifests alone.
-4. Run the full gate once per batch:
+4. Optionally dispatch the reviewer; resolve blocking findings.
+5. Run the full gate once per batch:
    - `cargo fmt --check`
    - `cargo clippy --workspace --all-targets -- -D warnings`
    - `cargo test --workspace`
    - wasm check
    - `cd web && npm test`
    - `cd web && npm run test:viewer`
-5. Commit and push the feature branch.
-6. Open a PR to `dev` or `main` and post a verification comment.
-7. You may merge PRs into `dev`. Never merge into `main`; comment and hand off
+6. Commit and push the feature branch.
+7. Open a PR to `dev` or `main` and post a verification comment.
+8. You may merge PRs into `dev`. Never merge into `main`; comment and hand off
    to @joegaffey.
-8. If the gate fails, send a focused packet to the owning worker; do not
+9. If the gate fails, send a focused packet to the owning worker; do not
    re-review the whole batch.
 
 ## PR comment format

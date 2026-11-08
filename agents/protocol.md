@@ -5,6 +5,8 @@
 - **Architect** (primary): owns contracts, mirrors, docs, workspace/build/CI
   config. Delegates implementation. Verifies results.
 - **Worker** (subagent): owns one domain. Short-lived. One task per session.
+- **Reviewer** (optional subagent): read-only. Reviews a batch diff against
+  contracts and acceptance criteria. Advisory only.
 
 ## Task packet
 
@@ -56,6 +58,32 @@ Rules:
 - `status` is `BLOCKED` when a contract change or human decision is required.
 - `tests.passed` must reflect the actual scoped verification.
 
+## Review manifest
+
+The reviewer returns only this JSON object:
+
+```json
+{
+  "status": "APPROVE | REQUEST_CHANGES | BLOCKED",
+  "scope": "batch | <domain>",
+  "findings": [
+    {
+      "severity": "blocking | major | minor | nit",
+      "file": "<path>",
+      "line": 123,
+      "issue": "<...>",
+      "suggestion": "<...>"
+    }
+  ],
+  "contracts_checked": ["<path>"],
+  "tests_checked": ["<command>"],
+  "summary": "<1-2 sentences>"
+}
+```
+
+The reviewer never edits, commits, or pushes. Findings are advisory; the
+architect decides. Blocking findings go back to the owning worker.
+
 ## Lifecycle
 
 1. Architect updates canonical contracts and mirrors first, if needed.
@@ -63,7 +91,10 @@ Rules:
 3. Worker reads contracts and its role card, implements, verifies.
 4. Worker returns the manifest and terminates. The session is not reused.
 5. Architect re-runs verification and updates durable state.
-6. Contract changes requested by workers return to the architect.
+6. Optional: dispatch the reviewer; blocking findings return to the owning
+   worker.
+7. Architect commits after the gate and optional review.
+8. Contract changes requested by workers return to the architect.
 
 ## Batch review and gate
 
@@ -71,6 +102,8 @@ Rules:
 - The architect batches one or more worker tasks on a feature branch.
 - The architect reviews the combined diff and runs the full gate once per
   batch, not per task.
+- Optional: dispatch the reviewer after workers and before commit; treat
+  findings as advisory.
 - The architect commits and pushes the feature branch.
 - PRs to `main` require `gate` CI and @joegaffey approval.
 - The architect may merge to `dev`; never to `main`.
@@ -96,4 +129,5 @@ Rules:
 - Scoped verify command passes.
 - No contract files edited by a worker.
 - Manifest returned.
+- If the reviewer was used, findings are resolved or explicitly accepted.
 - Architect has re-run verification and updated durable state.
