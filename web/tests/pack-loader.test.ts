@@ -57,6 +57,24 @@ test("loads and verifies the track pack", async () => {
   assert.ok(pack.chunkBytes("Metadata").length > 0);
 });
 
+test("loads packs when SubtleCrypto is unavailable", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const originalWarn = console.warn;
+  Object.defineProperty(globalThis, "crypto", { value: {}, configurable: true });
+  console.warn = () => {};
+  try {
+    const pack = await loadPackFromBytes(await readBytes(carUrl));
+    assert.equal(pack.manifest.kind, "Car");
+  } finally {
+    console.warn = originalWarn;
+    if (original) {
+      Object.defineProperty(globalThis, "crypto", original);
+    } else {
+      delete (globalThis as { crypto?: unknown }).crypto;
+    }
+  }
+});
+
 test("loads a pack inside a worker", async () => {
   const bytes = await readBytes(carUrl);
   const result = await new Promise<{
