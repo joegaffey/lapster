@@ -24,6 +24,9 @@
 - [ ] `npm --prefix web test`
 - [ ] `npm --prefix web run test:viewer`
 
+Path-filtered docs/config-only changes may mark cargo/web rows as N/A; note the
+classification in the comment.
+
 ## Architect gate
 
 - Batch:

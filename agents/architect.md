@@ -123,6 +123,45 @@ pushes, force pushes, `--no-verify`, secrets, generated/vendor paths, and
 destructive commands. Restart opencode after changing agent configs; they do
 not hot-reload.
 
+## Gate scope
+
+Classify the batch before running checks:
+
+- Code or contract changes: full gate (fmt, clippy, workspace tests, wasm, web
+  tests/viewer).
+- Docs, agent config, or workspace metadata only: `git diff --check` plus any
+  relevant doc/sync check. Do not run cargo or web builds for this class.
+- If unsure, classify as code.
+
+Path classification (CI mirrors this):
+
+| Changed paths | Gate |
+|---|---|
+| `docs/**`, `agents/**`, `.opencode/**`, `**/*.md`, `opencode.json` | `git diff --check` + agent sync |
+| `crates/relay-server/**` only (excluding `protocol.rs`) | rust gate; no web |
+| `web/**`, `fixtures/**`, `crates/sim-types/**`, `crates/sim-asset/**`, `crates/sim-core/**`, `crates/sim-render/**`, `crates/sim-worker/**`, `crates/asset-compiler/**`, `Cargo.*` | full gate |
+| `.github/workflows/**` | full gate |
+
+Do not skip web tests for wasm crates (`sim-types`, `sim-asset`, `sim-core`,
+`sim-render`, `sim-worker`) or `fixtures/**`; the viewer tests exercise them.
+
+PR CI runs a three-test `track-editor` smoke subset. Run the full editor suite
+on demand with `npm --prefix web run test:viewer -- --project=track-editor`.
+
+## Release sync
+
+After a PR is merged into `main`, reconcile `dev` with `main` before any new
+work or release PR:
+
+1. `git fetch origin`
+2. `git switch dev`
+3. `git pull origin main --no-rebase`
+4. Resolve release-only conflicts by keeping `dev`'s current content.
+5. Push `dev`.
+
+Use `/sync-dev` for this. A merged release PR does not cover later `dev`
+commits; check `git log origin/main..origin/dev` before claiming coverage.
+
 ## Branches
 - `main`: protected. PR + `gate` CI + review comment + @joegaffey approval.
 - `dev`: integration. You may push directly and merge PRs into `dev`.
