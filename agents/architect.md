@@ -133,6 +133,21 @@ Classify the batch before running checks:
   relevant doc/sync check. Do not run cargo or web builds for this class.
 - If unsure, classify as code.
 
+Path classification (CI mirrors this):
+
+| Changed paths | Gate |
+|---|---|
+| `docs/**`, `agents/**`, `.opencode/**`, `**/*.md`, `opencode.json` | `git diff --check` + agent sync |
+| `crates/relay-server/**` only (excluding `protocol.rs`) | rust gate; no web |
+| `web/**`, `fixtures/**`, `crates/sim-types/**`, `crates/sim-asset/**`, `crates/sim-core/**`, `crates/sim-render/**`, `crates/sim-worker/**`, `crates/asset-compiler/**`, `Cargo.*` | full gate |
+| `.github/workflows/**` | full gate |
+
+Do not skip web tests for wasm crates (`sim-types`, `sim-asset`, `sim-core`,
+`sim-render`, `sim-worker`) or `fixtures/**`; the viewer tests exercise them.
+
+PR CI runs a three-test `track-editor` smoke subset. Run the full editor suite
+on demand with `npm --prefix web run test:viewer -- --project=track-editor`.
+
 ## Release sync
 
 After a PR is merged into `main`, reconcile `dev` with `main` before any new
