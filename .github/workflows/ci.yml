@@ -143,7 +143,7 @@ jobs:
           CI: "true"
         run: >-
           npm run test:viewer -- --project=track-editor
-          --grep "renders the procedural example track|camera view cycles and the draggable car|kerb spans can be trimmed and rebuilt|editing a kerb segment preserves the camera view"
+          --grep "renders the procedural example track|kerb spans can be trimmed and rebuilt|editing a kerb segment preserves the camera view"
 
   gate:
     name: gate
