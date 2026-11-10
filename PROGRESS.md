@@ -64,7 +64,9 @@ Deployment:
   colours, continuous full-loop sampling for multi-loop geometry, and canonical
   junction tangents. Remaining: junction pad/prop cleanup, shared pit lane,
   updating the stale editor Playwright selectors, full gate, and integration.
-  Local WIP checkpoint only; not pushed or deployed.
+  Local WIP checkpoint `b6333cf`; not pushed or deployed. Next: update the
+  stale editor Playwright selectors, refine junction pads/props, add the shared
+  pit lane, then run the full gate.
 
 ## Completed checkpoints
 

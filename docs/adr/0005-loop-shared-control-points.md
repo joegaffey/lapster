@@ -140,6 +140,21 @@ segments; that graph is not part of the editor model.
   shared decoration.
 - Remove the variants panel, route ranges, edge list, and shared/unique badges.
 
+### Current UX (WIP proof)
+
+- Ctrl+click a control point on the active loop to start a branch draft.
+- Ctrl+click empty space to append a branch point.
+- Connecting/snapping near a source-loop point auto-adds the detected loop.
+- Esc cancels the draft.
+- All loop centerlines are shown at once with per-loop colours; the active loop
+  is brighter. Shared status is not colour-coded.
+- Duplicate-loop and branch-select UI are removed.
+- Multi-loop geometry samples each loop continuously; shared edges reuse the
+  owner loop's samples. Control points are handles and may sit off the sampled
+  centerline.
+- Branch edges meeting a junction use the canonical main-loop tangent at that
+  junction so both ends merge smoothly. Junction pad/prop cleanup remains.
+
 ### Deletion
 
 Start with: delete from the selected loop only; keep the point if another loop
