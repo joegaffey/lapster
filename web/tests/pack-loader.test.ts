@@ -50,7 +50,11 @@ test("loads and verifies the track pack", async () => {
   const pack = await loadPackFromBytes(await readBytes(trackUrl));
   assert.equal(pack.manifest.kind, "Track");
   assert.equal(pack.manifest.id, "fixtures/track/minimal");
+  assert.equal(pack.manifest.schema_version, 4);
   assert.equal(pack.manifest.chunks.length, 3);
+  for (const chunk of pack.manifest.chunks) {
+    assert.equal(chunk.schema_version, 4);
+  }
   assert.equal(pack.manifest.entrypoints.collision, 1);
   assert.equal(pack.manifest.entrypoints.metadata, 2);
   assert.ok(pack.chunkBytes("Collision").length > 0);

@@ -4,7 +4,7 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 pub const MAGIC: [u8; 4] = *b"LSIM";
-pub const SCHEMA_VERSION: u16 = 3;
+pub const SCHEMA_VERSION: u16 = 4;
 pub const PACK_FORMAT_VERSION: u16 = 1;
 pub const PACK_HEADER_SIZE: usize = 64;
 
@@ -1008,6 +1008,48 @@ pub struct SurfaceSpec {
     pub roughness: f32,
 }
 
+/// One selectable circuit within a track pack. All layouts share the track
+/// pack's terrain, scenery, and surface table; only the circuit geometry and
+/// its per-layout metadata differ.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    SerdeSerialize,
+    SerdeDeserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
+#[archive(check_bytes)]
+pub struct LayoutSpec {
+    pub id: String,
+    pub name: String,
+    pub length: f32,
+    /// Start/finish position as a fraction of the layout length in `[0, 1)`.
+    pub start_finish: f32,
+    pub spawns: Vec<SpawnPoint>,
+    pub pit_boxes: Vec<SpawnPoint>,
+    pub cameras: Vec<CameraSpec>,
+    pub sectors: Vec<SectorSpec>,
+}
+
+impl LayoutSpec {
+    /// Builds a layout from the legacy top-level track fields.
+    pub fn from_track(metadata: &TrackMetadata) -> Self {
+        Self {
+            id: "main".to_string(),
+            name: metadata.name.clone(),
+            length: metadata.length,
+            start_finish: 0.0,
+            spawns: metadata.spawns.clone(),
+            pit_boxes: metadata.pit_boxes.clone(),
+            cameras: metadata.cameras.clone(),
+            sectors: metadata.sectors.clone(),
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -1020,6 +1062,8 @@ pub struct SurfaceSpec {
 )]
 #[archive(check_bytes)]
 pub struct TrackMetadata {
+    /// Legacy default-layout fields. They mirror `layouts[default_layout]` so
+    /// single-circuit consumers keep working.
     pub name: String,
     pub length: f32,
     pub spawns: Vec<SpawnPoint>,
@@ -1027,6 +1071,62 @@ pub struct TrackMetadata {
     pub cameras: Vec<CameraSpec>,
     pub sectors: Vec<SectorSpec>,
     pub surfaces: Vec<SurfaceSpec>,
+    /// Selectable circuits. Empty means the track has one implicit layout
+    /// derived from the top-level fields.
+    #[serde(default)]
+    pub layouts: Vec<LayoutSpec>,
+    /// Index into `layouts` used when no layout is selected at runtime.
+    #[serde(default)]
+    pub default_layout: u32,
+}
+
+impl TrackMetadata {
+    /// The layout selected by default, if the track declares layouts.
+    pub fn default_layout_spec(&self) -> Option<&LayoutSpec> {
+        self.layouts.get(self.default_layout as usize)
+    }
+
+    pub fn layout(&self, index: u32) -> Option<&LayoutSpec> {
+        self.layouts.get(index as usize)
+    }
+
+    pub fn layout_by_id(&self, id: &str) -> Option<&LayoutSpec> {
+        self.layouts.iter().find(|layout| layout.id == id)
+    }
+
+    /// Spawns for the requested layout id, falling back to the default layout
+    /// and then the legacy top-level fields.
+    pub fn spawns_for_layout(&self, id: Option<&str>) -> &[SpawnPoint] {
+        let layout = id
+            .and_then(|id| self.layout_by_id(id))
+            .or_else(|| self.default_layout_spec());
+        layout
+            .map(|layout| layout.spawns.as_slice())
+            .filter(|spawns| !spawns.is_empty())
+            .unwrap_or(&self.spawns)
+    }
+
+    /// Ensures the default layout exists and keeps the legacy top-level fields
+    /// in sync with it. Idempotent; constructors should call this after
+    /// building metadata.
+    pub fn normalize_layouts(mut self) -> Self {
+        if self.layouts.is_empty() {
+            self.layouts.push(LayoutSpec::from_track(&self));
+            self.default_layout = 0;
+        }
+        if self.default_layout as usize >= self.layouts.len() {
+            self.default_layout = 0;
+        }
+        if let Some(default) = self.layouts.get(self.default_layout as usize) {
+            self.name = default.name.clone();
+            self.length = default.length;
+            self.spawns = default.spawns.clone();
+            self.pit_boxes = default.pit_boxes.clone();
+            self.cameras = default.cameras.clone();
+            self.sectors = default.sectors.clone();
+        }
+        self
+    }
 }
 
 #[derive(

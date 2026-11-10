@@ -964,7 +964,12 @@ async function boot() {
       initializeSab(sab);
       validateSab(sab);
       ffbSab = sab;
-      const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
+      const client = await PhysicsClient.create(
+        sab,
+        trackPack.bytes,
+        carPack.bytes,
+        params.get("layout") ?? undefined,
+      );
       physics = client;
       smoother = new SnapshotSmoother(client.reader);
       physicsWorker = true;

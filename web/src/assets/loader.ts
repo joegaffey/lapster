@@ -9,7 +9,7 @@ import type {
 export const PACK_MAGIC = "LSIM";
 export const PACK_FORMAT_VERSION = 1;
 export const PACK_HEADER_SIZE = 64;
-export const ASSET_SCHEMA_VERSION = 3;
+export const ASSET_SCHEMA_VERSION = 4;
 
 const REQUIRED_ENTRYPOINTS: Record<string, ChunkKind[]> = {
   Car: ["Physics", "Visual"],

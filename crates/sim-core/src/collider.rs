@@ -485,7 +485,10 @@ mod tests {
                     roughness: 0.0,
                 },
             ],
+            layouts: Vec::new(),
+            default_layout: 0,
         }
+        .normalize_layouts()
     }
 
     fn ground_collision() -> TrackCollision {

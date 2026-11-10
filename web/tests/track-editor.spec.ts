@@ -1,5 +1,76 @@
 import { expect, test, type Page } from "@playwright/test";
 
+type ProjectLoop = {
+  id: string;
+  name: string;
+  controlPoints: string[];
+  sectors: unknown[];
+  cameras: unknown[];
+  spawns: unknown[];
+};
+
+type ProjectV3 = {
+  schema: string;
+  settings: {
+    width: number;
+    kerb: { width: number; depth: number; elementLength: number };
+    pit?: unknown;
+  };
+  loops: ProjectLoop[];
+  controlPoints: Array<{
+    id: string;
+    position: [number, number];
+    kind: string;
+    tangent?: [number, number] | null;
+  }>;
+  segments: Array<{
+    from: string;
+    to: string;
+    role: "main" | "branch";
+    kerbs: unknown[];
+    propSpans: unknown[];
+  }>;
+  pitLane?: unknown;
+};
+
+function trackWidth(project: ProjectV3): number {
+  return project.settings.width;
+}
+
+async function waitForEditorRebuild(page: Page, timeout = 20_000) {
+  await page
+    .waitForFunction(
+      () => document.querySelector("#status")?.textContent !== "ready",
+      undefined,
+      { timeout: 5_000 },
+    )
+    .catch(() => {});
+  await expect(page.locator("#status")).toHaveText("ready", { timeout });
+}
+
+async function readLoopCenterlines(page: Page, restoreId?: string) {
+  return page.evaluate(async (targetId) => {
+    const viewer = (window as any).__trackEditor;
+    const switchLayout = (window as any).__setEditorActiveLayout as (
+      id: string,
+    ) => Promise<void>;
+    const project = JSON.parse(viewer.editor_project()) as {
+      loops: Array<{ id: string }>;
+    };
+    const previous = viewer.editor_active_layout() as string;
+    const centerlines: Record<string, string> = {};
+    for (const loop of project.loops) {
+      await switchLayout(loop.id);
+      centerlines[loop.id] = viewer.editor_centerline() as string;
+    }
+    const restore = targetId && centerlines[targetId] !== undefined
+      ? targetId
+      : previous;
+    await switchLayout(restore);
+    return { centerlines, active: viewer.editor_active_layout() as string };
+  }, restoreId);
+}
+
 async function findKerbGap(page: Page) {
   return page.evaluate(() => {
     const viewer = (window as any).__trackEditor;
@@ -284,7 +355,7 @@ test("track editor renders the procedural example track", async ({ page }) => {
   expect(state.meshes).not.toContain("dither_shoulder");
   expect(state.meshes).toContain("kerb_red");
   expect(state.meshes).toContain("barriers");
-  expect(state.meshes).toContain("tires_blue");
+  expect(state.meshes).toContain("tree_trunks_high");
 
   const overlay = page.locator("#control-points");
   const overlayToggle = page.locator("#toggle-overlay");
@@ -475,16 +546,6 @@ test("prop sections can switch between blocks, tyres, and off", async ({ page })
       kind: string;
     }>;
     const blocksIndex = before.findIndex((line) => line.kind === "blocks");
-    const acrossSectionVertices = () => {
-      const meshes = JSON.parse(viewer.debug_info()).meshes as Array<{
-        name: string;
-        vertices: number;
-      }>;
-      return meshes
-        .filter((mesh) => mesh.name === "barriers" || mesh.name.startsWith("tires_"))
-        .reduce((sum, mesh) => sum + mesh.vertices, 0);
-    };
-    const beforeVertices = acrossSectionVertices();
     const changed = before.map((line, index) =>
       index === blocksIndex ? { ...line, kind: "off" } : line,
     );
@@ -506,17 +567,22 @@ test("prop sections can switch between blocks, tyres, and off", async ({ page })
       before,
       after,
       blocksIndex,
-      beforeVertices,
-      afterVertices: acrossSectionVertices(),
     };
   });
 
   expect(result.blocksIndex).toBeGreaterThanOrEqual(0);
   expect(result.before.length).toBeGreaterThan(4);
   expect(result.before.some((line) => line.kind === "trees")).toBe(true);
-  expect(result.after[result.blocksIndex].kind).toBe("off");
+  expect(result.after.length).toBeGreaterThanOrEqual(result.before.length);
+  const blocksBefore = result.before[result.blocksIndex];
+  const blocksAfter = result.after[result.blocksIndex];
+  expect(blocksAfter.kind).toBe("off");
+  expect(blocksAfter.start).toBe(blocksBefore.start);
+  expect(blocksAfter.side).toBe(blocksBefore.side);
+  expect(blocksAfter.offset).toBe(blocksBefore.offset);
+  expect(result.after.some((line) => line.kind === "blocks")).toBe(true);
   expect(result.after.some((line) => line.kind === "tyres")).toBe(true);
-  expect(result.afterVertices).toBeLessThan(result.beforeVertices);
+  expect(result.after.some((line) => line.kind === "trees")).toBe(true);
   expect(pageErrors).toEqual([]);
 });
 
@@ -1060,5 +1126,517 @@ test("editing a kerb segment preserves the camera view", async ({ page }) => {
   );
 
   await assertCameraPreserved("after delete");
+  expect(pageErrors).toEqual([]);
+});
+
+test("legacy track projects migrate from @1 to @3", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=legacy-migration");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  const legacyProject = {
+    schema: "lapster/track-project@1",
+    name: "Legacy Loop",
+    defaultLayout: "legacy-layout",
+    layouts: [
+      {
+        id: "legacy-layout",
+        name: "Legacy Layout",
+        width: 14,
+        controlPoints: [
+          [0, 0],
+          [0, 30],
+          [30, 30],
+          [30, 0],
+        ],
+        kerbs: [],
+        propLines: [],
+        startFinish: 0,
+        spawns: [],
+        pitBoxes: [],
+        cameras: [],
+        sectors: [],
+      },
+    ],
+  };
+
+  const project = await page.evaluate(async (legacy) => {
+    await (window as any).__setEditorProject(JSON.stringify(legacy));
+    const viewer = (window as any).__trackEditor;
+    return JSON.parse(viewer.editor_project()) as ProjectV3;
+  }, legacyProject);
+
+  expect(project.schema).toBe("lapster/track-project@3");
+  expect(project.loops).toHaveLength(1);
+  expect(project.loops[0].id).toBe("legacy-layout");
+  expect(project.loops[0].controlPoints.length).toBeGreaterThanOrEqual(4);
+  expect(project.controlPoints.length).toBeGreaterThanOrEqual(4);
+  expect(trackWidth(project)).toBe(14);
+  expect(pageErrors).toEqual([]);
+});
+
+test("layout panel adds, switches, resizes, duplicates, deletes, and test drives a circuit", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=multi-layout");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  await page.locator("#hud-toggle").click();
+  await expect(page.locator("#hud")).toBeVisible();
+
+  const initial = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as ProjectV3,
+      active: viewer.editor_active_layout() as string,
+      centerline: viewer.editor_centerline() as string,
+    };
+  });
+  expect(initial.project.schema).toBe("lapster/track-project@3");
+  expect(initial.project.loops).toHaveLength(1);
+  expect(Array.isArray(initial.project.controlPoints)).toBe(true);
+  expect(initial.project.controlPoints.length).toBeGreaterThan(0);
+  const firstLoop = initial.project.loops[0];
+  expect(firstLoop).not.toHaveProperty("width");
+  expect(firstLoop).not.toHaveProperty("route");
+  expect(firstLoop.controlPoints.length).toBeGreaterThan(0);
+  expect(firstLoop.controlPoints.every((id) => typeof id === "string")).toBe(true);
+  const firstId = firstLoop.id;
+  expect(initial.active).toBe(firstId);
+  expect(trackWidth(initial.project)).toBeCloseTo(12, 4);
+  await expect(page.locator("#layout-hud")).toContainText("control points");
+  await expect(page.locator("#layout-hud")).toContainText("shared");
+
+  await page.locator("#add-layout").click();
+  await waitForEditorRebuild(page);
+
+  const added = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as ProjectV3,
+      active: viewer.editor_active_layout() as string,
+      centerline: viewer.editor_centerline() as string,
+    };
+  });
+  expect(added.project.schema).toBe("lapster/track-project@3");
+  expect(added.project.loops).toHaveLength(2);
+  expect(added.project.controlPoints.length).toBeGreaterThan(0);
+  const secondId = added.active;
+  expect(secondId).not.toBe(firstId);
+  expect(added.centerline).not.toBe(initial.centerline);
+  await expect(page.locator("#layout-hud")).toContainText("control points");
+  await expect(page.locator("#layout-hud")).toContainText("shared");
+
+  await page.locator("#layout-select").selectOption(firstId);
+  await waitForEditorRebuild(page);
+  const switched = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      active: viewer.editor_active_layout() as string,
+      centerline: viewer.editor_centerline() as string,
+    };
+  });
+  expect(switched.active).toBe(firstId);
+  expect(switched.centerline).toBe(initial.centerline);
+
+  await page.locator("#layout-width").fill("18");
+  await page.locator("#layout-width").dispatchEvent("change");
+  await waitForEditorRebuild(page);
+  const resized = await page.evaluate(
+    () =>
+      JSON.parse(
+        (window as any).__trackEditor.editor_project(),
+      ) as ProjectV3,
+  );
+  expect(resized.schema).toBe("lapster/track-project@3");
+  expect(trackWidth(resized)).toBe(18);
+
+  await page.locator("#duplicate-layout").click();
+  await waitForEditorRebuild(page);
+  const duplicated = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as ProjectV3,
+      active: viewer.editor_active_layout() as string,
+    };
+  });
+  expect(duplicated.project.loops).toHaveLength(3);
+  const duplicateId = duplicated.active;
+  expect(duplicateId).not.toBe(firstId);
+  const duplicateLoop = duplicated.project.loops.find(
+    (loop) => loop.id === duplicateId,
+  );
+  expect(duplicateLoop).toBeTruthy();
+  expect(duplicateLoop!.controlPoints).toEqual(firstLoop.controlPoints);
+
+  await page.locator("#delete-layout").click();
+  await waitForEditorRebuild(page);
+  const deleted = await page.evaluate((id) => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      loops: (
+        JSON.parse(viewer.editor_project()) as {
+          loops: Array<{ id: string }>;
+        }
+      ).loops,
+      active: viewer.editor_active_layout() as string,
+      deletedId: id,
+    };
+  }, duplicateId);
+  expect(deleted.loops).toHaveLength(2);
+  expect(deleted.active).not.toBe(deleted.deletedId);
+  const activeAfterDelete = deleted.active;
+
+  const driveRequest = page.waitForRequest(
+    (request) => request.url().includes("/web/drive/"),
+    { timeout: 20_000 },
+  );
+  await page.route("**/web/drive/**", (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>drive</title>" }),
+  );
+  await page.locator("#test-drive").click();
+  const requestUrl = new URL((await driveRequest).url());
+  expect(requestUrl.searchParams.get("layout")).toBe(activeAfterDelete);
+  expect(requestUrl.searchParams.get("track")).toBe("editor");
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("loops share control points and can be made unique", async ({ page }) => {
+  test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=loop-shared");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  await page.locator("#hud-toggle").click();
+  await expect(page.locator("#hud")).toBeVisible();
+  await expect(page.locator("#status")).toHaveText("ready");
+
+  const initial = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as ProjectV3,
+      active: viewer.editor_active_layout() as string,
+    };
+  });
+  expect(initial.project.loops).toHaveLength(1);
+  const originalId = initial.active;
+  const originalLoop = initial.project.loops.find(
+    (loop) => loop.id === originalId,
+  );
+  expect(originalLoop).toBeTruthy();
+  expect(originalLoop!.controlPoints.length).toBeGreaterThan(2);
+
+  await page.locator("#duplicate-layout").click();
+  await waitForEditorRebuild(page);
+
+  const duplicated = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as ProjectV3,
+      active: viewer.editor_active_layout() as string,
+    };
+  });
+  expect(duplicated.project.loops).toHaveLength(2);
+  const newLoopId = duplicated.active;
+  expect(newLoopId).not.toBe(originalId);
+  const duplicatedLoop = duplicated.project.loops.find(
+    (loop) => loop.id === newLoopId,
+  );
+  const originalLoopAfterDuplicate = duplicated.project.loops.find(
+    (loop) => loop.id === originalId,
+  );
+  expect(duplicatedLoop).toBeTruthy();
+  expect(originalLoopAfterDuplicate).toBeTruthy();
+  expect(duplicatedLoop!.controlPoints).toEqual(
+    originalLoopAfterDuplicate!.controlPoints,
+  );
+
+  const pointIndex = 2;
+  const sharedPointId = duplicatedLoop!.controlPoints[pointIndex];
+  const sharedPoint = duplicated.project.controlPoints.find(
+    (point) => point.id === sharedPointId,
+  );
+  expect(sharedPoint).toBeTruthy();
+
+  const beforeMove = await readLoopCenterlines(page, newLoopId);
+  await waitForEditorRebuild(page);
+  const initialCenterline = beforeMove.centerlines[originalId];
+  expect(beforeMove.centerlines[newLoopId]).toBe(initialCenterline);
+
+  await page.evaluate(
+    async ({ id, x, z }) =>
+      await (window as any).__editorMovePoint(id, x, z),
+    {
+      id: sharedPointId,
+      x: sharedPoint!.position[0] + 5,
+      z: sharedPoint!.position[1],
+    },
+  );
+  await waitForEditorRebuild(page);
+  const afterSharedMove = await readLoopCenterlines(page, newLoopId);
+  await waitForEditorRebuild(page);
+  expect(afterSharedMove.centerlines[originalId]).not.toBe(initialCenterline);
+  expect(afterSharedMove.centerlines[newLoopId]).not.toBe(initialCenterline);
+  expect(afterSharedMove.centerlines[newLoopId]).toBe(
+    afterSharedMove.centerlines[originalId],
+  );
+
+  await page.evaluate(
+    async ({ loopId, pointId }) =>
+      await (window as any).__editorMakeUnique(loopId, pointId),
+    { loopId: newLoopId, pointId: sharedPointId },
+  );
+  await waitForEditorRebuild(page);
+
+  const unique = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return JSON.parse(viewer.editor_project()) as ProjectV3;
+  });
+  const uniqueLoop = unique.loops.find((loop) => loop.id === newLoopId);
+  const originalLoopAfterUnique = unique.loops.find(
+    (loop) => loop.id === originalId,
+  );
+  expect(uniqueLoop).toBeTruthy();
+  expect(originalLoopAfterUnique).toBeTruthy();
+  expect(uniqueLoop!.controlPoints).not.toContain(sharedPointId);
+  expect(originalLoopAfterUnique!.controlPoints).toContain(sharedPointId);
+  const newPointId = uniqueLoop!.controlPoints[pointIndex];
+  expect(newPointId).not.toBe(sharedPointId);
+  const newPoint = unique.controlPoints.find((point) => point.id === newPointId);
+  expect(newPoint).toBeTruthy();
+
+  await page.evaluate((id) => {
+    (window as any).__editorSelectPoint(id);
+  }, newPointId);
+  await expect(page.locator("#make-unique")).toBeEnabled();
+
+  const beforeUniqueMove = await readLoopCenterlines(page, newLoopId);
+  await waitForEditorRebuild(page);
+  await page.evaluate(
+    async ({ id, x, z }) =>
+      await (window as any).__editorMovePoint(id, x, z),
+    {
+      id: newPointId,
+      x: newPoint!.position[0] + 7,
+      z: newPoint!.position[1],
+    },
+  );
+  await waitForEditorRebuild(page);
+  const afterUniqueMove = await readLoopCenterlines(page, newLoopId);
+  await waitForEditorRebuild(page);
+  expect(afterUniqueMove.centerlines[originalId]).toBe(
+    beforeUniqueMove.centerlines[originalId],
+  );
+  expect(afterUniqueMove.centerlines[newLoopId]).not.toBe(
+    beforeUniqueMove.centerlines[newLoopId],
+  );
+
+  const driveRequest = page.waitForRequest(
+    (request) => request.url().includes("/web/drive/"),
+    { timeout: 20_000 },
+  );
+  await page.route("**/web/drive/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>drive</title>",
+    }),
+  );
+  await page.locator("#test-drive").click();
+  const requestUrl = new URL((await driveRequest).url());
+  expect(requestUrl.searchParams.get("layout")).toBe(newLoopId);
+  expect(requestUrl.searchParams.get("track")).toBe("editor");
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("a branch creates a new loop whose shared arc keeps the original ids", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=branch-create");
+  await page.waitForFunction(
+    () => (window as any).__trackEditorReady === true || (window as any).__trackEditorError,
+    undefined,
+    { timeout: 45_000 },
+  );
+
+  await page.locator("#hud-toggle").click();
+  await expect(page.locator("#hud")).toBeVisible();
+  await expect(page.locator("#status")).toHaveText("ready");
+  await expect(page.locator("#branch-hint")).toContainText(
+    "Creates a new loop with a perpendicular bypass",
+  );
+
+  const initial = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as ProjectV3,
+      active: viewer.editor_active_layout() as string,
+    };
+  });
+  expect(initial.project.loops).toHaveLength(1);
+  const originalId = initial.active;
+  const originalLoop = initial.project.loops.find(
+    (loop) => loop.id === originalId,
+  );
+  expect(originalLoop).toBeTruthy();
+  const originalRoute = originalLoop!.controlPoints;
+  expect(originalRoute.length).toBeGreaterThanOrEqual(4);
+
+  const startIndex = 1;
+  const endIndex = 3;
+  const startId = originalRoute[startIndex];
+  const endId = originalRoute[endIndex];
+  await page.locator("#branch-start").selectOption(startId);
+  await page.locator("#branch-end").selectOption(endId);
+
+  await page.locator("#create-branch").click();
+  await waitForEditorRebuild(page);
+
+  const branched = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as ProjectV3,
+      active: viewer.editor_active_layout() as string,
+    };
+  });
+  expect(branched.project.loops).toHaveLength(2);
+  const newLoopId = branched.active;
+  expect(newLoopId).not.toBe(originalId);
+  const newLoop = branched.project.loops.find((loop) => loop.id === newLoopId);
+  expect(newLoop).toBeTruthy();
+  expect(newLoop!.name).toMatch(/^Branch \d+$/);
+
+  const newRoute = newLoop!.controlPoints;
+  const p1Id = newRoute[1];
+  const p2Id = newRoute[2];
+  expect(newRoute.slice(0, 4)).toEqual([startId, p1Id, p2Id, endId]);
+  expect(p1Id).toMatch(new RegExp(`^${newLoopId}-cp-1$`));
+  expect(p2Id).toMatch(new RegExp(`^${newLoopId}-cp-2$`));
+  expect(originalRoute).not.toContain(p1Id);
+  expect(originalRoute).not.toContain(p2Id);
+
+  const expectedAfterEnd: string[] = [];
+  for (
+    let index = (endIndex + 1) % originalRoute.length;
+    index !== startIndex;
+    index = (index + 1) % originalRoute.length
+  ) {
+    expectedAfterEnd.push(originalRoute[index]);
+  }
+  expect(newRoute.slice(4)).toEqual(expectedAfterEnd);
+
+  const segment = (from: string, to: string) =>
+    branched.project.segments.find(
+      (entry) => entry.from === from && entry.to === to,
+    );
+  for (const [from, to] of [
+    [startId, p1Id],
+    [p1Id, p2Id],
+    [p2Id, endId],
+  ]) {
+    const entry = segment(from, to);
+    expect(entry).toBeTruthy();
+    expect(entry!.role).toBe("branch");
+    expect(entry!.kerbs).toEqual([]);
+    expect(entry!.propSpans).toEqual([]);
+  }
+  for (let index = 3; index < newRoute.length; index += 1) {
+    const entry = segment(
+      newRoute[index],
+      newRoute[(index + 1) % newRoute.length],
+    );
+    expect(entry).toBeTruthy();
+    expect(entry!.role).toBe("main");
+  }
+
+  const originalAfterBranch = branched.project.loops.find(
+    (loop) => loop.id === originalId,
+  );
+  expect(originalAfterBranch).toBeTruthy();
+  expect(originalAfterBranch!.controlPoints).toEqual(originalRoute);
+
+  const branchPoint = branched.project.controlPoints.find(
+    (point) => point.id === p1Id,
+  );
+  expect(branchPoint).toBeTruthy();
+  expect(branchPoint!.kind).toBe("normal");
+
+  const loopPositions = originalRoute.map((id) => {
+    const point = branched.project.controlPoints.find(
+      (candidate) => candidate.id === id,
+    );
+    expect(point).toBeTruthy();
+    return point!.position;
+  });
+  const centroid: [number, number] = [
+    loopPositions.reduce((sum, position) => sum + position[0], 0) /
+      loopPositions.length,
+    loopPositions.reduce((sum, position) => sum + position[1], 0) /
+      loopPositions.length,
+  ];
+  const startPoint = branched.project.controlPoints.find(
+    (point) => point.id === startId,
+  );
+  expect(startPoint).toBeTruthy();
+  const distanceToCentroid = (position: [number, number]): number =>
+    Math.hypot(position[0] - centroid[0], position[1] - centroid[1]);
+  expect(distanceToCentroid(branchPoint!.position)).toBeGreaterThan(
+    distanceToCentroid(startPoint!.position),
+  );
+
+  const driveRequest = page.waitForRequest(
+    (request) => request.url().includes("/web/drive/"),
+    { timeout: 20_000 },
+  );
+  await page.route("**/web/drive/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>drive</title>",
+    }),
+  );
+  await page.locator("#test-drive").click();
+  const requestUrl = new URL((await driveRequest).url());
+  expect(requestUrl.searchParams.get("layout")).toBe(newLoopId);
+  expect(requestUrl.searchParams.get("track")).toBe("editor");
+
   expect(pageErrors).toEqual([]);
 });

@@ -1,13 +1,31 @@
 use asset_compiler::bake::{bake_car, bake_glb_track, bake_track};
 use glam::Vec3;
 use sim_asset::{Pack, PackError};
-use sim_types::{AssetKind, PACK_FORMAT_VERSION, PACK_HEADER_SIZE};
+use sim_types::{AssetKind, TrackMetadata, PACK_FORMAT_VERSION, PACK_HEADER_SIZE, SCHEMA_VERSION};
 use std::path::PathBuf;
 
 fn fixture_dir(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(relative)
+}
+
+fn assert_valid_default_layout(metadata: &TrackMetadata) {
+    assert!(!metadata.layouts.is_empty(), "layouts must not be empty");
+    assert!(
+        (metadata.default_layout as usize) < metadata.layouts.len(),
+        "default_layout must be in range"
+    );
+    let default = metadata
+        .default_layout_spec()
+        .expect("default layout spec must exist");
+    assert!(!default.id.trim().is_empty(), "layout id must not be empty");
+    assert_eq!(default.name, metadata.name);
+    assert_eq!(default.length, metadata.length);
+    assert_eq!(default.spawns, metadata.spawns);
+    assert_eq!(default.pit_boxes, metadata.pit_boxes);
+    assert_eq!(default.cameras, metadata.cameras);
+    assert_eq!(default.sectors, metadata.sectors);
 }
 
 #[test]
@@ -48,12 +66,15 @@ fn track_bake_is_deterministic_and_round_trips() {
 
     let pack = Pack::from_bytes(&first).expect("track pack failed validation");
     assert_eq!(pack.kind(), AssetKind::Track);
+    assert_eq!(pack.manifest().schema_version, SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 4);
 
     let metadata = pack.track_metadata_owned().expect("metadata load failed");
     assert_eq!(metadata.name, "Minimal Test Track");
     assert_eq!(metadata.spawns.len(), 1);
     assert_eq!(metadata.surfaces.len(), 3);
     assert_eq!(metadata.sectors.len(), 2);
+    assert_valid_default_layout(&metadata);
 
     let collision = pack.track_collision_owned().expect("collision load failed");
     assert_eq!(collision.surface_ids.len(), collision.indices.len() / 3);
@@ -78,12 +99,15 @@ fn glb_track_bake_is_deterministic_and_round_trips() {
 
     let pack = Pack::from_bytes(&first).expect("GLB track pack failed validation");
     assert_eq!(pack.kind(), AssetKind::Track);
+    assert_eq!(pack.manifest().schema_version, SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 4);
 
     let metadata = pack.track_metadata_owned().expect("metadata load failed");
     assert_eq!(metadata.name, "Drift Tracks");
     assert_eq!(metadata.spawns.len(), 1);
     assert_eq!(metadata.surfaces.len(), 4);
     assert_eq!(metadata.surfaces[0].name, "asphalt");
+    assert_valid_default_layout(&metadata);
 
     let collision = pack.track_collision_owned().expect("collision load failed");
     assert_eq!(collision.surface_ids.len(), collision.indices.len() / 3);
@@ -188,7 +212,9 @@ fn skidpad_fixture_includes_solid_wall_collision() {
     let path = fixture_dir("fixtures/tracks/skidpad05/pack.sima");
     let bytes = std::fs::read(&path).expect("skidpad pack");
     let pack = Pack::from_bytes(&bytes).expect("skidpad pack failed validation");
+    assert_eq!(pack.manifest().schema_version, SCHEMA_VERSION);
     let metadata = pack.track_metadata_owned().expect("metadata load failed");
+    assert_valid_default_layout(&metadata);
     let wall_id = metadata
         .surfaces
         .iter()

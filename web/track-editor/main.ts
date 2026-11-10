@@ -70,6 +70,76 @@ interface GuideDrag {
   pointerId: number;
 }
 
+interface BranchDraftPoint {
+  id: string;
+  position: Vec3;
+}
+
+interface BranchDraft {
+  sourceLoopId: string;
+  junctionId: string;
+  points: BranchDraftPoint[];
+}
+
+interface VenueSettings {
+  width: number;
+  kerb: { width: number; depth: number; elementLength: number };
+  pit?: unknown;
+}
+
+interface ProjectLoop {
+  id: string;
+  name: string;
+  controlPoints: string[];
+  sectors: unknown[];
+  cameras: unknown[];
+  spawns: unknown[];
+}
+
+interface ProjectControlPoint {
+  id: string;
+  position: [number, number];
+  kind?: string;
+  tangent?: [number, number] | null;
+  [key: string]: unknown;
+}
+
+type EditorSegmentRole = "main" | "branch";
+
+interface EditorSegment {
+  from: string;
+  to: string;
+  role: EditorSegmentRole;
+  kerbs: unknown[];
+  propSpans: unknown[];
+  [key: string]: unknown;
+}
+
+interface TrackProject {
+  schema: string;
+  name: string;
+  settings: VenueSettings;
+  loops: ProjectLoop[];
+  controlPoints: ProjectControlPoint[];
+  segments: EditorSegment[];
+  pitLane?: unknown;
+  [key: string]: unknown;
+}
+
+interface LoopPointInfo {
+  id: string;
+  position: [number, number];
+  kind: string;
+  shared: boolean;
+  sharedCount: number;
+}
+
+const TRACK_PROJECT_SCHEMA = "lapster/track-project@3";
+const TRACK_PROJECT_STORAGE_KEY = "lapster.track-project.v1";
+const DEFAULT_TRACK_WIDTH = 12;
+const MIN_TRACK_WIDTH = 6;
+const MAX_TRACK_WIDTH = 30;
+
 const MAX_CAMERA_HEIGHT = 140;
 const CONTROL_POINT_RADIUS = 9;
 const CONTROL_POINT_HIT_RADIUS = 18;
@@ -80,6 +150,19 @@ const PROP_FAR_OFFSET = 19;
 const GUIDE_HIT_RADIUS = 12;
 const GUIDE_HANDLE_RADIUS = 7;
 const GUIDE_HANDLE_HIT_RADIUS = 16;
+const BRANCH_DRAFT_DISTANCE = 25;
+const BRANCH_APPROACH_DISTANCE = 20;
+const BRANCH_SNAP_RADIUS = 12;
+const LOOP_CENTERLINE_COLORS = [
+  "#38bdf8",
+  "#a78bfa",
+  "#34d399",
+  "#fbbf24",
+  "#f472b6",
+  "#fb923c",
+  "#22d3ee",
+  "#c084fc",
+];
 const DEFAULT_KERB_SEGMENT_LENGTH = 6;
 const PROP_SEGMENT_LENGTH_METERS = 3;
 const MIN_SEGMENT_LENGTH = 0.5;
@@ -111,11 +194,38 @@ const deleteSegmentButton =
 const overlayToggle = document.querySelector<HTMLButtonElement>("#toggle-overlay")!;
 const cameraViewButton = document.querySelector<HTMLButtonElement>("#camera-view")!;
 const testDriveButton = document.querySelector<HTMLButtonElement>("#test-drive")!;
+const layoutSelect = document.querySelector<HTMLSelectElement>("#layout-select")!;
+const addLayoutButton = document.querySelector<HTMLButtonElement>("#add-layout")!;
+const deleteLayoutButton =
+  document.querySelector<HTMLButtonElement>("#delete-layout")!;
+const layoutNameInput = document.querySelector<HTMLInputElement>("#layout-name")!;
+const layoutWidthInput =
+  document.querySelector<HTMLInputElement>("#layout-width")!;
+const layoutHud = document.querySelector<HTMLElement>("#layout-hud")!;
+const saveProjectButton =
+  document.querySelector<HTMLButtonElement>("#save-project")!;
+const loadProjectButton =
+  document.querySelector<HTMLButtonElement>("#load-project")!;
+const exportProjectButton =
+  document.querySelector<HTMLButtonElement>("#export-project")!;
+const importProjectButton =
+  document.querySelector<HTMLButtonElement>("#import-project")!;
+const projectFileInput =
+  document.querySelector<HTMLInputElement>("#project-file")!;
+const makeUniqueButton =
+  document.querySelector<HTMLButtonElement>("#make-unique")!;
 
 let editorViewer: TrackViewer | undefined;
+let project: TrackProject | null = null;
+let projectJson: string | null = null;
+let activeLayoutId = "";
+let syncingProjectControls = false;
 let cameraController: OrbitCameraController | undefined;
 let controlPoints: Vec3[] = [];
+let loopPoints: LoopPointInfo[] = [];
+let selectedPointId: string | null = null;
 let centerline: Vec3[] = [];
+let loopCenterlines: Record<string, Vec3[]> = {};
 let dragIndex: number | null = null;
 let dragPointerId: number | null = null;
 let dragPlaneY = 0;
@@ -125,13 +235,15 @@ let cameraDragging = false;
 let deleteMode = false;
 let hoverDeleteIndex: number | null = null;
 let lastPointer: [number, number] | null = null;
-let hoverInsert: { point: Vec3; screen: [number, number]; insertIndex: number } | null = null;
+let hoverInsert: { point: Vec3; screen: [number, number]; afterPointId: string } | null = null;
 let kerbSpans: KerbSpan[] = [];
 let propLines: PropLine[] = [];
 let hoverPoint: GuidePoint | null = null;
 let hoverHandleEdge: "start" | "end" | null = null;
 let selectedSegment: SegmentSelection | null = null;
 let guideDrag: GuideDrag | null = null;
+let branchDraft: BranchDraft | null = null;
+let branchDraftPointSeq = 0;
 let paintKind: PropKind = "blocks";
 const TREE_DETAIL_MODES = ["high", "low", "cards"] as const;
 type TreeDetailMode = (typeof TREE_DETAIL_MODES)[number];
@@ -419,6 +531,28 @@ function screenRay(
 function pointerPosition(event: PointerEvent): [number, number] {
   const rect = canvas.getBoundingClientRect();
   return [event.clientX - rect.left, event.clientY - rect.top];
+}
+
+function groundPointFromScreen(
+  x: number,
+  y: number,
+  planeY: number,
+): Vec3 | null {
+  const camera = currentCamera();
+  if (!camera) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const ray = screenRay(x, y, camera, width, height);
+  if (Math.abs(ray.direction[1]) < 1e-5) {
+    return null;
+  }
+  const distance = (planeY - ray.origin[1]) / ray.direction[1];
+  if (distance <= 0) {
+    return null;
+  }
+  return add(ray.origin, scale(ray.direction, distance));
 }
 
 function hitTestControlPoint(x: number, y: number): number {
@@ -1080,14 +1214,17 @@ function updateHover(): void {
     }
     bestDistance = distance;
     const next = (index + 1) % centerline.length;
-    const insertIndex =
-      (Math.floor((index * controlPoints.length) / centerline.length) %
-        controlPoints.length) +
-      1;
+    const pointIndex =
+      Math.floor((index * loopPoints.length) / centerline.length) %
+      Math.max(loopPoints.length, 1);
+    const afterPointId = loopPoints[pointIndex]?.id;
+    if (!afterPointId) {
+      continue;
+    }
     hoverInsert = {
       point: lerp(centerline[index], centerline[next], t),
       screen: [hitX, hitY],
-      insertIndex,
+      afterPointId,
     };
   }
   canvas.style.cursor = hoverInsert ? "copy" : "";
@@ -1117,6 +1254,25 @@ function flashStatus(message: string): void {
   }, 1200);
 }
 
+function flashReadyStatus(message: string): void {
+  status.textContent = message;
+  status.className = "status ready";
+  window.setTimeout(() => {
+    if (!rebuilding && !window.__trackEditorError && status.textContent === message) {
+      status.textContent = "ready";
+      status.className = "status ready";
+    }
+  }, 1500);
+}
+
+function loopCenterlineColor(loopId: string): string {
+  let hash = 0;
+  for (let index = 0; index < loopId.length; index += 1) {
+    hash = (hash * 31 + loopId.charCodeAt(index)) >>> 0;
+  }
+  return LOOP_CENTERLINE_COLORS[hash % LOOP_CENTERLINE_COLORS.length];
+}
+
 function drawControlPoints(): void {
   if (!overlayVisible) {
     return;
@@ -1140,12 +1296,17 @@ function drawControlPoints(): void {
     return;
   }
   updateHover();
-  if (centerline.length > 1) {
+  const drawCenterline = (points: Vec3[], color: string, active: boolean) => {
+    if (points.length < 2) {
+      return;
+    }
+    overlayContext.save();
+    overlayContext.globalAlpha = active ? 0.95 : 0.32;
     overlayContext.beginPath();
     let drawing = false;
-    for (let index = 0; index <= centerline.length; index += 1) {
+    for (let index = 0; index <= points.length; index += 1) {
       const projected = projectPoint(
-        centerline[index % centerline.length],
+        points[index % points.length],
         camera,
         width,
         height,
@@ -1161,10 +1322,20 @@ function drawControlPoints(): void {
         overlayContext.lineTo(projected[0], projected[1]);
       }
     }
-    overlayContext.lineWidth = 2;
-    overlayContext.strokeStyle = "rgba(56, 189, 248, 0.9)";
+    overlayContext.lineWidth = active ? 2.5 : 1.25;
+    overlayContext.strokeStyle = color;
     overlayContext.stroke();
+    overlayContext.restore();
+  };
+
+  for (const [loopId, points] of Object.entries(loopCenterlines)) {
+    if (loopId === activeLayoutId) {
+      continue;
+    }
+    drawCenterline(points, loopCenterlineColor(loopId), false);
   }
+  const activeCenterline = loopCenterlines[activeLayoutId] ?? centerline;
+  drawCenterline(activeCenterline, loopCenterlineColor(activeLayoutId), true);
   if (hoverInsert) {
     const [hitX, hitY] = hoverInsert.screen;
     overlayContext.save();
@@ -1362,11 +1533,13 @@ function drawControlPoints(): void {
       return;
     }
     const deleteTarget = deleteMode && index === hoverDeleteIndex;
+    const selected = loopPoints[index]?.id === selectedPointId;
+    const highlighted = selected || index === dragIndex;
     overlayContext.beginPath();
     overlayContext.arc(
       projected[0],
       projected[1],
-      CONTROL_POINT_RADIUS + (deleteTarget ? 3 : 0),
+      CONTROL_POINT_RADIUS + (deleteTarget || highlighted ? 3 : 0),
       0,
       Math.PI * 2,
     );
@@ -1374,12 +1547,14 @@ function drawControlPoints(): void {
       ? "#ef4444"
       : deleteMode
         ? "#fca5a5"
-        : index === dragIndex
-          ? "#38bdf8"
-          : "#fbbf24";
+        : "#fbbf24";
     overlayContext.fill();
-    overlayContext.lineWidth = deleteTarget ? 3 : 2;
-    overlayContext.strokeStyle = deleteTarget ? "#fff1f2" : "#080a0d";
+    overlayContext.lineWidth = deleteTarget || highlighted ? 3 : 2;
+    overlayContext.strokeStyle = deleteTarget
+      ? "#fff1f2"
+      : highlighted
+        ? "#f8fafc"
+        : "#080a0d";
     overlayContext.stroke();
     overlayContext.fillStyle = "#080a0d";
     overlayContext.font = "600 10px ui-monospace, monospace";
@@ -1387,42 +1562,553 @@ function drawControlPoints(): void {
     overlayContext.textBaseline = "middle";
     overlayContext.fillText(String(index + 1), projected[0], projected[1] + 0.5);
   });
+
+  if (branchDraft) {
+    const junctionIndex = loopPoints.findIndex(
+      (point) => point.id === branchDraft!.junctionId,
+    );
+    const draftWorld: Vec3[] = [];
+    if (junctionIndex >= 0 && controlPoints[junctionIndex]) {
+      draftWorld.push(controlPoints[junctionIndex]);
+    }
+    for (const point of branchDraft.points) {
+      draftWorld.push(point.position);
+    }
+    overlayContext.save();
+    overlayContext.setLineDash([6, 4]);
+    overlayContext.globalAlpha = 0.95;
+    overlayContext.beginPath();
+    let drawing = false;
+    for (const point of draftWorld) {
+      const projected = projectPoint(point, camera, width, height);
+      if (!projected) {
+        drawing = false;
+        continue;
+      }
+      if (!drawing) {
+        overlayContext.moveTo(projected[0], projected[1]);
+        drawing = true;
+      } else {
+        overlayContext.lineTo(projected[0], projected[1]);
+      }
+    }
+    overlayContext.lineWidth = 2;
+    overlayContext.strokeStyle = "#f472b6";
+    overlayContext.stroke();
+    overlayContext.restore();
+    branchDraft.points.forEach((point, index) => {
+      const projected = projectPoint(point.position, camera, width, height);
+      if (!projected) {
+        return;
+      }
+      overlayContext.beginPath();
+      overlayContext.arc(
+        projected[0],
+        projected[1],
+        CONTROL_POINT_RADIUS,
+        0,
+        Math.PI * 2,
+      );
+      overlayContext.fillStyle = "#22d3ee";
+      overlayContext.fill();
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "#f472b6";
+      overlayContext.stroke();
+      overlayContext.fillStyle = "#06121a";
+      overlayContext.font = "600 10px ui-monospace, monospace";
+      overlayContext.textAlign = "center";
+      overlayContext.textBaseline = "middle";
+      overlayContext.fillText(String(index + 1), projected[0], projected[1] + 0.5);
+    });
+  }
 }
 
 function moveControlPoint(index: number, x: number, y: number): void {
-  const camera = currentCamera();
-  if (!camera) {
+  const world = groundPointFromScreen(x, y, dragPlaneY);
+  if (!world) {
     return;
   }
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const ray = screenRay(x, y, camera, width, height);
-  if (Math.abs(ray.direction[1]) < 1e-5) {
-    return;
-  }
-  const distance = (dragPlaneY - ray.origin[1]) / ray.direction[1];
-  if (distance <= 0) {
-    return;
-  }
-  const world = add(ray.origin, scale(ray.direction, distance));
   const current = controlPoints[index];
-  controlPoints[index] = [
-    Math.max(-140, Math.min(140, world[0])),
-    current[1],
-    Math.max(-140, Math.min(140, world[2])),
+  const pointX = Math.max(-140, Math.min(140, world[0]));
+  const pointZ = Math.max(-140, Math.min(140, world[2]));
+  controlPoints[index] = [pointX, current[1], pointZ];
+  if (loopPoints[index]) {
+    loopPoints[index] = {
+      ...loopPoints[index],
+      position: [pointX, pointZ],
+    };
+  }
+}
+
+function activeLayout(): ProjectLoop | null {
+  if (!project) {
+    return null;
+  }
+  return (
+    project.loops.find((layout) => layout.id === activeLayoutId) ??
+    project.loops[0] ??
+    null
+  );
+}
+
+function trackWidth(): number {
+  return project?.settings?.width ?? DEFAULT_TRACK_WIDTH;
+}
+
+function sharedPointCount(): number {
+  return loopPoints.filter((point) => point.shared).length;
+}
+
+function selectedPointIndex(): number {
+  if (!selectedPointId) {
+    return -1;
+  }
+  return loopPoints.findIndex((point) => point.id === selectedPointId);
+}
+
+function syncPointControls(): void {
+  const index = selectedPointIndex();
+  const point = index >= 0 ? loopPoints[index] : null;
+  makeUniqueButton.disabled = !point || rebuilding;
+}
+
+function segmentKey(from: string, to: string): string {
+  return `${from}->${to}`;
+}
+
+function uniqueBranchBase(pointCount: number): {
+  loopId: string;
+  name: string;
+  pointIds: string[];
+} {
+  const loopIds = new Set(project?.loops.map((loop) => loop.id) ?? []);
+  const pointIds = new Set(project?.controlPoints.map((point) => point.id) ?? []);
+  let number = 1;
+  for (;;) {
+    const loopId = `branch-${number}`;
+    const ids = Array.from(
+      { length: pointCount },
+      (_, index) => `${loopId}-cp-${index + 1}`,
+    );
+    if (!loopIds.has(loopId) && ids.every((id) => !pointIds.has(id))) {
+      return { loopId, name: `Branch ${number}`, pointIds: ids };
+    }
+    number += 1;
+  }
+}
+
+function normalize2d(value: [number, number]): [number, number] {
+  const length = Math.hypot(value[0], value[1]);
+  return length > 1e-6 ? [value[0] / length, value[1] / length] : [1, 0];
+}
+
+function loopTangentAt(
+  route: string[],
+  positions: Map<string, [number, number]>,
+  index: number,
+): [number, number] | null {
+  const count = route.length;
+  const previous = positions.get(route[(index - 1 + count) % count]);
+  const next = positions.get(route[(index + 1) % count]);
+  if (!previous || !next) {
+    return null;
+  }
+  return normalize2d([next[0] - previous[0], next[1] - previous[1]]);
+}
+
+function loopNormalAt(
+  route: string[],
+  positions: Map<string, [number, number]>,
+  index: number,
+): [number, number] | null {
+  const tangent = loopTangentAt(route, positions, index);
+  if (!tangent) {
+    return null;
+  }
+  return normalize2d([-tangent[1], tangent[0]]);
+}
+
+function loopCentroid(
+  route: string[],
+  positions: Map<string, [number, number]>,
+): [number, number] {
+  const points = route
+    .map((id) => positions.get(id))
+    .filter((position): position is [number, number] => Boolean(position));
+  if (points.length === 0) {
+    return [0, 0];
+  }
+  return [
+    points.reduce((sum, position) => sum + position[0], 0) / points.length,
+    points.reduce((sum, position) => sum + position[1], 0) / points.length,
   ];
+}
+
+function outwardNormal(
+  position: [number, number],
+  normal: [number, number],
+  centroid: [number, number],
+): [number, number] {
+  const distanceToCentroid = (candidate: [number, number]): number =>
+    Math.hypot(candidate[0] - centroid[0], candidate[1] - centroid[1]);
+  const plus: [number, number] = [
+    position[0] + normal[0] * BRANCH_DRAFT_DISTANCE,
+    position[1] + normal[1] * BRANCH_DRAFT_DISTANCE,
+  ];
+  const minus: [number, number] = [
+    position[0] - normal[0] * BRANCH_DRAFT_DISTANCE,
+    position[1] - normal[1] * BRANCH_DRAFT_DISTANCE,
+  ];
+  return distanceToCentroid(plus) >= distanceToCentroid(minus)
+    ? normal
+    : [-normal[0], -normal[1]];
+}
+
+function startBranchDraft(index: number): void {
+  if (!project || !editorViewer || rebuilding) {
+    return;
+  }
+  const layout = activeLayout();
+  const junctionId = loopPoints[index]?.id;
+  const junctionPosition = controlPoints[index];
+  if (!layout || !junctionId || !junctionPosition) {
+    return;
+  }
+  const route = layout.controlPoints;
+  const startIndex = route.indexOf(junctionId);
+  if (startIndex < 0) {
+    flashStatus("Ctrl+click a control point on the active loop");
+    return;
+  }
+  const positions = new Map(
+    project.controlPoints.map((point) => [point.id, point.position]),
+  );
+  const position = positions.get(junctionId);
+  if (!position) {
+    flashStatus("branch point unavailable");
+    return;
+  }
+  const normal = loopNormalAt(route, positions, startIndex);
+  const centroid = loopCentroid(route, positions);
+  const outward = normal
+    ? outwardNormal(position, normal, centroid)
+    : ([1, 0] as [number, number]);
+  const firstPoint: Vec3 = [
+    position[0] + outward[0] * BRANCH_DRAFT_DISTANCE,
+    junctionPosition[1],
+    position[1] + outward[1] * BRANCH_DRAFT_DISTANCE,
+  ];
+  branchDraft = {
+    sourceLoopId: layout.id,
+    junctionId,
+    points: [{ id: `draft-${branchDraftPointSeq++}`, position: firstPoint }],
+  };
+  flashStatus(
+    "branch started · Ctrl+click to add a point, Ctrl+click a loop point to close, Esc cancels",
+  );
+  drawControlPoints();
+}
+
+function sourceLoopControlPoints(
+  loopId: string,
+): { id: string; position: [number, number] }[] {
+  const loop = project?.loops.find((item) => item.id === loopId);
+  if (!project || !loop) {
+    return [];
+  }
+  const positions = new Map(
+    project.controlPoints.map((point) => [point.id, point.position]),
+  );
+  return loop.controlPoints.flatMap((id) => {
+    const position = positions.get(id);
+    return position ? [{ id, position }] : [];
+  });
+}
+
+function appendBranchDraftPoint(x: number, y: number): void {
+  if (!branchDraft) {
+    return;
+  }
+  const planeY = branchDraft.points[0]?.position[1] ?? 0;
+  const world = groundPointFromScreen(x, y, planeY);
+  if (!world) {
+    flashStatus("cannot place branch point here");
+    return;
+  }
+  let nearestId: string | null = null;
+  let nearestDistance = BRANCH_SNAP_RADIUS;
+  for (const point of sourceLoopControlPoints(branchDraft.sourceLoopId)) {
+    const distance = Math.hypot(
+      world[0] - point.position[0],
+      world[2] - point.position[1],
+    );
+    if (distance <= nearestDistance) {
+      nearestDistance = distance;
+      nearestId = point.id;
+    }
+  }
+  if (nearestId) {
+    void closeBranchDraft(nearestId);
+    return;
+  }
+  branchDraft.points.push({
+    id: `draft-${branchDraftPointSeq++}`,
+    position: world,
+  });
+  drawControlPoints();
+}
+
+function cancelBranchDraft(): void {
+  if (!branchDraft) {
+    return;
+  }
+  branchDraft = null;
+  flashStatus("branch cancelled");
+  drawControlPoints();
+}
+
+async function closeBranchDraft(endId: string): Promise<void> {
+  if (!editorViewer || !project || !branchDraft || rebuilding) {
+    return;
+  }
+  const draft = branchDraft;
+  const layout =
+    project.loops.find((loop) => loop.id === draft.sourceLoopId) ??
+    activeLayout();
+  if (!layout) {
+    cancelBranchDraft();
+    return;
+  }
+  const route = layout.controlPoints;
+  const startIndex = route.indexOf(draft.junctionId);
+  const closesToJunction = endId === draft.junctionId;
+  const endIndex = closesToJunction ? startIndex : route.indexOf(endId);
+  if (startIndex < 0 || endIndex < 0) {
+    flashStatus("Ctrl+click a different control point to close the branch");
+    return;
+  }
+  const positions = new Map(
+    project.controlPoints.map((point) => [point.id, point.position]),
+  );
+  const endPosition = positions.get(endId);
+  const endTangent =
+    endPosition && endIndex >= 0
+      ? loopTangentAt(route, positions, endIndex)
+      : null;
+  const approachPoints: [number, number][] = [];
+  if (endPosition && endTangent) {
+    // Default branches loop past an outer point beside the closing junction
+    // before turning in along the main loop tangent.
+    if (!closesToJunction && draft.points.length <= 1) {
+      const endNormal = loopNormalAt(route, positions, endIndex);
+      if (endNormal) {
+        const centroid = loopCentroid(route, positions);
+        const outward = outwardNormal(endPosition, endNormal, centroid);
+        approachPoints.push([
+          endPosition[0] + outward[0] * BRANCH_DRAFT_DISTANCE,
+          endPosition[1] + outward[1] * BRANCH_DRAFT_DISTANCE,
+        ]);
+      }
+    }
+    const nextIndex = (endIndex + 1) % route.length;
+    const nextPosition = positions.get(route[nextIndex]);
+    const approachBase = nextPosition ?? endPosition;
+    approachPoints.push([
+      approachBase[0] - endTangent[0] * BRANCH_APPROACH_DISTANCE,
+      approachBase[1] - endTangent[1] * BRANCH_APPROACH_DISTANCE,
+    ]);
+  }
+  const base = uniqueBranchBase(draft.points.length + approachPoints.length);
+  const draftControlPoints: ProjectControlPoint[] = [
+    ...draft.points.map(
+      (point, index): ProjectControlPoint => ({
+        id: base.pointIds[index],
+        position: [point.position[0], point.position[2]],
+        kind: "normal",
+      }),
+    ),
+    ...approachPoints.map(
+      (position, index): ProjectControlPoint => ({
+        id: base.pointIds[draft.points.length + index],
+        position,
+        kind: "normal",
+      }),
+    ),
+  ];
+  const draftIds = draftControlPoints.map((point) => point.id);
+  const newRoute = closesToJunction
+    ? [draft.junctionId, ...draftIds]
+    : [draft.junctionId, ...draftIds, endId];
+  if (!closesToJunction) {
+    for (
+      let index = (endIndex + 1) % route.length;
+      index !== startIndex;
+      index = (index + 1) % route.length
+    ) {
+      newRoute.push(route[index]);
+    }
+  }
+  const segments = project.segments.map((segment) => ({
+    ...segment,
+    role: segment.role === "branch" ? "branch" : "main",
+    kerbs: Array.isArray(segment.kerbs) ? segment.kerbs : [],
+    propSpans: Array.isArray(segment.propSpans) ? segment.propSpans : [],
+  }));
+  const pairs = new Set(
+    segments.map((segment) => segmentKey(segment.from, segment.to)),
+  );
+  const addSegment = (
+    from: string,
+    to: string,
+    role: EditorSegmentRole,
+  ): void => {
+    const key = segmentKey(from, to);
+    if (pairs.has(key)) {
+      return;
+    }
+    pairs.add(key);
+    segments.push({ from, to, role, kerbs: [], propSpans: [] });
+  };
+  const branchRoute = closesToJunction
+    ? []
+    : [draft.junctionId, ...draftIds, endId];
+  for (let index = 0; index < branchRoute.length - 1; index += 1) {
+    addSegment(branchRoute[index], branchRoute[index + 1], "branch");
+  }
+  for (let index = 0; index < newRoute.length; index += 1) {
+    addSegment(newRoute[index], newRoute[(index + 1) % newRoute.length], "main");
+  }
+  project.controlPoints.push(...draftControlPoints);
+  project.segments = segments;
+  project.loops.push({
+    id: base.loopId,
+    name: base.name,
+    controlPoints: newRoute,
+    sectors: [],
+    cameras: [],
+    spawns: [],
+  });
+  branchDraft = null;
+  drawControlPoints();
+  await rebuildEditor("creating branch", async () => {
+    await editorViewer!.set_editor_project(JSON.stringify(project));
+    await editorViewer!.set_editor_active_layout(base.loopId);
+  });
+}
+
+function syncProjectControls(): void {
+  const layout = activeLayout();
+  syncingProjectControls = true;
+  try {
+    layoutSelect.replaceChildren();
+    if (project) {
+      for (const item of project.loops) {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.name || item.id;
+        option.selected = item.id === activeLayoutId;
+        layoutSelect.append(option);
+      }
+    }
+    layoutNameInput.value = layout?.name ?? "";
+    layoutWidthInput.value = project ? String(trackWidth()) : "";
+    deleteLayoutButton.disabled = !project || project.loops.length <= 1;
+    layoutHud.textContent = layout
+      ? `${layout.name || layout.id} · ${loopPoints.length} control points · ${sharedPointCount()} shared`
+      : "—";
+  } finally {
+    syncingProjectControls = false;
+  }
+  syncPointControls();
+}
+
+function readProject(): void {
+  if (!editorViewer) {
+    return;
+  }
+  const raw = editorViewer.editor_project();
+  try {
+    const parsed = JSON.parse(raw) as TrackProject;
+    if (
+      parsed &&
+      parsed.schema === TRACK_PROJECT_SCHEMA &&
+      Array.isArray(parsed.loops)
+    ) {
+      parsed.segments = Array.isArray(parsed.segments)
+        ? parsed.segments.map((segment) => ({
+            ...segment,
+            role: segment.role === "branch" ? "branch" : "main",
+            kerbs: Array.isArray(segment.kerbs) ? segment.kerbs : [],
+            propSpans: Array.isArray(segment.propSpans) ? segment.propSpans : [],
+          }))
+        : [];
+      project = parsed;
+      projectJson = JSON.stringify(parsed);
+    } else {
+      project = null;
+      projectJson = null;
+    }
+  } catch {
+    project = null;
+    projectJson = null;
+  }
+  activeLayoutId = editorViewer.editor_active_layout();
+  syncProjectControls();
+}
+
+function projectSnapshot(): string | null {
+  if (projectJson) {
+    return projectJson;
+  }
+  if (project) {
+    return JSON.stringify(project);
+  }
+  return null;
+}
+
+function saveProject(): void {
+  const snapshot = projectSnapshot();
+  if (!snapshot) {
+    return;
+  }
+  try {
+    localStorage.setItem(TRACK_PROJECT_STORAGE_KEY, snapshot);
+  } catch (error) {
+    console.warn("could not save track project", error);
+  }
+}
+
+function loadSavedProject(): string | null {
+  try {
+    return localStorage.getItem(TRACK_PROJECT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 
 function refreshEditorState(): void {
   if (!editorViewer) {
     return;
   }
-  controlPoints = JSON.parse(editorViewer.editor_control_points()) as Vec3[];
+  const heights = JSON.parse(editorViewer.editor_control_points()) as Vec3[];
+  loopPoints = JSON.parse(editorViewer.editor_loop_points()) as LoopPointInfo[];
+  controlPoints = loopPoints.map((point, index) => [
+    point.position[0],
+    heights[index]?.[1] ?? 0,
+    point.position[1],
+  ]);
+  if (selectedPointId && selectedPointIndex() < 0) {
+    selectedPointId = null;
+  }
   centerline = JSON.parse(editorViewer.editor_centerline()) as Vec3[];
+  loopCenterlines = JSON.parse(
+    editorViewer.editor_loop_centerlines(),
+  ) as Record<string, Vec3[]>;
   kerbSpans = (
     JSON.parse(editorViewer.editor_kerb_spans()) as KerbSpan[]
   ).sort((a, b) => a.side - b.side || a.start - b.start);
   propLines = JSON.parse(editorViewer.editor_prop_lines()) as PropLine[];
+  readProject();
   resolveSelection();
   syncPaintControls();
   const debug = JSON.parse(editorViewer.debug_info());
@@ -1447,6 +2133,9 @@ async function testDrive(): Promise<void> {
       target.searchParams.set("car", car);
     }
     target.searchParams.set("trees", treeDetailMode);
+    if (activeLayoutId) {
+      target.searchParams.set("layout", activeLayoutId);
+    }
     window.location.href = target.toString();
   } catch (error) {
     testDriveButton.disabled = false;
@@ -1458,9 +2147,142 @@ testDriveButton.addEventListener("click", () => {
   void testDrive();
 });
 
+function reportActionError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  status.textContent = message;
+  status.className = "status error";
+  console.error(error);
+}
+
+addLayoutButton.addEventListener("click", () => {
+  void rebuildEditor("adding layout", () =>
+    editorViewer!.add_editor_layout("").then(() => undefined),
+  );
+});
+
+deleteLayoutButton.addEventListener("click", () => {
+  if (!activeLayoutId) {
+    return;
+  }
+  void rebuildEditor(
+    "deleting layout",
+    () => editorViewer!.delete_editor_layout(activeLayoutId),
+    reportActionError,
+  );
+});
+
+makeUniqueButton.addEventListener("click", () => {
+  void makeSelectedPointUnique();
+});
+
+layoutSelect.addEventListener("change", () => {
+  const id = layoutSelect.value;
+  if (!id || id === activeLayoutId) {
+    return;
+  }
+  void rebuildEditor("switching layout", () =>
+    editorViewer!.set_editor_active_layout(id),
+  );
+});
+
+layoutNameInput.addEventListener("change", () => {
+  if (syncingProjectControls) {
+    return;
+  }
+  const layout = activeLayout();
+  const name = layoutNameInput.value.trim();
+  if (!layout || !name || name === layout.name) {
+    return;
+  }
+  void rebuildEditor("renaming layout", () =>
+    editorViewer!.rename_editor_layout(activeLayoutId, name),
+  );
+});
+
+layoutWidthInput.addEventListener("change", () => {
+  if (syncingProjectControls) {
+    return;
+  }
+  const width = Number(layoutWidthInput.value);
+  if (!activeLayoutId || !Number.isFinite(width)) {
+    return;
+  }
+  const clamped = Math.min(MAX_TRACK_WIDTH, Math.max(MIN_TRACK_WIDTH, width));
+  if (Math.abs(clamped - trackWidth()) < 1e-4) {
+    return;
+  }
+  void rebuildEditor("resizing track", () =>
+    editorViewer!.set_editor_layout_width(activeLayoutId, clamped),
+  );
+});
+
+saveProjectButton.addEventListener("click", () => {
+  saveProject();
+  status.textContent = "project saved";
+  status.className = "status ready";
+});
+
+loadProjectButton.addEventListener("click", () => {
+  const saved = loadSavedProject();
+  if (!saved) {
+    reportActionError(new Error("no saved project in this browser"));
+    return;
+  }
+  void rebuildEditor("loading project", () => editorViewer!.set_editor_project(saved));
+});
+
+function exportProject(): void {
+  const snapshot = projectSnapshot();
+  if (!snapshot) {
+    reportActionError(new Error("track project unavailable"));
+    return;
+  }
+  let json = snapshot;
+  try {
+    json = JSON.stringify(JSON.parse(snapshot), null, 2);
+  } catch {
+    // Export the last known project JSON even if it cannot be pretty-printed.
+  }
+  const blob = new Blob([json], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "track-project.json";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+exportProjectButton.addEventListener("click", exportProject);
+
+importProjectButton.addEventListener("click", () => {
+  projectFileInput.click();
+});
+
+projectFileInput.addEventListener("change", () => {
+  const file = projectFileInput.files?.[0];
+  projectFileInput.value = "";
+  if (!file) {
+    return;
+  }
+  void (async () => {
+    try {
+      const text = await file.text();
+      JSON.parse(text);
+      await rebuildEditor("importing project", () =>
+        editorViewer!.set_editor_project(text),
+      );
+    } catch (error) {
+      reportActionError(error);
+    }
+  })();
+});
+
 async function rebuildEditor(
   message: string,
   action: () => Promise<void>,
+  onError: (error: unknown) => void = fail,
 ): Promise<void> {
   if (!editorViewer || rebuilding) {
     return;
@@ -1475,27 +2297,18 @@ async function rebuildEditor(
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     await action();
     refreshEditorState();
+    saveProject();
     testDriveButton.disabled = false;
     status.textContent = "ready";
     status.className = "status ready";
   } catch (error) {
-    fail(error);
+    onError(error);
   } finally {
     suspended = false;
     rebuilding = false;
     cameraController?.setEnabled(true);
     drawControlPoints();
   }
-}
-
-async function rebuildControlPoints(): Promise<void> {
-  await rebuildEditor("rebuilding track", () =>
-    editorViewer!.set_editor_control_points(
-      JSON.stringify(
-        controlPoints.map((point) => [point[0], point[1], point[2]]),
-      ),
-    ),
-  );
 }
 
 async function rebuildKerbSpans(): Promise<void> {
@@ -1510,6 +2323,77 @@ async function rebuildPropLines(): Promise<void> {
   );
 }
 
+function selectControlPoint(id: string | null): void {
+  selectedPointId = id;
+  syncPointControls();
+  drawControlPoints();
+}
+
+async function deleteControlPoint(pointId: string): Promise<void> {
+  if (!editorViewer || !activeLayoutId || rebuilding) {
+    return;
+  }
+  await rebuildEditor("deleting control point", () =>
+    editorViewer!.delete_editor_control_point(activeLayoutId, pointId),
+  );
+  if (selectedPointId === pointId) {
+    selectedPointId = null;
+  }
+  syncPointControls();
+  drawControlPoints();
+}
+
+async function insertControlPoint(
+  point: Vec3,
+  afterPointId: string,
+): Promise<void> {
+  if (!editorViewer || !activeLayoutId || rebuilding) {
+    return;
+  }
+  let newId = "";
+  await rebuildEditor("inserting control point", async () => {
+    newId = await editorViewer!.insert_editor_control_point(
+      activeLayoutId,
+      afterPointId,
+      point[0],
+      point[2],
+    );
+  });
+  if (newId) {
+    selectControlPoint(newId);
+  }
+}
+
+async function moveControlPointById(
+  pointId: string,
+  point: Vec3,
+): Promise<void> {
+  if (!editorViewer || rebuilding) {
+    return;
+  }
+  await rebuildEditor("moving control point", () =>
+    editorViewer!.move_editor_control_point(pointId, point[0], point[2]),
+  );
+}
+
+async function makeSelectedPointUnique(): Promise<void> {
+  const index = selectedPointIndex();
+  const point = index >= 0 ? loopPoints[index] : null;
+  if (!point || !editorViewer || !activeLayoutId || rebuilding) {
+    return;
+  }
+  let newId = "";
+  await rebuildEditor("making control point unique", async () => {
+    newId = await editorViewer!.make_editor_control_point_unique(
+      activeLayoutId,
+      point.id,
+    );
+  });
+  if (newId) {
+    selectControlPoint(newId);
+  }
+}
+
 canvas.addEventListener(
   "pointerdown",
   (event) => {
@@ -1520,10 +2404,35 @@ canvas.addEventListener(
     ) {
       return;
     }
+    const [x, y] = pointerPosition(event);
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cameraDragging = false;
+      const index = overlayVisible ? hitTestControlPoint(x, y) : -1;
+      if (branchDraft) {
+        if (index >= 0) {
+          const pointId = loopPoints[index]?.id;
+          if (!pointId || pointId === branchDraft.junctionId) {
+            flashStatus("Ctrl+click a different control point to close the branch");
+            return;
+          }
+          void closeBranchDraft(pointId);
+          return;
+        }
+        appendBranchDraftPoint(x, y);
+        return;
+      }
+      if (index < 0) {
+        flashStatus("Ctrl+click a control point to start a branch");
+        return;
+      }
+      startBranchDraft(index);
+      return;
+    }
     if (event.shiftKey !== deleteMode) {
       setDeleteMode(event.shiftKey);
     }
-    const [x, y] = pointerPosition(event);
     if (
       overlayVisible &&
       !deleteMode &&
@@ -1553,11 +2462,13 @@ canvas.addEventListener(
         flashStatus("minimum 3 control points");
         return;
       }
-      controlPoints.splice(index, 1);
+      const pointId = loopPoints[index]?.id;
       hoverInsert = null;
       hoverDeleteIndex = null;
       drawControlPoints();
-      void rebuildControlPoints();
+      if (pointId) {
+        void deleteControlPoint(pointId);
+      }
       return;
     }
     if (index < 0) {
@@ -1615,14 +2526,10 @@ canvas.addEventListener(
       if (hoverInsert) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        controlPoints.splice(hoverInsert.insertIndex, 0, [
-          hoverInsert.point[0],
-          hoverInsert.point[1],
-          hoverInsert.point[2],
-        ]);
+        const insert = hoverInsert;
         hoverInsert = null;
         drawControlPoints();
-        void rebuildControlPoints();
+        void insertControlPoint(insert.point, insert.afterPointId);
       } else {
         drawControlPoints();
         if (event.button === 0) {
@@ -1634,6 +2541,7 @@ canvas.addEventListener(
     event.preventDefault();
     event.stopImmediatePropagation();
     cameraDragging = false;
+    selectControlPoint(loopPoints[index]?.id ?? null);
     dragIndex = index;
     dragPointerId = event.pointerId;
     dragPlaneY = controlPoints[index][1];
@@ -1696,6 +2604,8 @@ const endDrag = (event: PointerEvent) => {
   if (dragIndex === null || event.pointerId !== dragPointerId) {
     return;
   }
+  const index = dragIndex;
+  const pointId = loopPoints[index]?.id;
   dragIndex = null;
   dragPointerId = null;
   try {
@@ -1704,7 +2614,9 @@ const endDrag = (event: PointerEvent) => {
     // Pointer capture may already be released.
   }
   drawControlPoints();
-  void rebuildControlPoints();
+  if (pointId) {
+    void moveControlPointById(pointId, controlPoints[index]);
+  }
 };
 
 const endGuideDrag = (event: PointerEvent) => {
@@ -1794,6 +2706,11 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Shift") {
     setDeleteMode(true);
+  }
+  if (event.key === "Escape" && branchDraft) {
+    event.preventDefault();
+    cancelBranchDraft();
+    return;
   }
   if (event.key === "Escape" && selectedSegment && !guideDrag) {
     selectedSegment = null;
@@ -1931,15 +2848,52 @@ async function boot() {
   const viewer = await TrackViewer.create_editor(canvas);
   editorViewer = viewer;
   window.__trackEditor = viewer;
+  (window as any).__setEditorProject = async (json: string) => {
+    if (!editorViewer) throw new Error("editor unavailable");
+    await rebuildEditor("loading project", () => editorViewer!.set_editor_project(json));
+  };
+  (window as any).__setEditorActiveLayout = async (id: string) => {
+    if (!editorViewer) throw new Error("editor unavailable");
+    await rebuildEditor("switching layout", () =>
+      editorViewer!.set_editor_active_layout(id),
+    );
+  };
+  (window as any).__editorMovePoint = (id: string, x: number, z: number) =>
+    moveControlPointById(id, [x, 0, z]);
+  (window as any).__editorMakeUnique = (loopId: string, pointId: string) =>
+    rebuildEditor("making control point unique", async () => {
+      const newId = await editorViewer!.make_editor_control_point_unique(
+        loopId,
+        pointId,
+      );
+      selectControlPoint(newId);
+      return newId as any;
+    });
+  (window as any).__editorSelectPoint = (id: string | null) =>
+    selectControlPoint(id);
   if (devMode) {
     setupTrackDevMenu(viewer);
   }
-  controlPoints = JSON.parse(viewer.editor_control_points()) as Vec3[];
-  centerline = JSON.parse(viewer.editor_centerline()) as Vec3[];
-  kerbSpans = (
-    JSON.parse(viewer.editor_kerb_spans()) as KerbSpan[]
-  ).sort((a, b) => a.start - b.start);
-  propLines = JSON.parse(viewer.editor_prop_lines()) as PropLine[];
+  const defaultProject = viewer.editor_project();
+  let bootWarning = "";
+  const savedProject = loadSavedProject();
+  if (savedProject) {
+    try {
+      await viewer.set_editor_project(savedProject);
+    } catch (error) {
+      console.warn("could not restore saved track project", error);
+      bootWarning = "saved project could not be loaded; using default";
+      try {
+        await viewer.set_editor_project(defaultProject);
+      } catch (fallbackError) {
+        console.warn("could not restore default track project", fallbackError);
+      }
+    }
+  }
+  refreshEditorState();
+  if (savedProject && !bootWarning) {
+    saveProject();
+  }
   syncPaintControls();
   cameraController = setupTrackCamera(canvas, viewer, {
     maxHeight: MAX_CAMERA_HEIGHT,
@@ -1948,10 +2902,6 @@ async function boot() {
   syncCameraViewButton();
   syncTreeDetailButton();
   applyCameraView();
-
-  const debug = JSON.parse(viewer.debug_info());
-  renderStats(debug);
-  drawsLabel.textContent = String(debug.stats.drawCalls);
 
   const observer = new ResizeObserver(() => {
     if (resizeCanvas()) {
@@ -1994,6 +2944,9 @@ async function boot() {
   status.textContent = "ready";
   status.className = "status ready";
   window.__trackEditorReady = true;
+  if (bootWarning) {
+    flashStatus(bootWarning);
+  }
   requestAnimationFrame(frame);
   requestAnimationFrame(hideLoading);
 }

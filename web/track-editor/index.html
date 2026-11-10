@@ -97,6 +97,48 @@
       .status.error {
         color: #f87171;
       }
+      .layout-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .layout-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .layout-row button,
+      #layout-select,
+      #layout-name,
+      #layout-width {
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 4px 6px;
+        font: inherit;
+        font-size: 11px;
+      }
+      .layout-row button {
+        cursor: pointer;
+      }
+      .layout-row button:hover {
+        background: #1c2430;
+      }
+      #layout-select,
+      #layout-name,
+      #layout-width {
+        width: 100%;
+      }
+      .layout-field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .layout-field > span {
+        flex: 0 0 44px;
+        color: #8f9bab;
+      }
       dl {
         display: grid;
         grid-template-columns: auto 1fr;
@@ -254,6 +296,35 @@
       <p class="muted">Procedural Drift Loop</p>
       <p class="status" id="status">booting</p>
 
+      <h2>Loops</h2>
+      <div class="layout-controls">
+        <select id="layout-select" aria-label="Active loop"></select>
+        <div class="layout-row">
+          <button id="add-layout" type="button">Add</button>
+          <button id="delete-layout" type="button">Delete</button>
+          <button id="make-unique" type="button" disabled>Make unique</button>
+        </div>
+        <label class="layout-field">
+          <span>Name</span>
+          <input id="layout-name" type="text" />
+        </label>
+        <label class="layout-field">
+          <span>Track width</span>
+          <input id="layout-width" type="number" min="6" max="30" step="0.5" />
+        </label>
+        <p class="muted" id="layout-hud">—</p>
+        <p class="muted">Ctrl+click a point to start a branch, Ctrl+click empty space to add points, connect near a loop point to create the loop, Esc cancels.</p>
+      </div>
+
+      <h2>Project</h2>
+      <div class="layout-row">
+        <button id="save-project" type="button">Save</button>
+        <button id="load-project" type="button">Load</button>
+        <button id="export-project" type="button">Export</button>
+        <button id="import-project" type="button">Import</button>
+      </div>
+      <input id="project-file" type="file" accept="application/json" hidden />
+
       <h2>Frame</h2>
       <dl>
         <dt>fps</dt>
@@ -277,7 +348,7 @@
       <ul id="meshes"></ul>
 
       <h2>Control points</h2>
-      <p class="muted">Drag the numbered markers to reshape the track. Release to rebuild. Hold Shift and click a marker to delete it.</p>
+      <p class="muted">Drag the numbered markers to reshape the loop. Shared points affect every loop that uses them; select one and use Make unique to diverge this loop. Release to rebuild. Hold Shift and click a marker to delete it.</p>
 
       <h2>Guide lines</h2>
       <p class="muted">Continuous light dotted lines show both kerb edges plus near and far prop lines on the outside and inside. Paint far lines with trees to place them behind the near barriers. Use the Prop button in the top menu to cycle what you paint. Click an empty guide to create a short segment, then drag its start or end handle along the spline. Click an existing segment to select it.</p>

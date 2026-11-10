@@ -67,12 +67,14 @@ export class PhysicsClient {
     sab: SharedArrayBuffer,
     trackBytes: Uint8Array,
     carBytes: Uint8Array,
+    layout?: string,
   ): Promise<PhysicsClient> {
     const url = new URL(`../worker/physics-worker.js?v=${encodeURIComponent(APP_VERSION)}`, import.meta.url);
     const worker = new Worker(url, { type: "module" });
     const client = new PhysicsClient(worker, sab);
     const trackCopy = trackBytes.slice();
     const carCopy = carBytes.slice();
+    const selectedLayout = layout && layout.length > 0 ? layout : undefined;
     const ready = new Promise<void>((resolve, reject) => {
       client.readyResolve = resolve;
       client.readyReject = reject;
@@ -87,6 +89,7 @@ export class PhysicsClient {
         sab,
         trackBytes: trackCopy,
         carBytes: carCopy,
+        ...(selectedLayout ? { layout: selectedLayout } : {}),
       },
       [trackCopy.buffer, carCopy.buffer],
     );

@@ -34,3 +34,6 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-contract-bound-multi-agent-workflow.md) | Contract-bound multi-agent workflow | Accepted |
+| [0003](0003-multi-layout-track-model.md) | Multi-layout track model | Superseded by 0004 |
+| [0004](0004-venue-graph-shared-segments.md) | Venue graph, shared segments, and cross-section profiles | Superseded by 0005 |
+| [0005](0005-loop-shared-control-points.md) | Loop and shared-control-point model | Accepted |

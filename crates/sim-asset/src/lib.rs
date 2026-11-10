@@ -416,7 +416,10 @@ mod tests {
                 cameras: Vec::new(),
                 sectors: Vec::new(),
                 surfaces: Vec::new(),
-            },
+                layouts: Vec::new(),
+                default_layout: 0,
+            }
+            .normalize_layouts(),
         )
     }
 

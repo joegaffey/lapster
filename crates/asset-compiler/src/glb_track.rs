@@ -296,7 +296,10 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
         cameras,
         sectors: Vec::new(),
         surfaces,
-    };
+        layouts: Vec::new(),
+        default_layout: 0,
+    }
+    .normalize_layouts();
 
     Ok(ImportedTrack {
         visual,

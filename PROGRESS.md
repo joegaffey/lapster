@@ -58,6 +58,13 @@ Deployment:
   yet.
 - Next: Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
   integration.
+- Active amendment: loop/shared-control-point model (ADR 0005, supersedes the
+  venue-graph model). Implemented locally: `@3` loops/shared points, Ctrl+click
+  branch drafts with auto-close, all-loop centerline overlay with per-loop
+  colours, continuous full-loop sampling for multi-loop geometry, and canonical
+  junction tangents. Remaining: junction pad/prop cleanup, shared pit lane,
+  updating the stale editor Playwright selectors, full gate, and integration.
+  Local WIP checkpoint only; not pushed or deployed.
 
 ## Completed checkpoints
 

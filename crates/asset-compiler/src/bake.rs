@@ -3,8 +3,8 @@ use sha2::{Digest, Sha256};
 use sim_asset::{archive, sha256, write_pack, ChunkSpec};
 use sim_types::{
     Aabb, AssetKind, AssetManifest, AssetStats, CarVisual, ChunkKind, EntryPoints, MaterialRef,
-    MeshBuffers, MeshRef, TextureRef, TrackCollision, TrackVisual, WheelVisual, ENGINE_FRAME,
-    ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
+    MeshBuffers, MeshRef, TextureRef, TrackCollision, TrackMetadata, TrackVisual, WheelVisual,
+    ENGINE_FRAME, ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
 };
 use std::fs;
 use std::path::Path;
@@ -282,13 +282,11 @@ pub fn bake_track(dir: &Path) -> Result<Vec<u8>> {
         &source.frame,
     )?;
 
-    if source.metadata.spawns.is_empty() {
-        bail!("track metadata must contain at least one spawn point");
-    }
+    let metadata = source.metadata.normalize_layouts();
+    validate_track_layouts(&metadata)?;
 
     let (visual, visual_bounds, stats) = build_track_visual(&source.visual)?;
     let (collision, collision_bounds) = build_track_collision(&source.collision.primitives)?;
-    let metadata = source.metadata;
 
     let visual_bytes = archive(&visual)?;
     let collision_bytes = archive(&collision)?;
@@ -332,6 +330,32 @@ pub fn bake_track(dir: &Path) -> Result<Vec<u8>> {
     };
 
     Ok(write_pack(manifest, chunks)?)
+}
+
+fn validate_track_layouts(metadata: &TrackMetadata) -> Result<()> {
+    if metadata.layouts.is_empty() {
+        bail!("track metadata must contain at least one layout");
+    }
+    if metadata.default_layout as usize >= metadata.layouts.len() {
+        bail!(
+            "default layout {} is out of range for {} layout(s)",
+            metadata.default_layout,
+            metadata.layouts.len()
+        );
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for (index, layout) in metadata.layouts.iter().enumerate() {
+        if layout.id.trim().is_empty() {
+            bail!("layout {index} has an empty id");
+        }
+        if !ids.insert(layout.id.as_str()) {
+            bail!("duplicate layout id {}", layout.id);
+        }
+        if layout.spawns.is_empty() {
+            bail!("layout {} has no spawn points", layout.id);
+        }
+    }
+    Ok(())
 }
 
 fn build_textures(source: &[TextureSource]) -> Result<Vec<TextureRef>> {

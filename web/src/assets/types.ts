@@ -84,3 +84,53 @@ export interface LoadedPack {
   bytes: Uint8Array;
   chunkBytes(kind: ChunkKind): Uint8Array;
 }
+
+export interface SpawnPoint {
+  name: string;
+  position: [number, number, number];
+  rotation_xyzw: [number, number, number, number];
+}
+
+export interface CameraSpec {
+  name: string;
+  position: [number, number, number];
+  target: [number, number, number];
+  fov_y: number;
+}
+
+export interface SectorSpec {
+  name: string;
+  start_fraction: number;
+  end_fraction: number;
+}
+
+export interface SurfaceSpec {
+  id: number;
+  name: string;
+  friction: number;
+  roughness: number;
+}
+
+export interface LayoutSpec {
+  id: string;
+  name: string;
+  length: number;
+  start_finish: number;
+  spawns: SpawnPoint[];
+  pit_boxes: SpawnPoint[];
+  cameras: CameraSpec[];
+  sectors: SectorSpec[];
+}
+
+export interface TrackMetadata {
+  /** Legacy default-layout fields; mirrors `layouts[default_layout]`. */
+  name: string;
+  length: number;
+  spawns: SpawnPoint[];
+  pit_boxes: SpawnPoint[];
+  cameras: CameraSpec[];
+  sectors: SectorSpec[];
+  surfaces: SurfaceSpec[];
+  layouts: LayoutSpec[];
+  default_layout: number;
+}

@@ -33,7 +33,7 @@ architect (primary)
 | Contract | Canonical | Mirror | Owner |
 |---|---|---|---|
 | SAB ABI v2 | `crates/sim-types/src/abi.rs` | `web/src/types/asset-layout.ts` | architect |
-| Asset schema v3 / pack format | `crates/sim-types/src/asset.rs` | `web/src/assets/types.ts` | architect |
+| Asset schema v4 / pack format | `crates/sim-types/src/asset.rs` | `web/src/assets/types.ts` | architect |
 | Car tuning | `crates/sim-types/src/setup.rs` | `lapster/setup@1` schema tag in `web/src/ui/car-setup.ts` | architect |
 | Net protocol | `crates/relay-server/src/protocol.rs` | `web/src/net/protocol.ts` | architect |
 | Core public API | `crates/sim-core/src/lib.rs` re-exports | — | physics |

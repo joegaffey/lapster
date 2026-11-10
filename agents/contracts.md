@@ -6,7 +6,7 @@ their mirrors. Workers read contracts and never edit them.
 | Contract | Canonical | Mirror | Consumers | Owner |
 |---|---|---|---|---|
 | SAB ABI v2 | `crates/sim-types/src/abi.rs` | `web/src/types/asset-layout.ts` | `sim-worker`, `web/src/sim/sab.ts`, `web/src/input` | architect |
-| Asset schema v3 / pack format | `crates/sim-types/src/asset.rs` | `web/src/assets/types.ts` | `sim-asset`, `asset-compiler`, `sim-render`, `web/src/assets` | architect |
+| Asset schema v4 / pack format | `crates/sim-types/src/asset.rs` | `web/src/assets/types.ts` | `sim-asset`, `asset-compiler`, `sim-render`, `web/src/assets` | architect |
 | Car tuning | `crates/sim-types/src/setup.rs` | `lapster/setup@1` schema tag in `web/src/ui/car-setup.ts` | `asset-compiler`, `sim-worker`, `sim-render`, `web/src/ui` | architect |
 | Net protocol | `crates/relay-server/src/protocol.rs` | `web/src/net/protocol.ts` | `relay-server`, `web/src/net` | architect |
 | Core public API | `crates/sim-core/src/lib.rs` re-exports | — | `sim-worker`, `asset-compiler` tests | physics |

@@ -200,7 +200,11 @@ self.onmessage = async (event: MessageEvent) => {
       validateSab(sab);
       waitWord = new Int32Array(sab, HEADER_FIELDS.flags, 1);
       await init();
-      simulation = new Simulation(message.trackBytes, message.carBytes);
+      const layout = message.layout;
+      simulation =
+        typeof layout === "string" && layout.length > 0
+          ? Simulation.new_with_layout(message.trackBytes, message.carBytes, layout)
+          : new Simulation(message.trackBytes, message.carBytes);
       post("ready", { setup: simulation.setup() });
       startLoop();
     } catch (error) {

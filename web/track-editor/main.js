@@ -932,6 +932,11 @@ function showLoadingFailure(error) {
 }
 
 // web/track-editor/main.ts
+var TRACK_PROJECT_SCHEMA = "lapster/track-project@3";
+var TRACK_PROJECT_STORAGE_KEY = "lapster.track-project.v1";
+var DEFAULT_TRACK_WIDTH = 12;
+var MIN_TRACK_WIDTH = 6;
+var MAX_TRACK_WIDTH = 30;
 var MAX_CAMERA_HEIGHT = 140;
 var CONTROL_POINT_RADIUS = 9;
 var CONTROL_POINT_HIT_RADIUS = 18;
@@ -942,6 +947,19 @@ var PROP_FAR_OFFSET = 19;
 var GUIDE_HIT_RADIUS = 12;
 var GUIDE_HANDLE_RADIUS = 7;
 var GUIDE_HANDLE_HIT_RADIUS = 16;
+var BRANCH_DRAFT_DISTANCE = 25;
+var BRANCH_APPROACH_DISTANCE = 20;
+var BRANCH_SNAP_RADIUS = 12;
+var LOOP_CENTERLINE_COLORS = [
+  "#38bdf8",
+  "#a78bfa",
+  "#34d399",
+  "#fbbf24",
+  "#f472b6",
+  "#fb923c",
+  "#22d3ee",
+  "#c084fc"
+];
 var DEFAULT_KERB_SEGMENT_LENGTH = 6;
 var PROP_SEGMENT_LENGTH_METERS = 3;
 var MIN_SEGMENT_LENGTH = 0.5;
@@ -968,10 +986,29 @@ var deleteSegmentButton = document.querySelector("#delete-segment");
 var overlayToggle = document.querySelector("#toggle-overlay");
 var cameraViewButton = document.querySelector("#camera-view");
 var testDriveButton = document.querySelector("#test-drive");
+var layoutSelect = document.querySelector("#layout-select");
+var addLayoutButton = document.querySelector("#add-layout");
+var deleteLayoutButton = document.querySelector("#delete-layout");
+var layoutNameInput = document.querySelector("#layout-name");
+var layoutWidthInput = document.querySelector("#layout-width");
+var layoutHud = document.querySelector("#layout-hud");
+var saveProjectButton = document.querySelector("#save-project");
+var loadProjectButton = document.querySelector("#load-project");
+var exportProjectButton = document.querySelector("#export-project");
+var importProjectButton = document.querySelector("#import-project");
+var projectFileInput = document.querySelector("#project-file");
+var makeUniqueButton = document.querySelector("#make-unique");
 var editorViewer;
+var project = null;
+var projectJson = null;
+var activeLayoutId = "";
+var syncingProjectControls = false;
 var cameraController;
 var controlPoints = [];
+var loopPoints = [];
+var selectedPointId = null;
 var centerline = [];
+var loopCenterlines = {};
 var dragIndex = null;
 var dragPointerId = null;
 var dragPlaneY = 0;
@@ -988,6 +1025,8 @@ var hoverPoint = null;
 var hoverHandleEdge = null;
 var selectedSegment = null;
 var guideDrag = null;
+var branchDraft = null;
+var branchDraftPointSeq = 0;
 var paintKind = "blocks";
 var TREE_DETAIL_MODES = ["high", "low", "cards"];
 var TREE_DETAIL_LABELS = {
@@ -1237,6 +1276,23 @@ function screenRay(x, y, camera, width, height) {
 function pointerPosition(event) {
   const rect = canvas.getBoundingClientRect();
   return [event.clientX - rect.left, event.clientY - rect.top];
+}
+function groundPointFromScreen(x, y, planeY) {
+  const camera = currentCamera();
+  if (!camera) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const ray = screenRay(x, y, camera, width, height);
+  if (Math.abs(ray.direction[1]) < 1e-5) {
+    return null;
+  }
+  const distance = (planeY - ray.origin[1]) / ray.direction[1];
+  if (distance <= 0) {
+    return null;
+  }
+  return add2(ray.origin, scale2(ray.direction, distance));
 }
 function hitTestControlPoint(x, y) {
   const camera = currentCamera();
@@ -1758,11 +1814,15 @@ function updateHover() {
     }
     bestDistance = distance;
     const next = (index + 1) % centerline.length;
-    const insertIndex = Math.floor(index * controlPoints.length / centerline.length) % controlPoints.length + 1;
+    const pointIndex = Math.floor(index * loopPoints.length / centerline.length) % Math.max(loopPoints.length, 1);
+    const afterPointId = loopPoints[pointIndex]?.id;
+    if (!afterPointId) {
+      continue;
+    }
     hoverInsert = {
       point: lerp2(centerline[index], centerline[next], t),
       screen: [hitX, hitY],
-      insertIndex
+      afterPointId
     };
   }
   canvas.style.cursor = hoverInsert ? "copy" : "";
@@ -1789,6 +1849,13 @@ function flashStatus(message) {
     }
   }, 1200);
 }
+function loopCenterlineColor(loopId) {
+  let hash = 0;
+  for (let index = 0; index < loopId.length; index += 1) {
+    hash = hash * 31 + loopId.charCodeAt(index) >>> 0;
+  }
+  return LOOP_CENTERLINE_COLORS[hash % LOOP_CENTERLINE_COLORS.length];
+}
 function drawControlPoints() {
   if (!overlayVisible) {
     return;
@@ -1812,12 +1879,17 @@ function drawControlPoints() {
     return;
   }
   updateHover();
-  if (centerline.length > 1) {
+  const drawCenterline = (points, color, active) => {
+    if (points.length < 2) {
+      return;
+    }
+    overlayContext.save();
+    overlayContext.globalAlpha = active ? 0.95 : 0.32;
     overlayContext.beginPath();
     let drawing = false;
-    for (let index = 0; index <= centerline.length; index += 1) {
+    for (let index = 0; index <= points.length; index += 1) {
       const projected = projectPoint(
-        centerline[index % centerline.length],
+        points[index % points.length],
         camera,
         width,
         height
@@ -1833,10 +1905,19 @@ function drawControlPoints() {
         overlayContext.lineTo(projected[0], projected[1]);
       }
     }
-    overlayContext.lineWidth = 2;
-    overlayContext.strokeStyle = "rgba(56, 189, 248, 0.9)";
+    overlayContext.lineWidth = active ? 2.5 : 1.25;
+    overlayContext.strokeStyle = color;
     overlayContext.stroke();
+    overlayContext.restore();
+  };
+  for (const [loopId, points] of Object.entries(loopCenterlines)) {
+    if (loopId === activeLayoutId) {
+      continue;
+    }
+    drawCenterline(points, loopCenterlineColor(loopId), false);
   }
+  const activeCenterline = loopCenterlines[activeLayoutId] ?? centerline;
+  drawCenterline(activeCenterline, loopCenterlineColor(activeLayoutId), true);
   if (hoverInsert) {
     const [hitX, hitY] = hoverInsert.screen;
     overlayContext.save();
@@ -2007,18 +2088,20 @@ function drawControlPoints() {
       return;
     }
     const deleteTarget = deleteMode && index === hoverDeleteIndex;
+    const selected = loopPoints[index]?.id === selectedPointId;
+    const highlighted = selected || index === dragIndex;
     overlayContext.beginPath();
     overlayContext.arc(
       projected[0],
       projected[1],
-      CONTROL_POINT_RADIUS + (deleteTarget ? 3 : 0),
+      CONTROL_POINT_RADIUS + (deleteTarget || highlighted ? 3 : 0),
       0,
       Math.PI * 2
     );
-    overlayContext.fillStyle = deleteTarget ? "#ef4444" : deleteMode ? "#fca5a5" : index === dragIndex ? "#38bdf8" : "#fbbf24";
+    overlayContext.fillStyle = deleteTarget ? "#ef4444" : deleteMode ? "#fca5a5" : "#fbbf24";
     overlayContext.fill();
-    overlayContext.lineWidth = deleteTarget ? 3 : 2;
-    overlayContext.strokeStyle = deleteTarget ? "#fff1f2" : "#080a0d";
+    overlayContext.lineWidth = deleteTarget || highlighted ? 3 : 2;
+    overlayContext.strokeStyle = deleteTarget ? "#fff1f2" : highlighted ? "#f8fafc" : "#080a0d";
     overlayContext.stroke();
     overlayContext.fillStyle = "#080a0d";
     overlayContext.font = "600 10px ui-monospace, monospace";
@@ -2026,38 +2109,467 @@ function drawControlPoints() {
     overlayContext.textBaseline = "middle";
     overlayContext.fillText(String(index + 1), projected[0], projected[1] + 0.5);
   });
+  if (branchDraft) {
+    const junctionIndex = loopPoints.findIndex(
+      (point) => point.id === branchDraft.junctionId
+    );
+    const draftWorld = [];
+    if (junctionIndex >= 0 && controlPoints[junctionIndex]) {
+      draftWorld.push(controlPoints[junctionIndex]);
+    }
+    for (const point of branchDraft.points) {
+      draftWorld.push(point.position);
+    }
+    overlayContext.save();
+    overlayContext.setLineDash([6, 4]);
+    overlayContext.globalAlpha = 0.95;
+    overlayContext.beginPath();
+    let drawing = false;
+    for (const point of draftWorld) {
+      const projected = projectPoint(point, camera, width, height);
+      if (!projected) {
+        drawing = false;
+        continue;
+      }
+      if (!drawing) {
+        overlayContext.moveTo(projected[0], projected[1]);
+        drawing = true;
+      } else {
+        overlayContext.lineTo(projected[0], projected[1]);
+      }
+    }
+    overlayContext.lineWidth = 2;
+    overlayContext.strokeStyle = "#f472b6";
+    overlayContext.stroke();
+    overlayContext.restore();
+    branchDraft.points.forEach((point, index) => {
+      const projected = projectPoint(point.position, camera, width, height);
+      if (!projected) {
+        return;
+      }
+      overlayContext.beginPath();
+      overlayContext.arc(
+        projected[0],
+        projected[1],
+        CONTROL_POINT_RADIUS,
+        0,
+        Math.PI * 2
+      );
+      overlayContext.fillStyle = "#22d3ee";
+      overlayContext.fill();
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "#f472b6";
+      overlayContext.stroke();
+      overlayContext.fillStyle = "#06121a";
+      overlayContext.font = "600 10px ui-monospace, monospace";
+      overlayContext.textAlign = "center";
+      overlayContext.textBaseline = "middle";
+      overlayContext.fillText(String(index + 1), projected[0], projected[1] + 0.5);
+    });
+  }
 }
 function moveControlPoint(index, x, y) {
-  const camera = currentCamera();
-  if (!camera) {
+  const world = groundPointFromScreen(x, y, dragPlaneY);
+  if (!world) {
     return;
   }
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const ray = screenRay(x, y, camera, width, height);
-  if (Math.abs(ray.direction[1]) < 1e-5) {
-    return;
-  }
-  const distance = (dragPlaneY - ray.origin[1]) / ray.direction[1];
-  if (distance <= 0) {
-    return;
-  }
-  const world = add2(ray.origin, scale2(ray.direction, distance));
   const current = controlPoints[index];
-  controlPoints[index] = [
-    Math.max(-140, Math.min(140, world[0])),
-    current[1],
-    Math.max(-140, Math.min(140, world[2]))
+  const pointX = Math.max(-140, Math.min(140, world[0]));
+  const pointZ = Math.max(-140, Math.min(140, world[2]));
+  controlPoints[index] = [pointX, current[1], pointZ];
+  if (loopPoints[index]) {
+    loopPoints[index] = {
+      ...loopPoints[index],
+      position: [pointX, pointZ]
+    };
+  }
+}
+function activeLayout() {
+  if (!project) {
+    return null;
+  }
+  return project.loops.find((layout) => layout.id === activeLayoutId) ?? project.loops[0] ?? null;
+}
+function trackWidth() {
+  return project?.settings?.width ?? DEFAULT_TRACK_WIDTH;
+}
+function sharedPointCount() {
+  return loopPoints.filter((point) => point.shared).length;
+}
+function selectedPointIndex() {
+  if (!selectedPointId) {
+    return -1;
+  }
+  return loopPoints.findIndex((point) => point.id === selectedPointId);
+}
+function syncPointControls() {
+  const index = selectedPointIndex();
+  const point = index >= 0 ? loopPoints[index] : null;
+  makeUniqueButton.disabled = !point || rebuilding;
+}
+function segmentKey(from, to) {
+  return `${from}->${to}`;
+}
+function uniqueBranchBase(pointCount) {
+  const loopIds = new Set(project?.loops.map((loop) => loop.id) ?? []);
+  const pointIds = new Set(project?.controlPoints.map((point) => point.id) ?? []);
+  let number2 = 1;
+  for (; ; ) {
+    const loopId = `branch-${number2}`;
+    const ids = Array.from(
+      { length: pointCount },
+      (_, index) => `${loopId}-cp-${index + 1}`
+    );
+    if (!loopIds.has(loopId) && ids.every((id) => !pointIds.has(id))) {
+      return { loopId, name: `Branch ${number2}`, pointIds: ids };
+    }
+    number2 += 1;
+  }
+}
+function normalize2d(value) {
+  const length2 = Math.hypot(value[0], value[1]);
+  return length2 > 1e-6 ? [value[0] / length2, value[1] / length2] : [1, 0];
+}
+function loopTangentAt(route, positions, index) {
+  const count = route.length;
+  const previous = positions.get(route[(index - 1 + count) % count]);
+  const next = positions.get(route[(index + 1) % count]);
+  if (!previous || !next) {
+    return null;
+  }
+  return normalize2d([next[0] - previous[0], next[1] - previous[1]]);
+}
+function loopNormalAt(route, positions, index) {
+  const tangent = loopTangentAt(route, positions, index);
+  if (!tangent) {
+    return null;
+  }
+  return normalize2d([-tangent[1], tangent[0]]);
+}
+function loopCentroid(route, positions) {
+  const points = route.map((id) => positions.get(id)).filter((position) => Boolean(position));
+  if (points.length === 0) {
+    return [0, 0];
+  }
+  return [
+    points.reduce((sum, position) => sum + position[0], 0) / points.length,
+    points.reduce((sum, position) => sum + position[1], 0) / points.length
   ];
+}
+function outwardNormal(position, normal, centroid) {
+  const distanceToCentroid = (candidate) => Math.hypot(candidate[0] - centroid[0], candidate[1] - centroid[1]);
+  const plus = [
+    position[0] + normal[0] * BRANCH_DRAFT_DISTANCE,
+    position[1] + normal[1] * BRANCH_DRAFT_DISTANCE
+  ];
+  const minus = [
+    position[0] - normal[0] * BRANCH_DRAFT_DISTANCE,
+    position[1] - normal[1] * BRANCH_DRAFT_DISTANCE
+  ];
+  return distanceToCentroid(plus) >= distanceToCentroid(minus) ? normal : [-normal[0], -normal[1]];
+}
+function startBranchDraft(index) {
+  if (!project || !editorViewer || rebuilding) {
+    return;
+  }
+  const layout = activeLayout();
+  const junctionId = loopPoints[index]?.id;
+  const junctionPosition = controlPoints[index];
+  if (!layout || !junctionId || !junctionPosition) {
+    return;
+  }
+  const route = layout.controlPoints;
+  const startIndex = route.indexOf(junctionId);
+  if (startIndex < 0) {
+    flashStatus("Ctrl+click a control point on the active loop");
+    return;
+  }
+  const positions = new Map(
+    project.controlPoints.map((point) => [point.id, point.position])
+  );
+  const position = positions.get(junctionId);
+  if (!position) {
+    flashStatus("branch point unavailable");
+    return;
+  }
+  const normal = loopNormalAt(route, positions, startIndex);
+  const centroid = loopCentroid(route, positions);
+  const outward = normal ? outwardNormal(position, normal, centroid) : [1, 0];
+  const firstPoint = [
+    position[0] + outward[0] * BRANCH_DRAFT_DISTANCE,
+    junctionPosition[1],
+    position[1] + outward[1] * BRANCH_DRAFT_DISTANCE
+  ];
+  branchDraft = {
+    sourceLoopId: layout.id,
+    junctionId,
+    points: [{ id: `draft-${branchDraftPointSeq++}`, position: firstPoint }]
+  };
+  flashStatus(
+    "branch started \xB7 Ctrl+click to add a point, Ctrl+click a loop point to close, Esc cancels"
+  );
+  drawControlPoints();
+}
+function sourceLoopControlPoints(loopId) {
+  const loop = project?.loops.find((item) => item.id === loopId);
+  if (!project || !loop) {
+    return [];
+  }
+  const positions = new Map(
+    project.controlPoints.map((point) => [point.id, point.position])
+  );
+  return loop.controlPoints.flatMap((id) => {
+    const position = positions.get(id);
+    return position ? [{ id, position }] : [];
+  });
+}
+function appendBranchDraftPoint(x, y) {
+  if (!branchDraft) {
+    return;
+  }
+  const planeY = branchDraft.points[0]?.position[1] ?? 0;
+  const world = groundPointFromScreen(x, y, planeY);
+  if (!world) {
+    flashStatus("cannot place branch point here");
+    return;
+  }
+  let nearestId = null;
+  let nearestDistance = BRANCH_SNAP_RADIUS;
+  for (const point of sourceLoopControlPoints(branchDraft.sourceLoopId)) {
+    const distance = Math.hypot(
+      world[0] - point.position[0],
+      world[2] - point.position[1]
+    );
+    if (distance <= nearestDistance) {
+      nearestDistance = distance;
+      nearestId = point.id;
+    }
+  }
+  if (nearestId) {
+    void closeBranchDraft(nearestId);
+    return;
+  }
+  branchDraft.points.push({
+    id: `draft-${branchDraftPointSeq++}`,
+    position: world
+  });
+  drawControlPoints();
+}
+function cancelBranchDraft() {
+  if (!branchDraft) {
+    return;
+  }
+  branchDraft = null;
+  flashStatus("branch cancelled");
+  drawControlPoints();
+}
+async function closeBranchDraft(endId) {
+  if (!editorViewer || !project || !branchDraft || rebuilding) {
+    return;
+  }
+  const draft = branchDraft;
+  const layout = project.loops.find((loop) => loop.id === draft.sourceLoopId) ?? activeLayout();
+  if (!layout) {
+    cancelBranchDraft();
+    return;
+  }
+  const route = layout.controlPoints;
+  const startIndex = route.indexOf(draft.junctionId);
+  const closesToJunction = endId === draft.junctionId;
+  const endIndex = closesToJunction ? startIndex : route.indexOf(endId);
+  if (startIndex < 0 || endIndex < 0) {
+    flashStatus("Ctrl+click a different control point to close the branch");
+    return;
+  }
+  const positions = new Map(
+    project.controlPoints.map((point) => [point.id, point.position])
+  );
+  const endPosition = positions.get(endId);
+  const endTangent = endPosition && endIndex >= 0 ? loopTangentAt(route, positions, endIndex) : null;
+  const approachPoints = [];
+  if (endPosition && endTangent) {
+    if (!closesToJunction && draft.points.length <= 1) {
+      const endNormal = loopNormalAt(route, positions, endIndex);
+      if (endNormal) {
+        const centroid = loopCentroid(route, positions);
+        const outward = outwardNormal(endPosition, endNormal, centroid);
+        approachPoints.push([
+          endPosition[0] + outward[0] * BRANCH_DRAFT_DISTANCE,
+          endPosition[1] + outward[1] * BRANCH_DRAFT_DISTANCE
+        ]);
+      }
+    }
+    const nextIndex = (endIndex + 1) % route.length;
+    const nextPosition = positions.get(route[nextIndex]);
+    const approachBase = nextPosition ?? endPosition;
+    approachPoints.push([
+      approachBase[0] - endTangent[0] * BRANCH_APPROACH_DISTANCE,
+      approachBase[1] - endTangent[1] * BRANCH_APPROACH_DISTANCE
+    ]);
+  }
+  const base = uniqueBranchBase(draft.points.length + approachPoints.length);
+  const draftControlPoints = [
+    ...draft.points.map(
+      (point, index) => ({
+        id: base.pointIds[index],
+        position: [point.position[0], point.position[2]],
+        kind: "normal"
+      })
+    ),
+    ...approachPoints.map(
+      (position, index) => ({
+        id: base.pointIds[draft.points.length + index],
+        position,
+        kind: "normal"
+      })
+    )
+  ];
+  const draftIds = draftControlPoints.map((point) => point.id);
+  const newRoute = closesToJunction ? [draft.junctionId, ...draftIds] : [draft.junctionId, ...draftIds, endId];
+  if (!closesToJunction) {
+    for (let index = (endIndex + 1) % route.length; index !== startIndex; index = (index + 1) % route.length) {
+      newRoute.push(route[index]);
+    }
+  }
+  const segments = project.segments.map((segment) => ({
+    ...segment,
+    role: segment.role === "branch" ? "branch" : "main",
+    kerbs: Array.isArray(segment.kerbs) ? segment.kerbs : [],
+    propSpans: Array.isArray(segment.propSpans) ? segment.propSpans : []
+  }));
+  const pairs = new Set(
+    segments.map((segment) => segmentKey(segment.from, segment.to))
+  );
+  const addSegment = (from, to, role) => {
+    const key = segmentKey(from, to);
+    if (pairs.has(key)) {
+      return;
+    }
+    pairs.add(key);
+    segments.push({ from, to, role, kerbs: [], propSpans: [] });
+  };
+  const branchRoute = closesToJunction ? [] : [draft.junctionId, ...draftIds, endId];
+  for (let index = 0; index < branchRoute.length - 1; index += 1) {
+    addSegment(branchRoute[index], branchRoute[index + 1], "branch");
+  }
+  for (let index = 0; index < newRoute.length; index += 1) {
+    addSegment(newRoute[index], newRoute[(index + 1) % newRoute.length], "main");
+  }
+  project.controlPoints.push(...draftControlPoints);
+  project.segments = segments;
+  project.loops.push({
+    id: base.loopId,
+    name: base.name,
+    controlPoints: newRoute,
+    sectors: [],
+    cameras: [],
+    spawns: []
+  });
+  branchDraft = null;
+  drawControlPoints();
+  await rebuildEditor("creating branch", async () => {
+    await editorViewer.set_editor_project(JSON.stringify(project));
+    await editorViewer.set_editor_active_layout(base.loopId);
+  });
+}
+function syncProjectControls() {
+  const layout = activeLayout();
+  syncingProjectControls = true;
+  try {
+    layoutSelect.replaceChildren();
+    if (project) {
+      for (const item of project.loops) {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.name || item.id;
+        option.selected = item.id === activeLayoutId;
+        layoutSelect.append(option);
+      }
+    }
+    layoutNameInput.value = layout?.name ?? "";
+    layoutWidthInput.value = project ? String(trackWidth()) : "";
+    deleteLayoutButton.disabled = !project || project.loops.length <= 1;
+    layoutHud.textContent = layout ? `${layout.name || layout.id} \xB7 ${loopPoints.length} control points \xB7 ${sharedPointCount()} shared` : "\u2014";
+  } finally {
+    syncingProjectControls = false;
+  }
+  syncPointControls();
+}
+function readProject() {
+  if (!editorViewer) {
+    return;
+  }
+  const raw = editorViewer.editor_project();
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.schema === TRACK_PROJECT_SCHEMA && Array.isArray(parsed.loops)) {
+      parsed.segments = Array.isArray(parsed.segments) ? parsed.segments.map((segment) => ({
+        ...segment,
+        role: segment.role === "branch" ? "branch" : "main",
+        kerbs: Array.isArray(segment.kerbs) ? segment.kerbs : [],
+        propSpans: Array.isArray(segment.propSpans) ? segment.propSpans : []
+      })) : [];
+      project = parsed;
+      projectJson = JSON.stringify(parsed);
+    } else {
+      project = null;
+      projectJson = null;
+    }
+  } catch {
+    project = null;
+    projectJson = null;
+  }
+  activeLayoutId = editorViewer.editor_active_layout();
+  syncProjectControls();
+}
+function projectSnapshot() {
+  if (projectJson) {
+    return projectJson;
+  }
+  if (project) {
+    return JSON.stringify(project);
+  }
+  return null;
+}
+function saveProject() {
+  const snapshot = projectSnapshot();
+  if (!snapshot) {
+    return;
+  }
+  try {
+    localStorage.setItem(TRACK_PROJECT_STORAGE_KEY, snapshot);
+  } catch (error) {
+    console.warn("could not save track project", error);
+  }
+}
+function loadSavedProject() {
+  try {
+    return localStorage.getItem(TRACK_PROJECT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 function refreshEditorState() {
   if (!editorViewer) {
     return;
   }
-  controlPoints = JSON.parse(editorViewer.editor_control_points());
+  const heights = JSON.parse(editorViewer.editor_control_points());
+  loopPoints = JSON.parse(editorViewer.editor_loop_points());
+  controlPoints = loopPoints.map((point, index) => [
+    point.position[0],
+    heights[index]?.[1] ?? 0,
+    point.position[1]
+  ]);
+  if (selectedPointId && selectedPointIndex() < 0) {
+    selectedPointId = null;
+  }
   centerline = JSON.parse(editorViewer.editor_centerline());
+  loopCenterlines = JSON.parse(
+    editorViewer.editor_loop_centerlines()
+  );
   kerbSpans = JSON.parse(editorViewer.editor_kerb_spans()).sort((a, b) => a.side - b.side || a.start - b.start);
   propLines = JSON.parse(editorViewer.editor_prop_lines());
+  readProject();
   resolveSelection();
   syncPaintControls();
   const debug = JSON.parse(editorViewer.debug_info());
@@ -2081,6 +2593,9 @@ async function testDrive() {
       target.searchParams.set("car", car);
     }
     target.searchParams.set("trees", treeDetailMode);
+    if (activeLayoutId) {
+      target.searchParams.set("layout", activeLayoutId);
+    }
     window.location.href = target.toString();
   } catch (error) {
     testDriveButton.disabled = false;
@@ -2090,7 +2605,130 @@ async function testDrive() {
 testDriveButton.addEventListener("click", () => {
   void testDrive();
 });
-async function rebuildEditor(message, action) {
+function reportActionError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  status.textContent = message;
+  status.className = "status error";
+  console.error(error);
+}
+addLayoutButton.addEventListener("click", () => {
+  void rebuildEditor(
+    "adding layout",
+    () => editorViewer.add_editor_layout("").then(() => void 0)
+  );
+});
+deleteLayoutButton.addEventListener("click", () => {
+  if (!activeLayoutId) {
+    return;
+  }
+  void rebuildEditor(
+    "deleting layout",
+    () => editorViewer.delete_editor_layout(activeLayoutId),
+    reportActionError
+  );
+});
+makeUniqueButton.addEventListener("click", () => {
+  void makeSelectedPointUnique();
+});
+layoutSelect.addEventListener("change", () => {
+  const id = layoutSelect.value;
+  if (!id || id === activeLayoutId) {
+    return;
+  }
+  void rebuildEditor(
+    "switching layout",
+    () => editorViewer.set_editor_active_layout(id)
+  );
+});
+layoutNameInput.addEventListener("change", () => {
+  if (syncingProjectControls) {
+    return;
+  }
+  const layout = activeLayout();
+  const name = layoutNameInput.value.trim();
+  if (!layout || !name || name === layout.name) {
+    return;
+  }
+  void rebuildEditor(
+    "renaming layout",
+    () => editorViewer.rename_editor_layout(activeLayoutId, name)
+  );
+});
+layoutWidthInput.addEventListener("change", () => {
+  if (syncingProjectControls) {
+    return;
+  }
+  const width = Number(layoutWidthInput.value);
+  if (!activeLayoutId || !Number.isFinite(width)) {
+    return;
+  }
+  const clamped = Math.min(MAX_TRACK_WIDTH, Math.max(MIN_TRACK_WIDTH, width));
+  if (Math.abs(clamped - trackWidth()) < 1e-4) {
+    return;
+  }
+  void rebuildEditor(
+    "resizing track",
+    () => editorViewer.set_editor_layout_width(activeLayoutId, clamped)
+  );
+});
+saveProjectButton.addEventListener("click", () => {
+  saveProject();
+  status.textContent = "project saved";
+  status.className = "status ready";
+});
+loadProjectButton.addEventListener("click", () => {
+  const saved = loadSavedProject();
+  if (!saved) {
+    reportActionError(new Error("no saved project in this browser"));
+    return;
+  }
+  void rebuildEditor("loading project", () => editorViewer.set_editor_project(saved));
+});
+function exportProject() {
+  const snapshot = projectSnapshot();
+  if (!snapshot) {
+    reportActionError(new Error("track project unavailable"));
+    return;
+  }
+  let json2 = snapshot;
+  try {
+    json2 = JSON.stringify(JSON.parse(snapshot), null, 2);
+  } catch {
+  }
+  const blob = new Blob([json2], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "track-project.json";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+exportProjectButton.addEventListener("click", exportProject);
+importProjectButton.addEventListener("click", () => {
+  projectFileInput.click();
+});
+projectFileInput.addEventListener("change", () => {
+  const file = projectFileInput.files?.[0];
+  projectFileInput.value = "";
+  if (!file) {
+    return;
+  }
+  void (async () => {
+    try {
+      const text = await file.text();
+      JSON.parse(text);
+      await rebuildEditor(
+        "importing project",
+        () => editorViewer.set_editor_project(text)
+      );
+    } catch (error) {
+      reportActionError(error);
+    }
+  })();
+});
+async function rebuildEditor(message, action, onError = fail) {
   if (!editorViewer || rebuilding) {
     return;
   }
@@ -2104,27 +2742,18 @@ async function rebuildEditor(message, action) {
     await new Promise((resolve) => requestAnimationFrame(() => resolve()));
     await action();
     refreshEditorState();
+    saveProject();
     testDriveButton.disabled = false;
     status.textContent = "ready";
     status.className = "status ready";
   } catch (error) {
-    fail(error);
+    onError(error);
   } finally {
     suspended = false;
     rebuilding = false;
     cameraController?.setEnabled(true);
     drawControlPoints();
   }
-}
-async function rebuildControlPoints() {
-  await rebuildEditor(
-    "rebuilding track",
-    () => editorViewer.set_editor_control_points(
-      JSON.stringify(
-        controlPoints.map((point) => [point[0], point[1], point[2]])
-      )
-    )
-  );
 }
 async function rebuildKerbSpans() {
   await rebuildEditor(
@@ -2138,16 +2767,103 @@ async function rebuildPropLines() {
     () => editorViewer.set_editor_prop_lines(JSON.stringify(propLines))
   );
 }
+function selectControlPoint(id) {
+  selectedPointId = id;
+  syncPointControls();
+  drawControlPoints();
+}
+async function deleteControlPoint(pointId) {
+  if (!editorViewer || !activeLayoutId || rebuilding) {
+    return;
+  }
+  await rebuildEditor(
+    "deleting control point",
+    () => editorViewer.delete_editor_control_point(activeLayoutId, pointId)
+  );
+  if (selectedPointId === pointId) {
+    selectedPointId = null;
+  }
+  syncPointControls();
+  drawControlPoints();
+}
+async function insertControlPoint(point, afterPointId) {
+  if (!editorViewer || !activeLayoutId || rebuilding) {
+    return;
+  }
+  let newId = "";
+  await rebuildEditor("inserting control point", async () => {
+    newId = await editorViewer.insert_editor_control_point(
+      activeLayoutId,
+      afterPointId,
+      point[0],
+      point[2]
+    );
+  });
+  if (newId) {
+    selectControlPoint(newId);
+  }
+}
+async function moveControlPointById(pointId, point) {
+  if (!editorViewer || rebuilding) {
+    return;
+  }
+  await rebuildEditor(
+    "moving control point",
+    () => editorViewer.move_editor_control_point(pointId, point[0], point[2])
+  );
+}
+async function makeSelectedPointUnique() {
+  const index = selectedPointIndex();
+  const point = index >= 0 ? loopPoints[index] : null;
+  if (!point || !editorViewer || !activeLayoutId || rebuilding) {
+    return;
+  }
+  let newId = "";
+  await rebuildEditor("making control point unique", async () => {
+    newId = await editorViewer.make_editor_control_point_unique(
+      activeLayoutId,
+      point.id
+    );
+  });
+  if (newId) {
+    selectControlPoint(newId);
+  }
+}
 canvas.addEventListener(
   "pointerdown",
   (event) => {
     if (event.button !== 0 || dragIndex !== null || rebuilding) {
       return;
     }
+    const [x, y] = pointerPosition(event);
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cameraDragging = false;
+      const index2 = overlayVisible ? hitTestControlPoint(x, y) : -1;
+      if (branchDraft) {
+        if (index2 >= 0) {
+          const pointId = loopPoints[index2]?.id;
+          if (!pointId || pointId === branchDraft.junctionId) {
+            flashStatus("Ctrl+click a different control point to close the branch");
+            return;
+          }
+          void closeBranchDraft(pointId);
+          return;
+        }
+        appendBranchDraftPoint(x, y);
+        return;
+      }
+      if (index2 < 0) {
+        flashStatus("Ctrl+click a control point to start a branch");
+        return;
+      }
+      startBranchDraft(index2);
+      return;
+    }
     if (event.shiftKey !== deleteMode) {
       setDeleteMode(event.shiftKey);
     }
-    const [x, y] = pointerPosition(event);
     if (overlayVisible && !deleteMode && carDragPointerId === null && hitTestCarMarker(x, y)) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -2171,11 +2887,13 @@ canvas.addEventListener(
         flashStatus("minimum 3 control points");
         return;
       }
-      controlPoints.splice(index, 1);
+      const pointId = loopPoints[index]?.id;
       hoverInsert = null;
       hoverDeleteIndex = null;
       drawControlPoints();
-      void rebuildControlPoints();
+      if (pointId) {
+        void deleteControlPoint(pointId);
+      }
       return;
     }
     if (index < 0) {
@@ -2230,14 +2948,10 @@ canvas.addEventListener(
       if (hoverInsert) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        controlPoints.splice(hoverInsert.insertIndex, 0, [
-          hoverInsert.point[0],
-          hoverInsert.point[1],
-          hoverInsert.point[2]
-        ]);
+        const insert = hoverInsert;
         hoverInsert = null;
         drawControlPoints();
-        void rebuildControlPoints();
+        void insertControlPoint(insert.point, insert.afterPointId);
       } else {
         drawControlPoints();
         if (event.button === 0) {
@@ -2249,6 +2963,7 @@ canvas.addEventListener(
     event.preventDefault();
     event.stopImmediatePropagation();
     cameraDragging = false;
+    selectControlPoint(loopPoints[index]?.id ?? null);
     dragIndex = index;
     dragPointerId = event.pointerId;
     dragPlaneY = controlPoints[index][1];
@@ -2308,6 +3023,8 @@ var endDrag = (event) => {
   if (dragIndex === null || event.pointerId !== dragPointerId) {
     return;
   }
+  const index = dragIndex;
+  const pointId = loopPoints[index]?.id;
   dragIndex = null;
   dragPointerId = null;
   try {
@@ -2315,7 +3032,9 @@ var endDrag = (event) => {
   } catch {
   }
   drawControlPoints();
-  void rebuildControlPoints();
+  if (pointId) {
+    void moveControlPointById(pointId, controlPoints[index]);
+  }
 };
 var endGuideDrag = (event) => {
   if (!guideDrag || event.pointerId !== guideDrag.pointerId) {
@@ -2389,6 +3108,11 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Shift") {
     setDeleteMode(true);
+  }
+  if (event.key === "Escape" && branchDraft) {
+    event.preventDefault();
+    cancelBranchDraft();
+    return;
   }
   if (event.key === "Escape" && selectedSegment && !guideDrag) {
     selectedSegment = null;
@@ -2501,13 +3225,50 @@ async function boot() {
   const viewer = await TrackViewer.create_editor(canvas);
   editorViewer = viewer;
   window.__trackEditor = viewer;
+  window.__setEditorProject = async (json2) => {
+    if (!editorViewer) throw new Error("editor unavailable");
+    await rebuildEditor("loading project", () => editorViewer.set_editor_project(json2));
+  };
+  window.__setEditorActiveLayout = async (id) => {
+    if (!editorViewer) throw new Error("editor unavailable");
+    await rebuildEditor(
+      "switching layout",
+      () => editorViewer.set_editor_active_layout(id)
+    );
+  };
+  window.__editorMovePoint = (id, x, z) => moveControlPointById(id, [x, 0, z]);
+  window.__editorMakeUnique = (loopId, pointId) => rebuildEditor("making control point unique", async () => {
+    const newId = await editorViewer.make_editor_control_point_unique(
+      loopId,
+      pointId
+    );
+    selectControlPoint(newId);
+    return newId;
+  });
+  window.__editorSelectPoint = (id) => selectControlPoint(id);
   if (devMode) {
     setupTrackDevMenu(viewer);
   }
-  controlPoints = JSON.parse(viewer.editor_control_points());
-  centerline = JSON.parse(viewer.editor_centerline());
-  kerbSpans = JSON.parse(viewer.editor_kerb_spans()).sort((a, b) => a.start - b.start);
-  propLines = JSON.parse(viewer.editor_prop_lines());
+  const defaultProject = viewer.editor_project();
+  let bootWarning = "";
+  const savedProject = loadSavedProject();
+  if (savedProject) {
+    try {
+      await viewer.set_editor_project(savedProject);
+    } catch (error) {
+      console.warn("could not restore saved track project", error);
+      bootWarning = "saved project could not be loaded; using default";
+      try {
+        await viewer.set_editor_project(defaultProject);
+      } catch (fallbackError) {
+        console.warn("could not restore default track project", fallbackError);
+      }
+    }
+  }
+  refreshEditorState();
+  if (savedProject && !bootWarning) {
+    saveProject();
+  }
   syncPaintControls();
   cameraController = setupTrackCamera(canvas, viewer, {
     maxHeight: MAX_CAMERA_HEIGHT,
@@ -2516,9 +3277,6 @@ async function boot() {
   syncCameraViewButton();
   syncTreeDetailButton();
   applyCameraView();
-  const debug = JSON.parse(viewer.debug_info());
-  renderStats(debug);
-  drawsLabel.textContent = String(debug.stats.drawCalls);
   const observer = new ResizeObserver(() => {
     if (resizeCanvas()) {
       viewer.resize(canvas.width, canvas.height);
@@ -2557,6 +3315,9 @@ async function boot() {
   status.textContent = "ready";
   status.className = "status ready";
   window.__trackEditorReady = true;
+  if (bootWarning) {
+    flashStatus(bootWarning);
+  }
   requestAnimationFrame(frame);
   requestAnimationFrame(hideLoading);
 }

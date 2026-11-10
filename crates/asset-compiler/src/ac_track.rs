@@ -328,7 +328,10 @@ pub fn import_track_scaled_with_overrides(
         cameras: vec![camera],
         sectors: Vec::new(),
         surfaces,
-    };
+        layouts: Vec::new(),
+        default_layout: 0,
+    }
+    .normalize_layouts();
 
     warnings.push(format!("track scale {scale:.3}"));
     warnings.push(format!("spawn derived from {spawn_name}"));

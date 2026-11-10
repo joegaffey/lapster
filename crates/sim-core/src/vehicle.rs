@@ -1147,7 +1147,10 @@ mod tests {
                 friction: 1.0,
                 roughness: 0.0,
             }],
-        };
+            layouts: Vec::new(),
+            default_layout: 0,
+        }
+        .normalize_layouts();
         TrackCollider::from_collision(&collision, &metadata)
     }
 
@@ -1191,7 +1194,10 @@ mod tests {
                     roughness: 0.5,
                 },
             ],
-        };
+            layouts: Vec::new(),
+            default_layout: 0,
+        }
+        .normalize_layouts();
         TrackCollider::from_collision(&collision, &metadata)
     }
 
@@ -1225,7 +1231,10 @@ mod tests {
                 friction: 1.0,
                 roughness: 0.0,
             }],
-        };
+            layouts: Vec::new(),
+            default_layout: 0,
+        }
+        .normalize_layouts();
         TrackCollider::from_collision(&collision, &metadata)
     }
 

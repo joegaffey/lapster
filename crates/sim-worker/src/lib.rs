@@ -1,7 +1,7 @@
 use glam::{Quat, Vec3};
 use sim_core::{Controls, PhysicsTuning, TrackCollider, Vehicle, FIXED_DT};
 use sim_types::snapshot_state as state;
-use sim_types::{CarTuning, SNAPSHOT_STATE_FLOATS};
+use sim_types::{CarTuning, SpawnPoint, TrackMetadata, SNAPSHOT_STATE_FLOATS};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -15,50 +15,16 @@ pub struct Simulation {
 impl Simulation {
     #[wasm_bindgen(constructor)]
     pub fn new(track_pack_bytes: &[u8], car_pack_bytes: &[u8]) -> Result<Simulation, JsValue> {
-        let track_bytes = track_pack_bytes.to_vec();
-        let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
-        if track_pack.kind() != sim_types::AssetKind::Track {
-            return Err(JsValue::from_str("expected a track pack"));
-        }
-        let track_collision = track_pack.track_collision_owned().map_err(js_error)?;
-        let track_metadata = track_pack.track_metadata_owned().map_err(js_error)?;
-        drop(track_pack);
+        Self::new_with_layout(track_pack_bytes, car_pack_bytes, None)
+    }
 
-        let car_bytes = car_pack_bytes.to_vec();
-        let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-        if car_pack.kind() != sim_types::AssetKind::Car {
-            return Err(JsValue::from_str("expected a car pack"));
-        }
-        let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-        drop(car_pack);
-
-        let mut spawn = track_metadata
-            .spawns
-            .first()
-            .cloned()
-            .ok_or_else(|| JsValue::from_str("track has no spawn point"))?;
-        let spawn_rotation = Quat::from_xyzw(
-            spawn.rotation_xyzw[0],
-            spawn.rotation_xyzw[1],
-            spawn.rotation_xyzw[2],
-            spawn.rotation_xyzw[3],
-        );
-        let spawn_rotation = if spawn_rotation.length_squared() > 1e-8 {
-            spawn_rotation.normalize()
-        } else {
-            Quat::IDENTITY
-        };
-        spawn.rotation_xyzw =
-            (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
-        let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
-        let vehicle = Vehicle::new(car_physics, collider, &spawn);
-        let mut simulation = Simulation {
-            vehicle,
-            last_throttle: 0.0,
-            last_brake: 0.0,
-        };
-        simulation.settle();
-        Ok(simulation)
+    #[wasm_bindgen(js_name = new_with_layout)]
+    pub fn new_with_layout_wasm(
+        track_pack_bytes: &[u8],
+        car_pack_bytes: &[u8],
+        layout: Option<String>,
+    ) -> Result<Simulation, JsValue> {
+        Self::new_with_layout(track_pack_bytes, car_pack_bytes, layout.as_deref())
     }
 
     pub fn step(
@@ -242,6 +208,125 @@ impl Simulation {
     }
 }
 
+impl Simulation {
+    pub fn new_with_layout(
+        track_pack_bytes: &[u8],
+        car_pack_bytes: &[u8],
+        layout: Option<&str>,
+    ) -> Result<Simulation, JsValue> {
+        let track_bytes = track_pack_bytes.to_vec();
+        let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
+        if track_pack.kind() != sim_types::AssetKind::Track {
+            return Err(JsValue::from_str("expected a track pack"));
+        }
+        let track_collision = track_pack.track_collision_owned().map_err(js_error)?;
+        let track_metadata = track_pack.track_metadata_owned().map_err(js_error)?;
+        drop(track_pack);
+
+        let car_bytes = car_pack_bytes.to_vec();
+        let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
+        if car_pack.kind() != sim_types::AssetKind::Car {
+            return Err(JsValue::from_str("expected a car pack"));
+        }
+        let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
+        drop(car_pack);
+
+        let mut spawn = spawn_for_layout(&track_metadata, layout)?;
+        let spawn_rotation = Quat::from_xyzw(
+            spawn.rotation_xyzw[0],
+            spawn.rotation_xyzw[1],
+            spawn.rotation_xyzw[2],
+            spawn.rotation_xyzw[3],
+        );
+        let spawn_rotation = if spawn_rotation.length_squared() > 1e-8 {
+            spawn_rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        spawn.rotation_xyzw =
+            (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
+        let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
+        let vehicle = Vehicle::new(car_physics, collider, &spawn);
+        let mut simulation = Simulation {
+            vehicle,
+            last_throttle: 0.0,
+            last_brake: 0.0,
+        };
+        simulation.settle();
+        Ok(simulation)
+    }
+}
+
+fn spawn_for_layout(
+    track_metadata: &TrackMetadata,
+    layout: Option<&str>,
+) -> Result<SpawnPoint, JsValue> {
+    track_metadata
+        .spawns_for_layout(layout)
+        .first()
+        .cloned()
+        .ok_or_else(|| JsValue::from_str("track has no spawn point"))
+}
+
 fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_types::LayoutSpec;
+
+    fn spawn(name: &str, position: [f32; 3]) -> SpawnPoint {
+        SpawnPoint {
+            name: name.to_string(),
+            position,
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+
+    fn layout(id: &str, name: &str, spawn_name: &str, position: [f32; 3]) -> LayoutSpec {
+        LayoutSpec {
+            id: id.to_string(),
+            name: name.to_string(),
+            length: 100.0,
+            start_finish: 0.0,
+            spawns: vec![spawn(spawn_name, position)],
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+        }
+    }
+
+    fn two_layout_metadata() -> TrackMetadata {
+        TrackMetadata {
+            name: "venue".to_string(),
+            length: 100.0,
+            spawns: vec![spawn("main", [1.0, 0.0, 0.0])],
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+            surfaces: Vec::new(),
+            layouts: vec![
+                layout("main", "Main Circuit", "main", [1.0, 0.0, 0.0]),
+                layout("short", "Short Circuit", "short", [2.0, 0.0, 0.0]),
+            ],
+            default_layout: 0,
+        }
+        .normalize_layouts()
+    }
+
+    #[test]
+    fn selects_layout_spawn_and_falls_back_for_unknown_id() {
+        let metadata = two_layout_metadata();
+
+        let selected = spawn_for_layout(&metadata, Some("short")).expect("selected layout spawn");
+        assert_eq!(selected.position, [2.0, 0.0, 0.0]);
+
+        let defaulted = spawn_for_layout(&metadata, Some("missing")).expect("default layout spawn");
+        assert_eq!(defaulted.position, [1.0, 0.0, 0.0]);
+
+        let no_selection = spawn_for_layout(&metadata, None).expect("default layout spawn");
+        assert_eq!(no_selection.position, [1.0, 0.0, 0.0]);
+    }
 }
