@@ -78,6 +78,11 @@ Deployment:
   segments unique, edits interior points, paints kerbs/props on the selected
   segment, and authors a pit-lane path without listing it as a route. The
   editor Playwright suite is rewritten for `@4`. Full gate is green.
+  This branch is now a **reference snapshot** (`e03e138`), not a merge
+  candidate. The next implementation starts a fresh `feat/venue-graph` branch
+  from `main` and follows `docs/features/venue-graph-plan.md`: one canonical
+  graph model, canonical decoration paths, incremental phases, and no legacy
+  compatibility layer.
 
 ## Completed checkpoints
 
