@@ -1,6 +1,6 @@
 # Plan: canonical venue graph rebuild
 
-Status: agreed implementation plan, not started
+Status: Phase 1 and Phase 2 complete on `feat/venue-graph`; Phase 3 not started
 Created: 2026-11-11
 Owner: @joegaffey
 Reference branch: `feat/multi-circuit-track` (`e03e138`)

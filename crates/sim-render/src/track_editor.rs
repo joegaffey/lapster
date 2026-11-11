@@ -203,6 +203,12 @@ pub struct PropLine {
     #[serde(default = "default_prop_offset")]
     pub offset: f32,
     pub kind: PropKind,
+    /// Optional spacing override in metres for decoration-path props.
+    #[serde(default)]
+    pub spacing: Option<f32>,
+    /// Optional distance offset into the decoration path, in metres.
+    #[serde(default)]
+    pub phase: f32,
 }
 
 pub struct EditorTrack {
@@ -799,6 +805,7 @@ impl TrackProject {
                 }
             }
         }
+        validate_decoration_coverage(&self.decorations)?;
 
         Ok(())
     }
@@ -827,6 +834,233 @@ impl TrackProject {
     pub fn layout_index(&self, id: &str) -> Option<usize> {
         self.layouts.iter().position(|layout| layout.id == id)
     }
+
+    /// Moves a junction. Decoration anchors are fractions along segments, so
+    /// they reparameterise automatically when the junction moves.
+    #[allow(dead_code)]
+    pub fn move_junction(&mut self, id: &str, x: f32, z: f32) -> Result<(), String> {
+        if !x.is_finite() || !z.is_finite() {
+            return Err("junction position must be finite".to_string());
+        }
+        let junction = self
+            .junctions
+            .iter_mut()
+            .find(|junction| junction.id == id)
+            .ok_or_else(|| format!("unknown junction id '{id}'"))?;
+        junction.position = [x, z];
+        self.normalize_in_place()
+    }
+
+    #[allow(dead_code)]
+    pub fn set_junction_position(&mut self, id: &str, position: [f32; 2]) -> Result<(), String> {
+        self.move_junction(id, position[0], position[1])
+    }
+
+    /// Splits a segment into two canonical segments. The first keeps the
+    /// original id; the second gets a new id. Every layout, path, and
+    /// decoration chain is updated and decoration anchors are rebased.
+    #[allow(dead_code)]
+    pub fn split_segment(&mut self, segment_id: &str, fraction: f32) -> Result<String, String> {
+        self.normalize_in_place()?;
+        if !fraction.is_finite() || fraction <= 1e-4 || fraction >= 1.0 - 1e-4 {
+            return Err("segment split fraction must lie strictly inside (0, 1)".to_string());
+        }
+        let index = self
+            .segments
+            .iter()
+            .position(|segment| segment.id == segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let original = self.segments[index].clone();
+        let split_point = sample_segment_at(self, &original, fraction)?;
+        let before = sample_segment_at(self, &original, (fraction - 1e-3).max(0.0))?;
+        let after = sample_segment_at(self, &original, (fraction + 1e-3).min(0.999_999))?;
+        let direction = (after - before).normalize_or_zero();
+        let split_tangent = if direction.length_squared() > 1e-8 {
+            Some([direction.x, direction.z])
+        } else {
+            None
+        };
+
+        let new_junction_id = unique_track_id(
+            &format!("junction-split-{segment_id}"),
+            self.junctions.iter().map(|junction| junction.id.as_str()),
+        );
+        let new_segment_id = unique_track_id(
+            &format!("segment-split-{segment_id}"),
+            self.segments.iter().map(|segment| segment.id.as_str()),
+        );
+        let cut = if original.points.is_empty() {
+            0
+        } else {
+            (((original.points.len() + 1) as f32 * fraction).round() as usize)
+                .clamp(0, original.points.len())
+        };
+
+        let junction_insert = self
+            .junctions
+            .iter()
+            .position(|junction| junction.id == original.from)
+            .map(|index| index + 1)
+            .unwrap_or(self.junctions.len());
+        self.junctions.insert(
+            junction_insert,
+            Junction {
+                id: new_junction_id.clone(),
+                position: [split_point.x, split_point.z],
+                kind: JunctionKind::Normal,
+                profile: None,
+            },
+        );
+
+        let first = Segment {
+            id: original.id.clone(),
+            from: original.from.clone(),
+            to: new_junction_id.clone(),
+            points: original.points[..cut].to_vec(),
+            from_tangent: original.from_tangent,
+            to_tangent: split_tangent,
+            start_profile: original.start_profile.clone(),
+            end_profile: None,
+        };
+        let second = Segment {
+            id: new_segment_id.clone(),
+            from: new_junction_id,
+            to: original.to.clone(),
+            points: original.points[cut..].to_vec(),
+            from_tangent: split_tangent,
+            to_tangent: original.to_tangent,
+            start_profile: None,
+            end_profile: original.end_profile.clone(),
+        };
+        self.segments[index] = first;
+        self.segments.insert(index + 1, second);
+
+        for layout in &mut self.layouts {
+            layout.route = replace_chain_segment(&layout.route, segment_id, &new_segment_id);
+            rebase_start_finish(
+                &mut layout.start_finish,
+                segment_id,
+                &new_segment_id,
+                fraction,
+            );
+        }
+        for path in &mut self.paths {
+            path.route = replace_chain_segment(&path.route, segment_id, &new_segment_id);
+        }
+        for decoration in &mut self.decorations {
+            decoration.segments =
+                replace_chain_segment(&decoration.segments, segment_id, &new_segment_id);
+            if let Some(anchor) = &mut decoration.start {
+                rebase_decoration_anchor(anchor, segment_id, &new_segment_id, fraction);
+            }
+            if let Some(anchor) = &mut decoration.end {
+                rebase_decoration_anchor(anchor, segment_id, &new_segment_id, fraction);
+            }
+        }
+
+        self.normalize_in_place()?;
+        Ok(new_segment_id)
+    }
+
+    /// Deletes an unreferenced segment. Segments used by layouts, paths, or
+    /// decoration paths are blocked; decoration is never silently joined
+    /// across the gap.
+    #[allow(dead_code)]
+    pub fn delete_segment(&mut self, id: &str) -> Result<(), String> {
+        self.normalize_in_place()?;
+        if !self.segments.iter().any(|segment| segment.id == id) {
+            return Err(format!("unknown segment id '{id}'"));
+        }
+        if self.decorations.iter().any(|decoration| {
+            decoration
+                .segments
+                .iter()
+                .any(|segment_id| segment_id == id)
+        }) {
+            return Err(format!(
+                "cannot delete segment '{id}': decoration paths reference it; split or delete the decoration paths first"
+            ));
+        }
+        if self.layouts.iter().any(|layout| {
+            layout.route.iter().any(|segment_id| segment_id == id)
+                || layout.start_finish.segment_id == id
+        }) || self
+            .paths
+            .iter()
+            .any(|path| path.route.iter().any(|segment_id| segment_id == id))
+        {
+            return Err(format!(
+                "cannot delete segment '{id}': it is used by a layout or path"
+            ));
+        }
+        self.segments.retain(|segment| segment.id != id);
+        self.normalize_in_place()
+    }
+}
+
+#[allow(dead_code)]
+fn unique_track_id<'a>(base: &str, existing: impl Iterator<Item = &'a str>) -> String {
+    let existing = existing.collect::<BTreeSet<_>>();
+    if !existing.contains(base) {
+        return base.to_string();
+    }
+    for suffix in 1.. {
+        let candidate = format!("{base}-{suffix}");
+        if !existing.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded id search")
+}
+
+#[allow(dead_code)]
+fn replace_chain_segment(route: &[String], old_id: &str, new_id: &str) -> Vec<String> {
+    let mut updated = Vec::with_capacity(route.len() + 1);
+    for segment_id in route {
+        updated.push(segment_id.clone());
+        if segment_id == old_id {
+            updated.push(new_id.to_string());
+        }
+    }
+    updated
+}
+
+#[allow(dead_code)]
+fn rebase_decoration_anchor(
+    anchor: &mut DecorationAnchor,
+    old_id: &str,
+    new_id: &str,
+    split_fraction: f32,
+) {
+    if anchor.segment_id != old_id {
+        return;
+    }
+    if anchor.fraction < split_fraction {
+        anchor.fraction = (anchor.fraction / split_fraction).clamp(0.0, 1.0);
+    } else {
+        anchor.segment_id = new_id.to_string();
+        anchor.fraction =
+            ((anchor.fraction - split_fraction) / (1.0 - split_fraction)).clamp(0.0, 1.0);
+    }
+}
+
+#[allow(dead_code)]
+fn rebase_start_finish(
+    start_finish: &mut StartFinish,
+    old_id: &str,
+    new_id: &str,
+    split_fraction: f32,
+) {
+    if start_finish.segment_id != old_id {
+        return;
+    }
+    if start_finish.fraction < split_fraction {
+        start_finish.fraction = (start_finish.fraction / split_fraction).clamp(0.0, 1.0);
+    } else {
+        start_finish.segment_id = new_id.to_string();
+        start_finish.fraction =
+            ((start_finish.fraction - split_fraction) / (1.0 - split_fraction)).clamp(0.0, 1.0);
+    }
 }
 
 fn validate_unique_ids<'a>(ids: impl Iterator<Item = &'a str>, label: &str) -> Result<(), String> {
@@ -834,6 +1068,123 @@ fn validate_unique_ids<'a>(ids: impl Iterator<Item = &'a str>, label: &str) -> R
     for id in ids {
         if !seen.insert(id) {
             return Err(format!("duplicate {label} id '{id}'"));
+        }
+    }
+    Ok(())
+}
+
+/// Per-segment coverage of one decoration path, expressed as fractions along
+/// each segment's canonical direction.
+fn decoration_coverage(
+    decoration: &DecorationPath,
+) -> Result<BTreeMap<String, (f32, f32)>, String> {
+    let len = decoration.segments.len();
+    let mut start_index = 0usize;
+    let mut start_fraction = 0.0;
+    if let Some(anchor) = &decoration.start {
+        start_index = decoration
+            .segments
+            .iter()
+            .position(|segment_id| segment_id == &anchor.segment_id)
+            .ok_or_else(|| {
+                format!(
+                    "decoration '{}' start anchor references segment '{}' outside its chain",
+                    decoration.id, anchor.segment_id
+                )
+            })?;
+        start_fraction = anchor.fraction;
+    }
+    while start_fraction >= 1.0 - 1e-6 && start_index + 1 < len {
+        start_index += 1;
+        start_fraction = 0.0;
+    }
+    if start_index >= len || start_fraction >= 1.0 - 1e-6 {
+        return Err(format!(
+            "decoration '{}' has an empty start range",
+            decoration.id
+        ));
+    }
+
+    let (end_index, end_fraction) = match &decoration.end {
+        Some(anchor) => {
+            let index = decoration
+                .segments
+                .iter()
+                .position(|segment_id| segment_id == &anchor.segment_id)
+                .ok_or_else(|| {
+                    format!(
+                        "decoration '{}' end anchor references segment '{}' outside its chain",
+                        decoration.id, anchor.segment_id
+                    )
+                })?;
+            (index, anchor.fraction)
+        }
+        None => (len, 1.0),
+    };
+    if end_index < start_index
+        || (end_index == start_index && end_fraction <= start_fraction + 1e-6)
+    {
+        return Err(format!(
+            "decoration '{}' start anchor must precede its end anchor",
+            decoration.id
+        ));
+    }
+
+    let mut coverage = BTreeMap::new();
+    if end_index >= len {
+        for index in start_index..len {
+            let start = if index == start_index {
+                start_fraction
+            } else {
+                0.0
+            };
+            coverage.insert(decoration.segments[index].clone(), (start, 1.0));
+        }
+    } else if end_index == start_index {
+        coverage.insert(
+            decoration.segments[start_index].clone(),
+            (start_fraction, end_fraction),
+        );
+    } else {
+        coverage.insert(
+            decoration.segments[start_index].clone(),
+            (start_fraction, 1.0),
+        );
+        for index in start_index + 1..end_index {
+            coverage.insert(decoration.segments[index].clone(), (0.0, 1.0));
+        }
+        if end_fraction > 1e-6 {
+            coverage.insert(decoration.segments[end_index].clone(), (0.0, end_fraction));
+        }
+    }
+    Ok(coverage)
+}
+
+fn decorations_share_lane(a: &DecorationPath, b: &DecorationPath) -> bool {
+    a.kind == b.kind && (a.side < 0) == (b.side < 0) && a.lane == b.lane
+}
+
+fn validate_decoration_coverage(decorations: &[DecorationPath]) -> Result<(), String> {
+    let mut coverages = Vec::with_capacity(decorations.len());
+    for decoration in decorations {
+        coverages.push(decoration_coverage(decoration)?);
+    }
+    for first in 0..decorations.len() {
+        for second in first + 1..decorations.len() {
+            if !decorations_share_lane(&decorations[first], &decorations[second]) {
+                continue;
+            }
+            for (segment_id, (start, end)) in &coverages[first] {
+                let Some((other_start, other_end)) = coverages[second].get(segment_id) else {
+                    continue;
+                };
+                if *start < *other_end - 1e-5 && *other_start < *end - 1e-5 {
+                    return Err(format!(
+                        "decorations '{}' and '{}' overlap on segment '{}'",
+                        decorations[first].id, decorations[second].id, segment_id
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -928,6 +1279,8 @@ fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
             side: outside_side,
             offset: PROP_OFFSET,
             kind: PropKind::Blocks,
+            spacing: None,
+            phase: 0.0,
         });
         lines.push(PropLine {
             start,
@@ -935,6 +1288,8 @@ fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
             side: -outside_side,
             offset: PROP_OFFSET,
             kind: PropKind::Tyres,
+            spacing: None,
+            phase: 0.0,
         });
     }
     for (start, end) in segmented_ring(
@@ -949,6 +1304,8 @@ fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
                 side,
                 offset: PROP_FAR_OFFSET,
                 kind: PropKind::Trees,
+                spacing: None,
+                phase: 0.0,
             });
         }
     }
@@ -976,6 +1333,8 @@ fn sanitize_prop_lines(lines: &[PropLine], count: usize) -> Vec<PropLine> {
                 side: if line.side >= 0 { 1 } else { -1 },
                 offset,
                 kind: line.kind,
+                spacing: line.spacing,
+                phase: line.phase,
             })
         })
         .collect::<Vec<_>>();
@@ -1387,6 +1746,454 @@ pub fn layout_centerline(
     Ok(points.iter().map(|point| point.to_array()).collect())
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct KerbElementRun {
+    start: f32,
+    end: f32,
+    side: i8,
+    elements: Vec<f32>,
+    phase: f32,
+}
+
+struct RouteArc {
+    cumulative: Vec<f32>,
+    total: f32,
+}
+
+impl RouteArc {
+    fn new(points: &[Vec3]) -> Self {
+        let mut cumulative = Vec::with_capacity(points.len() + 1);
+        cumulative.push(0.0);
+        let mut total = 0.0;
+        for index in 0..points.len() {
+            total += points[index].distance(points[(index + 1) % points.len()]);
+            cumulative.push(total);
+        }
+        Self { cumulative, total }
+    }
+
+    fn distance_at_station(&self, station: f32) -> f32 {
+        if self.cumulative.len() < 2 {
+            return 0.0;
+        }
+        let limit = self.cumulative.len() as f32 - 1.0;
+        let station = station.clamp(0.0, limit);
+        let base = station.floor() as usize;
+        if base + 1 >= self.cumulative.len() {
+            return self.total;
+        }
+        let t = station - base as f32;
+        self.cumulative[base] + (self.cumulative[base + 1] - self.cumulative[base]) * t
+    }
+
+    fn station_at_distance(&self, distance: f32) -> f32 {
+        if self.cumulative.len() < 2 || self.total <= 1e-6 {
+            return 0.0;
+        }
+        let distance = distance.clamp(0.0, self.total);
+        let mut low = 0;
+        let mut high = self.cumulative.len() - 1;
+        while low + 1 < high {
+            let mid = (low + high) / 2;
+            if self.cumulative[mid] <= distance {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        let length = self.cumulative[high] - self.cumulative[low];
+        let t = if length > 1e-6 {
+            (distance - self.cumulative[low]) / length
+        } else {
+            0.0
+        };
+        low as f32 + t
+    }
+}
+
+#[derive(Default)]
+struct BakedRouteDecorations {
+    kerb_runs: Vec<KerbElementRun>,
+    kerb_spans: Vec<KerbSpan>,
+    prop_lines: Vec<PropLine>,
+    has_kerbs: bool,
+    has_props: bool,
+}
+
+fn decoration_prop_offset(lane: Option<&str>, kind: PropKind) -> f32 {
+    let default = if kind == PropKind::Trees {
+        PROP_FAR_OFFSET
+    } else {
+        PROP_OFFSET
+    };
+    lane.and_then(|lane| match lane {
+        "near" => Some(PROP_OFFSET),
+        "far" => Some(PROP_FAR_OFFSET),
+        other => other
+            .parse::<f32>()
+            .ok()
+            .filter(|offset| offset.is_finite() && *offset > 0.0)
+            .map(|offset| offset.clamp(MIN_PROP_OFFSET, MAX_PROP_OFFSET)),
+    })
+    .unwrap_or(default)
+}
+
+/// Returns the route station range covered by a decoration path for one
+/// layout. `None` means the layout does not use this decoration chain.
+fn decoration_route_range(
+    layout: &LayoutProject,
+    decoration: &DecorationPath,
+    route_scale: f32,
+) -> Option<(f32, f32)> {
+    let route = &layout.route;
+    let route_len = route.len();
+    if route_len == 0 || decoration.segments.is_empty() {
+        return None;
+    }
+    let start_index = route
+        .iter()
+        .position(|segment_id| segment_id == &decoration.segments[0])?;
+    for (offset, segment_id) in decoration.segments.iter().enumerate() {
+        if route[(start_index + offset) % route_len] != *segment_id {
+            return None;
+        }
+    }
+
+    let (start_chain_index, start_fraction) = decoration
+        .start
+        .as_ref()
+        .and_then(|anchor| {
+            decoration
+                .segments
+                .iter()
+                .position(|segment_id| segment_id == &anchor.segment_id)
+                .map(|index| (index, anchor.fraction))
+        })
+        .unwrap_or((0, 0.0));
+    let start_position = start_index as f32 + start_chain_index as f32 + start_fraction;
+
+    let end_position = match &decoration.end {
+        Some(anchor) => {
+            let chain_index = decoration
+                .segments
+                .iter()
+                .position(|segment_id| segment_id == &anchor.segment_id)?;
+            start_index as f32 + chain_index as f32 + anchor.fraction
+        }
+        None => start_index as f32 + decoration.segments.len() as f32,
+    };
+    if end_position <= start_position + 1e-4 {
+        return None;
+    }
+    if end_position - start_position > decoration.segments.len() as f32 + 1e-4 {
+        return None;
+    }
+    Some((start_position * route_scale, end_position * route_scale))
+}
+
+fn push_kerb_run(
+    decorations: &mut BakedRouteDecorations,
+    arc: &RouteArc,
+    start: f32,
+    end: f32,
+    side: i8,
+    elements: &[f32],
+    phase: f32,
+) {
+    let limit = arc.cumulative.len().saturating_sub(1) as f32;
+    let mut start = start.clamp(0.0, limit);
+    let mut end = end.clamp(0.0, limit);
+    if end - start <= 1e-4 {
+        return;
+    }
+    let mut phase = phase;
+    while end > limit + 1e-4 {
+        let first_length = arc.distance_at_station(limit) - arc.distance_at_station(start);
+        if limit - start > 1e-4 {
+            decorations.kerb_spans.push(KerbSpan {
+                start,
+                end: limit,
+                side,
+            });
+            decorations.kerb_runs.push(KerbElementRun {
+                start,
+                end: limit,
+                side,
+                elements: elements.to_vec(),
+                phase,
+            });
+        }
+        start = 0.0;
+        end -= limit;
+        phase += first_length;
+    }
+    if end - start > 1e-4 {
+        decorations.kerb_spans.push(KerbSpan { start, end, side });
+        decorations.kerb_runs.push(KerbElementRun {
+            start,
+            end,
+            side,
+            elements: elements.to_vec(),
+            phase,
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_prop_line(
+    decorations: &mut BakedRouteDecorations,
+    arc: &RouteArc,
+    start: f32,
+    end: f32,
+    side: i8,
+    offset: f32,
+    kind: PropKind,
+    spacing: Option<f32>,
+    phase: f32,
+) {
+    let limit = arc.cumulative.len().saturating_sub(1) as f32;
+    let mut start = start.clamp(0.0, limit);
+    let mut end = end.clamp(0.0, limit);
+    if end - start <= 1e-4 {
+        return;
+    }
+    let mut phase = phase;
+    while end > limit + 1e-4 {
+        let first_length = arc.distance_at_station(limit) - arc.distance_at_station(start);
+        if limit - start > 1e-4 {
+            decorations.prop_lines.push(PropLine {
+                start,
+                end: limit,
+                side,
+                offset,
+                kind,
+                spacing,
+                phase,
+            });
+        }
+        start = 0.0;
+        end -= limit;
+        phase += first_length;
+    }
+    if end - start > 1e-4 {
+        decorations.prop_lines.push(PropLine {
+            start,
+            end,
+            side,
+            offset,
+            kind,
+            spacing,
+            phase,
+        });
+    }
+}
+
+/// Junction clearance in metres at a route position. Degree-two junctions are
+/// continuous road; fork and pit junctions get a bake-time clearance so kerbs
+/// and props do not poke into the junction mouth.
+fn decoration_endpoint_clearance(
+    project: &TrackProject,
+    layout: &LayoutProject,
+    route_position: f32,
+) -> f32 {
+    let route_len = layout.route.len();
+    if route_len == 0 {
+        return 0.0;
+    }
+    let rounded = route_position.round();
+    if (route_position - rounded).abs() > 1e-4 {
+        return 0.0;
+    }
+    let index = (rounded as i64).rem_euclid(route_len as i64) as usize;
+    let Some(segment) = project.segment_by_id(&layout.route[index]) else {
+        return 0.0;
+    };
+    let Some(junction) = project.junction_by_id(&segment.from) else {
+        return 0.0;
+    };
+    match junction.kind {
+        JunctionKind::Fork => 1.0,
+        JunctionKind::PitEntry | JunctionKind::PitExit => 2.0,
+        JunctionKind::Normal | JunctionKind::StartFinish => {
+            let degree = project
+                .segments
+                .iter()
+                .filter(|segment| segment.from == junction.id || segment.to == junction.id)
+                .count();
+            if degree > 2 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
+/// Bakes canonical decoration paths into route-local slices for one layout.
+/// Slices are derived at bake time and are never written back to the project.
+fn bake_route_decorations(
+    project: &TrackProject,
+    layout: &LayoutProject,
+    points: &[Vec3],
+) -> Result<BakedRouteDecorations, String> {
+    let arc = RouteArc::new(points);
+    let route_scale = if layout.route.is_empty() {
+        0.0
+    } else {
+        SEGMENTS as f32 / layout.route.len() as f32
+    };
+    let mut decorations = BakedRouteDecorations::default();
+    for decoration in &project.decorations {
+        let Some((start, end)) = decoration_route_range(layout, decoration, route_scale) else {
+            continue;
+        };
+        let limit = points.len() as f32;
+        let (start, end) = if route_scale > 1e-6 && end <= limit + 1e-4 {
+            let start_clearance =
+                decoration_endpoint_clearance(project, layout, start / route_scale);
+            let end_clearance = decoration_endpoint_clearance(project, layout, end / route_scale);
+            let start = if start_clearance > 0.0 {
+                arc.station_at_distance(arc.distance_at_station(start) + start_clearance)
+            } else {
+                start
+            };
+            let end = if end_clearance > 0.0 {
+                let guarded = arc.distance_at_station(end) - end_clearance;
+                arc.station_at_distance(guarded.max(arc.distance_at_station(start)))
+            } else {
+                end
+            };
+            (start, end)
+        } else {
+            (start, end)
+        };
+        if end - start <= 1e-4 {
+            continue;
+        }
+        let side = if decoration.side < 0 { -1 } else { 1 };
+        match decoration.kind {
+            DecorationKind::Kerb => {
+                decorations.has_kerbs = true;
+                let elements = if decoration.elements.is_empty() {
+                    vec![project.settings.kerb.element_length.max(0.05)]
+                } else {
+                    decoration.elements.clone()
+                };
+                push_kerb_run(
+                    &mut decorations,
+                    &arc,
+                    start,
+                    end,
+                    side,
+                    &elements,
+                    decoration.phase,
+                );
+            }
+            DecorationKind::Prop => {
+                decorations.has_props = true;
+                let kind = decoration.prop_kind.unwrap_or(PropKind::Blocks);
+                if kind == PropKind::Off {
+                    continue;
+                }
+                let offset = decoration_prop_offset(decoration.lane.as_deref(), kind);
+                let spacing = decoration
+                    .spacing
+                    .filter(|spacing| spacing.is_finite() && *spacing > 1e-4);
+                push_prop_line(
+                    &mut decorations,
+                    &arc,
+                    start,
+                    end,
+                    side,
+                    offset,
+                    kind,
+                    spacing,
+                    decoration.phase,
+                );
+            }
+        }
+    }
+    decorations.kerb_spans = sanitize_kerb_spans(&decorations.kerb_spans, points.len());
+    Ok(decorations)
+}
+
+fn append_kerb_element(
+    points: &[Vec3],
+    start: f32,
+    end: f32,
+    side: f32,
+    buffers: &mut MeshBuffers,
+) {
+    if end - start <= 1e-4 {
+        return;
+    }
+    let mut station = start;
+    let mut previous_end = None;
+    while station < end - 1e-4 {
+        let next = (station.floor() + 1.0).min(end);
+        let (point, binormal) = track_frame(points, station);
+        let (next_point, next_binormal) = track_frame(points, next);
+        let (start_edge, end_edge) =
+            append_kerb(buffers, point, next_point, binormal, next_binormal, side);
+        if let Some(previous_end) = previous_end {
+            append_kerb_riser(buffers, previous_end, start_edge, next_point - point);
+        }
+        previous_end = Some(end_edge);
+        station = next;
+    }
+}
+
+fn append_decorated_kerbs(
+    points: &[Vec3],
+    runs: &[KerbElementRun],
+    kerb_red: &mut MeshBuffers,
+    kerb_white: &mut MeshBuffers,
+) {
+    let arc = RouteArc::new(points);
+    for run in runs {
+        let start = run.start.clamp(0.0, points.len() as f32);
+        let end = run.end.clamp(0.0, points.len() as f32);
+        if end - start <= 1e-4 || run.elements.is_empty() {
+            continue;
+        }
+        let cycle_total = run.elements.iter().sum::<f32>();
+        if cycle_total <= 1e-4 {
+            continue;
+        }
+        let mut cursor = arc.distance_at_station(start);
+        let end_distance = arc.distance_at_station(end);
+        let mut phase = run.phase.rem_euclid(cycle_total);
+        let mut element_index = 0;
+        let mut length = run.elements[0];
+        while phase >= length - 1e-4 {
+            phase -= length;
+            element_index += 1;
+            length = run.elements[element_index % run.elements.len()];
+        }
+        let mut remaining = (length - phase).max(0.0);
+        while cursor < end_distance - 1e-4 {
+            if remaining <= 1e-4 {
+                element_index += 1;
+                remaining = run.elements[element_index % run.elements.len()];
+                continue;
+            }
+            let element_length = remaining.min(end_distance - cursor);
+            let next = cursor + element_length;
+            let element_start = arc.station_at_distance(cursor);
+            let element_end = arc.station_at_distance(next);
+            let buffers = if element_index % 2 == 0 {
+                &mut *kerb_red
+            } else {
+                &mut *kerb_white
+            };
+            append_kerb_element(points, element_start, element_end, run.side as f32, buffers);
+            cursor = next;
+            element_index += 1;
+            remaining = run.elements[element_index % run.elements.len()];
+        }
+    }
+}
+
 pub fn track_from_project(project: &TrackProject) -> Result<EditorTrack, String> {
     track_from_project_with_default(project, None)
 }
@@ -1404,8 +2211,22 @@ pub fn track_from_project_with_default(
         .get(index)
         .ok_or_else(|| "track project needs at least one layout".to_string())?;
     let (points, start_finish) = sample_layout_loop(&project, layout)?;
-    let kerb_spans = sanitize_kerb_spans(&default_kerb_spans(), points.len());
-    let prop_lines = default_prop_lines(&points);
+    let baked = bake_route_decorations(&project, layout, &points)?;
+    let kerb_spans = if baked.has_kerbs {
+        baked.kerb_spans
+    } else {
+        sanitize_kerb_spans(&default_kerb_spans(), points.len())
+    };
+    let kerb_runs = if baked.has_kerbs {
+        Some(baked.kerb_runs)
+    } else {
+        None
+    };
+    let prop_lines = if baked.has_props {
+        baked.prop_lines
+    } else {
+        default_prop_lines(&points)
+    };
     build_editor_track(
         points,
         kerb_spans,
@@ -1417,6 +2238,7 @@ pub fn track_from_project_with_default(
             sectors: layout.sectors.clone(),
             cameras: layout.cameras.clone(),
             spawns: layout.spawns.clone(),
+            kerb_runs,
         },
     )
 }
@@ -1511,6 +2333,7 @@ struct TrackBuildMetadata {
     sectors: Vec<SectorSpec>,
     cameras: Vec<CameraSpec>,
     spawns: Vec<SpawnPoint>,
+    kerb_runs: Option<Vec<KerbElementRun>>,
 }
 
 impl TrackBuildMetadata {
@@ -1522,6 +2345,7 @@ impl TrackBuildMetadata {
             sectors: Vec::new(),
             cameras: Vec::new(),
             spawns: Vec::new(),
+            kerb_runs: None,
         }
     }
 }
@@ -1542,6 +2366,7 @@ fn build_editor_track(
         sectors,
         cameras,
         spawns,
+        kerb_runs,
     } = metadata;
 
     let mut visual = TrackVisual {
@@ -1598,32 +2423,36 @@ fn build_editor_track(
     let mut prop_walls = empty_buffers();
 
     let count = points.len();
-    for span in &kerb_spans {
-        let start = span.start.clamp(0.0, count as f32);
-        let end = span.end.clamp(0.0, count as f32);
-        if end - start <= 1e-4 {
-            continue;
-        }
-        let mut previous_end = None;
-        for index in start.floor() as usize..end.ceil() as usize {
-            let segment_start = (index as f32).max(start);
-            let segment_end = ((index + 1) as f32).min(end);
-            if segment_end - segment_start <= 1e-4 {
+    if let Some(runs) = &kerb_runs {
+        append_decorated_kerbs(&points, runs, &mut kerb_red, &mut kerb_white);
+    } else {
+        for span in &kerb_spans {
+            let start = span.start.clamp(0.0, count as f32);
+            let end = span.end.clamp(0.0, count as f32);
+            if end - start <= 1e-4 {
                 continue;
             }
-            let (point, binormal) = track_frame(&points, segment_start);
-            let (next, next_binormal) = track_frame(&points, segment_end);
-            let kerb = if index % 2 == 0 {
-                &mut kerb_red
-            } else {
-                &mut kerb_white
-            };
-            let (start_edge, end_edge) =
-                append_kerb(kerb, point, next, binormal, next_binormal, span.side as f32);
-            if let Some(previous_end) = previous_end {
-                append_kerb_riser(kerb, previous_end, start_edge, next - point);
+            let mut previous_end = None;
+            for index in start.floor() as usize..end.ceil() as usize {
+                let segment_start = (index as f32).max(start);
+                let segment_end = ((index + 1) as f32).min(end);
+                if segment_end - segment_start <= 1e-4 {
+                    continue;
+                }
+                let (point, binormal) = track_frame(&points, segment_start);
+                let (next, next_binormal) = track_frame(&points, segment_end);
+                let kerb = if index % 2 == 0 {
+                    &mut kerb_red
+                } else {
+                    &mut kerb_white
+                };
+                let (start_edge, end_edge) =
+                    append_kerb(kerb, point, next, binormal, next_binormal, span.side as f32);
+                if let Some(previous_end) = previous_end {
+                    append_kerb_riser(kerb, previous_end, start_edge, next - point);
+                }
+                previous_end = Some(end_edge);
             }
-            previous_end = Some(end_edge);
         }
     }
 
@@ -2318,12 +3147,16 @@ fn offset_path_vertices(points: &[Vec3], start: f32, end: f32, offset: f32) -> V
 }
 
 fn prop_placements(points: &[Vec3], line: &PropLine) -> Vec<(Vec3, Vec3)> {
-    let spacing = match line.kind {
+    let default_spacing = match line.kind {
         PropKind::Blocks => BLOCK_SPACING,
         PropKind::Tyres => TYRE_SPACING,
         PropKind::Trees => TREE_SPACING,
         PropKind::Off => return Vec::new(),
     };
+    let spacing = line
+        .spacing
+        .filter(|spacing| spacing.is_finite() && *spacing > 1e-4)
+        .unwrap_or(default_spacing);
     let vertices =
         offset_path_vertices(points, line.start, line.end, line.offset * line.side as f32);
     let mut segments = Vec::with_capacity(vertices.len().saturating_sub(1));
@@ -2341,7 +3174,11 @@ fn prop_placements(points: &[Vec3], line: &PropLine) -> Vec<(Vec3, Vec3)> {
     }
 
     let mut placements = Vec::new();
-    let mut distance = 0.0;
+    let mut distance = if line.phase.is_finite() {
+        line.phase.rem_euclid(spacing)
+    } else {
+        0.0
+    };
     let mut segment = 0;
     while distance < total - 1e-4 {
         while segment + 1 < segments.len() && distance > segments[segment].3 + segments[segment].2 {
@@ -3620,6 +4457,306 @@ mod tests {
             < 1.0));
     }
 
+    fn kerb_decoration(
+        id: &str,
+        segments: &[&str],
+        start: Option<(&str, f32)>,
+        end: Option<(&str, f32)>,
+        side: i8,
+        elements: Vec<f32>,
+    ) -> DecorationPath {
+        DecorationPath {
+            id: id.to_string(),
+            kind: DecorationKind::Kerb,
+            side,
+            lane: None,
+            segments: segments.iter().map(|segment| segment.to_string()).collect(),
+            start: start.map(|(segment_id, fraction)| DecorationAnchor {
+                segment_id: segment_id.to_string(),
+                fraction,
+            }),
+            end: end.map(|(segment_id, fraction)| DecorationAnchor {
+                segment_id: segment_id.to_string(),
+                fraction,
+            }),
+            elements,
+            phase: 0.0,
+            prop_kind: None,
+            spacing: None,
+        }
+    }
+
+    fn prop_decoration(
+        id: &str,
+        segments: &[&str],
+        side: i8,
+        lane: &str,
+        kind: PropKind,
+        spacing: f32,
+        phase: f32,
+    ) -> DecorationPath {
+        DecorationPath {
+            id: id.to_string(),
+            kind: DecorationKind::Prop,
+            side,
+            lane: Some(lane.to_string()),
+            segments: segments.iter().map(|segment| segment.to_string()).collect(),
+            start: None,
+            end: None,
+            elements: Vec::new(),
+            phase,
+            prop_kind: Some(kind),
+            spacing: Some(spacing),
+        }
+    }
+
+    #[test]
+    fn decoration_paths_bake_across_segment_boundaries_without_duplication() {
+        let mut project = TrackProject::default_project();
+        let mut decoration = kerb_decoration(
+            "kerb-a",
+            &["segment-1", "segment-2"],
+            Some(("segment-1", 0.25)),
+            Some(("segment-2", 0.75)),
+            1,
+            vec![1.5, 2.5],
+        );
+        decoration.phase = 0.4;
+        project.decorations.push(decoration);
+        let project = project.normalize().expect("normalize project");
+        let (points, _) = sample_layout_loop(&project, &project.layouts[0]).expect("points");
+        let baked = bake_route_decorations(&project, &project.layouts[0], &points)
+            .expect("bake decorations");
+        assert!(baked.has_kerbs);
+        assert_eq!(baked.kerb_runs.len(), 1);
+        assert_eq!(baked.kerb_spans.len(), 1);
+        let run = &baked.kerb_runs[0];
+        let segment_span = SEGMENTS as f32 / CONTROL_POINTS.len() as f32;
+        assert!(
+            run.end - run.start > segment_span * 1.4,
+            "expected the run to cross the segment boundary"
+        );
+
+        let track = track_from_project(&project).expect("track");
+        let mesh = |name: &str| {
+            track
+                .visual
+                .meshes
+                .iter()
+                .position(|mesh| mesh.name == name)
+                .and_then(|index| track.visual.mesh_buffers.get(index))
+                .unwrap_or_else(|| panic!("missing {name} mesh"))
+        };
+        assert!(!mesh("kerb_red").positions.is_empty());
+        assert!(!mesh("kerb_white").positions.is_empty());
+        let again = track_from_project(&project).expect("deterministic track");
+        assert_eq!(track.visual, again.visual);
+        assert_eq!(track.collision, again.collision);
+    }
+
+    #[test]
+    fn decoration_props_keep_spacing_and_phase_across_segments() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(prop_decoration(
+            "props-a",
+            &["segment-0", "segment-1"],
+            1,
+            "far",
+            PropKind::Trees,
+            6.0,
+            2.0,
+        ));
+        let project = project.normalize().expect("normalize project");
+        let (points, _) = sample_layout_loop(&project, &project.layouts[0]).expect("points");
+        let baked = bake_route_decorations(&project, &project.layouts[0], &points)
+            .expect("bake decorations");
+        assert!(baked.has_props);
+        assert_eq!(baked.prop_lines.len(), 1);
+        let line = &baked.prop_lines[0];
+        assert_eq!(line.spacing, Some(6.0));
+        assert!((line.phase - 2.0).abs() < 1e-5);
+        let placements = prop_placements(&points, line);
+        assert!(placements.len() > 2);
+        for pair in placements.windows(2) {
+            let distance = pair[0].0.distance(pair[1].0);
+            assert!(
+                (distance - 6.0).abs() < 0.2,
+                "expected continuous 6 m prop spacing, got {distance}"
+            );
+        }
+
+        let track = track_from_project(&project).expect("track");
+        assert!(track
+            .visual
+            .meshes
+            .iter()
+            .any(|mesh| mesh.name == "tree_trunks_high"));
+        let again = track_from_project(&project).expect("deterministic track");
+        assert_eq!(track.visual, again.visual);
+    }
+
+    #[test]
+    fn overlapping_decorations_are_rejected_only_on_the_same_lane() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(kerb_decoration(
+            "kerb-a",
+            &["segment-0"],
+            None,
+            None,
+            1,
+            Vec::new(),
+        ));
+        project.decorations.push(kerb_decoration(
+            "kerb-b",
+            &["segment-0"],
+            None,
+            None,
+            1,
+            Vec::new(),
+        ));
+        assert!(project.clone().normalize().is_err());
+
+        project.decorations[1].side = -1;
+        assert!(project.normalize().is_ok());
+    }
+
+    #[test]
+    fn decoration_anchors_must_run_in_chain_order() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(kerb_decoration(
+            "kerb-bad",
+            &["segment-0", "segment-1"],
+            Some(("segment-1", 0.5)),
+            Some(("segment-0", 0.5)),
+            1,
+            Vec::new(),
+        ));
+        assert!(project.normalize().is_err());
+    }
+
+    #[test]
+    fn fork_and_pit_junctions_clear_decoration_endpoints_at_bake_time() {
+        let mut project = TrackProject::default_project();
+        assert_eq!(
+            decoration_endpoint_clearance(&project, &project.layouts[0], 0.0),
+            0.0
+        );
+        project.junctions[0].kind = JunctionKind::Fork;
+        assert_eq!(
+            decoration_endpoint_clearance(&project, &project.layouts[0], 0.0),
+            1.0
+        );
+        project.junctions[0].kind = JunctionKind::PitExit;
+        assert_eq!(
+            decoration_endpoint_clearance(&project, &project.layouts[0], 0.0),
+            2.0
+        );
+        assert_eq!(
+            decoration_endpoint_clearance(&project, &project.layouts[0], 0.5),
+            0.0
+        );
+    }
+
+    #[test]
+    fn splitting_a_segment_rebases_decoration_chains_and_anchors() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(kerb_decoration(
+            "kerb-a",
+            &["segment-1", "segment-2"],
+            Some(("segment-1", 0.25)),
+            Some(("segment-2", 0.75)),
+            1,
+            vec![2.0],
+        ));
+        project = project.normalize().expect("normalize project");
+        let new_segment = project.split_segment("segment-1", 0.5).expect("split");
+        assert_eq!(
+            project.decorations[0].segments,
+            ["segment-1", new_segment.as_str(), "segment-2"]
+        );
+        let start = project.decorations[0].start.as_ref().expect("start");
+        assert_eq!(start.segment_id, "segment-1");
+        assert!((start.fraction - 0.5).abs() < 1e-5);
+        let end = project.decorations[0].end.as_ref().expect("end");
+        assert_eq!(end.segment_id, "segment-2");
+        assert!((end.fraction - 0.75).abs() < 1e-5);
+
+        track_from_project(&project).expect("track after split");
+
+        let second = project
+            .split_segment("segment-2", 0.5)
+            .expect("second split");
+        let end = project.decorations[0].end.as_ref().expect("end");
+        assert_eq!(end.segment_id, second);
+        assert!((end.fraction - 0.5).abs() < 1e-5);
+        track_from_project(&project).expect("track after second split");
+    }
+
+    #[test]
+    fn moving_a_junction_reparameterises_decorations_without_rewriting_paths() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(kerb_decoration(
+            "kerb-a",
+            &["segment-0"],
+            None,
+            None,
+            1,
+            vec![2.0],
+        ));
+        let before = track_from_project(&project).expect("before move");
+        let path_before = project.decorations[0].clone();
+        project
+            .move_junction("junction-1", 48.0, -42.0)
+            .expect("move");
+        let after = track_from_project(&project).expect("after move");
+        assert_ne!(before.visual, after.visual);
+        assert_eq!(project.decorations[0], path_before);
+    }
+
+    #[test]
+    fn deleting_a_decorated_segment_is_blocked() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(kerb_decoration(
+            "kerb-a",
+            &["segment-1"],
+            None,
+            None,
+            1,
+            Vec::new(),
+        ));
+        assert!(project.delete_segment("segment-1").is_err());
+
+        let mut spare = TrackProject::default_project();
+        spare.junctions.push(Junction {
+            id: "junction-spare-a".to_string(),
+            position: [80.0, 80.0],
+            kind: JunctionKind::Normal,
+            profile: None,
+        });
+        spare.junctions.push(Junction {
+            id: "junction-spare-b".to_string(),
+            position: [90.0, 90.0],
+            kind: JunctionKind::Normal,
+            profile: None,
+        });
+        spare.segments.push(Segment {
+            id: "segment-spare".to_string(),
+            from: "junction-spare-a".to_string(),
+            to: "junction-spare-b".to_string(),
+            points: Vec::new(),
+            from_tangent: None,
+            to_tangent: None,
+            start_profile: None,
+            end_profile: None,
+        });
+        spare = spare.normalize().expect("spare project");
+        spare.delete_segment("segment-spare").expect("delete spare");
+        assert!(!spare
+            .segments
+            .iter()
+            .any(|segment| segment.id == "segment-spare"));
+    }
+
     #[test]
     fn spawn_faces_increasing_track_direction_after_drive_flip() {
         let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
@@ -4221,6 +5358,8 @@ mod tests {
             side: 1,
             offset: PROP_FAR_OFFSET,
             kind: PropKind::Trees,
+            spacing: None,
+            phase: 0.0,
         }];
         let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&[]), Some(&lines))
             .expect("editor track");
@@ -4285,6 +5424,8 @@ mod tests {
             side: 1,
             offset: PROP_FAR_OFFSET,
             kind: PropKind::Blocks,
+            spacing: None,
+            phase: 0.0,
         };
         let vertices = offset_path_vertices(
             &points,

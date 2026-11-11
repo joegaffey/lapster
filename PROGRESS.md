@@ -52,15 +52,18 @@ Deployment:
 
 ## Current focus
 
-- Venue graph rebuild is in progress on `feat/venue-graph`. Phase 1 adds the
-  canonical `lapster/track-project@5` junction/segment/layout model and builds
+- Venue graph rebuild is in progress on `feat/venue-graph`. Phase 1 added the
+  canonical `lapster/track-project@5` junction/segment/layout model and built
   the default procedural loop from that graph with parity to the single-loop
-  baseline. Phase 2 (canonical decoration paths) is next.
+  baseline. Phase 2 added canonical kerb/prop decoration paths, bake-time
+  per-segment slicing, continuous element phase/spacing, junction clearance,
+  and split/junction reparameterisation. Phase 3 (project persistence and
+  segment editing UI) is next.
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: venue graph Phase 2, Speed Dreams physics, wheel/FFB hardware
+- Next: venue graph Phase 3, Speed Dreams physics, wheel/FFB hardware
   validation, and CP7 HID/audio integration.
 
 ## Completed checkpoints
