@@ -123,7 +123,7 @@ pub struct TrackViewer {
     vegetation: Option<scene::VegetationGroups>,
     style_car: Option<StyleCar>,
     style_drive: Option<StyleDrive>,
-    editor_project: Option<track_editor::EditorProject>,
+    editor_project: Option<track_editor::TrackProject>,
     editor_active_layout: Option<String>,
     editor_rebuilding: bool,
     tree_high_meshes: Vec<usize>,
@@ -160,10 +160,10 @@ impl TrackViewer {
     }
 
     pub async fn create_editor(canvas: web_sys::HtmlCanvasElement) -> Result<TrackViewer, JsValue> {
-        let project = crate::track_editor::EditorProject::default_project()
+        let project = crate::track_editor::TrackProject::default_project()
             .normalize()
             .map_err(js_error)?;
-        let track = crate::track_editor::track_from_editor_project(&project).map_err(js_error)?;
+        let track = crate::track_editor::track_from_project(&project).map_err(js_error)?;
         let scene = Scene::build(
             &track.visual,
             &track.metadata,
@@ -173,7 +173,7 @@ impl TrackViewer {
         .map_err(|error| JsValue::from_str(&error))?;
         let mut viewer =
             Self::create_from_scene(canvas, scene, &track.metadata, &track.collision, None).await?;
-        viewer.editor_active_layout = Some(track.project.default_loop_id().to_string());
+        viewer.editor_active_layout = Some(track.project.default_layout_id().to_string());
         viewer.editor_project = Some(track.project);
         Ok(viewer)
     }
@@ -343,22 +343,22 @@ impl TrackViewer {
         camera_json(&self.camera)
     }
 
-    fn editor_project_ref(&self) -> Result<&track_editor::EditorProject, JsValue> {
+    fn editor_project_ref(&self) -> Result<&track_editor::TrackProject, JsValue> {
         self.editor_project
             .as_ref()
             .ok_or_else(|| JsValue::from_str("editor project unavailable"))
     }
 
-    fn active_editor_layout(&self) -> Result<&track_editor::EditorLoop, JsValue> {
+    fn active_editor_layout(&self) -> Result<&track_editor::LayoutProject, JsValue> {
         let project = self.editor_project_ref()?;
         let id = self
             .editor_active_layout
             .as_deref()
-            .filter(|id| project.loop_by_id(id).is_some())
-            .unwrap_or_else(|| project.default_loop_id());
+            .filter(|id| project.layout_by_id(id).is_some())
+            .unwrap_or_else(|| project.default_layout_id());
         project
-            .loop_by_id(id)
-            .ok_or_else(|| JsValue::from_str("active editor loop unavailable"))
+            .layout_by_id(id)
+            .ok_or_else(|| JsValue::from_str("active editor layout unavailable"))
     }
 
     fn active_editor_layout_id(&self) -> Result<String, JsValue> {
@@ -368,8 +368,7 @@ impl TrackViewer {
     pub fn editor_control_points(&self) -> String {
         match (self.editor_project_ref(), self.active_editor_layout()) {
             (Ok(project), Ok(layout)) => {
-                let points = project
-                    .loop_control_points(layout)
+                let points = crate::track_editor::layout_control_points(project, layout)
                     .map(|points| crate::track_editor::layout_control_points_with_heights(&points))
                     .unwrap_or_default();
                 serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
@@ -378,39 +377,65 @@ impl TrackViewer {
         }
     }
 
+    /// Returns the active route's junctions in route order. Each entry carries
+    /// the junction id, its XZ position, kind, and its degree across the whole
+    /// venue. An unavailable project or layout yields `[]`.
     pub fn editor_loop_points(&self) -> String {
-        match (self.editor_project_ref(), self.active_editor_layout()) {
-            (Ok(project), Ok(layout)) => project
-                .loop_point_info(&layout.id)
-                .ok()
-                .and_then(|info| serde_json::to_string(&info).ok())
-                .unwrap_or_else(|| "[]".to_string()),
-            _ => "[]".to_string(),
+        let (Ok(project), Ok(layout)) = (self.editor_project_ref(), self.active_editor_layout())
+        else {
+            return "[]".to_string();
+        };
+        let mut degrees = std::collections::BTreeMap::<&str, usize>::new();
+        for segment in &project.edges {
+            *degrees.entry(segment.from.as_str()).or_default() += 1;
+            *degrees.entry(segment.to.as_str()).or_default() += 1;
         }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut junctions = Vec::new();
+        for segment_id in &layout.route {
+            let Some(segment) = project.segment_by_id(segment_id) else {
+                continue;
+            };
+            if !seen.insert(segment.from.as_str()) {
+                continue;
+            }
+            let Some(junction) = project.junction_by_id(&segment.from) else {
+                continue;
+            };
+            let degree = degrees.get(junction.id.as_str()).copied().unwrap_or(0);
+            junctions.push(serde_json::json!({
+                "id": junction.id,
+                "position": junction.position,
+                "kind": junction.kind,
+                "degree": degree,
+            }));
+        }
+        serde_json::to_string(&junctions).unwrap_or_else(|_| "[]".to_string())
     }
 
     pub fn editor_centerline(&self) -> String {
         match (self.editor_project_ref(), self.active_editor_layout()) {
             (Ok(project), Ok(layout)) => {
-                let points = project.loop_visible_centerline(layout).unwrap_or_default();
+                let points =
+                    crate::track_editor::layout_centerline(project, layout).unwrap_or_default();
                 serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
             }
             _ => "[]".to_string(),
         }
     }
 
-    /// Returns every loop's visible centerline keyed by loop id, so the web
-    /// overlay can draw all loops at once. Loops that fail to sample are
+    /// Returns every layout's visible centerline keyed by layout id, so the web
+    /// overlay can draw all routes at once. Layouts that fail to sample are
     /// skipped; an unavailable project yields `{}`.
     pub fn editor_loop_centerlines(&self) -> String {
         let Some(project) = self.editor_project.as_ref() else {
             return "{}".to_string();
         };
         let mut centerlines = serde_json::Map::new();
-        for loop_ in &project.loops {
-            if let Ok(points) = project.loop_visible_centerline(loop_) {
+        for layout in &project.layouts {
+            if let Ok(points) = crate::track_editor::layout_centerline(project, layout) {
                 if let Ok(value) = serde_json::to_value(points) {
-                    centerlines.insert(loop_.id.clone(), value);
+                    centerlines.insert(layout.id.clone(), value);
                 }
             }
         }
@@ -418,10 +443,58 @@ impl TrackViewer {
             .unwrap_or_else(|_| "{}".to_string())
     }
 
+    /// `@4` alias for [`Self::editor_loop_centerlines`]: every route's
+    /// centerline keyed by route id.
+    pub fn editor_route_centerlines(&self) -> String {
+        self.editor_loop_centerlines()
+    }
+
+    /// Samples one canonical segment. An unknown segment yields `[]`.
+    pub fn editor_segment_centerline(&self, segment_id: &str) -> String {
+        let Some(project) = self.editor_project.as_ref() else {
+            return "[]".to_string();
+        };
+        match project.segment_centerline(segment_id) {
+            Ok(points) => serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string()),
+            Err(_) => "[]".to_string(),
+        }
+    }
+
+    /// Samples every canonical segment and keys each centerline by segment id.
+    /// Segments that fail to sample are skipped; an unavailable project yields
+    /// `{}`.
+    pub fn editor_segment_centerlines(&self) -> String {
+        let Some(project) = self.editor_project.as_ref() else {
+            return "{}".to_string();
+        };
+        let mut centerlines = serde_json::Map::new();
+        for segment in &project.edges {
+            if let Ok(points) = project.segment_centerline(&segment.id) {
+                if let Ok(value) = serde_json::to_value(points) {
+                    centerlines.insert(segment.id.clone(), value);
+                }
+            }
+        }
+        serde_json::to_string(&serde_json::Value::Object(centerlines))
+            .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Returns a route's ordered segment ids, or `[]` for an unknown route.
+    pub fn editor_route_segments(&self, route_id: &str) -> String {
+        let Some(project) = self.editor_project.as_ref() else {
+            return "[]".to_string();
+        };
+        match project.route_segments(route_id) {
+            Some(segments) => serde_json::to_string(segments).unwrap_or_else(|_| "[]".to_string()),
+            None => "[]".to_string(),
+        }
+    }
+
     pub fn editor_kerb_spans(&self) -> String {
         match (self.editor_project_ref(), self.active_editor_layout()) {
             (Ok(project), Ok(layout)) => {
-                let spans = project.loop_kerb_spans(layout).unwrap_or_default();
+                let spans =
+                    crate::track_editor::layout_kerb_spans(project, layout).unwrap_or_default();
                 serde_json::to_string(&spans).unwrap_or_else(|_| "[]".to_string())
             }
             _ => "[]".to_string(),
@@ -431,7 +504,8 @@ impl TrackViewer {
     pub fn editor_prop_lines(&self) -> String {
         match (self.editor_project_ref(), self.active_editor_layout()) {
             (Ok(project), Ok(layout)) => {
-                let lines = project.loop_prop_lines(layout).unwrap_or_default();
+                let lines =
+                    crate::track_editor::layout_prop_lines(project, layout).unwrap_or_default();
                 serde_json::to_string(&lines).unwrap_or_else(|_| "[]".to_string())
             }
             _ => "[]".to_string(),
@@ -450,10 +524,10 @@ impl TrackViewer {
     }
 
     pub async fn set_editor_project(&mut self, json: &str) -> Result<(), JsValue> {
-        let project = track_editor::EditorProject::from_json(json)
+        let project = track_editor::TrackProject::from_json(json)
             .and_then(|project| project.normalize())
             .map_err(js_error)?;
-        self.editor_active_layout = Some(project.default_loop_id().to_string());
+        self.editor_active_layout = Some(project.default_layout_id().to_string());
         self.editor_project = Some(project);
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -470,8 +544,8 @@ impl TrackViewer {
             .editor_project
             .as_mut()
             .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        if project.loop_by_id(id).is_none() {
-            return Err(JsValue::from_str("unknown loop id"));
+        if project.layout_by_id(id).is_none() {
+            return Err(JsValue::from_str("unknown layout id"));
         }
         self.editor_active_layout = Some(id.to_string());
         self.editor_rebuilding = true;
@@ -486,7 +560,7 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project.add_loop(name).map_err(js_error)?
+            project.add_layout(name).map_err(js_error)?
         };
         self.editor_active_layout = Some(id.clone());
         self.editor_rebuilding = true;
@@ -502,7 +576,7 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project.duplicate_loop(id).map_err(js_error)?
+            project.duplicate_layout(id).map_err(js_error)?
         };
         self.editor_active_layout = Some(new_id.clone());
         self.editor_rebuilding = true;
@@ -518,16 +592,16 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project.delete_loop(id).map_err(js_error)?;
+            project.delete_layout(id).map_err(js_error)?;
         }
         if self.editor_active_layout.as_deref() == Some(id) {
-            let default_loop = self
+            let default_layout = self
                 .editor_project
                 .as_ref()
-                .and_then(|project| project.loops.first())
-                .map(|loop_| loop_.id.clone())
+                .and_then(|project| project.layouts.first())
+                .map(|layout| layout.id.clone())
                 .unwrap_or_default();
-            self.editor_active_layout = Some(default_loop);
+            self.editor_active_layout = Some(default_layout);
         }
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -541,10 +615,10 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            if project.loop_by_id(id).is_none() {
-                return Err(JsValue::from_str("unknown loop id"));
+            if project.layout_by_id(id).is_none() {
+                return Err(JsValue::from_str("unknown layout id"));
             }
-            project.set_width(width).map_err(js_error)?;
+            project.set_layout_width(id, width).map_err(js_error)?;
         }
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -558,7 +632,7 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project.rename_loop(id, name).map_err(js_error)?;
+            project.rename_layout(id, name).map_err(js_error)?;
         }
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -593,11 +667,8 @@ impl TrackViewer {
             .clone()
             .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
         let active_layout = self.active_editor_layout_id()?;
-        crate::track_editor::pack_from_editor_project_with_default(
-            &project,
-            Some(active_layout.as_str()),
-        )
-        .map_err(js_error)
+        crate::track_editor::pack_from_project_with_default(&project, Some(active_layout.as_str()))
+            .map_err(js_error)
     }
 
     pub async fn set_editor_control_points(&mut self, points_json: &str) -> Result<(), JsValue> {
@@ -613,7 +684,7 @@ impl TrackViewer {
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
             project
-                .set_loop_control_points(&id, &points)
+                .set_layout_control_points(&id, &points)
                 .map_err(js_error)?;
         }
         self.editor_rebuilding = true;
@@ -633,9 +704,7 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project
-                .move_control_point(point_id, x, z)
-                .map_err(js_error)?;
+            project.move_junction(point_id, x, z).map_err(js_error)?;
         }
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -643,31 +712,22 @@ impl TrackViewer {
         result
     }
 
+    /// Transition debt: make-unique is a `@3` loop operation. The `@4` editor
+    /// clones canonical segments instead, which the web rewrite will wire up.
     pub async fn make_editor_control_point_unique(
         &mut self,
-        loop_id: &str,
-        point_id: &str,
+        _loop_id: &str,
+        _point_id: &str,
     ) -> Result<String, JsValue> {
-        let new_id = {
-            let project = self
-                .editor_project
-                .as_mut()
-                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project
-                .make_control_point_unique(loop_id, point_id)
-                .map_err(js_error)?
-        };
-        self.editor_rebuilding = true;
-        let result = self.rebuild_editor().await;
-        self.editor_rebuilding = false;
-        result?;
-        Ok(new_id)
+        Err(JsValue::from_str(
+            "make unique is not available for the @4 editor yet",
+        ))
     }
 
     pub async fn insert_editor_control_point(
         &mut self,
-        loop_id: &str,
-        after_point_id: &str,
+        _loop_id: &str,
+        _after_point_id: &str,
         x: f32,
         z: f32,
     ) -> Result<String, JsValue> {
@@ -676,9 +736,7 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project
-                .insert_control_point(loop_id, after_point_id, x, z)
-                .map_err(js_error)?
+            project.insert_junction(x, z)
         };
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -689,7 +747,7 @@ impl TrackViewer {
 
     pub async fn delete_editor_control_point(
         &mut self,
-        loop_id: &str,
+        _loop_id: &str,
         point_id: &str,
     ) -> Result<(), JsValue> {
         {
@@ -697,8 +755,167 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project.delete_junction(point_id).map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
+    pub async fn move_editor_segment_point(
+        &mut self,
+        segment_id: &str,
+        index: usize,
+        x: f32,
+        z: f32,
+    ) -> Result<(), JsValue> {
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
             project
-                .delete_control_point(loop_id, point_id)
+                .move_segment_point(segment_id, index, x, z)
+                .map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
+    pub async fn insert_editor_segment_point(
+        &mut self,
+        segment_id: &str,
+        after_index: usize,
+        x: f32,
+        z: f32,
+    ) -> Result<usize, JsValue> {
+        let index = {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .insert_segment_point(segment_id, after_index, x, z)
+                .map_err(js_error)?
+        };
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result?;
+        Ok(index)
+    }
+
+    pub async fn delete_editor_segment_point(
+        &mut self,
+        segment_id: &str,
+        index: usize,
+    ) -> Result<(), JsValue> {
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .delete_segment_point(segment_id, index)
+                .map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
+    pub async fn make_editor_segment_unique(
+        &mut self,
+        route_id: &str,
+        segment_id: &str,
+    ) -> Result<String, JsValue> {
+        let unique_id = {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .make_segment_unique(route_id, segment_id)
+                .map_err(js_error)?
+        };
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result?;
+        Ok(unique_id)
+    }
+
+    pub async fn set_editor_segment_kerbs(
+        &mut self,
+        segment_id: &str,
+        spans_json: &str,
+    ) -> Result<(), JsValue> {
+        let spans = serde_json::from_str::<Vec<crate::track_editor::KerbSpan>>(spans_json)
+            .map_err(js_error)?;
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .set_segment_kerb_spans(segment_id, &spans)
+                .map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
+    pub async fn set_editor_segment_props(
+        &mut self,
+        segment_id: &str,
+        spans_json: &str,
+    ) -> Result<(), JsValue> {
+        let spans = serde_json::from_str::<Vec<crate::track_editor::PropSpan>>(spans_json)
+            .map_err(js_error)?;
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .set_segment_prop_spans(segment_id, &spans)
+                .map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
+    pub async fn set_editor_segment_tangents(
+        &mut self,
+        segment_id: &str,
+        from_json: &str,
+        to_json: &str,
+    ) -> Result<(), JsValue> {
+        let parse = |json: &str| -> Result<Option<[f32; 2]>, JsValue> {
+            let trimmed = json.trim();
+            if trimmed.is_empty() || trimmed == "null" {
+                Ok(None)
+            } else {
+                serde_json::from_str::<Option<[f32; 2]>>(trimmed).map_err(js_error)
+            }
+        };
+        let from = parse(from_json)?;
+        let to = parse(to_json)?;
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .set_segment_tangents(segment_id, from, to)
                 .map_err(js_error)?;
         }
         self.editor_rebuilding = true;
@@ -716,7 +933,9 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project.set_loop_kerb_spans(&id, &spans).map_err(js_error)?;
+            project
+                .set_layout_kerb_spans(&id, &spans)
+                .map_err(js_error)?;
         }
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -733,7 +952,9 @@ impl TrackViewer {
                 .editor_project
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-            project.set_loop_prop_lines(&id, &lines).map_err(js_error)?;
+            project
+                .set_layout_prop_lines(&id, &lines)
+                .map_err(js_error)?;
         }
         self.editor_rebuilding = true;
         let result = self.rebuild_editor().await;
@@ -747,11 +968,9 @@ impl TrackViewer {
             .editor_project
             .as_ref()
             .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        let track = crate::track_editor::track_from_editor_project_with_default(
-            project,
-            default_loop.as_deref(),
-        )
-        .map_err(js_error)?;
+        let track =
+            crate::track_editor::track_from_project_with_default(project, default_loop.as_deref())
+                .map_err(js_error)?;
         let scene = Scene::build(
             &track.visual,
             &track.metadata,
@@ -813,8 +1032,8 @@ impl TrackViewer {
         self.editor_active_layout = Some(
             self.editor_active_layout
                 .take()
-                .filter(|id| track.project.loop_by_id(id).is_some())
-                .unwrap_or_else(|| track.project.default_loop_id().to_string()),
+                .filter(|id| track.project.layout_by_id(id).is_some())
+                .unwrap_or_else(|| track.project.default_layout_id().to_string()),
         );
         self.editor_project = Some(track.project);
         self.tree_high_meshes = tree_high_meshes;

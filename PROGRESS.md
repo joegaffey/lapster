@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-08
+Last updated: 2026-11-10
 Current phase: **Relay multiplayer prototype**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
@@ -58,15 +58,26 @@ Deployment:
   yet.
 - Next: Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
   integration.
-- Active amendment: loop/shared-control-point model (ADR 0005, supersedes the
-  venue-graph model). Implemented locally: `@3` loops/shared points, Ctrl+click
-  branch drafts with auto-close, all-loop centerline overlay with per-loop
-  colours, continuous full-loop sampling for multi-loop geometry, and canonical
-  junction tangents. Remaining: junction pad/prop cleanup, shared pit lane,
-  updating the stale editor Playwright selectors, full gate, and integration.
-  Local WIP checkpoint `b6333cf`; not pushed or deployed. Next: update the
-  stale editor Playwright selectors, refine junction pads/props, add the shared
-  pit lane, then run the full gate.
+- Active amendment: drivable venue network (ADR 0006, supersedes the
+  loop/shared-control-point model). Product requirement: all layouts must be
+  drivable in one continuous world, including crossing junctions between
+  layouts; the pit lane is a drivable path, not a layout. Target model:
+  canonical segments and junctions baked once, layouts as closed routes over
+  segment ids, paths for the pit lane, and runtime layout selection as
+  spawn/metadata only. `@3` loop/shared-point work is a local WIP checkpoint
+  (`fa38fa0`) to mine for geometry and UX, not the target model. Asset schema
+  stays v4; editor project becomes `lapster/track-project@4`.
+  Implementation checkpoint (local, uncommitted): `@4` is the default project
+  schema; `@4` fields, validation, `@3` migration, canonical segment sampling,
+  per-route start/finish, branch edge tangents, cross-layout junction collision
+  coverage, and `TrackProject` junction/segment editing operations are in place;
+  the wasm editor API exposes the new operations. The web editor now loads `@4`,
+  switches routes, duplicates a route with shared segments, selects a canonical
+  segment, makes a shared segment unique, and adds/deletes/drags segment
+  interior points. Render tests, clippy, fmt, wasm checks, web unit tests, and
+  the four targeted `@4` editor smokes are green. Remaining: verify segment-
+  scoped kerb/prop painting and shared decoration behavior, add the pit path
+  UI, rewrite the full editor Playwright suite, then run the full gate.
 
 ## Completed checkpoints
 

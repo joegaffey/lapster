@@ -2,7 +2,7 @@
 description: TypeScript client runtime, UI, viewers, and browser tests.
 mode: subagent
 model: opencode-go/deepseek-v4.1-flash
-steps: 30
+steps: 80
 permission:
   edit:
     "*": deny

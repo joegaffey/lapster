@@ -932,7 +932,10 @@ function showLoadingFailure(error) {
 }
 
 // web/track-editor/main.ts
-var TRACK_PROJECT_SCHEMA = "lapster/track-project@3";
+var READABLE_TRACK_PROJECT_SCHEMAS = /* @__PURE__ */ new Set([
+  "lapster/track-project@2",
+  "lapster/track-project@4"
+]);
 var TRACK_PROJECT_STORAGE_KEY = "lapster.track-project.v1";
 var DEFAULT_TRACK_WIDTH = 12;
 var MIN_TRACK_WIDTH = 6;
@@ -941,16 +944,17 @@ var MAX_CAMERA_HEIGHT = 140;
 var CONTROL_POINT_RADIUS = 9;
 var CONTROL_POINT_HIT_RADIUS = 18;
 var CENTERLINE_HIT_RADIUS = 12;
+var SEGMENT_CENTERLINE_HIT_RADIUS = 10;
+var SEGMENT_POINT_HIT_RADIUS = 14;
+var SEGMENT_SELECTION_COLOR = "#f97316";
+var SEGMENT_SELECTION_WIDTH = 5;
 var KERB_RADIUS = 6.4;
 var PROP_OFFSET = 14;
 var PROP_FAR_OFFSET = 19;
 var GUIDE_HIT_RADIUS = 12;
 var GUIDE_HANDLE_RADIUS = 7;
 var GUIDE_HANDLE_HIT_RADIUS = 16;
-var BRANCH_DRAFT_DISTANCE = 25;
-var BRANCH_APPROACH_DISTANCE = 20;
-var BRANCH_SNAP_RADIUS = 12;
-var LOOP_CENTERLINE_COLORS = [
+var ROUTE_CENTERLINE_COLORS = [
   "#38bdf8",
   "#a78bfa",
   "#34d399",
@@ -988,27 +992,31 @@ var cameraViewButton = document.querySelector("#camera-view");
 var testDriveButton = document.querySelector("#test-drive");
 var layoutSelect = document.querySelector("#layout-select");
 var addLayoutButton = document.querySelector("#add-layout");
+var duplicateLayoutButton = document.querySelector("#duplicate-layout");
 var deleteLayoutButton = document.querySelector("#delete-layout");
 var layoutNameInput = document.querySelector("#layout-name");
 var layoutWidthInput = document.querySelector("#layout-width");
 var layoutHud = document.querySelector("#layout-hud");
+var segmentHud = document.querySelector("#segment-hud");
+var segmentMakeUniqueButton = document.querySelector("#segment-make-unique");
+var segmentAddPointButton = document.querySelector("#segment-add-point");
+var segmentDeletePointButton = document.querySelector("#segment-delete-point");
 var saveProjectButton = document.querySelector("#save-project");
 var loadProjectButton = document.querySelector("#load-project");
 var exportProjectButton = document.querySelector("#export-project");
 var importProjectButton = document.querySelector("#import-project");
 var projectFileInput = document.querySelector("#project-file");
-var makeUniqueButton = document.querySelector("#make-unique");
 var editorViewer;
 var project = null;
 var projectJson = null;
-var activeLayoutId = "";
+var activeRouteId = "";
 var syncingProjectControls = false;
 var cameraController;
 var controlPoints = [];
-var loopPoints = [];
+var routeJunctions = [];
 var selectedPointId = null;
 var centerline = [];
-var loopCenterlines = {};
+var routeCenterlines = {};
 var dragIndex = null;
 var dragPointerId = null;
 var dragPlaneY = 0;
@@ -1023,10 +1031,12 @@ var kerbSpans = [];
 var propLines = [];
 var hoverPoint = null;
 var hoverHandleEdge = null;
-var selectedSegment = null;
+var decorationSelection = null;
+var segmentCenterlines = {};
+var selectedSegmentId = null;
+var selectedSegmentPointIndex = null;
+var segmentPointDrag = null;
 var guideDrag = null;
-var branchDraft = null;
-var branchDraftPointSeq = 0;
 var paintKind = "blocks";
 var TREE_DETAIL_MODES = ["high", "low", "cards"];
 var TREE_DETAIL_LABELS = {
@@ -1316,7 +1326,50 @@ function hitTestControlPoint(x, y) {
   });
   return best;
 }
-function loopOutsideSide() {
+function hitTestSegmentCenterline(x, y) {
+  const camera = currentCamera();
+  if (!camera) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  let bestDistance = SEGMENT_CENTERLINE_HIT_RADIUS;
+  let bestId = null;
+  for (const [id, points] of Object.entries(segmentCenterlines)) {
+    if (points.length < 2) {
+      continue;
+    }
+    const projected = points.map(
+      (point) => projectPoint([point[0], point[1] ?? 0, point[2] ?? 0], camera, width, height)
+    );
+    for (let index = 0; index < projected.length - 1; index += 1) {
+      const start = projected[index];
+      const end = projected[index + 1];
+      if (!start || !end) {
+        continue;
+      }
+      const segmentX = end[0] - start[0];
+      const segmentY = end[1] - start[1];
+      const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+      const t = lengthSquared > 1e-6 ? Math.max(
+        0,
+        Math.min(
+          1,
+          ((x - start[0]) * segmentX + (y - start[1]) * segmentY) / lengthSquared
+        )
+      ) : 0;
+      const hitX = start[0] + segmentX * t;
+      const hitY = start[1] + segmentY * t;
+      const distance = Math.hypot(x - hitX, y - hitY);
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        bestId = id;
+      }
+    }
+  }
+  return bestId;
+}
+function routeOutsideSide() {
   let area = 0;
   for (let index = 0; index < centerline.length; index += 1) {
     const point = centerline[index];
@@ -1326,7 +1379,7 @@ function loopOutsideSide() {
   return area > 0 ? -1 : 1;
 }
 function guideDefinitions() {
-  const outside = loopOutsideSide();
+  const outside = routeOutsideSide();
   return [
     { kind: "kerb", side: -1, radius: KERB_RADIUS, color: "#fb7185" },
     { kind: "kerb", side: 1, radius: KERB_RADIUS, color: "#fb7185" },
@@ -1443,42 +1496,42 @@ function findRangeExact(kind, side, offset, start, end) {
   ) ?? null;
 }
 function selectedPropLine() {
-  if (!selectedSegment || selectedSegment.kind !== "prop") {
+  if (!decorationSelection || decorationSelection.kind !== "prop") {
     return void 0;
   }
   return propLines.find(
     (line) => matchesLane(
       "prop",
       line,
-      selectedSegment.side,
-      selectedSegment.offset
-    ) && Math.abs(line.start - selectedSegment.start) < 1e-4 && Math.abs(line.end - selectedSegment.end) < 1e-4
+      decorationSelection.side,
+      decorationSelection.offset
+    ) && Math.abs(line.start - decorationSelection.start) < 1e-4 && Math.abs(line.end - decorationSelection.end) < 1e-4
   );
 }
 function resolveSelection() {
-  if (!selectedSegment) {
+  if (!decorationSelection) {
     return;
   }
   const range = findRangeExact(
-    selectedSegment.kind,
-    selectedSegment.side,
-    selectedSegment.offset,
-    selectedSegment.start,
-    selectedSegment.end
+    decorationSelection.kind,
+    decorationSelection.side,
+    decorationSelection.offset,
+    decorationSelection.start,
+    decorationSelection.end
   ) ?? findRange(
-    selectedSegment.kind,
-    selectedSegment.side,
-    selectedSegment.offset,
-    (selectedSegment.start + selectedSegment.end) * 0.5
+    decorationSelection.kind,
+    decorationSelection.side,
+    decorationSelection.offset,
+    (decorationSelection.start + decorationSelection.end) * 0.5
   );
   if (range) {
-    selectedSegment.start = range.start;
-    selectedSegment.end = range.end;
+    decorationSelection.start = range.start;
+    decorationSelection.end = range.end;
     if (range.offset !== void 0) {
-      selectedSegment.offset = range.offset;
+      decorationSelection.offset = range.offset;
     }
   } else {
-    selectedSegment = null;
+    decorationSelection = null;
   }
 }
 function subtractRanges(items, kind, side, offset, start, end) {
@@ -1502,7 +1555,7 @@ function selectSegment(kind, side, offset, index) {
   if (!range) {
     return false;
   }
-  selectedSegment = {
+  decorationSelection = {
     kind,
     side,
     offset: range.offset ?? offset,
@@ -1565,7 +1618,7 @@ function createSegment(guide, index) {
     );
     kerbSpans.push({ start, end, side: guide.side });
     kerbSpans.sort((a, b) => a.side - b.side || a.start - b.start);
-    selectedSegment = {
+    decorationSelection = {
       kind: "kerb",
       side: guide.side,
       offset: guide.radius,
@@ -1596,7 +1649,7 @@ function createSegment(guide, index) {
   propLines.sort(
     (a, b) => a.side - b.side || a.offset - b.offset || a.start - b.start
   );
-  selectedSegment = {
+  decorationSelection = {
     kind: "prop",
     side: guide.side,
     offset: guide.radius,
@@ -1609,15 +1662,15 @@ function createSegment(guide, index) {
   void rebuildPropLines();
 }
 function updateSelectedEdge(edge, index) {
-  if (!selectedSegment) {
+  if (!decorationSelection) {
     return;
   }
-  const oldStart = selectedSegment.start;
-  const oldEnd = selectedSegment.end;
+  const oldStart = decorationSelection.start;
+  const oldEnd = decorationSelection.end;
   const range = findRangeExact(
-    selectedSegment.kind,
-    selectedSegment.side,
-    selectedSegment.offset,
+    decorationSelection.kind,
+    decorationSelection.side,
+    decorationSelection.offset,
     oldStart,
     oldEnd
   );
@@ -1625,27 +1678,27 @@ function updateSelectedEdge(edge, index) {
     return;
   }
   if (edge === "start") {
-    selectedSegment.start = Math.max(
+    decorationSelection.start = Math.max(
       0,
-      Math.min(index, selectedSegment.end - MIN_SEGMENT_LENGTH)
+      Math.min(index, decorationSelection.end - MIN_SEGMENT_LENGTH)
     );
   } else {
-    selectedSegment.end = Math.min(
+    decorationSelection.end = Math.min(
       centerline.length,
-      Math.max(index, selectedSegment.start + MIN_SEGMENT_LENGTH)
+      Math.max(index, decorationSelection.start + MIN_SEGMENT_LENGTH)
     );
   }
-  range.start = selectedSegment.start;
-  range.end = selectedSegment.end;
+  range.start = decorationSelection.start;
+  range.end = decorationSelection.end;
 }
 function hitGuideHandle(x, y) {
-  if (!selectedSegment) {
+  if (!decorationSelection) {
     return null;
   }
   const guide = guideFor(
-    selectedSegment.kind,
-    selectedSegment.side,
-    selectedSegment.offset
+    decorationSelection.kind,
+    decorationSelection.side,
+    decorationSelection.offset
   );
   const camera = currentCamera();
   if (!guide || !camera) {
@@ -1656,7 +1709,7 @@ function hitGuideHandle(x, y) {
   let best = null;
   let bestDistance = GUIDE_HANDLE_HIT_RADIUS;
   for (const edge of ["start", "end"]) {
-    const point = guidePoint(guide, selectedSegment[edge]);
+    const point = guidePoint(guide, decorationSelection[edge]);
     const projected = point ? projectPoint(point, camera, width, height) : null;
     if (!projected) {
       continue;
@@ -1683,17 +1736,17 @@ function paintLabel(kind) {
 }
 function syncPaintControls() {
   propToggle.textContent = `Prop: ${paintLabel(paintKind)}`;
-  deleteSegmentButton.disabled = selectedSegment === null;
+  deleteSegmentButton.disabled = decorationSelection === null;
 }
 function syncTreeDetailButton() {
   treeDetailButton.textContent = `Trees: ${TREE_DETAIL_LABELS[treeDetailMode]}`;
 }
 function deleteSelectedSegment() {
-  if (!selectedSegment || rebuilding) {
+  if (!decorationSelection || rebuilding) {
     return;
   }
-  const { kind, side, offset, start, end } = selectedSegment;
-  selectedSegment = null;
+  const { kind, side, offset, start, end } = decorationSelection;
+  decorationSelection = null;
   hoverPoint = null;
   hoverHandleEdge = null;
   if (kind === "kerb") {
@@ -1734,7 +1787,7 @@ function setOverlayVisible(visible) {
   hoverPoint = null;
   hoverHandleEdge = null;
   if (!visible) {
-    selectedSegment = null;
+    decorationSelection = null;
     guideDrag = null;
     syncPaintControls();
     canvas.style.cursor = "";
@@ -1746,7 +1799,7 @@ function updateHover() {
   hoverDeleteIndex = null;
   hoverPoint = null;
   hoverHandleEdge = null;
-  if (!overlayVisible || !lastPointer || dragIndex !== null || guideDrag !== null || carDragPointerId !== null || rebuilding || cameraDragging) {
+  if (!overlayVisible || !lastPointer || dragIndex !== null || segmentPointDrag !== null || guideDrag !== null || carDragPointerId !== null || rebuilding || cameraDragging) {
     canvas.style.cursor = "";
     return;
   }
@@ -1757,6 +1810,10 @@ function updateHover() {
     return;
   }
   if (hitTestCarMarker(lastPointer[0], lastPointer[1])) {
+    canvas.style.cursor = "grab";
+    return;
+  }
+  if (hitTestSegmentPoint(lastPointer[0], lastPointer[1]) !== null) {
     canvas.style.cursor = "grab";
     return;
   }
@@ -1814,8 +1871,8 @@ function updateHover() {
     }
     bestDistance = distance;
     const next = (index + 1) % centerline.length;
-    const pointIndex = Math.floor(index * loopPoints.length / centerline.length) % Math.max(loopPoints.length, 1);
-    const afterPointId = loopPoints[pointIndex]?.id;
+    const pointIndex = Math.floor(index * routeJunctions.length / centerline.length) % Math.max(routeJunctions.length, 1);
+    const afterPointId = routeJunctions[pointIndex]?.id;
     if (!afterPointId) {
       continue;
     }
@@ -1849,12 +1906,142 @@ function flashStatus(message) {
     }
   }, 1200);
 }
-function loopCenterlineColor(loopId) {
+function routeCenterlineColor(routeId) {
   let hash = 0;
-  for (let index = 0; index < loopId.length; index += 1) {
-    hash = hash * 31 + loopId.charCodeAt(index) >>> 0;
+  for (let index = 0; index < routeId.length; index += 1) {
+    hash = hash * 31 + routeId.charCodeAt(index) >>> 0;
   }
-  return LOOP_CENTERLINE_COLORS[hash % LOOP_CENTERLINE_COLORS.length];
+  return ROUTE_CENTERLINE_COLORS[hash % ROUTE_CENTERLINE_COLORS.length];
+}
+function segmentJunctionPoint(junctionId) {
+  const index = routeJunctions.findIndex((junction2) => junction2.id === junctionId);
+  if (index >= 0) {
+    return controlPoints[index] ?? null;
+  }
+  const junction = project?.controlPoints.find((item) => item.id === junctionId);
+  if (!junction) {
+    return null;
+  }
+  return [junction.position[0], 0, junction.position[1]];
+}
+function selectedSegmentEdge() {
+  return selectedSegmentId ? project?.edges.find((edge) => edge.id === selectedSegmentId) : void 0;
+}
+function segmentInteriorY(edge) {
+  const from = segmentJunctionPoint(edge.from);
+  const to = segmentJunctionPoint(edge.to);
+  return from && to ? (from[1] + to[1]) * 0.5 : from?.[1] ?? to?.[1] ?? 0;
+}
+function hitTestSegmentPoint(x, y) {
+  const edge = selectedSegmentEdge();
+  const camera = currentCamera();
+  if (!edge || !camera || edge.points.length === 0) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const interiorY = segmentInteriorY(edge);
+  let best = null;
+  let bestDistance = SEGMENT_POINT_HIT_RADIUS;
+  edge.points.forEach((point, index) => {
+    const projected = projectPoint(
+      [point[0], interiorY, point[1]],
+      camera,
+      width,
+      height
+    );
+    if (!projected) {
+      return;
+    }
+    const distance = Math.hypot(projected[0] - x, projected[1] - y);
+    if (distance <= bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+function selectedSegmentMidpoint() {
+  const points = selectedSegmentId ? segmentCenterlines[selectedSegmentId] : void 0;
+  if (!points || points.length === 0) {
+    return null;
+  }
+  const point = points[Math.floor(points.length / 2)];
+  return [point[0], point[1] ?? 0, point[2] ?? 0];
+}
+function lastPointerGroundPoint(planeY) {
+  if (!lastPointer) {
+    return null;
+  }
+  return groundPointFromScreen(lastPointer[0], lastPointer[1], planeY);
+}
+function drawSegmentSelection(camera, width, height) {
+  if (!selectedSegmentId) {
+    return;
+  }
+  const centerlinePoints = segmentCenterlines[selectedSegmentId];
+  if (centerlinePoints && centerlinePoints.length >= 2) {
+    const projected = centerlinePoints.map(
+      (point) => projectPoint([point[0], point[1] ?? 0, point[2] ?? 0], camera, width, height)
+    ).filter((point) => point !== null);
+    if (projected.length >= 2) {
+      overlayContext.save();
+      overlayContext.globalAlpha = 0.95;
+      overlayContext.lineCap = "round";
+      overlayContext.lineJoin = "round";
+      overlayContext.beginPath();
+      overlayContext.moveTo(projected[0][0], projected[0][1]);
+      for (let index = 1; index < projected.length; index += 1) {
+        overlayContext.lineTo(projected[index][0], projected[index][1]);
+      }
+      overlayContext.lineWidth = SEGMENT_SELECTION_WIDTH;
+      overlayContext.strokeStyle = SEGMENT_SELECTION_COLOR;
+      overlayContext.stroke();
+      overlayContext.restore();
+    }
+  }
+  const edge = selectedSegmentEdge();
+  if (!edge) {
+    return;
+  }
+  const from = segmentJunctionPoint(edge.from);
+  const to = segmentJunctionPoint(edge.to);
+  const interiorY = segmentInteriorY(edge);
+  const markers = [];
+  if (from) {
+    markers.push({ point: from, endpoint: true, index: null });
+  }
+  edge.points.forEach((point, index) => {
+    const dragging = segmentPointDrag && segmentPointDrag.segmentId === edge.id && segmentPointDrag.index === index;
+    markers.push({
+      point: dragging ? segmentPointDrag.position : [point[0], interiorY, point[1]],
+      endpoint: false,
+      index
+    });
+  });
+  if (to) {
+    markers.push({ point: to, endpoint: true, index: null });
+  }
+  for (const marker of markers) {
+    const projected = projectPoint(marker.point, camera, width, height);
+    if (!projected) {
+      continue;
+    }
+    const selected = marker.index !== null && marker.index === selectedSegmentPointIndex;
+    overlayContext.beginPath();
+    overlayContext.arc(
+      projected[0],
+      projected[1],
+      marker.endpoint ? 5 : selected ? 6 : 4,
+      0,
+      Math.PI * 2
+    );
+    overlayContext.fillStyle = marker.endpoint ? SEGMENT_SELECTION_COLOR : selected ? "#fbbf24" : "#fff7ed";
+    overlayContext.fill();
+    overlayContext.lineWidth = selected ? 3 : 2;
+    overlayContext.strokeStyle = marker.endpoint ? "#ffedd5" : SEGMENT_SELECTION_COLOR;
+    overlayContext.stroke();
+  }
 }
 function drawControlPoints() {
   if (!overlayVisible) {
@@ -1910,14 +2097,15 @@ function drawControlPoints() {
     overlayContext.stroke();
     overlayContext.restore();
   };
-  for (const [loopId, points] of Object.entries(loopCenterlines)) {
-    if (loopId === activeLayoutId) {
+  for (const [routeId, points] of Object.entries(routeCenterlines)) {
+    if (routeId === activeRouteId) {
       continue;
     }
-    drawCenterline(points, loopCenterlineColor(loopId), false);
+    drawCenterline(points, routeCenterlineColor(routeId), false);
   }
-  const activeCenterline = loopCenterlines[activeLayoutId] ?? centerline;
-  drawCenterline(activeCenterline, loopCenterlineColor(activeLayoutId), true);
+  const activeCenterline = routeCenterlines[activeRouteId] ?? centerline;
+  drawCenterline(activeCenterline, routeCenterlineColor(activeRouteId), true);
+  drawSegmentSelection(camera, width, height);
   if (hoverInsert) {
     const [hitX, hitY] = hoverInsert.screen;
     overlayContext.save();
@@ -1958,10 +2146,10 @@ function drawControlPoints() {
     overlayContext.restore();
   };
   const guides = guideDefinitions();
-  const selectedGuide = selectedSegment ? guideFor(
-    selectedSegment.kind,
-    selectedSegment.side,
-    selectedSegment.offset
+  const selectedGuide = decorationSelection ? guideFor(
+    decorationSelection.kind,
+    decorationSelection.side,
+    decorationSelection.offset
   ) : null;
   const draggedGuide = guideDrag ? guideFor(guideDrag.kind, guideDrag.side, guideDrag.offset) : null;
   const activeGuide = draggedGuide ?? hoverPoint?.guide ?? selectedGuide;
@@ -1990,14 +2178,14 @@ function drawControlPoints() {
     overlayContext.strokeStyle = "#e6f7ff";
     overlayContext.stroke();
   }
-  if (selectedSegment && selectedGuide) {
+  if (decorationSelection && selectedGuide) {
     const preview = [];
     const steps = Math.max(
       2,
-      Math.ceil((selectedSegment.end - selectedSegment.start) * 8)
+      Math.ceil((decorationSelection.end - decorationSelection.start) * 8)
     );
     for (let step = 0; step <= steps; step += 1) {
-      const index = selectedSegment.start + (selectedSegment.end - selectedSegment.start) * step / steps;
+      const index = decorationSelection.start + (decorationSelection.end - decorationSelection.start) * step / steps;
       const point = guidePoint(selectedGuide, index);
       if (point) {
         preview.push(point);
@@ -2018,12 +2206,12 @@ function drawControlPoints() {
       overlayContext.restore();
     }
     for (const edge of ["start", "end"]) {
-      const point = guidePoint(selectedGuide, selectedSegment[edge]);
+      const point = guidePoint(selectedGuide, decorationSelection[edge]);
       const projected2 = point ? projectPoint(point, camera, width, height) : null;
       if (!projected2) {
         continue;
       }
-      const active = hoverHandleEdge === edge || guideDrag?.edge === edge && guideDrag.kind === selectedSegment.kind;
+      const active = hoverHandleEdge === edge || guideDrag?.edge === edge && guideDrag.kind === decorationSelection.kind;
       overlayContext.beginPath();
       overlayContext.arc(
         projected2[0],
@@ -2088,7 +2276,7 @@ function drawControlPoints() {
       return;
     }
     const deleteTarget = deleteMode && index === hoverDeleteIndex;
-    const selected = loopPoints[index]?.id === selectedPointId;
+    const selected = routeJunctions[index]?.id === selectedPointId;
     const highlighted = selected || index === dragIndex;
     overlayContext.beginPath();
     overlayContext.arc(
@@ -2109,64 +2297,6 @@ function drawControlPoints() {
     overlayContext.textBaseline = "middle";
     overlayContext.fillText(String(index + 1), projected[0], projected[1] + 0.5);
   });
-  if (branchDraft) {
-    const junctionIndex = loopPoints.findIndex(
-      (point) => point.id === branchDraft.junctionId
-    );
-    const draftWorld = [];
-    if (junctionIndex >= 0 && controlPoints[junctionIndex]) {
-      draftWorld.push(controlPoints[junctionIndex]);
-    }
-    for (const point of branchDraft.points) {
-      draftWorld.push(point.position);
-    }
-    overlayContext.save();
-    overlayContext.setLineDash([6, 4]);
-    overlayContext.globalAlpha = 0.95;
-    overlayContext.beginPath();
-    let drawing = false;
-    for (const point of draftWorld) {
-      const projected = projectPoint(point, camera, width, height);
-      if (!projected) {
-        drawing = false;
-        continue;
-      }
-      if (!drawing) {
-        overlayContext.moveTo(projected[0], projected[1]);
-        drawing = true;
-      } else {
-        overlayContext.lineTo(projected[0], projected[1]);
-      }
-    }
-    overlayContext.lineWidth = 2;
-    overlayContext.strokeStyle = "#f472b6";
-    overlayContext.stroke();
-    overlayContext.restore();
-    branchDraft.points.forEach((point, index) => {
-      const projected = projectPoint(point.position, camera, width, height);
-      if (!projected) {
-        return;
-      }
-      overlayContext.beginPath();
-      overlayContext.arc(
-        projected[0],
-        projected[1],
-        CONTROL_POINT_RADIUS,
-        0,
-        Math.PI * 2
-      );
-      overlayContext.fillStyle = "#22d3ee";
-      overlayContext.fill();
-      overlayContext.lineWidth = 2;
-      overlayContext.strokeStyle = "#f472b6";
-      overlayContext.stroke();
-      overlayContext.fillStyle = "#06121a";
-      overlayContext.font = "600 10px ui-monospace, monospace";
-      overlayContext.textAlign = "center";
-      overlayContext.textBaseline = "middle";
-      overlayContext.fillText(String(index + 1), projected[0], projected[1] + 0.5);
-    });
-  }
 }
 function moveControlPoint(index, x, y) {
   const world = groundPointFromScreen(x, y, dragPlaneY);
@@ -2177,323 +2307,84 @@ function moveControlPoint(index, x, y) {
   const pointX = Math.max(-140, Math.min(140, world[0]));
   const pointZ = Math.max(-140, Math.min(140, world[2]));
   controlPoints[index] = [pointX, current[1], pointZ];
-  if (loopPoints[index]) {
-    loopPoints[index] = {
-      ...loopPoints[index],
+  if (routeJunctions[index]) {
+    routeJunctions[index] = {
+      ...routeJunctions[index],
       position: [pointX, pointZ]
     };
   }
 }
-function activeLayout() {
+function activeRoute() {
   if (!project) {
     return null;
   }
-  return project.loops.find((layout) => layout.id === activeLayoutId) ?? project.loops[0] ?? null;
+  return project.layouts.find((layout) => layout.id === activeRouteId) ?? project.layouts[0] ?? null;
 }
 function trackWidth() {
-  return project?.settings?.width ?? DEFAULT_TRACK_WIDTH;
+  const settings = project?.settings;
+  if (typeof settings?.width === "number") {
+    return settings.width;
+  }
+  const asphalt = (settings?.splines ?? []).filter(
+    (spline) => spline.surface === "asphalt" && typeof spline.offset === "number"
+  );
+  if (asphalt.length >= 2) {
+    const offsets = asphalt.map((spline) => spline.offset);
+    return Math.abs(Math.max(...offsets) - Math.min(...offsets));
+  }
+  return DEFAULT_TRACK_WIDTH;
 }
-function sharedPointCount() {
-  return loopPoints.filter((point) => point.shared).length;
+function routeSegmentCount() {
+  return activeRoute()?.route.length ?? 0;
 }
 function selectedPointIndex() {
   if (!selectedPointId) {
     return -1;
   }
-  return loopPoints.findIndex((point) => point.id === selectedPointId);
-}
-function syncPointControls() {
-  const index = selectedPointIndex();
-  const point = index >= 0 ? loopPoints[index] : null;
-  makeUniqueButton.disabled = !point || rebuilding;
-}
-function segmentKey(from, to) {
-  return `${from}->${to}`;
-}
-function uniqueBranchBase(pointCount) {
-  const loopIds = new Set(project?.loops.map((loop) => loop.id) ?? []);
-  const pointIds = new Set(project?.controlPoints.map((point) => point.id) ?? []);
-  let number2 = 1;
-  for (; ; ) {
-    const loopId = `branch-${number2}`;
-    const ids = Array.from(
-      { length: pointCount },
-      (_, index) => `${loopId}-cp-${index + 1}`
-    );
-    if (!loopIds.has(loopId) && ids.every((id) => !pointIds.has(id))) {
-      return { loopId, name: `Branch ${number2}`, pointIds: ids };
-    }
-    number2 += 1;
-  }
-}
-function normalize2d(value) {
-  const length2 = Math.hypot(value[0], value[1]);
-  return length2 > 1e-6 ? [value[0] / length2, value[1] / length2] : [1, 0];
-}
-function loopTangentAt(route, positions, index) {
-  const count = route.length;
-  const previous = positions.get(route[(index - 1 + count) % count]);
-  const next = positions.get(route[(index + 1) % count]);
-  if (!previous || !next) {
-    return null;
-  }
-  return normalize2d([next[0] - previous[0], next[1] - previous[1]]);
-}
-function loopNormalAt(route, positions, index) {
-  const tangent = loopTangentAt(route, positions, index);
-  if (!tangent) {
-    return null;
-  }
-  return normalize2d([-tangent[1], tangent[0]]);
-}
-function loopCentroid(route, positions) {
-  const points = route.map((id) => positions.get(id)).filter((position) => Boolean(position));
-  if (points.length === 0) {
-    return [0, 0];
-  }
-  return [
-    points.reduce((sum, position) => sum + position[0], 0) / points.length,
-    points.reduce((sum, position) => sum + position[1], 0) / points.length
-  ];
-}
-function outwardNormal(position, normal, centroid) {
-  const distanceToCentroid = (candidate) => Math.hypot(candidate[0] - centroid[0], candidate[1] - centroid[1]);
-  const plus = [
-    position[0] + normal[0] * BRANCH_DRAFT_DISTANCE,
-    position[1] + normal[1] * BRANCH_DRAFT_DISTANCE
-  ];
-  const minus = [
-    position[0] - normal[0] * BRANCH_DRAFT_DISTANCE,
-    position[1] - normal[1] * BRANCH_DRAFT_DISTANCE
-  ];
-  return distanceToCentroid(plus) >= distanceToCentroid(minus) ? normal : [-normal[0], -normal[1]];
-}
-function startBranchDraft(index) {
-  if (!project || !editorViewer || rebuilding) {
-    return;
-  }
-  const layout = activeLayout();
-  const junctionId = loopPoints[index]?.id;
-  const junctionPosition = controlPoints[index];
-  if (!layout || !junctionId || !junctionPosition) {
-    return;
-  }
-  const route = layout.controlPoints;
-  const startIndex = route.indexOf(junctionId);
-  if (startIndex < 0) {
-    flashStatus("Ctrl+click a control point on the active loop");
-    return;
-  }
-  const positions = new Map(
-    project.controlPoints.map((point) => [point.id, point.position])
-  );
-  const position = positions.get(junctionId);
-  if (!position) {
-    flashStatus("branch point unavailable");
-    return;
-  }
-  const normal = loopNormalAt(route, positions, startIndex);
-  const centroid = loopCentroid(route, positions);
-  const outward = normal ? outwardNormal(position, normal, centroid) : [1, 0];
-  const firstPoint = [
-    position[0] + outward[0] * BRANCH_DRAFT_DISTANCE,
-    junctionPosition[1],
-    position[1] + outward[1] * BRANCH_DRAFT_DISTANCE
-  ];
-  branchDraft = {
-    sourceLoopId: layout.id,
-    junctionId,
-    points: [{ id: `draft-${branchDraftPointSeq++}`, position: firstPoint }]
-  };
-  flashStatus(
-    "branch started \xB7 Ctrl+click to add a point, Ctrl+click a loop point to close, Esc cancels"
-  );
-  drawControlPoints();
-}
-function sourceLoopControlPoints(loopId) {
-  const loop = project?.loops.find((item) => item.id === loopId);
-  if (!project || !loop) {
-    return [];
-  }
-  const positions = new Map(
-    project.controlPoints.map((point) => [point.id, point.position])
-  );
-  return loop.controlPoints.flatMap((id) => {
-    const position = positions.get(id);
-    return position ? [{ id, position }] : [];
-  });
-}
-function appendBranchDraftPoint(x, y) {
-  if (!branchDraft) {
-    return;
-  }
-  const planeY = branchDraft.points[0]?.position[1] ?? 0;
-  const world = groundPointFromScreen(x, y, planeY);
-  if (!world) {
-    flashStatus("cannot place branch point here");
-    return;
-  }
-  let nearestId = null;
-  let nearestDistance = BRANCH_SNAP_RADIUS;
-  for (const point of sourceLoopControlPoints(branchDraft.sourceLoopId)) {
-    const distance = Math.hypot(
-      world[0] - point.position[0],
-      world[2] - point.position[1]
-    );
-    if (distance <= nearestDistance) {
-      nearestDistance = distance;
-      nearestId = point.id;
-    }
-  }
-  if (nearestId) {
-    void closeBranchDraft(nearestId);
-    return;
-  }
-  branchDraft.points.push({
-    id: `draft-${branchDraftPointSeq++}`,
-    position: world
-  });
-  drawControlPoints();
-}
-function cancelBranchDraft() {
-  if (!branchDraft) {
-    return;
-  }
-  branchDraft = null;
-  flashStatus("branch cancelled");
-  drawControlPoints();
-}
-async function closeBranchDraft(endId) {
-  if (!editorViewer || !project || !branchDraft || rebuilding) {
-    return;
-  }
-  const draft = branchDraft;
-  const layout = project.loops.find((loop) => loop.id === draft.sourceLoopId) ?? activeLayout();
-  if (!layout) {
-    cancelBranchDraft();
-    return;
-  }
-  const route = layout.controlPoints;
-  const startIndex = route.indexOf(draft.junctionId);
-  const closesToJunction = endId === draft.junctionId;
-  const endIndex = closesToJunction ? startIndex : route.indexOf(endId);
-  if (startIndex < 0 || endIndex < 0) {
-    flashStatus("Ctrl+click a different control point to close the branch");
-    return;
-  }
-  const positions = new Map(
-    project.controlPoints.map((point) => [point.id, point.position])
-  );
-  const endPosition = positions.get(endId);
-  const endTangent = endPosition && endIndex >= 0 ? loopTangentAt(route, positions, endIndex) : null;
-  const approachPoints = [];
-  if (endPosition && endTangent) {
-    if (!closesToJunction && draft.points.length <= 1) {
-      const endNormal = loopNormalAt(route, positions, endIndex);
-      if (endNormal) {
-        const centroid = loopCentroid(route, positions);
-        const outward = outwardNormal(endPosition, endNormal, centroid);
-        approachPoints.push([
-          endPosition[0] + outward[0] * BRANCH_DRAFT_DISTANCE,
-          endPosition[1] + outward[1] * BRANCH_DRAFT_DISTANCE
-        ]);
-      }
-    }
-    const nextIndex = (endIndex + 1) % route.length;
-    const nextPosition = positions.get(route[nextIndex]);
-    const approachBase = nextPosition ?? endPosition;
-    approachPoints.push([
-      approachBase[0] - endTangent[0] * BRANCH_APPROACH_DISTANCE,
-      approachBase[1] - endTangent[1] * BRANCH_APPROACH_DISTANCE
-    ]);
-  }
-  const base = uniqueBranchBase(draft.points.length + approachPoints.length);
-  const draftControlPoints = [
-    ...draft.points.map(
-      (point, index) => ({
-        id: base.pointIds[index],
-        position: [point.position[0], point.position[2]],
-        kind: "normal"
-      })
-    ),
-    ...approachPoints.map(
-      (position, index) => ({
-        id: base.pointIds[draft.points.length + index],
-        position,
-        kind: "normal"
-      })
-    )
-  ];
-  const draftIds = draftControlPoints.map((point) => point.id);
-  const newRoute = closesToJunction ? [draft.junctionId, ...draftIds] : [draft.junctionId, ...draftIds, endId];
-  if (!closesToJunction) {
-    for (let index = (endIndex + 1) % route.length; index !== startIndex; index = (index + 1) % route.length) {
-      newRoute.push(route[index]);
-    }
-  }
-  const segments = project.segments.map((segment) => ({
-    ...segment,
-    role: segment.role === "branch" ? "branch" : "main",
-    kerbs: Array.isArray(segment.kerbs) ? segment.kerbs : [],
-    propSpans: Array.isArray(segment.propSpans) ? segment.propSpans : []
-  }));
-  const pairs = new Set(
-    segments.map((segment) => segmentKey(segment.from, segment.to))
-  );
-  const addSegment = (from, to, role) => {
-    const key = segmentKey(from, to);
-    if (pairs.has(key)) {
-      return;
-    }
-    pairs.add(key);
-    segments.push({ from, to, role, kerbs: [], propSpans: [] });
-  };
-  const branchRoute = closesToJunction ? [] : [draft.junctionId, ...draftIds, endId];
-  for (let index = 0; index < branchRoute.length - 1; index += 1) {
-    addSegment(branchRoute[index], branchRoute[index + 1], "branch");
-  }
-  for (let index = 0; index < newRoute.length; index += 1) {
-    addSegment(newRoute[index], newRoute[(index + 1) % newRoute.length], "main");
-  }
-  project.controlPoints.push(...draftControlPoints);
-  project.segments = segments;
-  project.loops.push({
-    id: base.loopId,
-    name: base.name,
-    controlPoints: newRoute,
-    sectors: [],
-    cameras: [],
-    spawns: []
-  });
-  branchDraft = null;
-  drawControlPoints();
-  await rebuildEditor("creating branch", async () => {
-    await editorViewer.set_editor_project(JSON.stringify(project));
-    await editorViewer.set_editor_active_layout(base.loopId);
-  });
+  return routeJunctions.findIndex((point) => point.id === selectedPointId);
 }
 function syncProjectControls() {
-  const layout = activeLayout();
+  const route = activeRoute();
   syncingProjectControls = true;
   try {
     layoutSelect.replaceChildren();
     if (project) {
-      for (const item of project.loops) {
+      for (const item of project.layouts) {
         const option = document.createElement("option");
         option.value = item.id;
         option.textContent = item.name || item.id;
-        option.selected = item.id === activeLayoutId;
+        option.selected = item.id === (route?.id ?? activeRouteId);
         layoutSelect.append(option);
       }
     }
-    layoutNameInput.value = layout?.name ?? "";
+    layoutNameInput.value = route?.name ?? "";
     layoutWidthInput.value = project ? String(trackWidth()) : "";
-    deleteLayoutButton.disabled = !project || project.loops.length <= 1;
-    layoutHud.textContent = layout ? `${layout.name || layout.id} \xB7 ${loopPoints.length} control points \xB7 ${sharedPointCount()} shared` : "\u2014";
+    duplicateLayoutButton.disabled = !project || !activeRouteId || rebuilding;
+    deleteLayoutButton.disabled = !project || project.layouts.length <= 1;
+    layoutHud.textContent = route ? `${route.name || route.id} \xB7 ${routeJunctions.length} junctions \xB7 ${routeSegmentCount()} segments` : "\u2014";
   } finally {
     syncingProjectControls = false;
   }
-  syncPointControls();
+}
+function updateSegmentPanel() {
+  const edge = selectedSegmentEdge();
+  if (!selectedSegmentId || !edge) {
+    selectedSegmentPointIndex = null;
+    segmentHud.textContent = "Select a road segment in the viewport.";
+    segmentMakeUniqueButton.disabled = true;
+    segmentAddPointButton.disabled = true;
+    segmentDeletePointButton.disabled = true;
+    return;
+  }
+  if (selectedSegmentPointIndex !== null && selectedSegmentPointIndex >= edge.points.length) {
+    selectedSegmentPointIndex = null;
+  }
+  const count = edge.points.length;
+  const pointLabel = selectedSegmentPointIndex === null ? "no interior point selected" : `interior point ${selectedSegmentPointIndex} selected`;
+  segmentHud.textContent = `${edge.id} \xB7 ${edge.from} \u2192 ${edge.to} \xB7 ${count} interior point${count === 1 ? "" : "s"} \xB7 ${pointLabel}`;
+  segmentMakeUniqueButton.disabled = rebuilding;
+  segmentAddPointButton.disabled = rebuilding;
+  segmentDeletePointButton.disabled = rebuilding || selectedSegmentPointIndex === null;
 }
 function readProject() {
   if (!editorViewer) {
@@ -2502,13 +2393,7 @@ function readProject() {
   const raw = editorViewer.editor_project();
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && parsed.schema === TRACK_PROJECT_SCHEMA && Array.isArray(parsed.loops)) {
-      parsed.segments = Array.isArray(parsed.segments) ? parsed.segments.map((segment) => ({
-        ...segment,
-        role: segment.role === "branch" ? "branch" : "main",
-        kerbs: Array.isArray(segment.kerbs) ? segment.kerbs : [],
-        propSpans: Array.isArray(segment.propSpans) ? segment.propSpans : []
-      })) : [];
+    if (parsed && READABLE_TRACK_PROJECT_SCHEMAS.has(parsed.schema) && Array.isArray(parsed.layouts)) {
       project = parsed;
       projectJson = JSON.stringify(parsed);
     } else {
@@ -2519,7 +2404,7 @@ function readProject() {
     project = null;
     projectJson = null;
   }
-  activeLayoutId = editorViewer.editor_active_layout();
+  activeRouteId = editorViewer.editor_active_layout();
   syncProjectControls();
 }
 function projectSnapshot() {
@@ -2554,8 +2439,10 @@ function refreshEditorState() {
     return;
   }
   const heights = JSON.parse(editorViewer.editor_control_points());
-  loopPoints = JSON.parse(editorViewer.editor_loop_points());
-  controlPoints = loopPoints.map((point, index) => [
+  routeJunctions = JSON.parse(
+    editorViewer.editor_loop_points()
+  );
+  controlPoints = routeJunctions.map((point, index) => [
     point.position[0],
     heights[index]?.[1] ?? 0,
     point.position[1]
@@ -2564,12 +2451,22 @@ function refreshEditorState() {
     selectedPointId = null;
   }
   centerline = JSON.parse(editorViewer.editor_centerline());
-  loopCenterlines = JSON.parse(
-    editorViewer.editor_loop_centerlines()
+  routeCenterlines = JSON.parse(
+    editorViewer.editor_route_centerlines()
+  );
+  segmentCenterlines = JSON.parse(
+    editorViewer.editor_segment_centerlines()
   );
   kerbSpans = JSON.parse(editorViewer.editor_kerb_spans()).sort((a, b) => a.side - b.side || a.start - b.start);
   propLines = JSON.parse(editorViewer.editor_prop_lines());
   readProject();
+  if (selectedSegmentId && !project?.edges.some((edge) => edge.id === selectedSegmentId)) {
+    selectedSegmentId = null;
+  }
+  if (!selectedSegmentId) {
+    selectedSegmentPointIndex = null;
+  }
+  updateSegmentPanel();
   resolveSelection();
   syncPaintControls();
   const debug = JSON.parse(editorViewer.debug_info());
@@ -2593,8 +2490,8 @@ async function testDrive() {
       target.searchParams.set("car", car);
     }
     target.searchParams.set("trees", treeDetailMode);
-    if (activeLayoutId) {
-      target.searchParams.set("layout", activeLayoutId);
+    if (activeRouteId) {
+      target.searchParams.set("layout", activeRouteId);
     }
     window.location.href = target.toString();
   } catch (error) {
@@ -2617,22 +2514,29 @@ addLayoutButton.addEventListener("click", () => {
     () => editorViewer.add_editor_layout("").then(() => void 0)
   );
 });
+duplicateLayoutButton.addEventListener("click", () => {
+  if (!activeRouteId || rebuilding) {
+    return;
+  }
+  void rebuildEditor(
+    "duplicating layout",
+    () => editorViewer.duplicate_editor_layout(activeRouteId).then(() => void 0),
+    reportActionError
+  );
+});
 deleteLayoutButton.addEventListener("click", () => {
-  if (!activeLayoutId) {
+  if (!activeRouteId) {
     return;
   }
   void rebuildEditor(
     "deleting layout",
-    () => editorViewer.delete_editor_layout(activeLayoutId),
+    () => editorViewer.delete_editor_layout(activeRouteId),
     reportActionError
   );
 });
-makeUniqueButton.addEventListener("click", () => {
-  void makeSelectedPointUnique();
-});
 layoutSelect.addEventListener("change", () => {
   const id = layoutSelect.value;
-  if (!id || id === activeLayoutId) {
+  if (!id || id === activeRouteId) {
     return;
   }
   void rebuildEditor(
@@ -2644,14 +2548,14 @@ layoutNameInput.addEventListener("change", () => {
   if (syncingProjectControls) {
     return;
   }
-  const layout = activeLayout();
+  const layout = activeRoute();
   const name = layoutNameInput.value.trim();
   if (!layout || !name || name === layout.name) {
     return;
   }
   void rebuildEditor(
     "renaming layout",
-    () => editorViewer.rename_editor_layout(activeLayoutId, name)
+    () => editorViewer.rename_editor_layout(activeRouteId, name)
   );
 });
 layoutWidthInput.addEventListener("change", () => {
@@ -2659,7 +2563,7 @@ layoutWidthInput.addEventListener("change", () => {
     return;
   }
   const width = Number(layoutWidthInput.value);
-  if (!activeLayoutId || !Number.isFinite(width)) {
+  if (!activeRouteId || !Number.isFinite(width)) {
     return;
   }
   const clamped = Math.min(MAX_TRACK_WIDTH, Math.max(MIN_TRACK_WIDTH, width));
@@ -2668,7 +2572,7 @@ layoutWidthInput.addEventListener("change", () => {
   }
   void rebuildEditor(
     "resizing track",
-    () => editorViewer.set_editor_layout_width(activeLayoutId, clamped)
+    () => editorViewer.set_editor_layout_width(activeRouteId, clamped)
   );
 });
 saveProjectButton.addEventListener("click", () => {
@@ -2728,12 +2632,99 @@ projectFileInput.addEventListener("change", () => {
     }
   })();
 });
+function makeSelectedSegmentUnique() {
+  if (!editorViewer || !activeRouteId || !selectedSegmentId || rebuilding) {
+    return;
+  }
+  const routeId = activeRouteId;
+  const segmentId = selectedSegmentId;
+  let uniqueId = "";
+  void (async () => {
+    await rebuildEditor(
+      "making segment unique",
+      async () => {
+        uniqueId = await editorViewer.make_editor_segment_unique(
+          routeId,
+          segmentId
+        );
+      },
+      reportActionError
+    );
+    if (uniqueId) {
+      selectedSegmentId = uniqueId;
+      selectedSegmentPointIndex = null;
+      segmentPointDrag = null;
+      updateSegmentPanel();
+      drawControlPoints();
+    }
+  })();
+}
+function addSelectedSegmentPoint() {
+  if (!editorViewer || !selectedSegmentId || rebuilding) {
+    return;
+  }
+  const edge = selectedSegmentEdge();
+  if (!edge) {
+    return;
+  }
+  const segmentId = selectedSegmentId;
+  const midpoint = selectedSegmentMidpoint();
+  const ground = midpoint ?? lastPointerGroundPoint(segmentInteriorY(edge));
+  if (!ground) {
+    reportActionError(
+      new Error("no viewport position available for a new interior point")
+    );
+    return;
+  }
+  const afterIndex = edge.points.length === 0 ? 0 : edge.points.length - 1;
+  let newIndex = -1;
+  void (async () => {
+    await rebuildEditor(
+      "adding segment point",
+      async () => {
+        newIndex = await editorViewer.insert_editor_segment_point(
+          segmentId,
+          afterIndex,
+          ground[0],
+          ground[2]
+        );
+      },
+      reportActionError
+    );
+    if (newIndex >= 0) {
+      selectedSegmentPointIndex = newIndex;
+      updateSegmentPanel();
+      drawControlPoints();
+    }
+  })();
+}
+function deleteSelectedSegmentPoint() {
+  if (!editorViewer || !selectedSegmentId || selectedSegmentPointIndex === null || rebuilding) {
+    return;
+  }
+  const segmentId = selectedSegmentId;
+  const index = selectedSegmentPointIndex;
+  void (async () => {
+    await rebuildEditor(
+      "deleting segment point",
+      () => editorViewer.delete_editor_segment_point(segmentId, index),
+      reportActionError
+    );
+    selectedSegmentPointIndex = null;
+    updateSegmentPanel();
+    drawControlPoints();
+  })();
+}
+segmentMakeUniqueButton.addEventListener("click", makeSelectedSegmentUnique);
+segmentAddPointButton.addEventListener("click", addSelectedSegmentPoint);
+segmentDeletePointButton.addEventListener("click", deleteSelectedSegmentPoint);
 async function rebuildEditor(message, action, onError = fail) {
   if (!editorViewer || rebuilding) {
     return;
   }
   rebuilding = true;
   suspended = true;
+  duplicateLayoutButton.disabled = true;
   testDriveButton.disabled = true;
   cameraController?.setEnabled(false);
   status.textContent = message;
@@ -2751,7 +2742,9 @@ async function rebuildEditor(message, action, onError = fail) {
   } finally {
     suspended = false;
     rebuilding = false;
+    duplicateLayoutButton.disabled = !project || !activeRouteId;
     cameraController?.setEnabled(true);
+    updateSegmentPanel();
     drawControlPoints();
   }
 }
@@ -2769,31 +2762,29 @@ async function rebuildPropLines() {
 }
 function selectControlPoint(id) {
   selectedPointId = id;
-  syncPointControls();
   drawControlPoints();
 }
 async function deleteControlPoint(pointId) {
-  if (!editorViewer || !activeLayoutId || rebuilding) {
+  if (!editorViewer || !activeRouteId || rebuilding) {
     return;
   }
   await rebuildEditor(
     "deleting control point",
-    () => editorViewer.delete_editor_control_point(activeLayoutId, pointId)
+    () => editorViewer.delete_editor_control_point(activeRouteId, pointId)
   );
   if (selectedPointId === pointId) {
     selectedPointId = null;
   }
-  syncPointControls();
   drawControlPoints();
 }
 async function insertControlPoint(point, afterPointId) {
-  if (!editorViewer || !activeLayoutId || rebuilding) {
+  if (!editorViewer || !activeRouteId || rebuilding) {
     return;
   }
   let newId = "";
   await rebuildEditor("inserting control point", async () => {
     newId = await editorViewer.insert_editor_control_point(
-      activeLayoutId,
+      activeRouteId,
       afterPointId,
       point[0],
       point[2]
@@ -2812,23 +2803,6 @@ async function moveControlPointById(pointId, point) {
     () => editorViewer.move_editor_control_point(pointId, point[0], point[2])
   );
 }
-async function makeSelectedPointUnique() {
-  const index = selectedPointIndex();
-  const point = index >= 0 ? loopPoints[index] : null;
-  if (!point || !editorViewer || !activeLayoutId || rebuilding) {
-    return;
-  }
-  let newId = "";
-  await rebuildEditor("making control point unique", async () => {
-    newId = await editorViewer.make_editor_control_point_unique(
-      activeLayoutId,
-      point.id
-    );
-  });
-  if (newId) {
-    selectControlPoint(newId);
-  }
-}
 canvas.addEventListener(
   "pointerdown",
   (event) => {
@@ -2836,31 +2810,6 @@ canvas.addEventListener(
       return;
     }
     const [x, y] = pointerPosition(event);
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      cameraDragging = false;
-      const index2 = overlayVisible ? hitTestControlPoint(x, y) : -1;
-      if (branchDraft) {
-        if (index2 >= 0) {
-          const pointId = loopPoints[index2]?.id;
-          if (!pointId || pointId === branchDraft.junctionId) {
-            flashStatus("Ctrl+click a different control point to close the branch");
-            return;
-          }
-          void closeBranchDraft(pointId);
-          return;
-        }
-        appendBranchDraftPoint(x, y);
-        return;
-      }
-      if (index2 < 0) {
-        flashStatus("Ctrl+click a control point to start a branch");
-        return;
-      }
-      startBranchDraft(index2);
-      return;
-    }
     if (event.shiftKey !== deleteMode) {
       setDeleteMode(event.shiftKey);
     }
@@ -2887,7 +2836,7 @@ canvas.addEventListener(
         flashStatus("minimum 3 control points");
         return;
       }
-      const pointId = loopPoints[index]?.id;
+      const pointId = routeJunctions[index]?.id;
       hoverInsert = null;
       hoverDeleteIndex = null;
       drawControlPoints();
@@ -2898,15 +2847,44 @@ canvas.addEventListener(
     }
     if (index < 0) {
       if (overlayVisible && !deleteMode) {
+        const pointIndex = hitTestSegmentPoint(x, y);
+        if (pointIndex !== null && selectedSegmentId) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          cameraDragging = false;
+          const edge = selectedSegmentEdge();
+          const point2 = edge?.points[pointIndex];
+          if (edge && point2) {
+            const interiorY = segmentInteriorY(edge);
+            selectedSegmentPointIndex = pointIndex;
+            segmentPointDrag = {
+              segmentId: selectedSegmentId,
+              index: pointIndex,
+              pointerId: event.pointerId,
+              planeY: interiorY,
+              position: [point2[0], interiorY, point2[1]],
+              moved: false
+            };
+            updateSegmentPanel();
+            cameraController?.setEnabled(false);
+            try {
+              canvas.setPointerCapture(event.pointerId);
+            } catch {
+            }
+            canvas.style.cursor = "grabbing";
+            drawControlPoints();
+            return;
+          }
+        }
         const handle = hitGuideHandle(x, y);
-        if (handle && selectedSegment) {
+        if (handle && decorationSelection) {
           event.preventDefault();
           event.stopImmediatePropagation();
           cameraDragging = false;
           guideDrag = {
-            kind: selectedSegment.kind,
-            side: selectedSegment.side,
-            offset: selectedSegment.offset,
+            kind: decorationSelection.kind,
+            side: decorationSelection.side,
+            offset: decorationSelection.offset,
             edge: handle.edge,
             pointerId: event.pointerId
           };
@@ -2939,8 +2917,26 @@ canvas.addEventListener(
           return;
         }
       }
-      if (selectedSegment) {
-        selectedSegment = null;
+      const segmentId = overlayVisible && !deleteMode ? hitTestSegmentCenterline(x, y) : null;
+      if (segmentId) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cameraDragging = false;
+        selectedSegmentId = segmentId;
+        selectedSegmentPointIndex = null;
+        segmentPointDrag = null;
+        updateSegmentPanel();
+        drawControlPoints();
+        return;
+      }
+      if (selectedSegmentId || selectedSegmentPointIndex !== null) {
+        selectedSegmentId = null;
+        selectedSegmentPointIndex = null;
+        segmentPointDrag = null;
+        updateSegmentPanel();
+      }
+      if (decorationSelection) {
+        decorationSelection = null;
         hoverPoint = null;
         hoverHandleEdge = null;
         syncPaintControls();
@@ -2963,7 +2959,7 @@ canvas.addEventListener(
     event.preventDefault();
     event.stopImmediatePropagation();
     cameraDragging = false;
-    selectControlPoint(loopPoints[index]?.id ?? null);
+    selectControlPoint(routeJunctions[index]?.id ?? null);
     dragIndex = index;
     dragPointerId = event.pointerId;
     dragPlaneY = controlPoints[index][1];
@@ -2988,6 +2984,21 @@ window.addEventListener(
         if (cameraViewMode === "car") {
           applyCameraView();
         }
+        drawControlPoints();
+      }
+      return;
+    }
+    if (segmentPointDrag && event.pointerId === segmentPointDrag.pointerId) {
+      event.preventDefault();
+      const [x2, y2] = pointerPosition(event);
+      const world = groundPointFromScreen(x2, y2, segmentPointDrag.planeY);
+      if (world) {
+        segmentPointDrag.position = [
+          world[0],
+          segmentPointDrag.planeY,
+          world[2]
+        ];
+        segmentPointDrag.moved = true;
         drawControlPoints();
       }
       return;
@@ -3024,7 +3035,7 @@ var endDrag = (event) => {
     return;
   }
   const index = dragIndex;
-  const pointId = loopPoints[index]?.id;
+  const pointId = routeJunctions[index]?.id;
   dragIndex = null;
   dragPointerId = null;
   try {
@@ -3051,6 +3062,35 @@ var endGuideDrag = (event) => {
   canvas.style.cursor = "";
   drawControlPoints();
   void (kind === "kerb" ? rebuildKerbSpans() : rebuildPropLines());
+};
+var endSegmentPointDrag = (event) => {
+  if (!segmentPointDrag || event.pointerId !== segmentPointDrag.pointerId) {
+    return;
+  }
+  const drag = segmentPointDrag;
+  segmentPointDrag = null;
+  try {
+    canvas.releasePointerCapture(event.pointerId);
+  } catch {
+  }
+  cameraController?.setEnabled(true);
+  canvas.style.cursor = "";
+  drawControlPoints();
+  void (async () => {
+    await rebuildEditor(
+      "moving segment point",
+      () => editorViewer.move_editor_segment_point(
+        drag.segmentId,
+        drag.index,
+        drag.position[0],
+        drag.position[2]
+      ),
+      reportActionError
+    );
+    selectedSegmentPointIndex = drag.index;
+    updateSegmentPanel();
+    drawControlPoints();
+  })();
 };
 var endCarDrag = (event) => {
   if (carDragPointerId === null || event.pointerId !== carDragPointerId) {
@@ -3089,7 +3129,7 @@ window.addEventListener("keydown", (event) => {
   if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
     return;
   }
-  if ((event.key === "Delete" || event.key === "Backspace") && selectedSegment && !guideDrag) {
+  if ((event.key === "Delete" || event.key === "Backspace") && decorationSelection && !guideDrag) {
     event.preventDefault();
     deleteSelectedSegment();
     return;
@@ -3109,13 +3149,8 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Shift") {
     setDeleteMode(true);
   }
-  if (event.key === "Escape" && branchDraft) {
-    event.preventDefault();
-    cancelBranchDraft();
-    return;
-  }
-  if (event.key === "Escape" && selectedSegment && !guideDrag) {
-    selectedSegment = null;
+  if (event.key === "Escape" && decorationSelection && !guideDrag) {
+    decorationSelection = null;
     hoverPoint = null;
     hoverHandleEdge = null;
     syncPaintControls();
@@ -3156,6 +3191,8 @@ window.addEventListener("pointerup", endDrag, { capture: true });
 window.addEventListener("pointercancel", endDrag, { capture: true });
 window.addEventListener("pointerup", endGuideDrag, { capture: true });
 window.addEventListener("pointercancel", endGuideDrag, { capture: true });
+window.addEventListener("pointerup", endSegmentPointDrag, { capture: true });
+window.addEventListener("pointercancel", endSegmentPointDrag, { capture: true });
 window.addEventListener("pointerup", endCarDrag, { capture: true });
 window.addEventListener("pointercancel", endCarDrag, { capture: true });
 window.addEventListener("pointerup", endCameraDrag, { capture: true });
@@ -3237,15 +3274,14 @@ async function boot() {
     );
   };
   window.__editorMovePoint = (id, x, z) => moveControlPointById(id, [x, 0, z]);
-  window.__editorMakeUnique = (loopId, pointId) => rebuildEditor("making control point unique", async () => {
-    const newId = await editorViewer.make_editor_control_point_unique(
-      loopId,
-      pointId
-    );
-    selectControlPoint(newId);
-    return newId;
-  });
   window.__editorSelectPoint = (id) => selectControlPoint(id);
+  window.__editorSelectSegment = (id) => {
+    selectedSegmentId = id;
+    selectedSegmentPointIndex = null;
+    segmentPointDrag = null;
+    updateSegmentPanel();
+    drawControlPoints();
+  };
   if (devMode) {
     setupTrackDevMenu(viewer);
   }

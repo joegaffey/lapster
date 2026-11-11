@@ -12,6 +12,7 @@ use sim_types::{
 pub const TRACK_PROJECT_SCHEMA: &str = "lapster/track-project@2";
 pub const TRACK_PROJECT_SCHEMA_V1: &str = "lapster/track-project@1";
 pub const EDITOR_PROJECT_SCHEMA: &str = "lapster/track-project@3";
+pub const TRACK_PROJECT_SCHEMA_V4: &str = "lapster/track-project@4";
 pub const DEFAULT_LAYOUT_WIDTH: f32 = 12.0;
 pub const MIN_LAYOUT_WIDTH: f32 = 6.0;
 pub const MAX_LAYOUT_WIDTH: f32 = 30.0;
@@ -227,9 +228,14 @@ pub struct TrackProject {
     pub pit_lane: Option<PitLaneProject>,
     pub control_points: Vec<ControlPoint>,
     pub edges: Vec<EdgeProject>,
-    #[serde(default)]
+    /// Legacy `@3` decoration list retained for migration input only. It is
+    /// never written back into the `@4` document; per-segment decorations live
+    /// on [`EdgeProject`].
+    #[serde(default, skip_serializing)]
     pub segments: Vec<EditorSegment>,
     pub layouts: Vec<LayoutProject>,
+    #[serde(default)]
+    pub paths: Vec<PathProject>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -384,6 +390,12 @@ pub struct EdgeProject {
     pub kerbs: Vec<KerbSpan>,
     #[serde(default)]
     pub prop_spans: Vec<PropSpan>,
+    #[serde(default)]
+    pub points: Vec<[f32; 2]>,
+    #[serde(default)]
+    pub from_tangent: Option<[f32; 2]>,
+    #[serde(default)]
+    pub to_tangent: Option<[f32; 2]>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -398,6 +410,23 @@ pub struct LayoutProject {
     pub cameras: Vec<CameraSpec>,
     #[serde(default)]
     pub spawns: Vec<SpawnPoint>,
+    #[serde(default)]
+    pub start_finish: StartFinish,
+}
+
+/// A drivable, non-selectable path over canonical edges. The pit lane is a
+/// path; paths may be open and are never listed as layouts.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PathProject {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub route: Vec<String>,
+    #[serde(default)]
+    pub boxes: Vec<SpawnPoint>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -461,6 +490,7 @@ pub struct EditorControlPoint {
 }
 
 /// Read-only loop control-point details used by the editor UI.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorPointInfo {
@@ -683,20 +713,24 @@ impl TrackProject {
                 end_profile: None,
                 kerbs: Vec::new(),
                 prop_spans: Vec::new(),
+                points: Vec::new(),
+                from_tangent: None,
+                to_tangent: None,
             })
             .collect::<Vec<_>>();
         let route = edges.iter().map(|edge| edge.id.clone()).collect::<Vec<_>>();
+        let start_finish = StartFinish {
+            edge: edges
+                .first()
+                .map(|edge| edge.id.clone())
+                .unwrap_or_default(),
+            fraction: 0.0,
+        };
         Self {
-            schema: TRACK_PROJECT_SCHEMA.to_string(),
+            schema: TRACK_PROJECT_SCHEMA_V4.to_string(),
             name: name.to_string(),
             settings: VenueSettings::default(),
-            start_finish: StartFinish {
-                edge: edges
-                    .first()
-                    .map(|edge| edge.id.clone())
-                    .unwrap_or_default(),
-                fraction: 0.0,
-            },
+            start_finish: start_finish.clone(),
             pit_lane: None,
             control_points,
             edges,
@@ -708,14 +742,16 @@ impl TrackProject {
                 sectors: Vec::new(),
                 cameras: Vec::new(),
                 spawns: Vec::new(),
+                start_finish,
             }],
+            paths: Vec::new(),
         }
     }
 
-    /// Parses either the current `@2` project or a legacy `@1` project and
-    /// returns a normalized venue graph. `@1` layouts are migrated into
-    /// independent rings; the start/finish is taken from the first edge of the
-    /// legacy default layout.
+    /// Parses an `@4` venue graph, the current `@2` project, a legacy `@1`
+    /// project, or migrates an `@3` loop document through [`EditorProject`].
+    /// `@1` layouts are migrated into independent rings; the start/finish is
+    /// taken from the first edge of the legacy default layout.
     pub fn from_json(json: &str) -> Result<Self, String> {
         let value = serde_json::from_str::<serde_json::Value>(json)
             .map_err(|error| format!("invalid track project JSON: {error}"))?;
@@ -725,16 +761,19 @@ impl TrackProject {
             .unwrap_or_default()
             .to_string();
         match schema.as_str() {
-            TRACK_PROJECT_SCHEMA => serde_json::from_value::<TrackProject>(value)
-                .map_err(|error| format!("invalid track project: {error}"))?
-                .normalize(),
+            TRACK_PROJECT_SCHEMA | TRACK_PROJECT_SCHEMA_V4 => {
+                serde_json::from_value::<TrackProject>(value)
+                    .map_err(|error| format!("invalid track project: {error}"))?
+                    .normalize()
+            }
             TRACK_PROJECT_SCHEMA_V1 => {
                 let legacy = serde_json::from_value::<LegacyTrackProject>(value)
                     .map_err(|error| format!("invalid legacy track project: {error}"))?;
                 legacy.migrate()?.normalize()
             }
+            EDITOR_PROJECT_SCHEMA => EditorProject::from_json(json)?.to_graph()?.normalize(),
             other => Err(format!(
-                "unsupported track project schema '{other}'; expected {TRACK_PROJECT_SCHEMA} or {TRACK_PROJECT_SCHEMA_V1}"
+                "unsupported track project schema '{other}'; expected {TRACK_PROJECT_SCHEMA_V4}, {EDITOR_PROJECT_SCHEMA}, {TRACK_PROJECT_SCHEMA}, or {TRACK_PROJECT_SCHEMA_V1}"
             )),
         }
     }
@@ -745,9 +784,9 @@ impl TrackProject {
     }
 
     fn normalize_in_place(&mut self) -> Result<(), String> {
-        if self.schema != TRACK_PROJECT_SCHEMA {
+        if self.schema != TRACK_PROJECT_SCHEMA && self.schema != TRACK_PROJECT_SCHEMA_V4 {
             return Err(format!(
-                "unsupported track project schema '{}'; expected {TRACK_PROJECT_SCHEMA}",
+                "unsupported track project schema '{}'; expected {TRACK_PROJECT_SCHEMA_V4} or {TRACK_PROJECT_SCHEMA}",
                 self.schema
             ));
         }
@@ -842,6 +881,37 @@ impl TrackProject {
             }
         }
 
+        for edge in &mut self.edges {
+            for point in &edge.points {
+                if !point[0].is_finite() || !point[1].is_finite() {
+                    return Err(format!(
+                        "edge '{}' has a non-finite interior point",
+                        edge.id
+                    ));
+                }
+            }
+            for (label, tangent) in [
+                ("from", &mut edge.from_tangent),
+                ("to", &mut edge.to_tangent),
+            ] {
+                let Some(tangent) = tangent else {
+                    continue;
+                };
+                if !tangent[0].is_finite() || !tangent[1].is_finite() {
+                    return Err(format!("edge '{}' {label} tangent must be finite", edge.id));
+                }
+                let length = tangent[0].hypot(tangent[1]);
+                if length <= 1e-6 {
+                    return Err(format!(
+                        "edge '{}' {label} tangent must be non-zero",
+                        edge.id
+                    ));
+                }
+                tangent[0] /= length;
+                tangent[1] /= length;
+            }
+        }
+
         let control_points = self
             .control_points
             .iter()
@@ -928,6 +998,7 @@ impl TrackProject {
         if self.layouts.is_empty() {
             return Err("track project needs at least one layout".to_string());
         }
+        let require_layout_start_finish = self.schema == TRACK_PROJECT_SCHEMA_V4;
         for layout in &self.layouts {
             if layout.id.trim().is_empty() {
                 return Err("layout ids must not be empty".to_string());
@@ -963,20 +1034,53 @@ impl TrackProject {
                     ));
                 }
             }
+            if require_layout_start_finish {
+                if !layout.start_finish.fraction.is_finite()
+                    || layout.start_finish.fraction < 0.0
+                    || layout.start_finish.fraction >= 1.0
+                {
+                    return Err(format!(
+                        "layout '{}' start/finish fraction must lie in [0, 1)",
+                        layout.id
+                    ));
+                }
+                let start_edge = edges
+                    .get(layout.start_finish.edge.as_str())
+                    .ok_or_else(|| {
+                        format!(
+                            "layout '{}' start/finish references unknown edge '{}'",
+                            layout.id, layout.start_finish.edge
+                        )
+                    })?;
+                if !layout.route.iter().any(|edge| edge == &start_edge.id) {
+                    return Err(format!(
+                        "layout '{}' start/finish edge '{}' is missing from its route",
+                        layout.id, start_edge.id
+                    ));
+                }
+            }
         }
 
-        let start_edge = edges.get(self.start_finish.edge.as_str()).ok_or_else(|| {
-            format!(
-                "start/finish references unknown edge '{}'",
-                self.start_finish.edge
-            )
-        })?;
-        for layout in &self.layouts {
-            if !layout.route.iter().any(|edge| edge == &start_edge.id) {
-                return Err(format!(
-                    "start/finish edge '{}' is missing from layout '{}'",
-                    start_edge.id, layout.id
-                ));
+        if self.schema != TRACK_PROJECT_SCHEMA_V4 {
+            let start_edge = edges.get(self.start_finish.edge.as_str()).ok_or_else(|| {
+                format!(
+                    "start/finish references unknown edge '{}'",
+                    self.start_finish.edge
+                )
+            })?;
+            for layout in &self.layouts {
+                if !layout.route.iter().any(|edge| edge == &start_edge.id) {
+                    return Err(format!(
+                        "start/finish edge '{}' is missing from layout '{}'",
+                        start_edge.id, layout.id
+                    ));
+                }
+            }
+            // Legacy `@2` projects only carry the global start/finish, so mirror
+            // it onto every route before the route is assembled.
+            let start_finish = self.start_finish.clone();
+            for layout in &mut self.layouts {
+                layout.start_finish = start_finish.clone();
             }
         }
 
@@ -989,9 +1093,12 @@ impl TrackProject {
             let degree = degrees.get(point.id.as_str()).copied().unwrap_or(0);
             match point.kind {
                 ControlPointKind::Normal => {
-                    if degree != 2 {
+                    // Degree 0 is an unreferenced draft junction created while
+                    // authoring a branch; it is valid until it is connected or
+                    // deleted.
+                    if degree != 0 && degree != 2 {
                         return Err(format!(
-                            "control point '{}' is normal but has degree {degree}; expected 2",
+                            "control point '{}' is normal but has degree {degree}; expected 0 or 2",
                             point.id
                         ));
                     }
@@ -1080,6 +1187,39 @@ impl TrackProject {
                     "pit lane '{}' must end at a pit_exit control point, but '{}' is {:?}",
                     pit_lane.id, exit.id, exit.kind
                 ));
+            }
+        }
+
+        for path in &self.paths {
+            if path.id.trim().is_empty() {
+                return Err("path ids must not be empty".to_string());
+            }
+            if path.kind.trim().is_empty() {
+                return Err(format!("path '{}' kind must not be empty", path.id));
+            }
+            let mut previous: Option<&EdgeProject> = None;
+            for edge_id in &path.route {
+                let edge = edges.get(edge_id.as_str()).ok_or_else(|| {
+                    format!(
+                        "path '{}' route references unknown edge '{edge_id}'",
+                        path.id
+                    )
+                })?;
+                if edge.from == edge.to {
+                    return Err(format!(
+                        "path '{}' route must not reference self-loop edge '{}'",
+                        path.id, edge.id
+                    ));
+                }
+                if let Some(previous) = previous {
+                    if previous.to != edge.from {
+                        return Err(format!(
+                            "path '{}' route is not a canonical chain: edge '{}' ends at '{}' but next edge '{}' starts at '{}'",
+                            path.id, previous.id, previous.to, edge.id, edge.from
+                        ));
+                    }
+                }
+                previous = Some(edge);
             }
         }
 
@@ -1194,6 +1334,9 @@ impl TrackProject {
                 end_profile: None,
                 kerbs: Vec::new(),
                 prop_spans: Vec::new(),
+                points: Vec::new(),
+                from_tangent: None,
+                to_tangent: None,
             });
             route.push(id);
         }
@@ -1218,6 +1361,10 @@ impl TrackProject {
         } else {
             name.trim().to_string()
         };
+        let start_finish = StartFinish {
+            edge: start_edge.id.clone(),
+            fraction: self.start_finish.fraction,
+        };
         self.layouts.push(LayoutProject {
             id: id.clone(),
             name: layout_name,
@@ -1225,24 +1372,24 @@ impl TrackProject {
             sectors: Vec::new(),
             cameras: Vec::new(),
             spawns: Vec::new(),
+            start_finish,
         });
         Ok(id)
     }
 
-    /// Adds a layout using the same fallback route as [`Self::add_layout`],
-    /// carrying over the source layout metadata.
+    /// Clones a layout, sharing its route and canonical edges with the source.
+    /// No new control points or edges are created.
     pub fn duplicate_layout(&mut self, id: &str) -> Result<String, String> {
         let source = self
             .layout_by_id(id)
             .cloned()
             .ok_or_else(|| format!("unknown layout id '{id}'"))?;
-        let new_id = self.add_layout(&format!("{} Copy", source.name))?;
-        if let Some(layout) = self.layouts.iter_mut().find(|layout| layout.id == new_id) {
-            layout.name = format!("{} Copy", source.name);
-            layout.sectors = source.sectors;
-            layout.cameras = source.cameras;
-            layout.spawns = source.spawns;
-        }
+        let new_id = self.unique_layout_id(&format!("{}-copy", source.id));
+        let mut duplicate = source.clone();
+        duplicate.id = new_id.clone();
+        duplicate.name = format!("{} Copy", source.name);
+        self.layouts.push(duplicate);
+        self.normalize_in_place()?;
         Ok(new_id)
     }
 
@@ -1592,6 +1739,337 @@ impl TrackProject {
     }
 }
 
+/// Route/segment/junction editing operations for the `@4` editor. These use
+/// the graph's canonical names: a segment is an [`EdgeProject`], a junction is
+/// a [`ControlPoint`], and a route is a [`LayoutProject`].
+#[allow(dead_code)]
+impl TrackProject {
+    pub fn segment_by_id(&self, id: &str) -> Option<&EdgeProject> {
+        self.edges.iter().find(|segment| segment.id == id)
+    }
+
+    pub fn segment_index(&self, id: &str) -> Option<usize> {
+        self.edges.iter().position(|segment| segment.id == id)
+    }
+
+    pub fn junction_by_id(&self, id: &str) -> Option<&ControlPoint> {
+        self.control_points
+            .iter()
+            .find(|junction| junction.id == id)
+    }
+
+    pub fn junction_index(&self, id: &str) -> Option<usize> {
+        self.control_points
+            .iter()
+            .position(|junction| junction.id == id)
+    }
+
+    pub fn route_segments(&self, route_id: &str) -> Option<&[String]> {
+        self.layout_by_id(route_id)
+            .map(|route| route.route.as_slice())
+    }
+
+    /// Moves a junction's control point. Incident segments follow because they
+    /// sample from the junction position.
+    pub fn move_junction(&mut self, id: &str, x: f32, z: f32) -> Result<(), String> {
+        let index = self
+            .junction_index(id)
+            .ok_or_else(|| format!("unknown junction id '{id}'"))?;
+        if !x.is_finite() || !z.is_finite() {
+            return Err(format!("junction '{id}' position must be finite"));
+        }
+        let mut candidate = self.clone();
+        candidate.control_points[index].position = [x, z];
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Inserts a detached junction and returns its id. A detached junction is
+    /// only valid once an incident segment references it; connect or delete it
+    /// before normalizing the project.
+    pub fn insert_junction(&mut self, x: f32, z: f32) -> String {
+        let id = unique_id(
+            self.control_points.iter().map(|point| point.id.as_str()),
+            "junction",
+        );
+        let position = [
+            if x.is_finite() { x } else { 0.0 },
+            if z.is_finite() { z } else { 0.0 },
+        ];
+        self.control_points.push(ControlPoint {
+            id: id.clone(),
+            position,
+            kind: ControlPointKind::Normal,
+            profile: None,
+            branch_tangents: BTreeMap::new(),
+        });
+        id
+    }
+
+    /// Deletes an unreferenced junction. Referenced junctions must be rewired
+    /// or their segments removed first.
+    pub fn delete_junction(&mut self, id: &str) -> Result<(), String> {
+        let index = self
+            .junction_index(id)
+            .ok_or_else(|| format!("unknown junction id '{id}'"))?;
+        let referenced = self
+            .edges
+            .iter()
+            .filter(|segment| segment.from == id || segment.to == id)
+            .map(|segment| segment.id.as_str())
+            .collect::<Vec<_>>();
+        if !referenced.is_empty() {
+            return Err(format!(
+                "junction '{id}' is referenced by segment(s) {}; rewire or delete them first",
+                referenced.join(", ")
+            ));
+        }
+        let mut candidate = self.clone();
+        candidate.control_points.remove(index);
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Inserts an interior control point after `after_index` and returns the
+    /// inserted index. Indices are 0-based into the segment's interior points
+    /// vector; an empty vector accepts `after_index == 0`.
+    pub fn insert_segment_point(
+        &mut self,
+        segment_id: &str,
+        after_index: usize,
+        x: f32,
+        z: f32,
+    ) -> Result<usize, String> {
+        let index = self
+            .segment_index(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        if !x.is_finite() || !z.is_finite() {
+            return Err(format!(
+                "segment '{segment_id}' interior point must be finite"
+            ));
+        }
+        let mut candidate = self.clone();
+        let points = &mut candidate.edges[index].points;
+        if after_index > points.len() {
+            return Err(format!(
+                "segment '{segment_id}' interior point index {after_index} is out of range for {} point(s)",
+                points.len()
+            ));
+        }
+        let insert_at = if points.is_empty() {
+            0
+        } else {
+            (after_index + 1).min(points.len())
+        };
+        points.insert(insert_at, [x, z]);
+        *self = candidate.normalize()?;
+        Ok(insert_at)
+    }
+
+    /// Moves an interior control point at a 0-based index.
+    pub fn move_segment_point(
+        &mut self,
+        segment_id: &str,
+        index: usize,
+        x: f32,
+        z: f32,
+    ) -> Result<(), String> {
+        let segment_index = self
+            .segment_index(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        if !x.is_finite() || !z.is_finite() {
+            return Err(format!(
+                "segment '{segment_id}' interior point must be finite"
+            ));
+        }
+        let mut candidate = self.clone();
+        let points = &mut candidate.edges[segment_index].points;
+        if index >= points.len() {
+            return Err(format!(
+                "segment '{segment_id}' interior point index {index} is out of range for {} point(s)",
+                points.len()
+            ));
+        }
+        points[index] = [x, z];
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Deletes an interior control point at a 0-based index.
+    pub fn delete_segment_point(&mut self, segment_id: &str, index: usize) -> Result<(), String> {
+        let segment_index = self
+            .segment_index(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let mut candidate = self.clone();
+        let points = &mut candidate.edges[segment_index].points;
+        if index >= points.len() {
+            return Err(format!(
+                "segment '{segment_id}' interior point index {index} is out of range for {} point(s)",
+                points.len()
+            ));
+        }
+        points.remove(index);
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Clones a segment for one route and repoints only that route at the
+    /// clone. Other routes keep the original segment.
+    pub fn make_segment_unique(
+        &mut self,
+        route_id: &str,
+        segment_id: &str,
+    ) -> Result<String, String> {
+        let route_index = self
+            .layout_index(route_id)
+            .ok_or_else(|| format!("unknown route id '{route_id}'"))?;
+        let route_position = self.layouts[route_index]
+            .route
+            .iter()
+            .position(|id| id == segment_id)
+            .ok_or_else(|| {
+                format!("route '{route_id}' does not reference segment '{segment_id}'")
+            })?;
+        let segment_index = self
+            .segment_index(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        if self.start_finish.edge == segment_id {
+            return Err(format!(
+                "cannot make segment '{segment_id}' unique because it is the venue start/finish segment"
+            ));
+        }
+
+        let mut candidate = self.clone();
+        let mut unique = candidate.edges[segment_index].clone();
+        unique.id = unique_id(
+            candidate.edges.iter().map(|segment| segment.id.as_str()),
+            segment_id,
+        );
+        let unique_id = unique.id.clone();
+        let endpoints = [unique.from.clone(), unique.to.clone()];
+        candidate.edges.push(unique);
+        candidate.layouts[route_index].route[route_position] = unique_id.clone();
+        if candidate.layouts[route_index].start_finish.edge == segment_id {
+            candidate.layouts[route_index].start_finish.edge = unique_id.clone();
+        }
+        // A parallel segment raises the degree of both endpoints. Promote the
+        // degree-two junction kinds so the cloned segment can share them.
+        let mut degrees = BTreeMap::<&str, usize>::new();
+        for segment in &candidate.edges {
+            *degrees.entry(segment.from.as_str()).or_default() += 1;
+            *degrees.entry(segment.to.as_str()).or_default() += 1;
+        }
+        for junction in &mut candidate.control_points {
+            if endpoints.iter().any(|id| id == &junction.id)
+                && matches!(
+                    junction.kind,
+                    ControlPointKind::Normal | ControlPointKind::StartFinish
+                )
+                && degrees.get(junction.id.as_str()).copied().unwrap_or(0) >= 3
+            {
+                junction.kind = ControlPointKind::Fork;
+            }
+        }
+        *self = candidate.normalize()?;
+        Ok(unique_id)
+    }
+
+    pub fn set_segment_kerb_spans(
+        &mut self,
+        segment_id: &str,
+        spans: &[KerbSpan],
+    ) -> Result<(), String> {
+        let index = self
+            .segment_index(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let mut candidate = self.clone();
+        candidate.edges[index].kerbs = spans.to_vec();
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    pub fn set_segment_prop_spans(
+        &mut self,
+        segment_id: &str,
+        spans: &[PropSpan],
+    ) -> Result<(), String> {
+        let index = self
+            .segment_index(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let mut candidate = self.clone();
+        candidate.edges[index].prop_spans = spans.to_vec();
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Sets both endpoint tangents. `None` clears a tangent and falls back to
+    /// the sampler's derived direction. Non-zero tangents are normalized by
+    /// [`Self::normalize`].
+    pub fn set_segment_tangents(
+        &mut self,
+        segment_id: &str,
+        from: Option<[f32; 2]>,
+        to: Option<[f32; 2]>,
+    ) -> Result<(), String> {
+        let index = self
+            .segment_index(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let mut candidate = self.clone();
+        candidate.edges[index].from_tangent = from;
+        candidate.edges[index].to_tangent = to;
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    pub fn set_segment_from_tangent(
+        &mut self,
+        segment_id: &str,
+        tangent: Option<[f32; 2]>,
+    ) -> Result<(), String> {
+        let to = self
+            .segment_by_id(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?
+            .to_tangent;
+        self.set_segment_tangents(segment_id, tangent, to)
+    }
+
+    pub fn set_segment_to_tangent(
+        &mut self,
+        segment_id: &str,
+        tangent: Option<[f32; 2]>,
+    ) -> Result<(), String> {
+        let from = self
+            .segment_by_id(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?
+            .from_tangent;
+        self.set_segment_tangents(segment_id, from, tangent)
+    }
+
+    /// Samples one segment through the existing edge sampler.
+    pub fn segment_centerline(&self, segment_id: &str) -> Result<Vec<[f32; 3]>, String> {
+        let segment = self
+            .segment_by_id(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let points = sample_edge_points(self, segment)?;
+        Ok(points.into_iter().map(|point| point.to_array()).collect())
+    }
+
+    /// Assembles a route's centreline from its canonical segments.
+    pub fn route_centerline(&self, route_id: &str) -> Result<Vec<[f32; 3]>, String> {
+        let route = self
+            .layout_by_id(route_id)
+            .ok_or_else(|| format!("unknown route id '{route_id}'"))?;
+        let segment_ids = route.route.iter().cloned().collect::<BTreeSet<_>>();
+        let built = build_unique_edges(self, &segment_ids)?;
+        let assembled = assemble_route(self, route, &built, &HashMap::new())?;
+        Ok(assembled
+            .points
+            .into_iter()
+            .map(|point| point.to_array())
+            .collect())
+    }
+}
+
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
@@ -1602,6 +2080,7 @@ impl Default for EditorSettings {
     }
 }
 
+#[allow(dead_code)]
 impl EditorProject {
     /// The built-in single-loop venue; matches the original editor loop.
     pub fn default_project() -> Self {
@@ -2453,6 +2932,23 @@ impl EditorProject {
                     continue;
                 }
                 let segment = segments.get(&key);
+                let role = segment_roles.get(&key).copied().unwrap_or_default();
+                let branch_tangent = match (positions.get(&from), positions.get(&to)) {
+                    (Some(from_position), Some(to_position)) => {
+                        let dx = to_position[0] - from_position[0];
+                        let dz = to_position[1] - from_position[1];
+                        let length = dx.hypot(dz);
+                        (length > 1e-6).then(|| [dx / length, dz / length])
+                    }
+                    _ => None,
+                };
+                // Main edges follow the averaged main-loop point tangent. Branch
+                // edges seed both endpoints with their own chord direction so
+                // they can meet a junction at a distinct angle.
+                let (from_tangent, to_tangent) = match (role, branch_tangent) {
+                    (EditorSegmentRole::Branch, Some(tangent)) => (Some(tangent), Some(tangent)),
+                    _ => (tangents.get(&from).copied(), tangents.get(&to).copied()),
+                };
                 edges.push(EdgeProject {
                     id: format!("{from}->{to}"),
                     from,
@@ -2465,6 +2961,9 @@ impl EditorProject {
                     prop_spans: segment
                         .map(|segment| segment.prop_spans.clone())
                         .unwrap_or_default(),
+                    points: Vec::new(),
+                    from_tangent,
+                    to_tangent,
                 });
             }
         }
@@ -2475,6 +2974,8 @@ impl EditorProject {
                 if !edge_pairs.insert(key.clone()) {
                     continue;
                 }
+                let from_tangent = tangents.get(&pair[0]).copied();
+                let to_tangent = tangents.get(&pair[1]).copied();
                 edges.push(EdgeProject {
                     id: format!("{}->{}", pair[0], pair[1]),
                     from: pair[0].clone(),
@@ -2483,24 +2984,24 @@ impl EditorProject {
                     end_profile: None,
                     kerbs: Vec::new(),
                     prop_spans: Vec::new(),
+                    points: Vec::new(),
+                    from_tangent,
+                    to_tangent,
                 });
             }
         }
 
         let mut branch_tangents = BTreeMap::<String, BTreeMap<String, [f32; 2]>>::new();
         for edge in &edges {
-            // Every edge endpoint uses the shared main-loop point tangent. At a
-            // junction this is the union tangent of the main loop, so branch
-            // edges meet the shared run with a matching tangent at both ends.
-            let from_tangent = tangents.get(&edge.from).copied();
-            let to_tangent = tangents.get(&edge.to).copied();
-            if let Some(tangent) = from_tangent {
+            // Mirror the canonical edge endpoint tangents into the legacy
+            // per-control-point map so both views agree at every junction.
+            if let Some(tangent) = edge.from_tangent {
                 branch_tangents
                     .entry(edge.from.clone())
                     .or_default()
                     .insert(edge.id.clone(), tangent);
             }
-            if let Some(tangent) = to_tangent {
+            if let Some(tangent) = edge.to_tangent {
                 branch_tangents
                     .entry(edge.to.clone())
                     .or_default()
@@ -2520,7 +3021,7 @@ impl EditorProject {
             })
             .collect::<Vec<_>>();
 
-        let layouts = project
+        let mut layouts = project
             .loops
             .iter()
             .map(|loop_| LayoutProject {
@@ -2538,6 +3039,7 @@ impl EditorProject {
                 sectors: loop_.sectors.clone(),
                 cameras: loop_.cameras.clone(),
                 spawns: loop_.spawns.clone(),
+                start_finish: StartFinish::default(),
             })
             .collect::<Vec<_>>();
 
@@ -2573,6 +3075,17 @@ impl EditorProject {
             fraction: 0.0,
         };
 
+        for layout in &mut layouts {
+            layout.start_finish = if layout.route.iter().any(|edge| edge == &start_finish.edge) {
+                start_finish.clone()
+            } else {
+                StartFinish {
+                    edge: layout.route.first().cloned().unwrap_or_default(),
+                    fraction: 0.0,
+                }
+            };
+        }
+
         let pit_lane = project.pit_lane.as_ref().map(|pit_lane| PitLaneProject {
             id: "pit".to_string(),
             route: pit_lane
@@ -2582,9 +3095,24 @@ impl EditorProject {
                 .collect(),
             boxes: pit_lane.boxes.clone(),
         });
+        let paths = project
+            .pit_lane
+            .as_ref()
+            .map(|pit_lane| PathProject {
+                id: "pit".to_string(),
+                kind: "pit_lane".to_string(),
+                route: pit_lane
+                    .control_points
+                    .windows(2)
+                    .map(|pair| format!("{}->{}", pair[0], pair[1]))
+                    .collect(),
+                boxes: pit_lane.boxes.clone(),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
 
         Ok(TrackProject {
-            schema: TRACK_PROJECT_SCHEMA.to_string(),
+            schema: TRACK_PROJECT_SCHEMA_V4.to_string(),
             name: project.name.clone(),
             settings: VenueSettings {
                 splines: default_splines(width),
@@ -2597,10 +3125,12 @@ impl EditorProject {
             edges,
             segments: project.segments.clone(),
             layouts,
+            paths,
         })
     }
 }
 
+#[allow(dead_code)]
 fn loop_pair_set(loop_: &EditorLoop) -> BTreeSet<(String, String)> {
     (0..loop_.control_points.len())
         .map(|index| {
@@ -2864,6 +3394,9 @@ impl LegacyTrackProject {
                     end_profile: None,
                     kerbs: Vec::new(),
                     prop_spans: Vec::new(),
+                    points: Vec::new(),
+                    from_tangent: None,
+                    to_tangent: None,
                 });
             }
             let route = edges.iter().map(|edge| edge.id.clone()).collect();
@@ -2914,6 +3447,9 @@ impl LegacyTrackProject {
                     end_profile: None,
                     kerbs: Vec::new(),
                     prop_spans: Vec::new(),
+                    points: Vec::new(),
+                    from_tangent: None,
+                    to_tangent: None,
                 };
                 let bridge_out = EdgeProject {
                     id: format!("layout-{layout_index}-bridge-out"),
@@ -2923,6 +3459,9 @@ impl LegacyTrackProject {
                     end_profile: None,
                     kerbs: Vec::new(),
                     prop_spans: Vec::new(),
+                    points: Vec::new(),
+                    from_tangent: None,
+                    to_tangent: None,
                 };
                 edges.push(bridge_in.clone());
                 edges.push(bridge_out.clone());
@@ -2950,11 +3489,15 @@ impl LegacyTrackProject {
                 sectors: layout.sectors,
                 cameras: layout.cameras,
                 spawns: layout.spawns,
+                start_finish: StartFinish {
+                    edge: start_finish_edge.clone(),
+                    fraction: 0.0,
+                },
             });
         }
 
         Ok(TrackProject {
-            schema: TRACK_PROJECT_SCHEMA.to_string(),
+            schema: TRACK_PROJECT_SCHEMA_V4.to_string(),
             name: self.name,
             settings,
             start_finish: StartFinish {
@@ -2966,6 +3509,7 @@ impl LegacyTrackProject {
             edges,
             segments: Vec::new(),
             layouts,
+            paths: Vec::new(),
         })
     }
 }
@@ -2990,7 +3534,7 @@ pub struct EditorTrack {
     pub manifest: AssetManifest,
     pub kerb_spans: Vec<KerbSpan>,
     pub prop_lines: Vec<PropLine>,
-    pub project: EditorProject,
+    pub project: TrackProject,
 }
 
 #[allow(dead_code)]
@@ -3733,18 +4277,6 @@ fn resolved_edge_offsets(
     ))
 }
 
-/// Returns the authored branch tangent for `edge_id` at `node_id`, normalised
-/// in the canonical edge direction.
-fn branch_tangent(project: &TrackProject, node_id: &str, edge_id: &str) -> Option<Vec3> {
-    let point = project
-        .control_points
-        .iter()
-        .find(|point| point.id == node_id)?;
-    let tangent = point.branch_tangents.get(edge_id)?;
-    let direction = Vec3::new(tangent[0], 0.0, tangent[1]);
-    (direction.length_squared() > 1e-8).then(|| direction.normalize())
-}
-
 fn cubic_hermite(p0: Vec3, p1: Vec3, m0: Vec3, m1: Vec3, t: f32) -> Vec3 {
     let t2 = t * t;
     let t3 = t2 * t;
@@ -3755,133 +4287,115 @@ fn cubic_hermite(p0: Vec3, p1: Vec3, m0: Vec3, m1: Vec3, t: f32) -> Vec3 {
     p0 * h00 + m0 * h10 + p1 * h01 + m1 * h11
 }
 
-/// Samples a single edge independently with Hermite/Catmull-Rom. Used as the
-/// fallback when no owning layout loop covers the edge (for example pit lane).
+fn tangent_vector(tangent: Option<[f32; 2]>) -> Option<Vec3> {
+    let tangent = tangent?;
+    let direction = Vec3::new(tangent[0], 0.0, tangent[1]);
+    (direction.length_squared() > 1e-8).then(|| direction.normalize())
+}
+
+fn direction_between(from: Vec3, to: Vec3) -> Option<Vec3> {
+    let direction = to - from;
+    (direction.length_squared() > 1e-8).then(|| direction.normalize())
+}
+
+/// Samples one canonical segment from its own junction endpoints, interior
+/// points, and endpoint tangents. The result never depends on which route owns
+/// the segment.
 fn sample_edge_points(project: &TrackProject, edge: &EdgeProject) -> Result<Vec<Vec3>, String> {
     let from_position = control_point_position(project, &edge.from)?;
     let to_position = control_point_position(project, &edge.to)?;
-    let previous = edge_neighbor_position(project, edge, &edge.from, from_position, to_position);
-    let next = edge_neighbor_position(project, edge, &edge.to, to_position, from_position);
-    let explicit_from = branch_tangent(project, &edge.from, &edge.id);
-    let explicit_to = branch_tangent(project, &edge.to, &edge.id);
+    let explicit_from = tangent_vector(edge.from_tangent);
+    let explicit_to = tangent_vector(edge.to_tangent);
 
-    let chord = from_position.distance(to_position).max(1.0);
-    let from_tangent =
-        explicit_from.unwrap_or_else(|| (to_position - previous).normalize_or_zero());
-    let to_tangent = explicit_to.unwrap_or_else(|| (next - from_position).normalize_or_zero());
-    let use_tangents = explicit_from.is_some() || explicit_to.is_some();
-    let start_derivative = from_tangent * chord;
-    let end_derivative = to_tangent * chord;
+    if edge.points.is_empty() {
+        // No interior points: one span between the junctions. Authored edge
+        // tangents win; otherwise keep Catmull-Rom continuity with the
+        // neighbouring edges.
+        let previous =
+            edge_neighbor_position(project, edge, &edge.from, from_position, to_position);
+        let next = edge_neighbor_position(project, edge, &edge.to, to_position, from_position);
+        let chord = from_position.distance(to_position).max(1.0);
+        let from_tangent =
+            explicit_from.unwrap_or_else(|| (to_position - previous).normalize_or_zero());
+        let to_tangent = explicit_to.unwrap_or_else(|| (next - from_position).normalize_or_zero());
+        let use_tangents = explicit_from.is_some() || explicit_to.is_some();
+        let start_derivative = from_tangent * chord;
+        let end_derivative = to_tangent * chord;
 
-    let segments = ((chord / 3.0).ceil() as usize).clamp(4, 64);
-    let mut points = Vec::with_capacity(segments + 1);
-    for index in 0..=segments {
-        let t = index as f32 / segments as f32;
-        let mut point = if use_tangents {
-            cubic_hermite(
-                from_position,
-                to_position,
-                start_derivative,
-                end_derivative,
-                t,
-            )
-        } else {
-            catmull_rom(previous, from_position, to_position, next, t)
-        };
-        point.y = terrain_height(point.x, point.z);
-        points.push(point);
-    }
-    Ok(points)
-}
-
-/// Samples an edge with cubic Hermite using the canonical junction tangent at
-/// any endpoint that is a junction, while keeping the owner loop's tangent at
-/// the other endpoint. Used for shared edges that start or end at a junction.
-fn sample_edge_points_hybrid(
-    project: &TrackProject,
-    edge: &EdgeProject,
-    owner_points: &[Vec3],
-) -> Result<Vec<Vec3>, String> {
-    if owner_points.len() < 2 {
-        return sample_edge_points(project, edge);
-    }
-    let from_position = control_point_position(project, &edge.from)?;
-    let to_position = control_point_position(project, &edge.to)?;
-
-    let owner_start = (owner_points[1] - owner_points[0]).normalize_or_zero();
-    let last = owner_points.len() - 1;
-    let owner_end = (owner_points[last] - owner_points[last - 1]).normalize_or_zero();
-
-    let from_tangent = if point_is_junction(project, &edge.from) {
-        branch_tangent(project, &edge.from, &edge.id).unwrap_or(owner_start)
-    } else {
-        owner_start
-    };
-    let to_tangent = if point_is_junction(project, &edge.to) {
-        branch_tangent(project, &edge.to, &edge.id).unwrap_or(owner_end)
-    } else {
-        owner_end
-    };
-
-    let chord = from_position.distance(to_position).max(1.0);
-    let start_derivative = from_tangent * chord;
-    let end_derivative = to_tangent * chord;
-
-    let segments = ((chord / 3.0).ceil() as usize).clamp(4, 64);
-    let mut points = Vec::with_capacity(segments + 1);
-    for index in 0..=segments {
-        let t = index as f32 / segments as f32;
-        let mut point = cubic_hermite(
-            from_position,
-            to_position,
-            start_derivative,
-            end_derivative,
-            t,
-        );
-        point.y = terrain_height(point.x, point.z);
-        points.push(point);
-    }
-    Ok(points)
-}
-
-/// Returns true when `id` is incident to more than two unique ordered edge
-/// pairs across all layouts, making it a junction in the venue graph.
-fn point_is_junction(project: &TrackProject, id: &str) -> bool {
-    let mut pairs = BTreeSet::<(String, String)>::new();
-    for layout in &project.layouts {
-        for edge_id in &layout.route {
-            let Some(edge) = project.edge_by_id(edge_id) else {
-                continue;
-            };
-            if edge.from == id || edge.to == id {
-                pairs.insert((edge.from.clone(), edge.to.clone()));
-            }
-        }
-    }
-    pairs.len() > 2
-}
-
-fn sample_built_edge(
-    project: &TrackProject,
-    edge: &EdgeProject,
-    owner_points: Option<Vec<Vec3>>,
-) -> Result<BuiltEdge, String> {
-    let splines = surface_splines(project);
-    let at_junction =
-        point_is_junction(project, &edge.from) || point_is_junction(project, &edge.to);
-    let points = match owner_points {
-        Some(points) if points.len() >= 2 => {
-            if at_junction {
-                // At a junction the edge must follow the canonical junction
-                // tangent so it meets the branch edge smoothly, while the
-                // other endpoint keeps the owning loop's continuity.
-                sample_edge_points_hybrid(project, edge, &points)?
+        let segments = ((chord / 3.0).ceil() as usize).clamp(4, 64);
+        let mut points = Vec::with_capacity(segments + 1);
+        for index in 0..=segments {
+            let t = index as f32 / segments as f32;
+            let mut point = if use_tangents {
+                cubic_hermite(
+                    from_position,
+                    to_position,
+                    start_derivative,
+                    end_derivative,
+                    t,
+                )
             } else {
-                points
-            }
+                catmull_rom(previous, from_position, to_position, next, t)
+            };
+            point.y = terrain_height(point.x, point.z);
+            points.push(point);
         }
-        _ => sample_edge_points(project, edge)?,
-    };
+        return Ok(points);
+    }
+
+    // Interior points: build the edge's own control chain and derive a knot
+    // tangent at every control point. Endpoint tangents come from the edge or
+    // fall back to the nearest chain direction; interior knots use Catmull-Rom
+    // continuity through their neighbours.
+    let mut controls = Vec::with_capacity(edge.points.len() + 2);
+    controls.push(from_position);
+    controls.extend(
+        edge.points
+            .iter()
+            .map(|point| Vec3::new(point[0], 0.0, point[1])),
+    );
+    controls.push(to_position);
+
+    let last = controls.len() - 1;
+    let mut tangents = Vec::with_capacity(controls.len());
+    for index in 0..controls.len() {
+        let tangent = if index == 0 {
+            explicit_from.or_else(|| direction_between(controls[0], controls[1]))
+        } else if index == last {
+            explicit_to.or_else(|| direction_between(controls[last - 1], controls[last]))
+        } else {
+            direction_between(controls[index - 1], controls[index + 1])
+        };
+        let fallback = direction_between(
+            controls[index.saturating_sub(1)],
+            controls[(index + 1).min(last)],
+        )
+        .unwrap_or(Vec3::Z);
+        tangents.push(tangent.unwrap_or(fallback));
+    }
+
+    let mut points = Vec::new();
+    for span in 0..last {
+        let p0 = controls[span];
+        let p1 = controls[span + 1];
+        let chord = p0.distance(p1).max(1.0);
+        let m0 = tangents[span] * chord;
+        let m1 = tangents[span + 1] * chord;
+        let segments = ((chord / 3.0).ceil() as usize).clamp(2, 32);
+        let first_step = usize::from(span > 0);
+        for step in first_step..=segments {
+            let t = step as f32 / segments as f32;
+            let mut point = cubic_hermite(p0, p1, m0, m1, t);
+            point.y = terrain_height(point.x, point.z);
+            points.push(point);
+        }
+    }
+    Ok(points)
+}
+
+fn sample_built_edge(project: &TrackProject, edge: &EdgeProject) -> Result<BuiltEdge, String> {
+    let splines = surface_splines(project);
+    let points = sample_edge_points(project, edge)?;
     let segments = points.len().saturating_sub(1);
     let length = points
         .windows(2)
@@ -3927,69 +4441,10 @@ fn sample_built_edge(
     })
 }
 
-/// Samples every layout's full control-point loop once with the continuous
-/// sampler and caches the result by layout id. This is the same sampling path
-/// used by the legacy/editor continuous centerline.
-fn loop_samples_by_layout(project: &TrackProject) -> HashMap<String, Vec<Vec3>> {
-    let width = global_asphalt_width(project);
-    let mut cache = HashMap::with_capacity(project.layouts.len());
-    for layout in &project.layouts {
-        let Ok(control_points) = layout_control_points(project, layout) else {
-            continue;
-        };
-        if control_points.len() < 3 {
-            continue;
-        }
-        let points = layout_control_points_with_heights(&control_points);
-        let samples = sample_track_with_min_radius(&points, min_turn_radius(width));
-        if samples.len() >= 3 {
-            cache.insert(layout.id.clone(), samples);
-        }
-    }
-    cache
-}
-
-/// Returns the continuous full-loop samples for the first layout whose route
-/// contains `edge_id`, sliced to that edge's control-point range in the route
-/// direction. Shared edges reuse the owning loop's samples.
-fn edge_owner_samples(
-    project: &TrackProject,
-    cache: &HashMap<String, Vec<Vec3>>,
-    edge_id: &str,
-) -> Option<Vec<Vec3>> {
-    let (layout, index) = project.layouts.iter().find_map(|layout| {
-        layout
-            .route
-            .iter()
-            .position(|id| id == edge_id)
-            .map(|index| (layout, index))
-    })?;
-    let samples = cache.get(&layout.id)?;
-    let point_count = layout.route.len();
-    if point_count == 0 || samples.len() < 2 {
-        return None;
-    }
-    let sample_count = samples.len();
-    let start =
-        ((index as f32) * sample_count as f32 / point_count as f32).round() as usize % sample_count;
-    let next = (index + 1) % point_count;
-    let end =
-        ((next as f32) * sample_count as f32 / point_count as f32).round() as usize % sample_count;
-    let mut points = Vec::new();
-    if end >= start {
-        points.extend_from_slice(&samples[start..=end]);
-    } else {
-        points.extend_from_slice(&samples[start..]);
-        points.extend_from_slice(&samples[..=end]);
-    }
-    (points.len() >= 2).then_some(points)
-}
-
 fn build_unique_edges(
     project: &TrackProject,
     ids: &BTreeSet<String>,
 ) -> Result<HashMap<String, BuiltEdge>, String> {
-    let cache = loop_samples_by_layout(project);
     let mut built = HashMap::with_capacity(ids.len());
     for id in ids {
         if built.contains_key(id) {
@@ -3998,8 +4453,7 @@ fn build_unique_edges(
         let edge = project
             .edge_by_id(id)
             .ok_or_else(|| format!("unknown edge id '{id}'"))?;
-        let owner_points = edge_owner_samples(project, &cache, id);
-        built.insert(id.clone(), sample_built_edge(project, edge, owner_points)?);
+        built.insert(id.clone(), sample_built_edge(project, edge)?);
     }
     Ok(built)
 }
@@ -4535,8 +4989,8 @@ fn assemble_route(
         debug_assert_eq!(edge.id, *edge_id);
         let segments = edge.points.len().saturating_sub(1) as f32;
         let station_offset = (points.len() as f32) - if points.is_empty() { 0.0 } else { 1.0 };
-        if edge_id == &project.start_finish.edge {
-            let fraction = project.start_finish.fraction.clamp(0.0, 0.999_999);
+        if edge_id == &layout.start_finish.edge {
+            let fraction = layout.start_finish.fraction.clamp(0.0, 0.999_999);
             start_finish_distance = Some(preceding + edge.length * fraction);
         }
         let route_edge = project
@@ -5091,8 +5545,6 @@ fn track_from_graph(project: TrackProject, default_index: usize) -> Result<Edito
         warnings: vec!["procedural track editor preview".to_string()],
     };
 
-    let editor_project = project.to_editor_project()?;
-
     Ok(EditorTrack {
         visual,
         metadata,
@@ -5100,7 +5552,7 @@ fn track_from_graph(project: TrackProject, default_index: usize) -> Result<Edito
         manifest,
         kerb_spans: default_route.kerb_spans,
         prop_lines: default_route.prop_lines,
-        project: editor_project,
+        project,
     })
 }
 
@@ -5265,6 +5717,7 @@ pub fn track_from_project_with_default(
     track_from_graph(project, default_index)
 }
 
+#[allow(dead_code)]
 pub fn track_from_editor_project(project: &EditorProject) -> Result<EditorTrack, String> {
     track_from_editor_project_with_default(project, None)
 }
@@ -5274,26 +5727,11 @@ pub fn track_from_editor_project_with_default(
     default_loop: Option<&str>,
 ) -> Result<EditorTrack, String> {
     let project = project.clone().normalize()?;
-    if project.loops.len() == 1 && project.pit_lane.is_none() {
-        // A single loop has no shared-edge reconstruction to do, so keep the
-        // original continuous sampler to preserve the pre-graph geometry.
-        let graph = project.to_graph()?;
-        let default_loop_id = default_loop
-            .filter(|id| graph.layout_by_id(id).is_some())
-            .map(str::to_string)
-            .unwrap_or_else(|| project.loops[0].id.clone());
-        let legacy = legacy_from_project(&graph, Some(&default_loop_id))?;
-        let mut track = track_from_legacy(graph, legacy)?;
-        track.project = project;
-        return Ok(track);
-    }
     let graph = project.to_graph()?;
     let default_index = default_loop
         .and_then(|id| graph.layout_index(id))
         .unwrap_or(0);
-    let mut track = track_from_graph(graph, default_index)?;
-    track.project = project;
-    Ok(track)
+    track_from_graph(graph, default_index)
 }
 
 /// Temporary B1 adapter. It flattens each `@2` route into an independent old
@@ -5583,7 +6021,6 @@ fn track_from_legacy(project: TrackProject, legacy: LegacyProject) -> Result<Edi
     };
 
     let default_samples = &layouts[default_index];
-    let editor_project = project.to_editor_project()?;
     Ok(EditorTrack {
         visual,
         metadata,
@@ -5591,7 +6028,7 @@ fn track_from_legacy(project: TrackProject, legacy: LegacyProject) -> Result<Edi
         manifest,
         kerb_spans: default_samples.kerb_spans.clone(),
         prop_lines: default_samples.prop_lines.clone(),
-        project: editor_project,
+        project,
     })
 }
 
@@ -7407,6 +7844,176 @@ mod tests {
         [-3.0, 0.0, 13.0],
     ];
 
+    #[test]
+    fn track_project_round_trips_paths_and_start_finish() {
+        let mut project = TrackProject::default_project();
+        project.paths.push(PathProject {
+            id: "pit".to_string(),
+            kind: "pit_lane".to_string(),
+            route: vec!["edge-0".to_string()],
+            boxes: Vec::new(),
+        });
+        project.layouts[0].start_finish = StartFinish {
+            edge: "edge-0".to_string(),
+            fraction: 0.25,
+        };
+        project.edges[0].points = vec![[1.0, 2.0]];
+        project.edges[0].from_tangent = Some([1.0, 0.0]);
+        project.edges[0].to_tangent = Some([0.0, 1.0]);
+
+        let json = serde_json::to_string(&project).expect("serialize project");
+        let parsed: TrackProject = serde_json::from_str(&json).expect("deserialize project");
+        assert_eq!(parsed, project);
+    }
+
+    #[test]
+    fn track_project_v4_round_trips_paths_and_start_finish() {
+        let mut project = TrackProject::default_project();
+        project.schema = TRACK_PROJECT_SCHEMA_V4.to_string();
+        project.layouts[0].start_finish = StartFinish {
+            edge: "edge-0".to_string(),
+            fraction: 0.25,
+        };
+        project.paths.push(PathProject {
+            id: "pit".to_string(),
+            kind: "pit_lane".to_string(),
+            route: vec!["edge-0".to_string(), "edge-1".to_string()],
+            boxes: Vec::new(),
+        });
+        project.edges[0].from_tangent = Some([2.0, 0.0]);
+
+        let json = serde_json::to_string(&project).expect("serialize project");
+        let parsed = TrackProject::from_json(&json).expect("parse @4 project");
+        assert_eq!(parsed.schema, TRACK_PROJECT_SCHEMA_V4);
+        assert_eq!(parsed.layouts[0].start_finish.edge, "edge-0");
+        assert!((parsed.layouts[0].start_finish.fraction - 0.25).abs() < 1e-6);
+        assert_eq!(parsed.paths, project.paths);
+        assert_eq!(parsed.edges[0].from_tangent, Some([1.0, 0.0]));
+    }
+
+    #[test]
+    fn editor_project_v3_migrates_to_v4_routes_and_paths() {
+        let mut editor = EditorProject::default_project();
+        let loop_id = editor.default_loop_id().to_string();
+        let loop_index = editor.loop_index(&loop_id).expect("default loop");
+        editor.control_points.push(EditorControlPoint {
+            id: "pit-entry".to_string(),
+            position: [10.0, -10.0],
+            kind: ControlPointKind::PitEntry,
+            tangent: None,
+        });
+        editor.control_points.push(EditorControlPoint {
+            id: "pit-mid".to_string(),
+            position: [20.0, -15.0],
+            kind: ControlPointKind::Normal,
+            tangent: None,
+        });
+        editor.control_points.push(EditorControlPoint {
+            id: "pit-exit".to_string(),
+            position: [30.0, -10.0],
+            kind: ControlPointKind::PitExit,
+            tangent: None,
+        });
+        let route = &mut editor.loops[loop_index].control_points;
+        route.insert(1, "pit-entry".to_string());
+        let exit_index = route
+            .iter()
+            .position(|point| point == "cp-3")
+            .expect("cp-3 in loop");
+        route.insert(exit_index + 1, "pit-exit".to_string());
+        editor.pit_lane = Some(EditorPitLane {
+            control_points: vec![
+                "pit-entry".to_string(),
+                "pit-mid".to_string(),
+                "pit-exit".to_string(),
+            ],
+            boxes: Vec::new(),
+        });
+
+        let json = serde_json::to_string(&editor).expect("serialize @3 project");
+        let parsed = TrackProject::from_json(&json).expect("migrate @3 to @4");
+
+        assert_eq!(parsed.schema, TRACK_PROJECT_SCHEMA_V4);
+        for layout in &parsed.layouts {
+            assert!(
+                layout.route.contains(&layout.start_finish.edge),
+                "layout '{}' start/finish '{}' is not in its route",
+                layout.id,
+                layout.start_finish.edge
+            );
+        }
+        assert_eq!(parsed.paths.len(), 1);
+        assert_eq!(parsed.paths[0].id, "pit");
+        assert_eq!(parsed.paths[0].kind, "pit_lane");
+        assert_eq!(
+            parsed.paths[0].route,
+            vec![
+                "pit-entry->pit-mid".to_string(),
+                "pit-mid->pit-exit".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn path_route_must_be_a_canonical_chain() {
+        let mut project = TrackProject::default_project();
+        project.schema = TRACK_PROJECT_SCHEMA_V4.to_string();
+        project.layouts[0].start_finish = StartFinish {
+            edge: "edge-0".to_string(),
+            fraction: 0.0,
+        };
+        project.paths.push(PathProject {
+            id: "pit".to_string(),
+            kind: "pit_lane".to_string(),
+            route: vec!["edge-0".to_string(), "edge-2".to_string()],
+            boxes: Vec::new(),
+        });
+
+        let error = project.normalize().expect_err("non-consecutive path chain");
+        assert!(error.contains("path"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn layout_start_finish_must_reference_a_route_edge() {
+        let mut project = fork_project();
+        project.schema = TRACK_PROJECT_SCHEMA_V4.to_string();
+        let short = project
+            .layouts
+            .iter_mut()
+            .find(|layout| layout.id == "short")
+            .expect("short layout");
+        short.start_finish = StartFinish {
+            edge: "e0".to_string(),
+            fraction: 0.0,
+        };
+        let full = project
+            .layouts
+            .iter_mut()
+            .find(|layout| layout.id == "full")
+            .expect("full layout");
+        full.start_finish = StartFinish {
+            edge: "e4".to_string(),
+            fraction: 0.0,
+        };
+        let error = project.normalize().expect_err("start/finish outside route");
+        assert!(
+            error.contains("missing from its route"),
+            "unexpected error: {error}"
+        );
+
+        let mut project = fork_project();
+        project.schema = TRACK_PROJECT_SCHEMA_V4.to_string();
+        for layout in &mut project.layouts {
+            layout.start_finish = StartFinish {
+                edge: "e0".to_string(),
+                fraction: 0.0,
+            };
+        }
+        project.layouts[0].start_finish.edge = "missing".to_string();
+        let error = project.normalize().expect_err("unknown start/finish edge");
+        assert!(error.contains("unknown edge"), "unexpected error: {error}");
+    }
+
     fn minimum_radius(points: &[Vec3]) -> f32 {
         let count = points.len();
         (0..count)
@@ -8221,7 +8828,7 @@ mod tests {
             serde_json::to_value(&parsed).expect("parsed json value"),
             serde_json::to_value(&expected).expect("expected json value")
         );
-        assert_eq!(expected.schema, TRACK_PROJECT_SCHEMA);
+        assert_eq!(expected.schema, TRACK_PROJECT_SCHEMA_V4);
         assert_eq!(expected.layouts.len(), 1);
     }
 
@@ -8856,22 +9463,68 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_layout_shares_route_and_edges() {
+        let mut project = TrackProject::default_project();
+        project.layouts[0].sectors = vec![SectorSpec {
+            name: "one".to_string(),
+            start_fraction: 0.0,
+            end_fraction: 0.5,
+        }];
+        project.layouts[0].cameras = vec![CameraSpec {
+            name: "cam".to_string(),
+            position: [1.0, 2.0, 3.0],
+            target: [4.0, 5.0, 6.0],
+            fov_y: 1.2,
+        }];
+        project.layouts[0].spawns = vec![SpawnPoint {
+            name: "grid".to_string(),
+            position: [0.0, 0.0, 0.0],
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        }];
+
+        let source = project.layouts[0].clone();
+        let source_id = source.id.clone();
+        let edge_count = project.edges.len();
+
+        let duplicate_id = project.duplicate_layout(&source_id).expect("duplicate");
+        assert_eq!(project.layouts.len(), 2);
+        assert_eq!(project.edges.len(), edge_count);
+        assert_ne!(duplicate_id, source_id);
+
+        let duplicate = project
+            .layout_by_id(&duplicate_id)
+            .expect("duplicate exists")
+            .clone();
+        assert_eq!(duplicate.name, format!("{} Copy", source.name));
+        assert_eq!(duplicate.route, source.route);
+        assert_eq!(duplicate.start_finish, source.start_finish);
+        assert_eq!(duplicate.sectors, source.sectors);
+        assert_eq!(duplicate.cameras, source.cameras);
+        assert_eq!(duplicate.spawns, source.spawns);
+
+        assert!(project.normalize().is_ok());
+    }
+
+    #[test]
     fn project_json_uses_schema_tag_and_camel_case_keys() {
         let project = TrackProject::default_project();
         let value = serde_json::to_value(&project).expect("json value");
-        assert_eq!(value["schema"], TRACK_PROJECT_SCHEMA);
+        assert_eq!(value["schema"], TRACK_PROJECT_SCHEMA_V4);
         assert_eq!(value["layouts"][0]["id"], "procedural-drift-loop");
         assert!(value["controlPoints"].is_array());
         assert!(value["edges"].is_array());
         assert!(value["layouts"][0]["route"].is_array());
+        assert!(value["layouts"][0]["startFinish"]["edge"].is_string());
         assert!(value["startFinish"]["edge"].is_string());
         assert!(value["settings"]["splines"].is_array());
+        assert!(value["paths"].is_array());
+        assert!(value.get("segments").is_none());
         assert!(value.get("defaultLayout").is_none());
         assert!(value.get("default_layout").is_none());
     }
 
     #[test]
-    fn legacy_v1_project_migrates_to_v2_venue_graph() {
+    fn legacy_v1_project_migrates_to_v4_venue_graph() {
         let legacy = serde_json::json!({
             "schema": "lapster/track-project@1",
             "name": "Legacy Venue",
@@ -8895,15 +9548,23 @@ mod tests {
             ]
         });
         let project = TrackProject::from_json(&legacy.to_string()).expect("migrate");
-        assert_eq!(project.schema, TRACK_PROJECT_SCHEMA);
+        assert_eq!(project.schema, TRACK_PROJECT_SCHEMA_V4);
         assert_eq!(project.layouts.len(), 2);
         assert!(project.edges.len() > 8);
         for layout in &project.layouts {
             assert!(!layout.route.is_empty());
-            assert!(layout
-                .route
-                .iter()
-                .any(|edge| edge == &project.start_finish.edge));
+            assert!(!layout.start_finish.edge.is_empty());
+            assert!(
+                layout
+                    .route
+                    .iter()
+                    .any(|edge| edge == &layout.start_finish.edge),
+                "layout '{}' start/finish edge '{}' must be in its route",
+                layout.id,
+                layout.start_finish.edge
+            );
+            assert!(layout.start_finish.fraction.is_finite());
+            assert!((0.0..1.0).contains(&layout.start_finish.fraction));
         }
         let mut ids = BTreeSet::new();
         for edge in &project.edges {
@@ -8957,6 +9618,9 @@ mod tests {
             end_profile: None,
             kerbs: Vec::new(),
             prop_spans: Vec::new(),
+            points: Vec::new(),
+            from_tangent: None,
+            to_tangent: None,
         };
         project.edges.push(detour.clone());
         project.layouts[0].route[0] = detour.id.clone();
@@ -9047,6 +9711,9 @@ mod tests {
             end_profile: None,
             kerbs: Vec::new(),
             prop_spans: Vec::new(),
+            points: Vec::new(),
+            from_tangent: None,
+            to_tangent: None,
         };
         TrackProject {
             schema: TRACK_PROJECT_SCHEMA.to_string(),
@@ -9084,6 +9751,7 @@ mod tests {
                     sectors: Vec::new(),
                     cameras: Vec::new(),
                     spawns: Vec::new(),
+                    start_finish: StartFinish::default(),
                 },
                 LayoutProject {
                     id: "short".to_string(),
@@ -9092,8 +9760,10 @@ mod tests {
                     sectors: Vec::new(),
                     cameras: Vec::new(),
                     spawns: Vec::new(),
+                    start_finish: StartFinish::default(),
                 },
             ],
+            paths: Vec::new(),
         }
     }
 
@@ -9185,6 +9855,82 @@ mod tests {
     }
 
     #[test]
+    fn two_routes_bake_their_own_start_finish() {
+        let mut project = TrackProject::default_project();
+        let second_id = project.add_layout("Second Circuit").expect("add layout");
+        project.layouts[0].start_finish = StartFinish {
+            edge: project.layouts[0].route[0].clone(),
+            fraction: 0.25,
+        };
+        let second_index = project
+            .layout_index(&second_id)
+            .expect("second layout index");
+        project.layouts[second_index].start_finish = StartFinish {
+            edge: project.layouts[second_index].route[1].clone(),
+            fraction: 0.75,
+        };
+        let project = project.normalize().expect("normalized project");
+        let track = track_from_project(&project).expect("track");
+        let ids = unique_route_edges(&project);
+        let built = build_unique_edges(&project, &ids).expect("built edges");
+
+        let expected_fraction = |layout: &LayoutProject| -> f32 {
+            let mut total = 0.0_f32;
+            let mut preceding = 0.0_f32;
+            let mut start_finish_distance = None;
+            for edge_id in &layout.route {
+                let edge = built.get(edge_id).expect("route edge");
+                if edge_id == &layout.start_finish.edge {
+                    start_finish_distance =
+                        Some(preceding + edge.length * layout.start_finish.fraction);
+                }
+                preceding += edge.length;
+                total += edge.length;
+            }
+            start_finish_distance.unwrap_or(0.0) / total
+        };
+
+        let mut fractions = Vec::new();
+        let mut spawns = Vec::new();
+        for layout in &project.layouts {
+            let spec = track
+                .metadata
+                .layout_by_id(&layout.id)
+                .expect("layout metadata");
+            let expected = expected_fraction(layout);
+            assert!(
+                (spec.start_finish - expected).abs() < 1e-4,
+                "layout '{}' start/finish {} != expected {}",
+                layout.id,
+                spec.start_finish,
+                expected
+            );
+            fractions.push(spec.start_finish);
+
+            let route =
+                assemble_route(&project, layout, &built, &HashMap::new()).expect("assembled route");
+            let count = route.points.len();
+            let index =
+                ((route.start_finish.clamp(0.0, 1.0) * count as f32).round() as usize) % count;
+            let spawn = spec.spawns.first().expect("spawn");
+            assert!(spawn.position.iter().all(|value| value.is_finite()));
+            assert!(
+                Vec3::from_array(spawn.position).distance(route.points[index]) < 1e-3,
+                "layout '{}' spawn is not at its start/finish sample",
+                layout.id
+            );
+            spawns.push(spawn.position);
+        }
+
+        assert!(
+            (fractions[0] - fractions[1]).abs() > 1e-4,
+            "per-layout start/finish fractions should differ: {:?}",
+            fractions
+        );
+        assert_ne!(spawns[0], spawns[1], "per-layout spawns should differ");
+    }
+
+    #[test]
     fn fork_topology_samples_both_branches() {
         let project = fork_project();
         let track = track_from_project(&project).expect("fork track");
@@ -9232,6 +9978,87 @@ mod tests {
                 .raycast(Vec3::new(node[0], y, node[1]), Vec3::NEG_Y, 50.0)
                 .unwrap_or_else(|| panic!("no junction collision at {:?}", node));
             assert_eq!(hit.surface, TRACK_SURFACE);
+        }
+    }
+
+    #[test]
+    fn shared_junction_collision_continues_across_routes() {
+        use sim_core::TrackCollider;
+
+        let project = fork_project();
+        let built =
+            build_unique_edges(&project, &unique_route_edges(&project)).expect("built edges");
+        let splines = surface_splines(&project);
+        let pads = build_junction_pads(&project, &built, &splines);
+        let track = track_from_project(&project).expect("fork track");
+        let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
+
+        // The shared e0/e1 approach is baked once for both routes; only the
+        // junction pads add asphalt on top of the unique edge ribbons.
+        let edge_vertices = unique_route_edges(&project)
+            .iter()
+            .map(|id| {
+                edge_ribbon(built.get(id).expect("built edge"), &splines)
+                    .0
+                    .positions
+                    .len()
+            })
+            .sum::<usize>();
+        assert_eq!(
+            asphalt_vertex_count(&track),
+            edge_vertices + pads.positions.len()
+        );
+
+        let hit_at = |point: Vec3, label: &str| {
+            let hit = collider
+                .raycast(
+                    Vec3::new(point.x, point.y + 20.0, point.z),
+                    Vec3::NEG_Y,
+                    50.0,
+                )
+                .unwrap_or_else(|| panic!("gap at {label}"));
+            assert_eq!(hit.surface, TRACK_SURFACE, "wrong surface at {label}");
+            assert!(
+                (hit.point.y - point.y).abs() < 0.5,
+                "surface height jumps at {label}"
+            );
+        };
+
+        // Walk both routes over the shared approach and across the forks at
+        // c2 (e1 -> e2 or e4) and c0 (e2/e4 -> e0). Every sampled centreline
+        // point, including the junction endpoints themselves, must land on
+        // exactly one continuous asphalt surface.
+        let routes: [&[&str]; 2] = [&["e0", "e1", "e2", "e3"], &["e0", "e1", "e4"]];
+        for route in routes {
+            for edge_id in route {
+                let edge = built.get(*edge_id).expect("route edge");
+                let last = edge.points.len() - 1;
+                let stations = [
+                    0.0,
+                    1.0,
+                    last as f32 * 0.5,
+                    (last - 2) as f32,
+                    (last - 1) as f32,
+                    last as f32,
+                ];
+                for station in stations {
+                    let (point, _) = edge_frame_at(&edge.points, station);
+                    hit_at(point, &format!("edge {edge_id} station {station}"));
+                }
+            }
+        }
+
+        // Explicitly cross the shared junction seam from e1 onto each branch.
+        let approach = built.get("e1").expect("shared approach");
+        let last = approach.points.len() - 1;
+        for branch_id in ["e2", "e4"] {
+            let branch = built.get(branch_id).expect("branch edge");
+            for point in [approach.points[last - 1], approach.points[last]]
+                .into_iter()
+                .chain(branch.points[..=2].iter().copied())
+            {
+                hit_at(point, &format!("e1 -> {branch_id} seam"));
+            }
         }
     }
 
@@ -9288,31 +10115,33 @@ mod tests {
         };
 
         let mut project = fork_project();
-        let point = project
-            .control_points
+        let branch = project
+            .edges
             .iter_mut()
-            .find(|point| point.id == "c2")
-            .expect("fork point");
-        point.branch_tangents.insert("e4".to_string(), [1.0, -1.0]);
+            .find(|edge| edge.id == "e4")
+            .expect("branch edge");
+        branch.from_tangent = Some([1.0, -1.0]);
         let built =
             build_unique_edges(&project, &unique_route_edges(&project)).expect("built edges");
         let edge = built.get("e4").expect("branch edge");
-        let explicit_tangent = (edge.points[1] - edge.points[0]).normalize_or_zero();
-        let explicit_xz = Vec3::new(explicit_tangent.x, 0.0, explicit_tangent.z).normalize();
         let expected = Vec3::new(1.0, 0.0, -1.0).normalize();
-        assert!(explicit_xz.dot(expected) > 0.99);
-        assert!(explicit_xz.dot(fallback_tangent) < 0.99);
+
+        let start_tangent = (edge.points[1] - edge.points[0]).normalize_or_zero();
+        let start_xz = Vec3::new(start_tangent.x, 0.0, start_tangent.z).normalize();
+        assert!(
+            start_xz.dot(expected) > 0.99,
+            "start {start_xz:?} expected {expected:?}"
+        );
+        assert!(start_xz.dot(fallback_tangent) < 0.99);
 
         // At a `to` node the tangent is the canonical incoming direction.
         let mut merge = fork_project();
-        let merge_point = merge
-            .control_points
+        let merge_edge = merge
+            .edges
             .iter_mut()
-            .find(|point| point.id == "c0")
-            .expect("merge point");
-        merge_point
-            .branch_tangents
-            .insert("e3".to_string(), [0.0, -1.0]);
+            .find(|edge| edge.id == "e3")
+            .expect("merge edge");
+        merge_edge.to_tangent = Some([0.0, -1.0]);
         let built = build_unique_edges(&merge, &unique_route_edges(&merge)).expect("built edges");
         let edge = built.get("e3").expect("merge edge");
         let end = edge.points.len() - 1;
@@ -9538,7 +10367,8 @@ mod tests {
             end: 0.2,
             kind: PropKind::Blocks,
         });
-        let graph = graph.normalize().expect("normalized graph");
+        let mut graph = graph.normalize().expect("normalized graph");
+        graph.schema = TRACK_PROJECT_SCHEMA.to_string();
         let source = graph.edges[0].clone();
         let json = serde_json::to_string(&graph).expect("serialize graph");
         let project = EditorProject::from_json(&json).expect("migrate project");
@@ -10001,7 +10831,8 @@ mod tests {
             1
         );
 
-        let graph = TrackProject::default_project();
+        let mut graph = TrackProject::default_project();
+        graph.schema = TRACK_PROJECT_SCHEMA.to_string();
         let json = serde_json::to_string(&graph).expect("serialize v2 graph");
         let migrated = EditorProject::from_json(&json).expect("migrate v2 graph");
         assert_eq!(migrated.schema, EDITOR_PROJECT_SCHEMA);
@@ -10153,5 +10984,284 @@ mod tests {
             cp1.branch_tangents.get("cp-1->cp-2").copied(),
             Some(shared_to)
         );
+    }
+
+    #[test]
+    fn segment_and_junction_helpers_locate_graph_parts() {
+        let project = TrackProject::default_project();
+        assert!(project.segment_by_id("edge-0").is_some());
+        assert_eq!(project.segment_index("edge-0"), Some(0));
+        assert!(project.junction_by_id("control-0").is_some());
+        assert_eq!(project.junction_index("control-0"), Some(0));
+        assert_eq!(
+            project
+                .route_segments("procedural-drift-loop")
+                .map(|segments| segments.len()),
+            Some(8)
+        );
+        assert!(project.segment_by_id("missing").is_none());
+        assert!(project.junction_by_id("missing").is_none());
+        assert!(project.route_segments("missing").is_none());
+    }
+
+    #[test]
+    fn move_junction_updates_position_and_rejects_invalid_input() {
+        let mut project = TrackProject::default_project();
+        project
+            .move_junction("control-0", 5.0, 7.0)
+            .expect("move junction");
+        let junction = project.junction_by_id("control-0").expect("junction");
+        assert_eq!(junction.position, [5.0, 7.0]);
+
+        assert!(project.move_junction("missing", 0.0, 0.0).is_err());
+        assert!(project.move_junction("control-0", f32::NAN, 0.0).is_err());
+        let junction = project.junction_by_id("control-0").expect("junction");
+        assert_eq!(junction.position, [5.0, 7.0]);
+    }
+
+    #[test]
+    fn insert_and_delete_junction_round_trip() {
+        let mut project = TrackProject::default_project();
+        let first = project.insert_junction(12.0, 34.0);
+        let second = project.insert_junction(56.0, 78.0);
+        assert_ne!(first, second);
+        assert_eq!(
+            project.junction_by_id(&first).expect("junction").position,
+            [12.0, 34.0]
+        );
+
+        assert!(project.delete_junction("missing").is_err());
+        assert!(project.delete_junction("control-0").is_err());
+        project.delete_junction(&first).expect("delete first");
+        project.delete_junction(&second).expect("delete second");
+        assert!(project.junction_by_id(&first).is_none());
+        project.normalize().expect("project stays valid");
+    }
+
+    #[test]
+    fn insert_and_delete_interior_segment_points() {
+        let mut project = TrackProject::default_project();
+        project.edges[0].points = vec![[1.0, 2.0], [3.0, 4.0]];
+
+        let inserted = project
+            .insert_segment_point("edge-0", 0, 5.0, 6.0)
+            .expect("insert point");
+        assert_eq!(inserted, 1);
+        assert_eq!(
+            project.segment_by_id("edge-0").expect("segment").points,
+            vec![[1.0, 2.0], [5.0, 6.0], [3.0, 4.0]]
+        );
+
+        project
+            .delete_segment_point("edge-0", inserted)
+            .expect("delete point");
+        assert_eq!(
+            project.segment_by_id("edge-0").expect("segment").points,
+            vec![[1.0, 2.0], [3.0, 4.0]]
+        );
+
+        let empty = project
+            .insert_segment_point("edge-1", 0, 9.0, 8.0)
+            .expect("insert into empty");
+        assert_eq!(empty, 0);
+        assert_eq!(
+            project.segment_by_id("edge-1").expect("segment").points,
+            vec![[9.0, 8.0]]
+        );
+
+        assert!(project
+            .insert_segment_point("missing", 0, 0.0, 0.0)
+            .is_err());
+        assert!(project.delete_segment_point("missing", 0).is_err());
+        assert!(project.delete_segment_point("edge-0", 99).is_err());
+    }
+
+    #[test]
+    fn move_segment_point_updates_interior_point() {
+        let mut project = TrackProject::default_project();
+        project.edges[0].points = vec![[1.0, 2.0], [3.0, 4.0]];
+
+        project
+            .move_segment_point("edge-0", 1, 7.5, -2.5)
+            .expect("move point");
+        assert_eq!(
+            project.segment_by_id("edge-0").expect("segment").points,
+            vec![[1.0, 2.0], [7.5, -2.5]]
+        );
+        project.clone().normalize().expect("project stays valid");
+    }
+
+    #[test]
+    fn move_segment_point_rejects_invalid_input_and_keeps_original() {
+        let mut project = TrackProject::default_project();
+        project.edges[0].points = vec![[1.0, 2.0], [3.0, 4.0]];
+
+        assert!(project.move_segment_point("missing", 0, 0.0, 0.0).is_err());
+        assert!(project.move_segment_point("edge-0", 99, 0.0, 0.0).is_err());
+        assert!(project
+            .move_segment_point("edge-0", 0, f32::NAN, 0.0)
+            .is_err());
+        assert!(project
+            .move_segment_point("edge-0", 0, 0.0, f32::INFINITY)
+            .is_err());
+        assert_eq!(
+            project.segment_by_id("edge-0").expect("segment").points,
+            vec![[1.0, 2.0], [3.0, 4.0]]
+        );
+    }
+
+    #[test]
+    fn make_segment_unique_only_repoints_the_selected_route() {
+        let mut project = fork_project();
+        let segment = project
+            .edges
+            .iter_mut()
+            .find(|segment| segment.id == "e1")
+            .expect("shared segment");
+        segment.points = vec![[10.0, 5.0], [20.0, 5.0]];
+        segment.kerbs = vec![KerbSpan {
+            start: 0.1,
+            end: 0.4,
+            side: 1,
+        }];
+        segment.prop_spans = vec![PropSpan {
+            spline: "prop-near-left".to_string(),
+            start: 0.2,
+            end: 0.6,
+            kind: PropKind::Blocks,
+        }];
+
+        let unique = project
+            .make_segment_unique("short", "e1")
+            .expect("make segment unique");
+        assert_ne!(unique, "e1");
+
+        let full_route = project.route_segments("full").expect("full route").to_vec();
+        let short_route = project
+            .route_segments("short")
+            .expect("short route")
+            .to_vec();
+        assert!(full_route.contains(&"e1".to_string()));
+        assert!(!short_route.contains(&"e1".to_string()));
+        assert!(short_route.contains(&unique));
+
+        let original = project.segment_by_id("e1").expect("original");
+        let cloned = project.segment_by_id(&unique).expect("clone");
+        assert_eq!(cloned.from, original.from);
+        assert_eq!(cloned.to, original.to);
+        assert_eq!(cloned.points, original.points);
+        assert_eq!(cloned.from_tangent, original.from_tangent);
+        assert_eq!(cloned.to_tangent, original.to_tangent);
+        assert_eq!(cloned.kerbs, original.kerbs);
+        assert_eq!(cloned.prop_spans, original.prop_spans);
+
+        assert!(project.make_segment_unique("missing", "e1").is_err());
+        assert!(project.make_segment_unique("full", "missing").is_err());
+    }
+
+    #[test]
+    fn set_segment_kerbs_props_and_tangents() {
+        let mut project = TrackProject::default_project();
+        let kerbs = [KerbSpan {
+            start: 0.1,
+            end: 0.5,
+            side: -1,
+        }];
+        project
+            .set_segment_kerb_spans("edge-0", &kerbs)
+            .expect("set kerbs");
+        assert_eq!(
+            project.segment_by_id("edge-0").expect("segment").kerbs,
+            kerbs
+        );
+
+        let props = [PropSpan {
+            spline: "prop-near-left".to_string(),
+            start: 0.2,
+            end: 0.7,
+            kind: PropKind::Tyres,
+        }];
+        project
+            .set_segment_prop_spans("edge-0", &props)
+            .expect("set props");
+        assert_eq!(
+            project.segment_by_id("edge-0").expect("segment").prop_spans,
+            props
+        );
+
+        project
+            .set_segment_tangents("edge-0", Some([3.0, 4.0]), Some([0.0, 1.0]))
+            .expect("set tangents");
+        let segment = project.segment_by_id("edge-0").expect("segment");
+        let from = segment.from_tangent.expect("from tangent");
+        assert!((from[0] - 0.6).abs() < 1e-6);
+        assert!((from[1] - 0.8).abs() < 1e-6);
+        assert_eq!(segment.to_tangent, Some([0.0, 1.0]));
+
+        project
+            .set_segment_from_tangent("edge-0", Some([1.0, 0.0]))
+            .expect("set from tangent");
+        project
+            .set_segment_to_tangent("edge-0", None)
+            .expect("clear to tangent");
+        let segment = project.segment_by_id("edge-0").expect("segment");
+        assert_eq!(segment.from_tangent, Some([1.0, 0.0]));
+        assert_eq!(segment.to_tangent, None);
+
+        assert!(project.set_segment_kerb_spans("missing", &[]).is_err());
+        assert!(project
+            .set_segment_kerb_spans(
+                "edge-0",
+                &[KerbSpan {
+                    start: 1.5,
+                    end: 0.2,
+                    side: 0,
+                }],
+            )
+            .is_err());
+        assert!(project
+            .set_segment_prop_spans(
+                "edge-0",
+                &[PropSpan {
+                    spline: "missing".to_string(),
+                    start: 0.0,
+                    end: 0.5,
+                    kind: PropKind::Blocks,
+                }],
+            )
+            .is_err());
+        assert!(project
+            .set_segment_tangents("edge-0", Some([0.0, 0.0]), None)
+            .is_err());
+        assert!(project
+            .set_segment_tangents("missing", Some([1.0, 0.0]), None)
+            .is_err());
+        // A rejected mutation leaves the previous tangents in place.
+        let segment = project.segment_by_id("edge-0").expect("segment");
+        assert_eq!(segment.from_tangent, Some([1.0, 0.0]));
+        assert_eq!(segment.to_tangent, None);
+    }
+
+    #[test]
+    fn segment_and_route_centerlines_use_the_edge_sampler() {
+        let project = TrackProject::default_project();
+        let segment = project
+            .segment_centerline("edge-0")
+            .expect("segment centerline");
+        assert!(segment.len() >= 2);
+        let start = project
+            .junction_by_id("control-0")
+            .expect("start junction")
+            .position;
+        assert!((segment[0][0] - start[0]).abs() < 1e-4);
+        assert!((segment[0][2] - start[1]).abs() < 1e-4);
+
+        let route = project
+            .route_centerline("procedural-drift-loop")
+            .expect("route centerline");
+        assert!(route.len() >= 3);
+
+        assert!(project.segment_centerline("missing").is_err());
+        assert!(project.route_centerline("missing").is_err());
     }
 }

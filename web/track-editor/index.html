@@ -296,13 +296,13 @@
       <p class="muted">Procedural Drift Loop</p>
       <p class="status" id="status">booting</p>
 
-      <h2>Loops</h2>
+      <h2>Routes</h2>
       <div class="layout-controls">
-        <select id="layout-select" aria-label="Active loop"></select>
+        <select id="layout-select" aria-label="Active route"></select>
         <div class="layout-row">
           <button id="add-layout" type="button">Add</button>
+          <button id="duplicate-layout" type="button" disabled>Duplicate</button>
           <button id="delete-layout" type="button">Delete</button>
-          <button id="make-unique" type="button" disabled>Make unique</button>
         </div>
         <label class="layout-field">
           <span>Name</span>
@@ -313,7 +313,7 @@
           <input id="layout-width" type="number" min="6" max="30" step="0.5" />
         </label>
         <p class="muted" id="layout-hud">—</p>
-        <p class="muted">Ctrl+click a point to start a branch, Ctrl+click empty space to add points, connect near a loop point to create the loop, Esc cancels.</p>
+        <p class="muted">Drag junctions to reshape shared road. Editing a segment updates every route that uses it.</p>
       </div>
 
       <h2>Project</h2>
@@ -347,8 +347,16 @@
       <h2>Meshes</h2>
       <ul id="meshes"></ul>
 
-      <h2>Control points</h2>
-      <p class="muted">Drag the numbered markers to reshape the loop. Shared points affect every loop that uses them; select one and use Make unique to diverge this loop. Release to rebuild. Hold Shift and click a marker to delete it.</p>
+      <h2>Junctions</h2>
+      <p class="muted">Drag the numbered junction markers to reshape shared road. Moving a junction updates every route and path that uses it. Release to rebuild. Hold Shift and click a marker to delete it.</p>
+
+      <h2>Road segment</h2>
+      <p class="muted" id="segment-hud">Select a road segment in the viewport.</p>
+      <div class="layout-row">
+        <button id="segment-make-unique" type="button" disabled>Make unique</button>
+        <button id="segment-add-point" type="button" disabled>Add point</button>
+        <button id="segment-delete-point" type="button" disabled>Delete point</button>
+      </div>
 
       <h2>Guide lines</h2>
       <p class="muted">Continuous light dotted lines show both kerb edges plus near and far prop lines on the outside and inside. Paint far lines with trees to place them behind the near barriers. Use the Prop button in the top menu to cycle what you paint. Click an empty guide to create a short segment, then drag its start or end handle along the spline. Click an existing segment to select it.</p>

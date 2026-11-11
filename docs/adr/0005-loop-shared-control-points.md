@@ -1,6 +1,6 @@
 # 0005. Loop and shared-control-point model
 
-- Status: accepted
+- Status: superseded by ADR 0006
 - Date: 2026-11-09
 - Supersedes: ADR 0004
 - Deciders: @joegaffey, architect

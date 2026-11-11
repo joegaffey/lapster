@@ -1,5 +1,258 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test("editor loads a schema 4 project with routes", async ({ page }) => {
+  test.setTimeout(90_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/");
+  await expect(page.locator("#status")).toHaveText("ready", { timeout: 20_000 });
+
+  const project = await page.evaluate(
+    () => JSON.parse((window as any).__trackEditor.editor_project()) as {
+      schema: string;
+      layouts: Array<{ id: string }>;
+      edges: unknown[];
+      controlPoints: unknown[];
+    },
+  );
+
+  expect(project.schema).toBe("lapster/track-project@4");
+  expect(Array.isArray(project.layouts) && project.layouts.length > 0).toBe(true);
+  expect(Array.isArray(project.edges) && project.edges.length > 0).toBe(true);
+  expect(
+    Array.isArray(project.controlPoints) && project.controlPoints.length > 0,
+  ).toBe(true);
+
+  const routeIds = project.layouts.map((layout) => layout.id);
+  const initialActive = await page.evaluate(
+    () => (window as any).__trackEditor.editor_active_layout() as string,
+  );
+  await expect(page.locator("#layout-select option")).toHaveCount(
+    project.layouts.length,
+  );
+  expect(routeIds).toContain(initialActive);
+
+  if (project.layouts.length >= 2) {
+    await page.locator("#hud-toggle").click();
+    const otherId = routeIds.find((id) => id !== initialActive)!;
+    await page.locator("#layout-select").selectOption(otherId);
+    await expect(page.locator("#status")).toHaveText("ready", { timeout: 20_000 });
+    const switched = await page.evaluate(
+      () => (window as any).__trackEditor.editor_active_layout() as string,
+    );
+    expect(switched).toBe(otherId);
+    expect(switched).not.toBe(initialActive);
+  } else {
+    const active = await page.evaluate(
+      () => (window as any).__trackEditor.editor_active_layout() as string,
+    );
+    expect(active).toBe(initialActive);
+  }
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("selecting a road segment shows the segment panel", async ({ page }) => {
+  test.setTimeout(90_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/?v=segment-select");
+  await expect(page.locator("#status")).toHaveText("ready", { timeout: 20_000 });
+
+  const segmentId = await page.evaluate(() => {
+    const project = JSON.parse((window as any).__trackEditor.editor_project()) as {
+      layouts: Array<{ route: string[] }>;
+    };
+    return project.layouts[0]?.route[0] ?? "";
+  });
+  expect(segmentId).not.toBe("");
+
+  await page.locator("#hud-toggle").click();
+  await page.evaluate(
+    (id) => (window as any).__editorSelectSegment(id),
+    segmentId,
+  );
+  await expect(page.locator("#segment-hud")).toContainText(segmentId);
+  const makeUnique = page.locator("#segment-make-unique");
+  await expect(makeUnique).toBeVisible();
+  await expect(makeUnique).toBeEnabled();
+  expect(pageErrors).toEqual([]);
+});
+
+test("duplicating a route shares canonical segments", async ({ page }) => {
+  test.setTimeout(90_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  await page.goto("/web/track-editor/");
+  await expect(page.locator("#status")).toHaveText("ready", { timeout: 20_000 });
+
+  await page.locator("#hud-toggle").click();
+
+  const before = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as {
+        layouts: Array<{ id: string; route: string[] }>;
+      },
+      active: viewer.editor_active_layout() as string,
+    };
+  });
+  expect(before.project.layouts.length).toBeGreaterThanOrEqual(1);
+  const source =
+    before.project.layouts.find((layout) => layout.id === before.active) ??
+    before.project.layouts[0];
+  const sourceRoute = [...source.route];
+  const existingIds = before.project.layouts.map((layout) => layout.id);
+
+  await page.locator("#duplicate-layout").click();
+  await waitForEditorRebuild(page);
+
+  const after = await page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    return {
+      project: JSON.parse(viewer.editor_project()) as {
+        layouts: Array<{ id: string; route: string[] }>;
+      },
+      active: viewer.editor_active_layout() as string,
+    };
+  });
+  expect(after.project.layouts.length).toBe(before.project.layouts.length + 1);
+  const duplicate = after.project.layouts.find(
+    (layout) => !existingIds.includes(layout.id),
+  );
+  expect(duplicate).toBeTruthy();
+  expect(duplicate!.route).toEqual(sourceRoute);
+  expect(after.active).toBe(duplicate!.id);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("shared segment make unique diverges one route", async ({ page }) => {
+  test.setTimeout(90_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
+
+  const readEditor = () =>
+    page.evaluate(() => {
+      const viewer = (window as any).__trackEditor;
+      return {
+        project: JSON.parse(viewer.editor_project()) as {
+          edges: Array<{ id: string; points: unknown[] }>;
+          layouts: Array<{
+            id: string;
+            route: string[];
+            startFinish?: { edge: string; fraction: number };
+          }>;
+        },
+        active: viewer.editor_active_layout() as string,
+      };
+    });
+
+  await page.goto("/web/track-editor/?v=shared-segment-unique");
+  await expect(page.locator("#status")).toHaveText("ready", { timeout: 20_000 });
+
+  if (
+    await page
+      .locator("#hud")
+      .evaluate((hud) => hud.classList.contains("hud-collapsed"))
+  ) {
+    await page.locator("#hud-toggle").click();
+  }
+
+  const before = await readEditor();
+
+  await page.locator("#duplicate-layout").click();
+  await waitForEditorRebuild(page);
+
+  const duplicated = await readEditor();
+  const source = duplicated.project.layouts.find(
+    (layout) => layout.id === before.active,
+  );
+  const duplicate = duplicated.project.layouts.find(
+    (layout) => layout.id === duplicated.active,
+  );
+  expect(source).toBeTruthy();
+  expect(duplicate).toBeTruthy();
+  expect(duplicate!.startFinish?.edge).toBeTruthy();
+  const segmentId = duplicate!.route.find(
+    (id) => id !== duplicate!.startFinish!.edge,
+  );
+  expect(segmentId).toBeTruthy();
+  const routeIndex = duplicate!.route.indexOf(segmentId!);
+  expect(routeIndex).toBeGreaterThanOrEqual(0);
+  expect(source!.route).toContain(segmentId!);
+
+  await page.evaluate(
+    (id) => (window as any).__editorSelectSegment(id),
+    segmentId,
+  );
+  await expect(page.locator("#segment-hud")).toContainText(segmentId!);
+  const makeUnique = page.locator("#segment-make-unique");
+  await expect(makeUnique).toBeEnabled();
+  await makeUnique.click();
+  await waitForEditorRebuild(page);
+
+  const unique = await readEditor();
+  const uniqueSource = unique.project.layouts.find(
+    (layout) => layout.id === before.active,
+  );
+  const uniqueDuplicate = unique.project.layouts.find(
+    (layout) => layout.id === duplicated.active,
+  );
+  expect(uniqueSource).toBeTruthy();
+  expect(uniqueDuplicate).toBeTruthy();
+  const newSegmentId = uniqueDuplicate!.route[routeIndex];
+  expect(newSegmentId).toBeTruthy();
+  expect(newSegmentId).not.toBe(segmentId);
+  expect(uniqueSource!.route).toContain(segmentId!);
+  expect(uniqueSource!.route[routeIndex]).toBe(segmentId);
+  const edgeIds = unique.project.edges.map((edge) => edge.id);
+  expect(edgeIds).toContain(segmentId!);
+  expect(edgeIds).toContain(newSegmentId);
+  await expect(page.locator("#segment-hud")).toContainText(newSegmentId);
+
+  const newSegment = unique.project.edges.find(
+    (edge) => edge.id === newSegmentId,
+  );
+  expect(newSegment).toBeTruthy();
+  const originalPointCount = newSegment!.points.length;
+
+  await page.locator("#segment-add-point").click();
+  await waitForEditorRebuild(page);
+  const afterAdd = await readEditor();
+  const addedSegment = afterAdd.project.edges.find(
+    (edge) => edge.id === newSegmentId,
+  );
+  expect(addedSegment).toBeTruthy();
+  expect(addedSegment!.points.length).toBe(originalPointCount + 1);
+
+  await page.locator("#segment-delete-point").click();
+  await waitForEditorRebuild(page);
+  const afterDelete = await readEditor();
+  const restoredSegment = afterDelete.project.edges.find(
+    (edge) => edge.id === newSegmentId,
+  );
+  expect(restoredSegment).toBeTruthy();
+  expect(restoredSegment!.points.length).toBe(originalPointCount);
+
+  expect(pageErrors).toEqual([]);
+});
+
 type ProjectLoop = {
   id: string;
   name: string;
