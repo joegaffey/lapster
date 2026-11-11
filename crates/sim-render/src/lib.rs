@@ -924,6 +924,75 @@ impl TrackViewer {
         result
     }
 
+    pub async fn add_editor_path(&mut self, kind: &str) -> Result<String, JsValue> {
+        let id = {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project.add_path(kind).map_err(js_error)?
+        };
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result?;
+        Ok(id)
+    }
+
+    pub async fn delete_editor_path(&mut self, id: &str) -> Result<(), JsValue> {
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project.delete_path(id).map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
+    pub async fn append_editor_path_segment(
+        &mut self,
+        path_id: &str,
+        segment_id: &str,
+    ) -> Result<(), JsValue> {
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .append_path_segment(path_id, segment_id)
+                .map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
+    pub async fn remove_editor_path_segment(
+        &mut self,
+        path_id: &str,
+        index: usize,
+    ) -> Result<(), JsValue> {
+        {
+            let project = self
+                .editor_project
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+            project
+                .remove_path_segment(path_id, index)
+                .map_err(js_error)?;
+        }
+        self.editor_rebuilding = true;
+        let result = self.rebuild_editor().await;
+        self.editor_rebuilding = false;
+        result
+    }
+
     pub async fn set_editor_kerb_spans(&mut self, spans_json: &str) -> Result<(), JsValue> {
         let spans = serde_json::from_str::<Vec<crate::track_editor::KerbSpan>>(spans_json)
             .map_err(js_error)?;

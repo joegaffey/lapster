@@ -1006,6 +1006,12 @@ var loadProjectButton = document.querySelector("#load-project");
 var exportProjectButton = document.querySelector("#export-project");
 var importProjectButton = document.querySelector("#import-project");
 var projectFileInput = document.querySelector("#project-file");
+var pathSelect = document.querySelector("#path-select");
+var addPathButton = document.querySelector("#add-path");
+var deletePathButton = document.querySelector("#delete-path");
+var appendPathSegmentButton = document.querySelector("#append-path-segment");
+var removePathSegmentButton = document.querySelector("#remove-path-segment");
+var pathHud = document.querySelector("#path-hud");
 var editorViewer;
 var project = null;
 var projectJson = null;
@@ -1034,6 +1040,7 @@ var hoverHandleEdge = null;
 var decorationSelection = null;
 var segmentCenterlines = {};
 var selectedSegmentId = null;
+var activePathId = "";
 var selectedSegmentPointIndex = null;
 var segmentPointDrag = null;
 var guideDrag = null;
@@ -1389,28 +1396,67 @@ function guideDefinitions() {
     { kind: "prop", side: -outside, radius: PROP_FAR_OFFSET, color: "#c084fc" }
   ];
 }
+function selectedSegmentPoints() {
+  if (!selectedSegmentId) {
+    return [];
+  }
+  return (segmentCenterlines[selectedSegmentId] ?? []).map((point) => toVec32(point));
+}
+function paintCenterline() {
+  return selectedSegmentId ? selectedSegmentPoints() : centerline;
+}
+function paintIsClosed() {
+  return !selectedSegmentId;
+}
+function paintUnits() {
+  const count = paintCenterline().length;
+  if (count < 2) {
+    return 0;
+  }
+  return paintIsClosed() ? count : count - 1;
+}
 function binormalAt(sample) {
-  const count = centerline.length;
-  const index = (sample % count + count) % count;
-  const incoming = normalize2(
-    sub2(centerline[index], centerline[(index + count - 1) % count])
-  );
-  const outgoing = normalize2(
-    sub2(centerline[(index + 1) % count], centerline[index])
-  );
+  const points = paintCenterline();
+  const count = points.length;
+  if (count < 2) {
+    return [1, 0, 0];
+  }
+  let index;
+  let previous;
+  let next;
+  if (paintIsClosed()) {
+    index = (Math.round(sample) % count + count) % count;
+    previous = (index + count - 1) % count;
+    next = (index + 1) % count;
+  } else {
+    index = Math.max(0, Math.min(count - 1, Math.round(sample)));
+    previous = Math.max(0, index - 1);
+    next = Math.min(count - 1, index + 1);
+  }
+  const incoming = normalize2(sub2(points[index], points[previous]));
+  const outgoing = normalize2(sub2(points[next], points[index]));
   const tangent = normalize2(add2(incoming, outgoing));
   return [-tangent[2], 0, tangent[0]];
 }
 function offsetPoint(index, side, radius) {
-  if (centerline.length < 2) {
+  const points = paintCenterline();
+  const count = points.length;
+  if (count < 2) {
     return null;
   }
-  const count = centerline.length;
-  const position = Math.max(0, Math.min(count, index));
-  const base = Math.floor(position) % count;
-  const next = (base + 1) % count;
+  const units = paintUnits();
+  const position = Math.max(0, Math.min(units, index));
+  let base;
+  let next;
+  if (paintIsClosed()) {
+    base = Math.floor(position) % count;
+    next = (base + 1) % count;
+  } else {
+    base = Math.min(count - 1, Math.floor(position));
+    next = Math.min(count - 1, base + 1);
+  }
   const t = position - Math.floor(position);
-  const point = lerp2(centerline[base], centerline[next], t);
+  const point = lerp2(points[base], points[next], t);
   const binormal = normalize2(lerp2(binormalAt(base), binormalAt(next), t));
   return add2(point, scale2(binormal, radius * side));
 }
@@ -1419,7 +1465,8 @@ function guidePoint(guide, index) {
 }
 function guidePoints(guide) {
   const points = [];
-  for (let index = 0; index <= centerline.length; index += 1) {
+  const units = paintUnits();
+  for (let index = 0; index <= units; index += 1) {
     const point = guidePoint(guide, index);
     if (point) {
       points.push(point);
@@ -1465,7 +1512,7 @@ function hitGuidePoint(x, y, guides = guideDefinitions()) {
       bestDistance = distance;
       best = {
         guide,
-        index: Math.max(0, Math.min(centerline.length, index + t)),
+        index: Math.max(0, Math.min(paintUnits(), index + t)),
         screen: [hitX, hitY]
       };
     }
@@ -1574,28 +1621,30 @@ function selectSegment(kind, side, offset, index) {
   return true;
 }
 function propSegmentLength() {
-  const count = centerline.length;
-  if (count < 2) {
+  const points = paintCenterline();
+  const count = points.length;
+  const units = paintUnits();
+  if (count < 2 || units < 2) {
     return MIN_SEGMENT_LENGTH;
   }
   let perimeter = 0;
-  for (let index = 0; index < count; index += 1) {
-    const point = centerline[index];
-    const next = centerline[(index + 1) % count];
+  for (let index = 0; index < units; index += 1) {
+    const point = points[index];
+    const next = points[paintIsClosed() ? (index + 1) % count : index + 1];
     perimeter += Math.hypot(
       next[0] - point[0],
       next[1] - point[1],
       next[2] - point[2]
     );
   }
-  const sampleSpacing = perimeter / count;
+  const sampleSpacing = perimeter / units;
   return Math.max(
     MIN_SEGMENT_LENGTH,
     PROP_SEGMENT_LENGTH_METERS / Math.max(sampleSpacing, 1e-4)
   );
 }
 function createSegment(guide, index) {
-  const count = centerline.length;
+  const count = paintUnits();
   if (guide.kind === "prop" && paintKind === "off") {
     flashStatus("Choose a prop type to add props");
     return;
@@ -1684,7 +1733,7 @@ function updateSelectedEdge(edge, index) {
     );
   } else {
     decorationSelection.end = Math.min(
-      centerline.length,
+      paintUnits(),
       Math.max(index, decorationSelection.start + MIN_SEGMENT_LENGTH)
     );
   }
@@ -2145,6 +2194,30 @@ function drawControlPoints() {
     overlayContext.stroke();
     overlayContext.restore();
   };
+  const path = activePath();
+  if (path && path.route.length > 0) {
+    const pathPoints = [];
+    for (const segmentId of path.route) {
+      const points = segmentCenterlines[segmentId] ?? [];
+      for (const point of points) {
+        pathPoints.push(toVec32(point));
+      }
+    }
+    const projected = pathPoints.map((point) => projectPoint(point, camera, width, height)).filter((point) => point !== null);
+    if (projected.length >= 2) {
+      overlayContext.save();
+      overlayContext.beginPath();
+      overlayContext.moveTo(projected[0][0], projected[0][1]);
+      for (let index = 1; index < projected.length; index += 1) {
+        overlayContext.lineTo(projected[index][0], projected[index][1]);
+      }
+      overlayContext.lineWidth = 3;
+      overlayContext.strokeStyle = "#fbbf24";
+      overlayContext.globalAlpha = 0.85;
+      overlayContext.stroke();
+      overlayContext.restore();
+    }
+  }
   const guides = guideDefinitions();
   const selectedGuide = decorationSelection ? guideFor(
     decorationSelection.kind,
@@ -2366,6 +2439,40 @@ function syncProjectControls() {
     syncingProjectControls = false;
   }
 }
+function activePath() {
+  if (!project) {
+    return null;
+  }
+  return project.paths.find((path) => path.id === activePathId) ?? null;
+}
+function syncPathControls() {
+  const path = activePath();
+  pathSelect.replaceChildren();
+  if (project) {
+    for (const item of project.paths) {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = `${item.kind || item.id} (${item.route.length})`;
+      option.selected = item.id === activePathId;
+      pathSelect.append(option);
+    }
+  }
+  addPathButton.disabled = rebuilding;
+  deletePathButton.disabled = !path || rebuilding;
+  appendPathSegmentButton.disabled = !path || !selectedSegmentId || rebuilding;
+  removePathSegmentButton.disabled = !path || path.route.length === 0 || rebuilding;
+  pathHud.textContent = path ? `${path.id} \xB7 ${path.kind} \xB7 ${path.route.length} segment${path.route.length === 1 ? "" : "s"}${selectedSegmentId ? ` \xB7 append ${selectedSegmentId} when it continues the chain` : " \xB7 select a road segment to append it"}` : "No pit lane path. Add one, then select a segment and append it.";
+}
+function setSelectedSegment(id) {
+  selectedSegmentId = id;
+  selectedSegmentPointIndex = null;
+  segmentPointDrag = null;
+  decorationSelection = null;
+  refreshPaintSpans();
+  syncPathControls();
+  updateSegmentPanel();
+  drawControlPoints();
+}
 function updateSegmentPanel() {
   const edge = selectedSegmentEdge();
   if (!selectedSegmentId || !edge) {
@@ -2396,6 +2503,12 @@ function readProject() {
     if (parsed && READABLE_TRACK_PROJECT_SCHEMAS.has(parsed.schema) && Array.isArray(parsed.layouts)) {
       project = parsed;
       projectJson = JSON.stringify(parsed);
+      if (activePathId && !project.paths.some((path) => path.id === activePathId)) {
+        activePathId = "";
+      }
+      if (!activePathId && project.paths.length > 0) {
+        activePathId = project.paths[0].id;
+      }
     } else {
       project = null;
       projectJson = null;
@@ -2434,6 +2547,79 @@ function loadSavedProject() {
     return null;
   }
 }
+function splineLateral(spline) {
+  const base = spline.base ? project?.settings.splines?.find((candidate) => candidate.id === spline.base) : void 0;
+  return (base?.offset ?? 0) + (spline.offset ?? 0);
+}
+function propSpanToLine(span, units) {
+  const spline = project?.settings.splines?.find(
+    (candidate) => candidate.id === span.spline
+  );
+  if (!spline) {
+    return null;
+  }
+  const lateral = splineLateral(spline);
+  return {
+    start: span.start * units,
+    end: span.end * units,
+    side: lateral < 0 ? -1 : 1,
+    offset: Math.abs(lateral),
+    kind: span.kind
+  };
+}
+function propLineToSpan(line, units) {
+  const splines = project?.settings.splines ?? [];
+  const left = line.side < 0;
+  const threshold = (PROP_OFFSET + PROP_FAR_OFFSET) * 0.5;
+  const wantNear = line.offset <= threshold;
+  let best = null;
+  for (const spline of splines) {
+    if (spline.role !== "prop") {
+      continue;
+    }
+    const lateral = splineLateral(spline);
+    if (lateral < 0 !== left) {
+      continue;
+    }
+    if (Math.abs(lateral) <= threshold !== wantNear) {
+      continue;
+    }
+    const distance = Math.abs(Math.abs(lateral) - line.offset);
+    if (!best || distance < best.distance) {
+      best = { distance, spline };
+    }
+  }
+  if (!best) {
+    return null;
+  }
+  const scale3 = Math.max(units, 1);
+  return {
+    spline: best.spline.id,
+    start: Math.max(0, Math.min(1, line.start / scale3)),
+    end: Math.max(0, Math.min(1, line.end / scale3)),
+    kind: line.kind
+  };
+}
+function refreshPaintSpans() {
+  if (!editorViewer) {
+    return;
+  }
+  if (selectedSegmentId) {
+    const edge = selectedSegmentEdge();
+    const units = Math.max(paintUnits(), 1);
+    kerbSpans = (edge?.kerbs ?? []).map((span) => ({
+      start: span.start * units,
+      end: span.end * units,
+      side: span.side
+    })).sort((a, b) => a.side - b.side || a.start - b.start);
+    propLines = (edge?.propSpans ?? []).map((span) => propSpanToLine(span, units)).filter((line) => line !== null).sort(
+      (a, b) => a.side - b.side || a.offset - b.offset || a.start - b.start
+    );
+    return;
+  }
+  kerbSpans = JSON.parse(editorViewer.editor_kerb_spans()).sort((a, b) => a.side - b.side || a.start - b.start);
+  propLines = JSON.parse(editorViewer.editor_prop_lines());
+}
 function refreshEditorState() {
   if (!editorViewer) {
     return;
@@ -2457,8 +2643,6 @@ function refreshEditorState() {
   segmentCenterlines = JSON.parse(
     editorViewer.editor_segment_centerlines()
   );
-  kerbSpans = JSON.parse(editorViewer.editor_kerb_spans()).sort((a, b) => a.side - b.side || a.start - b.start);
-  propLines = JSON.parse(editorViewer.editor_prop_lines());
   readProject();
   if (selectedSegmentId && !project?.edges.some((edge) => edge.id === selectedSegmentId)) {
     selectedSegmentId = null;
@@ -2466,6 +2650,8 @@ function refreshEditorState() {
   if (!selectedSegmentId) {
     selectedSegmentPointIndex = null;
   }
+  refreshPaintSpans();
+  syncPathControls();
   updateSegmentPanel();
   resolveSelection();
   syncPaintControls();
@@ -2632,6 +2818,62 @@ projectFileInput.addEventListener("change", () => {
     }
   })();
 });
+addPathButton.addEventListener("click", () => {
+  if (!editorViewer || rebuilding) {
+    return;
+  }
+  void rebuildEditor(
+    "adding pit lane",
+    async () => {
+      activePathId = await editorViewer.add_editor_path("pit_lane");
+    },
+    reportActionError
+  );
+});
+deletePathButton.addEventListener("click", () => {
+  if (!editorViewer || !activePathId || rebuilding) {
+    return;
+  }
+  const pathId = activePathId;
+  void rebuildEditor(
+    "deleting path",
+    async () => {
+      await editorViewer.delete_editor_path(pathId);
+      activePathId = "";
+    },
+    reportActionError
+  );
+});
+appendPathSegmentButton.addEventListener("click", () => {
+  if (!editorViewer || !activePathId || !selectedSegmentId || rebuilding) {
+    return;
+  }
+  const pathId = activePathId;
+  const segmentId = selectedSegmentId;
+  void rebuildEditor(
+    "appending path segment",
+    () => editorViewer.append_editor_path_segment(pathId, segmentId),
+    reportActionError
+  );
+});
+removePathSegmentButton.addEventListener("click", () => {
+  const path = activePath();
+  if (!editorViewer || !path || path.route.length === 0 || rebuilding) {
+    return;
+  }
+  const pathId = path.id;
+  const index = path.route.length - 1;
+  void rebuildEditor(
+    "removing path segment",
+    () => editorViewer.remove_editor_path_segment(pathId, index),
+    reportActionError
+  );
+});
+pathSelect.addEventListener("change", () => {
+  activePathId = pathSelect.value;
+  syncPathControls();
+  drawControlPoints();
+});
 function makeSelectedSegmentUnique() {
   if (!editorViewer || !activeRouteId || !selectedSegmentId || rebuilding) {
     return;
@@ -2651,11 +2893,7 @@ function makeSelectedSegmentUnique() {
       reportActionError
     );
     if (uniqueId) {
-      selectedSegmentId = uniqueId;
-      selectedSegmentPointIndex = null;
-      segmentPointDrag = null;
-      updateSegmentPanel();
-      drawControlPoints();
+      setSelectedSegment(uniqueId);
     }
   })();
 }
@@ -2744,17 +2982,49 @@ async function rebuildEditor(message, action, onError = fail) {
     rebuilding = false;
     duplicateLayoutButton.disabled = !project || !activeRouteId;
     cameraController?.setEnabled(true);
+    syncProjectControls();
+    syncPathControls();
     updateSegmentPanel();
     drawControlPoints();
   }
 }
 async function rebuildKerbSpans() {
+  if (selectedSegmentId) {
+    const segmentId = selectedSegmentId;
+    const units = Math.max(paintUnits(), 1);
+    const spans = kerbSpans.map((span) => ({
+      start: Math.max(0, Math.min(1, span.start / units)),
+      end: Math.max(0, Math.min(1, span.end / units)),
+      side: span.side
+    }));
+    await rebuildEditor(
+      "rebuilding kerbs",
+      () => editorViewer.set_editor_segment_kerbs(
+        segmentId,
+        JSON.stringify(spans)
+      )
+    );
+    return;
+  }
   await rebuildEditor(
     "rebuilding kerbs",
     () => editorViewer.set_editor_kerb_spans(JSON.stringify(kerbSpans))
   );
 }
 async function rebuildPropLines() {
+  if (selectedSegmentId) {
+    const segmentId = selectedSegmentId;
+    const units = Math.max(paintUnits(), 1);
+    const spans = propLines.map((line) => propLineToSpan(line, units)).filter((span) => span !== null);
+    await rebuildEditor(
+      "rebuilding prop lines",
+      () => editorViewer.set_editor_segment_props(
+        segmentId,
+        JSON.stringify(spans)
+      )
+    );
+    return;
+  }
   await rebuildEditor(
     "rebuilding prop lines",
     () => editorViewer.set_editor_prop_lines(JSON.stringify(propLines))
@@ -2922,18 +3192,11 @@ canvas.addEventListener(
         event.preventDefault();
         event.stopImmediatePropagation();
         cameraDragging = false;
-        selectedSegmentId = segmentId;
-        selectedSegmentPointIndex = null;
-        segmentPointDrag = null;
-        updateSegmentPanel();
-        drawControlPoints();
+        setSelectedSegment(segmentId);
         return;
       }
       if (selectedSegmentId || selectedSegmentPointIndex !== null) {
-        selectedSegmentId = null;
-        selectedSegmentPointIndex = null;
-        segmentPointDrag = null;
-        updateSegmentPanel();
+        setSelectedSegment(null);
       }
       if (decorationSelection) {
         decorationSelection = null;
@@ -3276,11 +3539,7 @@ async function boot() {
   window.__editorMovePoint = (id, x, z) => moveControlPointById(id, [x, 0, z]);
   window.__editorSelectPoint = (id) => selectControlPoint(id);
   window.__editorSelectSegment = (id) => {
-    selectedSegmentId = id;
-    selectedSegmentPointIndex = null;
-    segmentPointDrag = null;
-    updateSegmentPanel();
-    drawControlPoints();
+    setSelectedSegment(id);
   };
   if (devMode) {
     setupTrackDevMenu(viewer);

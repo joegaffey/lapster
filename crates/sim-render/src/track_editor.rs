@@ -1414,6 +1414,11 @@ impl TrackProject {
                 used_edges.insert(edge.clone());
             }
         }
+        for path in &self.paths {
+            for edge in &path.route {
+                used_edges.insert(edge.clone());
+            }
+        }
         used_edges.insert(self.start_finish.edge.clone());
         self.edges.retain(|edge| used_edges.contains(&edge.id));
 
@@ -1909,6 +1914,101 @@ impl TrackProject {
             ));
         }
         points.remove(index);
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Adds an empty drivable path and returns its id. Pit lanes use the
+    /// canonical `pit` base id; other path kinds derive their base from the
+    /// kind. The path has no segments or pit boxes until it is edited.
+    pub fn add_path(&mut self, kind: &str) -> Result<String, String> {
+        let kind = kind.trim();
+        if kind.is_empty() {
+            return Err("path kind must not be empty".to_string());
+        }
+        let base = if kind == "pit_lane" { "pit" } else { kind };
+        let id = unique_id(self.paths.iter().map(|path| path.id.as_str()), base);
+        let mut candidate = self.clone();
+        candidate.paths.push(PathProject {
+            id: id.clone(),
+            kind: kind.to_string(),
+            route: Vec::new(),
+            boxes: Vec::new(),
+        });
+        *self = candidate.normalize()?;
+        Ok(id)
+    }
+
+    /// Removes a path. Layouts are not affected.
+    pub fn delete_path(&mut self, id: &str) -> Result<(), String> {
+        let index = self
+            .paths
+            .iter()
+            .position(|path| path.id == id)
+            .ok_or_else(|| format!("unknown path id '{id}'"))?;
+        let mut candidate = self.clone();
+        candidate.paths.remove(index);
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Appends a canonical segment to a path. A non-empty path only accepts a
+    /// segment that continues its open chain; layouts are never altered.
+    pub fn append_path_segment(&mut self, path_id: &str, segment_id: &str) -> Result<(), String> {
+        let path_index = self
+            .paths
+            .iter()
+            .position(|path| path.id == path_id)
+            .ok_or_else(|| format!("unknown path id '{path_id}'"))?;
+        let segment = self
+            .edge_by_id(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        if segment.from == segment.to {
+            return Err(format!(
+                "path '{path_id}' must not reference self-loop segment '{segment_id}'"
+            ));
+        }
+        let path = &self.paths[path_index];
+        if path.route.iter().any(|id| id == segment_id) {
+            return Err(format!(
+                "path '{path_id}' already contains segment '{segment_id}'"
+            ));
+        }
+        if let Some(last_id) = path.route.last() {
+            let last = self.edge_by_id(last_id).ok_or_else(|| {
+                format!("path '{path_id}' references unknown segment '{last_id}'")
+            })?;
+            if last.to != segment.from {
+                return Err(format!(
+                    "path '{path_id}' is not a canonical chain: segment '{}' ends at '{}' but segment '{}' starts at '{}'",
+                    last.id, last.to, segment.id, segment.from
+                ));
+            }
+        }
+        let mut candidate = self.clone();
+        candidate.paths[path_index]
+            .route
+            .push(segment_id.to_string());
+        *self = candidate.normalize()?;
+        Ok(())
+    }
+
+    /// Removes the segment at a 0-based index from a path. Empty paths remain
+    /// valid.
+    pub fn remove_path_segment(&mut self, path_id: &str, index: usize) -> Result<(), String> {
+        let path_index = self
+            .paths
+            .iter()
+            .position(|path| path.id == path_id)
+            .ok_or_else(|| format!("unknown path id '{path_id}'"))?;
+        let route_len = self.paths[path_index].route.len();
+        if index >= route_len {
+            return Err(format!(
+                "path '{path_id}' segment index {index} is out of range for {route_len} segment(s)"
+            ));
+        }
+        let mut candidate = self.clone();
+        candidate.paths[path_index].route.remove(index);
         *self = candidate.normalize()?;
         Ok(())
     }
@@ -4101,11 +4201,7 @@ fn legacy_from_project(
     }
     let width = global_asphalt_width(project);
     let start_finish = shared_start_finish_fraction(project);
-    let pit_boxes = project
-        .pit_lane
-        .as_ref()
-        .map(|pit_lane| pit_lane.boxes.clone())
-        .unwrap_or_default();
+    let pit_boxes = baked_pit_boxes(project);
     let mut layouts = Vec::with_capacity(project.layouts.len());
     for layout in &project.layouts {
         let control_points = layout_control_points(project, layout)?;
@@ -5267,6 +5363,33 @@ fn terrain_grid_for_built_edges(edges: impl Iterator<Item = BuiltEdge>) -> MeshB
     buffers
 }
 
+/// Pit boxes are authored on the pit-lane path in `@4`; legacy documents that
+/// predate paths keep using the top-level `pit_lane`. Boxes shared by more
+/// than one pit path are emitted once.
+fn baked_pit_boxes(project: &TrackProject) -> Vec<SpawnPoint> {
+    let mut has_pit_path = false;
+    let mut boxes = Vec::new();
+    for path in &project.paths {
+        if path.kind != "pit_lane" {
+            continue;
+        }
+        has_pit_path = true;
+        for pit_box in &path.boxes {
+            if !boxes.contains(pit_box) {
+                boxes.push(pit_box.clone());
+            }
+        }
+    }
+    if has_pit_path {
+        return boxes;
+    }
+    project
+        .pit_lane
+        .as_ref()
+        .map(|pit_lane| pit_lane.boxes.clone())
+        .unwrap_or_default()
+}
+
 fn track_from_graph(project: TrackProject, default_index: usize) -> Result<EditorTrack, String> {
     if project.layouts.is_empty() {
         return Err("track project needs at least one layout".to_string());
@@ -5280,14 +5403,19 @@ fn track_from_graph(project: TrackProject, default_index: usize) -> Result<Edito
             layout_edge_ids.insert(edge_id.clone());
         }
     }
-    let mut terrain_edge_ids = layout_edge_ids.clone();
+    let mut world_edge_ids = layout_edge_ids.clone();
+    for path in &project.paths {
+        for edge_id in &path.route {
+            world_edge_ids.insert(edge_id.clone());
+        }
+    }
     if let Some(pit_lane) = &project.pit_lane {
         for edge_id in &pit_lane.route {
-            terrain_edge_ids.insert(edge_id.clone());
+            world_edge_ids.insert(edge_id.clone());
         }
     }
 
-    let built = build_unique_edges(&project, &terrain_edge_ids)?;
+    let built = build_unique_edges(&project, &world_edge_ids)?;
 
     let mut visual = TrackVisual {
         meshes: Vec::new(),
@@ -5323,11 +5451,11 @@ fn track_from_graph(project: TrackProject, default_index: usize) -> Result<Edito
     let has_kerbs = project
         .edges
         .iter()
-        .any(|edge| layout_edge_ids.contains(&edge.id) && !edge.kerbs.is_empty());
+        .any(|edge| world_edge_ids.contains(&edge.id) && !edge.kerbs.is_empty());
     let has_props = project
         .edges
         .iter()
-        .any(|edge| layout_edge_ids.contains(&edge.id) && !edge.prop_spans.is_empty());
+        .any(|edge| world_edge_ids.contains(&edge.id) && !edge.prop_spans.is_empty());
     let synthesized_prop_spans = if has_props {
         HashMap::new()
     } else {
@@ -5336,7 +5464,7 @@ fn track_from_graph(project: TrackProject, default_index: usize) -> Result<Edito
         synthesize_default_prop_spans(&project, &default_route, &built, &splines, width)
     };
 
-    for edge_id in &layout_edge_ids {
+    for edge_id in &world_edge_ids {
         let edge = built
             .get(edge_id)
             .ok_or_else(|| format!("missing built edge '{edge_id}'"))?;
@@ -5453,11 +5581,7 @@ fn track_from_graph(project: TrackProject, default_index: usize) -> Result<Edito
     append_collision(&mut collision, &prop_walls, WALL_SURFACE);
     collision.bounds = collision_bounds(&collision.vertices);
 
-    let pit_boxes = project
-        .pit_lane
-        .as_ref()
-        .map(|pit_lane| pit_lane.boxes.clone())
-        .unwrap_or_default();
+    let pit_boxes = baked_pit_boxes(&project);
     let mut layout_specs = Vec::with_capacity(project.layouts.len());
     for layout in &project.layouts {
         let route = assemble_route(&project, layout, &built, &edge_prop_lines)?;
@@ -7971,6 +8095,120 @@ mod tests {
 
         let error = project.normalize().expect_err("non-consecutive path chain");
         assert!(error.contains("path"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn path_only_edges_are_baked_into_the_world() {
+        let mut project = fork_project();
+        project.schema = TRACK_PROJECT_SCHEMA_V4.to_string();
+        for layout in &mut project.layouts {
+            layout.start_finish = StartFinish {
+                edge: "e0".to_string(),
+                fraction: 0.0,
+            };
+        }
+        let baseline = track_from_project(&project).expect("baseline track");
+        let baseline_asphalt = baseline
+            .collision
+            .surface_ids
+            .iter()
+            .filter(|surface| **surface == TRACK_SURFACE)
+            .count();
+
+        let point = |id: &str, position: [f32; 2]| ControlPoint {
+            id: id.to_string(),
+            position,
+            kind: ControlPointKind::Normal,
+            profile: None,
+            branch_tangents: BTreeMap::new(),
+        };
+        let edge = |id: &str, from: &str, to: &str| EdgeProject {
+            id: id.to_string(),
+            from: from.to_string(),
+            to: to.to_string(),
+            start_profile: None,
+            end_profile: None,
+            kerbs: Vec::new(),
+            prop_spans: Vec::new(),
+            points: Vec::new(),
+            from_tangent: None,
+            to_tangent: None,
+        };
+        project
+            .control_points
+            .iter_mut()
+            .find(|point| point.id == "c1")
+            .expect("c1")
+            .kind = ControlPointKind::Fork;
+        project.control_points.push(point("c4", [20.0, -20.0]));
+        project.edges.push(edge("e5", "c1", "c4"));
+        project.edges.push(edge("e6", "c4", "c2"));
+        let pit_box = SpawnPoint {
+            name: "pit-1".to_string(),
+            position: [20.0, 0.0, -20.0],
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        };
+        project.paths.push(PathProject {
+            id: "pit".to_string(),
+            kind: "pit_lane".to_string(),
+            route: vec!["e5".to_string(), "e6".to_string()],
+            boxes: vec![pit_box.clone()],
+        });
+
+        let track = track_from_project(&project).expect("path track");
+        let asphalt = track
+            .collision
+            .surface_ids
+            .iter()
+            .filter(|surface| **surface == TRACK_SURFACE)
+            .count();
+        assert!(
+            asphalt > baseline_asphalt,
+            "path-only edges must add asphalt collision geometry"
+        );
+        for layout in &track.metadata.layouts {
+            assert_eq!(layout.pit_boxes, vec![pit_box.clone()]);
+        }
+    }
+
+    #[test]
+    fn path_editing_preserves_layouts_and_validates_the_chain() {
+        let mut project = fork_project();
+        project.schema = TRACK_PROJECT_SCHEMA_V4.to_string();
+        for layout in &mut project.layouts {
+            layout.start_finish = StartFinish {
+                edge: "e0".to_string(),
+                fraction: 0.0,
+            };
+        }
+        let layouts_before = project.layouts.clone();
+
+        let id = project.add_path("pit_lane").expect("add pit path");
+        assert_eq!(id, "pit");
+        project
+            .append_path_segment(&id, "e0")
+            .expect("append first segment");
+        project
+            .append_path_segment(&id, "e1")
+            .expect("append continuing segment");
+
+        let before_reject = project.clone();
+        let error = project
+            .append_path_segment(&id, "e3")
+            .expect_err("non-consecutive segment must be rejected");
+        assert!(
+            error.contains("canonical chain"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(project, before_reject, "rejected edit must be atomic");
+
+        project
+            .remove_path_segment(&id, 0)
+            .expect("remove first segment");
+        assert_eq!(project.paths[0].route, vec!["e1".to_string()]);
+        project.delete_path(&id).expect("delete path");
+        assert!(project.paths.is_empty());
+        assert_eq!(project.layouts, layouts_before);
     }
 
     #[test]

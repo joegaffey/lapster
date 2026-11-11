@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-10
+Last updated: 2026-11-11
 Current phase: **Relay multiplayer prototype**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
@@ -67,17 +67,17 @@ Deployment:
   spawn/metadata only. `@3` loop/shared-point work is a local WIP checkpoint
   (`fa38fa0`) to mine for geometry and UX, not the target model. Asset schema
   stays v4; editor project becomes `lapster/track-project@4`.
-  Implementation checkpoint (local, uncommitted): `@4` is the default project
-  schema; `@4` fields, validation, `@3` migration, canonical segment sampling,
-  per-route start/finish, branch edge tangents, cross-layout junction collision
-  coverage, and `TrackProject` junction/segment editing operations are in place;
-  the wasm editor API exposes the new operations. The web editor now loads `@4`,
-  switches routes, duplicates a route with shared segments, selects a canonical
-  segment, makes a shared segment unique, and adds/deletes/drags segment
-  interior points. Render tests, clippy, fmt, wasm checks, web unit tests, and
-  the four targeted `@4` editor smokes are green. Remaining: verify segment-
-  scoped kerb/prop painting and shared decoration behavior, add the pit path
-  UI, rewrite the full editor Playwright suite, then run the full gate.
+  Implementation checkpoint: `@4` is the default project schema; `@4`
+  fields, validation, `@3`/`@2`/`@1` migration, canonical segment sampling,
+  per-route start/finish, branch edge tangents, and cross-layout junction
+  collision coverage are in place. The wasm editor API exposes junction,
+  segment, layout, and path operations. Paths are baked into the same visual
+  and collision world as layout edges, and pit boxes come from pit-lane paths
+  with the legacy `pitLane` field as fallback. The web editor loads `@4`,
+  switches and duplicates routes, selects canonical segments, makes shared
+  segments unique, edits interior points, paints kerbs/props on the selected
+  segment, and authors a pit-lane path without listing it as a route. The
+  editor Playwright suite is rewritten for `@4`. Full gate is green.
 
 ## Completed checkpoints
 
@@ -126,10 +126,10 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 54 tests
+- `cargo test --workspace` — 191 tests
 - `cargo check ... --target wasm32-unknown-unknown`
-- `npm test` — 22 tests
-- `npm run test:viewer` — 37 Playwright tests plus an opt-in physics benchmark
+- `npm test` — 38 tests
+- `npm run test:viewer` — 77 Playwright tests plus one skipped screenshot test and an opt-in physics benchmark
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.

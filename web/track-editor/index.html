@@ -316,6 +316,20 @@
         <p class="muted">Drag junctions to reshape shared road. Editing a segment updates every route that uses it.</p>
       </div>
 
+      <h2>Pit lane path</h2>
+      <div class="layout-controls">
+        <select id="path-select" aria-label="Active path"></select>
+        <div class="layout-row">
+          <button id="add-path" type="button">Add pit lane</button>
+          <button id="delete-path" type="button" disabled>Delete</button>
+        </div>
+        <div class="layout-row">
+          <button id="append-path-segment" type="button" disabled>Append segment</button>
+          <button id="remove-path-segment" type="button" disabled>Remove last</button>
+        </div>
+        <p class="muted" id="path-hud">No pit lane path. Add one, then select a segment and append it.</p>
+      </div>
+
       <h2>Project</h2>
       <div class="layout-row">
         <button id="save-project" type="button">Save</button>
