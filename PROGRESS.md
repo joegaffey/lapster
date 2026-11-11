@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-08
-Current phase: **Relay multiplayer prototype**
+Last updated: 2026-11-11
+Current phase: **Venue graph rebuild — Phase 1**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -52,12 +52,16 @@ Deployment:
 
 ## Current focus
 
+- Venue graph rebuild is in progress on `feat/venue-graph`. Phase 1 adds the
+  canonical `lapster/track-project@5` junction/segment/layout model and builds
+  the default procedural loop from that graph with parity to the single-loop
+  baseline. Phase 2 (canonical decoration paths) is next.
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
-  integration.
+- Next: venue graph Phase 2, Speed Dreams physics, wheel/FFB hardware
+  validation, and CP7 HID/audio integration.
 
 ## Completed checkpoints
 

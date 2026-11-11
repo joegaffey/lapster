@@ -157,10 +157,8 @@ impl TrackViewer {
 
     pub async fn create_editor(canvas: web_sys::HtmlCanvasElement) -> Result<TrackViewer, JsValue> {
         let points = crate::track_editor::default_control_points();
-        let track = crate::track_editor::track_from_control_points_with_spans(
-            &points,
-            Some(&crate::track_editor::default_kerb_spans()),
-            None,
+        let track = crate::track_editor::track_from_project(
+            &crate::track_editor::TrackProject::default_project(),
         )
         .map_err(js_error)?;
         let scene = Scene::build(

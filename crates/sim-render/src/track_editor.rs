@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::{PI, TAU};
 
 use glam::{Quat, Vec3};
@@ -8,6 +9,7 @@ use sim_types::{
     TrackVisual, ENGINE_FRAME, ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
 };
 
+pub const TRACK_PROJECT_SCHEMA: &str = "lapster/track-project@5";
 const SEGMENTS: usize = 120;
 const TRACK_SURFACE: u16 = 0;
 const GRASS_SURFACE: u16 = 1;
@@ -210,6 +212,670 @@ pub struct EditorTrack {
     pub manifest: AssetManifest,
     pub kerb_spans: Vec<KerbSpan>,
     pub prop_lines: Vec<PropLine>,
+}
+
+/// The canonical venue graph. Junctions are shared endpoints, segments are
+/// connected splines between junctions, layouts are closed loops of segment
+/// ids, and paths are open segment chains.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackProject {
+    pub schema: String,
+    pub name: String,
+    pub settings: VenueSettings,
+    pub junctions: Vec<Junction>,
+    pub segments: Vec<Segment>,
+    pub layouts: Vec<LayoutProject>,
+    #[serde(default)]
+    pub paths: Vec<PathProject>,
+    #[serde(default)]
+    pub decorations: Vec<DecorationPath>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VenueSettings {
+    pub width: f32,
+    pub kerb: KerbSettings,
+}
+
+impl Default for VenueSettings {
+    fn default() -> Self {
+        Self {
+            width: ASPHALT_HALF_WIDTH * 2.0,
+            kerb: KerbSettings::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct KerbSettings {
+    pub width: f32,
+    pub depth: f32,
+    pub element_length: f32,
+}
+
+impl Default for KerbSettings {
+    fn default() -> Self {
+        Self {
+            width: KERB_OUTER_RADIUS - KERB_INNER_RADIUS,
+            depth: KERB_TOP_OFFSET - KERB_SURFACE_OFFSET,
+            element_length: TARMAC_TILE_METERS / 3.5,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    #[serde(default)]
+    pub values: BTreeMap<String, f32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JunctionKind {
+    #[default]
+    Normal,
+    StartFinish,
+    Fork,
+    PitEntry,
+    PitExit,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Junction {
+    pub id: String,
+    pub position: [f32; 2],
+    #[serde(default)]
+    pub kind: JunctionKind,
+    #[serde(default)]
+    pub profile: Option<Profile>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Segment {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub points: Vec<[f32; 2]>,
+    #[serde(default)]
+    pub from_tangent: Option<[f32; 2]>,
+    #[serde(default)]
+    pub to_tangent: Option<[f32; 2]>,
+    #[serde(default)]
+    pub start_profile: Option<Profile>,
+    #[serde(default)]
+    pub end_profile: Option<Profile>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartFinish {
+    pub segment_id: String,
+    #[serde(default)]
+    pub fraction: f32,
+}
+
+impl Default for StartFinish {
+    fn default() -> Self {
+        Self {
+            segment_id: String::new(),
+            fraction: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutProject {
+    pub id: String,
+    pub name: String,
+    pub route: Vec<String>,
+    #[serde(default)]
+    pub start_finish: StartFinish,
+    #[serde(default)]
+    pub spawns: Vec<SpawnPoint>,
+    #[serde(default)]
+    pub sectors: Vec<SectorSpec>,
+    #[serde(default)]
+    pub cameras: Vec<CameraSpec>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PathProject {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub route: Vec<String>,
+    #[serde(default)]
+    pub boxes: Vec<SpawnPoint>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecorationAnchor {
+    pub segment_id: String,
+    #[serde(default)]
+    pub fraction: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecorationKind {
+    #[default]
+    Kerb,
+    Prop,
+}
+
+/// A canonical decoration path over an ordered, contiguous segment chain.
+/// Per-segment slices are derived at bake time; they are never serialized.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecorationPath {
+    pub id: String,
+    pub kind: DecorationKind,
+    #[serde(default)]
+    pub side: i8,
+    #[serde(default)]
+    pub lane: Option<String>,
+    pub segments: Vec<String>,
+    #[serde(default)]
+    pub start: Option<DecorationAnchor>,
+    #[serde(default)]
+    pub end: Option<DecorationAnchor>,
+    #[serde(default)]
+    pub elements: Vec<f32>,
+    #[serde(default)]
+    pub phase: f32,
+    #[serde(default)]
+    pub prop_kind: Option<PropKind>,
+    #[serde(default)]
+    pub spacing: Option<f32>,
+}
+
+impl TrackProject {
+    /// The built-in single-layout venue; matches the original editor loop.
+    pub fn default_project() -> Self {
+        let control_points = CONTROL_POINTS
+            .iter()
+            .map(|point| [point[0], point[2]])
+            .collect::<Vec<_>>();
+        Self::ring_project(
+            "Procedural Drift Loop",
+            "procedural-drift-loop",
+            &control_points,
+        )
+    }
+
+    /// Builds a canonical one-loop project from ordered XZ control points.
+    pub fn ring_project(name: &str, layout_id: &str, control_points: &[[f32; 2]]) -> Self {
+        let junctions = control_points
+            .iter()
+            .enumerate()
+            .map(|(index, position)| Junction {
+                id: format!("junction-{index}"),
+                position: *position,
+                kind: JunctionKind::Normal,
+                profile: None,
+            })
+            .collect::<Vec<_>>();
+        let segments = junctions
+            .iter()
+            .enumerate()
+            .map(|(index, from)| Segment {
+                id: format!("segment-{index}"),
+                from: from.id.clone(),
+                to: junctions[(index + 1) % junctions.len()].id.clone(),
+                points: Vec::new(),
+                from_tangent: None,
+                to_tangent: None,
+                start_profile: None,
+                end_profile: None,
+            })
+            .collect::<Vec<_>>();
+        let route = segments
+            .iter()
+            .map(|segment| segment.id.clone())
+            .collect::<Vec<_>>();
+        let start_finish = StartFinish {
+            segment_id: segments
+                .first()
+                .map(|segment| segment.id.clone())
+                .unwrap_or_default(),
+            fraction: 0.0,
+        };
+        Self {
+            schema: TRACK_PROJECT_SCHEMA.to_string(),
+            name: name.to_string(),
+            settings: VenueSettings::default(),
+            junctions,
+            segments,
+            layouts: vec![LayoutProject {
+                id: layout_id.to_string(),
+                name: name.to_string(),
+                route,
+                start_finish,
+                spawns: Vec::new(),
+                sectors: Vec::new(),
+                cameras: Vec::new(),
+            }],
+            paths: Vec::new(),
+            decorations: Vec::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        let value = serde_json::from_str::<serde_json::Value>(json)
+            .map_err(|error| format!("invalid track project JSON: {error}"))?;
+        let schema = value
+            .get("schema")
+            .and_then(|schema| schema.as_str())
+            .unwrap_or_default();
+        if schema != TRACK_PROJECT_SCHEMA {
+            return Err(format!(
+                "unsupported track project schema '{schema}'; expected {TRACK_PROJECT_SCHEMA}"
+            ));
+        }
+        serde_json::from_value::<Self>(value)
+            .map_err(|error| format!("invalid track project: {error}"))?
+            .normalize()
+    }
+
+    #[allow(dead_code)]
+    pub fn to_json(&self) -> Result<String, String> {
+        serde_json::to_string(&self.clone().normalize()?)
+            .map_err(|error| format!("failed to serialize track project: {error}"))
+    }
+
+    pub fn normalize(mut self) -> Result<Self, String> {
+        self.normalize_in_place()?;
+        Ok(self)
+    }
+
+    fn normalize_in_place(&mut self) -> Result<(), String> {
+        if self.schema != TRACK_PROJECT_SCHEMA {
+            return Err(format!(
+                "unsupported track project schema '{}'; expected {TRACK_PROJECT_SCHEMA}",
+                self.schema
+            ));
+        }
+        self.name = self.name.trim().to_string();
+        if !self.settings.width.is_finite() || self.settings.width <= 0.0 {
+            return Err("venue width must be finite and positive".to_string());
+        }
+        if !self.settings.kerb.width.is_finite()
+            || !self.settings.kerb.depth.is_finite()
+            || !self.settings.kerb.element_length.is_finite()
+            || self.settings.kerb.width <= 0.0
+            || self.settings.kerb.depth <= 0.0
+            || self.settings.kerb.element_length <= 0.0
+        {
+            return Err("kerb settings must be finite and positive".to_string());
+        }
+
+        validate_unique_ids(
+            self.junctions.iter().map(|junction| junction.id.as_str()),
+            "junction",
+        )?;
+        validate_unique_ids(
+            self.segments.iter().map(|segment| segment.id.as_str()),
+            "segment",
+        )?;
+        validate_unique_ids(
+            self.layouts.iter().map(|layout| layout.id.as_str()),
+            "layout",
+        )?;
+        validate_unique_ids(self.paths.iter().map(|path| path.id.as_str()), "path")?;
+        validate_unique_ids(
+            self.decorations
+                .iter()
+                .map(|decoration| decoration.id.as_str()),
+            "decoration",
+        )?;
+
+        if self.junctions.is_empty() {
+            return Err("track project needs at least one junction".to_string());
+        }
+        for junction in &self.junctions {
+            if junction.id.trim().is_empty() {
+                return Err("junction ids must not be empty".to_string());
+            }
+            if !junction.position[0].is_finite() || !junction.position[1].is_finite() {
+                return Err(format!(
+                    "junction '{}' has a non-finite position",
+                    junction.id
+                ));
+            }
+            validate_profile(
+                junction.profile.as_ref(),
+                &format!("junction '{}'", junction.id),
+            )?;
+        }
+
+        let junction_ids = self
+            .junctions
+            .iter()
+            .map(|junction| junction.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for segment in &mut self.segments {
+            if segment.id.trim().is_empty() {
+                return Err("segment ids must not be empty".to_string());
+            }
+            if segment.from == segment.to {
+                return Err(format!("segment '{}' must not self-loop", segment.id));
+            }
+            for endpoint in [&segment.from, &segment.to] {
+                if !junction_ids.contains(endpoint.as_str()) {
+                    return Err(format!(
+                        "segment '{}' references unknown junction '{endpoint}'",
+                        segment.id
+                    ));
+                }
+            }
+            for point in &segment.points {
+                if !point[0].is_finite() || !point[1].is_finite() {
+                    return Err(format!(
+                        "segment '{}' has a non-finite interior point",
+                        segment.id
+                    ));
+                }
+            }
+            normalize_tangent(&mut segment.from_tangent, &segment.id, "from")?;
+            normalize_tangent(&mut segment.to_tangent, &segment.id, "to")?;
+            validate_profile(
+                segment.start_profile.as_ref(),
+                &format!("segment '{}' start profile", segment.id),
+            )?;
+            validate_profile(
+                segment.end_profile.as_ref(),
+                &format!("segment '{}' end profile", segment.id),
+            )?;
+        }
+
+        if self.layouts.is_empty() {
+            return Err("track project needs at least one layout".to_string());
+        }
+        let segment_ids = self
+            .segments
+            .iter()
+            .map(|segment| segment.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for layout in &self.layouts {
+            if layout.id.trim().is_empty() {
+                return Err("layout ids must not be empty".to_string());
+            }
+            if layout.route.is_empty() {
+                return Err(format!("layout '{}' route must not be empty", layout.id));
+            }
+            let mut seen = BTreeSet::new();
+            for (index, segment_id) in layout.route.iter().enumerate() {
+                if !seen.insert(segment_id.as_str()) {
+                    return Err(format!(
+                        "layout '{}' route repeats segment '{segment_id}'",
+                        layout.id
+                    ));
+                }
+                let segment = self
+                    .segments
+                    .iter()
+                    .find(|segment| segment.id == *segment_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "layout '{}' route references unknown segment '{segment_id}'",
+                            layout.id
+                        )
+                    })?;
+                let next_id = &layout.route[(index + 1) % layout.route.len()];
+                let next = self
+                    .segments
+                    .iter()
+                    .find(|segment| segment.id == *next_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "layout '{}' route references unknown segment '{next_id}'",
+                            layout.id
+                        )
+                    })?;
+                if segment.to != next.from {
+                    return Err(format!(
+                        "layout '{}' route is not a closed canonical chain: segment '{}' ends at '{}' but next segment '{}' starts at '{}'",
+                        layout.id, segment.id, segment.to, next.id, next.from
+                    ));
+                }
+            }
+            if !segment_ids.contains(layout.start_finish.segment_id.as_str()) {
+                return Err(format!(
+                    "layout '{}' start/finish references unknown segment '{}'",
+                    layout.id, layout.start_finish.segment_id
+                ));
+            }
+            if !layout
+                .route
+                .iter()
+                .any(|segment_id| segment_id == &layout.start_finish.segment_id)
+            {
+                return Err(format!(
+                    "layout '{}' start/finish segment '{}' is missing from its route",
+                    layout.id, layout.start_finish.segment_id
+                ));
+            }
+            if !layout.start_finish.fraction.is_finite()
+                || layout.start_finish.fraction < 0.0
+                || layout.start_finish.fraction >= 1.0
+            {
+                return Err(format!(
+                    "layout '{}' start/finish fraction must lie in [0, 1)",
+                    layout.id
+                ));
+            }
+        }
+
+        for path in &self.paths {
+            if path.id.trim().is_empty() {
+                return Err("path ids must not be empty".to_string());
+            }
+            if path.route.is_empty() {
+                return Err(format!("path '{}' route must not be empty", path.id));
+            }
+            for (index, segment_id) in path.route.iter().enumerate() {
+                let segment = self
+                    .segments
+                    .iter()
+                    .find(|segment| segment.id == *segment_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "path '{}' references unknown segment '{segment_id}'",
+                            path.id
+                        )
+                    })?;
+                if let Some(next_id) = path.route.get(index + 1) {
+                    let next = self
+                        .segments
+                        .iter()
+                        .find(|segment| segment.id == *next_id)
+                        .ok_or_else(|| {
+                            format!("path '{}' references unknown segment '{next_id}'", path.id)
+                        })?;
+                    if segment.to != next.from {
+                        return Err(format!(
+                            "path '{}' route is not an open canonical chain: segment '{}' ends at '{}' but next segment '{}' starts at '{}'",
+                            path.id, segment.id, segment.to, next.id, next.from
+                        ));
+                    }
+                }
+            }
+        }
+
+        for decoration in &self.decorations {
+            if decoration.id.trim().is_empty() {
+                return Err("decoration ids must not be empty".to_string());
+            }
+            if decoration.segments.is_empty() {
+                return Err(format!(
+                    "decoration '{}' needs at least one segment",
+                    decoration.id
+                ));
+            }
+            for (index, segment_id) in decoration.segments.iter().enumerate() {
+                let segment = self
+                    .segments
+                    .iter()
+                    .find(|segment| segment.id == *segment_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "decoration '{}' references unknown segment '{segment_id}'",
+                            decoration.id
+                        )
+                    })?;
+                if let Some(next_id) = decoration.segments.get(index + 1) {
+                    let next = self
+                        .segments
+                        .iter()
+                        .find(|segment| segment.id == *next_id)
+                        .ok_or_else(|| {
+                            format!(
+                                "decoration '{}' references unknown segment '{next_id}'",
+                                decoration.id
+                            )
+                        })?;
+                    if segment.to != next.from {
+                        return Err(format!(
+                            "decoration '{}' chain is not contiguous: segment '{}' ends at '{}' but next segment '{}' starts at '{}'",
+                            decoration.id, segment.id, segment.to, next.id, next.from
+                        ));
+                    }
+                }
+            }
+            for (label, anchor) in [("start", &decoration.start), ("end", &decoration.end)] {
+                let Some(anchor) = anchor else {
+                    continue;
+                };
+                if !decoration
+                    .segments
+                    .iter()
+                    .any(|segment_id| segment_id == &anchor.segment_id)
+                {
+                    return Err(format!(
+                        "decoration '{}' {label} anchor references segment '{}' outside its chain",
+                        decoration.id, anchor.segment_id
+                    ));
+                }
+                if !anchor.fraction.is_finite() || !(0.0..=1.0).contains(&anchor.fraction) {
+                    return Err(format!(
+                        "decoration '{}' {label} fraction must lie in [0, 1]",
+                        decoration.id
+                    ));
+                }
+            }
+            for element in &decoration.elements {
+                if !element.is_finite() || *element <= 0.0 {
+                    return Err(format!(
+                        "decoration '{}' element lengths must be finite and positive",
+                        decoration.id
+                    ));
+                }
+            }
+            if !decoration.phase.is_finite() {
+                return Err(format!(
+                    "decoration '{}' phase must be finite",
+                    decoration.id
+                ));
+            }
+            if let Some(spacing) = decoration.spacing {
+                if !spacing.is_finite() || spacing <= 0.0 {
+                    return Err(format!(
+                        "decoration '{}' spacing must be finite and positive",
+                        decoration.id
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn default_layout_id(&self) -> &str {
+        self.layouts
+            .first()
+            .map(|layout| layout.id.as_str())
+            .unwrap_or_default()
+    }
+
+    pub fn junction_by_id(&self, id: &str) -> Option<&Junction> {
+        self.junctions.iter().find(|junction| junction.id == id)
+    }
+
+    pub fn segment_by_id(&self, id: &str) -> Option<&Segment> {
+        self.segments.iter().find(|segment| segment.id == id)
+    }
+
+    #[allow(dead_code)]
+    pub fn layout_by_id(&self, id: &str) -> Option<&LayoutProject> {
+        self.layouts.iter().find(|layout| layout.id == id)
+    }
+
+    pub fn layout_index(&self, id: &str) -> Option<usize> {
+        self.layouts.iter().position(|layout| layout.id == id)
+    }
+}
+
+fn validate_unique_ids<'a>(ids: impl Iterator<Item = &'a str>, label: &str) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for id in ids {
+        if !seen.insert(id) {
+            return Err(format!("duplicate {label} id '{id}'"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_profile(profile: Option<&Profile>, label: &str) -> Result<(), String> {
+    let Some(profile) = profile else {
+        return Ok(());
+    };
+    for (key, value) in &profile.values {
+        if key.trim().is_empty() {
+            return Err(format!("{label} profile has an empty key"));
+        }
+        if !value.is_finite() {
+            return Err(format!("{label} profile value for '{key}' must be finite"));
+        }
+    }
+    Ok(())
+}
+
+fn normalize_tangent(
+    tangent: &mut Option<[f32; 2]>,
+    segment_id: &str,
+    label: &str,
+) -> Result<(), String> {
+    let Some(tangent) = tangent else {
+        return Ok(());
+    };
+    if !tangent[0].is_finite() || !tangent[1].is_finite() {
+        return Err(format!(
+            "segment '{segment_id}' {label} tangent must be finite"
+        ));
+    }
+    let length = tangent[0].hypot(tangent[1]);
+    if length <= 1e-6 {
+        return Err(format!(
+            "segment '{segment_id}' {label} tangent must be non-zero"
+        ));
+    }
+    tangent[0] /= length;
+    tangent[1] /= length;
+    Ok(())
 }
 
 pub fn default_control_points() -> Vec<[f32; 3]> {
@@ -502,6 +1168,273 @@ fn sanitize_kerb_spans(spans: &[KerbSpan], count: usize) -> Vec<KerbSpan> {
     sanitized
 }
 
+fn junction_position(project: &TrackProject, id: &str) -> Result<Vec3, String> {
+    let junction = project
+        .junction_by_id(id)
+        .ok_or_else(|| format!("unknown junction id '{id}'"))?;
+    Ok(Vec3::new(junction.position[0], 0.0, junction.position[1]))
+}
+
+/// Finds the far junction beyond a degree-two neighbor so a segment can keep
+/// Catmull-Rom continuity with the rest of the graph.
+fn segment_neighbor_position(
+    project: &TrackProject,
+    segment: &Segment,
+    junction_id: &str,
+) -> Option<Vec3> {
+    let mut neighbors = project.segments.iter().filter(|other| {
+        other.id != segment.id && (other.from == junction_id || other.to == junction_id)
+    });
+    let other = neighbors.next()?;
+    if neighbors.next().is_some() {
+        return None;
+    }
+    let far = if other.from == junction_id {
+        &other.to
+    } else {
+        &other.from
+    };
+    project
+        .junction_by_id(far)
+        .map(|junction| Vec3::new(junction.position[0], 0.0, junction.position[1]))
+}
+
+fn tangent_vector(tangent: Option<[f32; 2]>) -> Option<Vec3> {
+    let tangent = tangent?;
+    let direction = Vec3::new(tangent[0], 0.0, tangent[1]);
+    (direction.length_squared() > 1e-8).then(|| direction.normalize())
+}
+
+fn direction_between(from: Vec3, to: Vec3) -> Option<Vec3> {
+    let direction = to - from;
+    (direction.length_squared() > 1e-8).then(|| direction.normalize())
+}
+
+fn cubic_hermite(p0: Vec3, p1: Vec3, m0: Vec3, m1: Vec3, t: f32) -> Vec3 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = t3 - 2.0 * t2 + t;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = t3 - t2;
+    p0 * h00 + m0 * h10 + p1 * h01 + m1 * h11
+}
+
+/// Samples one canonical segment at `local` in `[0, 1)`. The result depends
+/// only on the segment, its junction endpoints, and its graph neighbors.
+fn sample_segment_at(
+    project: &TrackProject,
+    segment: &Segment,
+    local: f32,
+) -> Result<Vec3, String> {
+    let from = junction_position(project, &segment.from)?;
+    let to = junction_position(project, &segment.to)?;
+    let mut controls = Vec::with_capacity(segment.points.len() + 2);
+    controls.push(from);
+    controls.extend(
+        segment
+            .points
+            .iter()
+            .map(|point| Vec3::new(point[0], 0.0, point[1])),
+    );
+    controls.push(to);
+    let spans = controls.len() - 1;
+    let local = local.clamp(0.0, 0.999_999);
+    let explicit_from = tangent_vector(segment.from_tangent);
+    let explicit_to = tangent_vector(segment.to_tangent);
+
+    if spans == 1 && explicit_from.is_none() && explicit_to.is_none() {
+        let p0 = segment_neighbor_position(project, segment, &segment.from)
+            .unwrap_or_else(|| from + (from - to));
+        let p3 = segment_neighbor_position(project, segment, &segment.to)
+            .unwrap_or_else(|| to + (to - from));
+        return Ok(catmull_rom(p0, from, to, p3, local));
+    }
+
+    let last = controls.len() - 1;
+    let mut tangents = Vec::with_capacity(controls.len());
+    for index in 0..controls.len() {
+        let tangent = if index == 0 {
+            explicit_from.or_else(|| direction_between(controls[0], controls[1]))
+        } else if index == last {
+            explicit_to.or_else(|| direction_between(controls[last - 1], controls[last]))
+        } else {
+            direction_between(controls[index - 1], controls[index + 1])
+        };
+        let fallback = direction_between(
+            controls[index.saturating_sub(1)],
+            controls[(index + 1).min(last)],
+        )
+        .unwrap_or(Vec3::Z);
+        tangents.push(tangent.unwrap_or(fallback));
+    }
+
+    let scaled = (local * spans as f32).min(spans as f32 - 1e-6);
+    let span = (scaled.floor() as usize).min(spans - 1);
+    let t = scaled - span as f32;
+    let p0 = controls[span];
+    let p1 = controls[span + 1];
+    let chord = p0.distance(p1).max(1.0);
+    Ok(cubic_hermite(
+        p0,
+        p1,
+        tangents[span] * chord,
+        tangents[span + 1] * chord,
+        t,
+    ))
+}
+
+fn layout_ordered_segments<'a>(
+    project: &'a TrackProject,
+    layout: &LayoutProject,
+) -> Result<Vec<&'a Segment>, String> {
+    let mut segments = Vec::with_capacity(layout.route.len());
+    for (index, segment_id) in layout.route.iter().enumerate() {
+        let segment = project.segment_by_id(segment_id).ok_or_else(|| {
+            format!(
+                "layout '{}' references unknown segment '{segment_id}'",
+                layout.id
+            )
+        })?;
+        let next_id = &layout.route[(index + 1) % layout.route.len()];
+        let next = project.segment_by_id(next_id).ok_or_else(|| {
+            format!(
+                "layout '{}' references unknown segment '{next_id}'",
+                layout.id
+            )
+        })?;
+        if segment.to != next.from {
+            return Err(format!(
+                "layout '{}' route is not a closed canonical chain: segment '{}' ends at '{}' but next segment '{}' starts at '{}'",
+                layout.id, segment.id, segment.to, next.id, next.from
+            ));
+        }
+        segments.push(segment);
+    }
+    Ok(segments)
+}
+
+fn segment_length(project: &TrackProject, segment: &Segment, steps: usize) -> Result<f32, String> {
+    let mut previous = sample_segment_at(project, segment, 0.0)?;
+    let mut length = 0.0;
+    for index in 1..=steps {
+        let point = sample_segment_at(project, segment, index as f32 / steps as f32)?;
+        length += previous.distance(point);
+        previous = point;
+    }
+    Ok(length)
+}
+
+/// Builds the centerline for one layout from its canonical segments. The route
+/// is sampled with the same station distribution as the original single-loop
+/// builder so the default venue is geometrically identical to `main`.
+fn sample_layout_loop(
+    project: &TrackProject,
+    layout: &LayoutProject,
+) -> Result<(Vec<Vec3>, f32), String> {
+    let segments = layout_ordered_segments(project, layout)?;
+    let count = segments.len();
+    let mut points = Vec::with_capacity(SEGMENTS);
+    for index in 0..SEGMENTS {
+        let global = index as f32 / SEGMENTS as f32 * count as f32;
+        let ordinal = (global.floor() as usize) % count;
+        let local = global - global.floor();
+        points.push(sample_segment_at(project, segments[ordinal], local)?);
+    }
+    limit_centerline_curvature(&mut points);
+    for point in &mut points {
+        point.y = terrain_height(point.x, point.z);
+    }
+
+    let start_index = layout
+        .route
+        .iter()
+        .position(|segment_id| segment_id == &layout.start_finish.segment_id)
+        .ok_or_else(|| {
+            format!(
+                "layout '{}' start/finish segment '{}' is missing from its route",
+                layout.id, layout.start_finish.segment_id
+            )
+        })?;
+    let mut total_length = 0.0;
+    let mut start_distance = 0.0;
+    let mut start_segment_length = 0.0;
+    for (index, segment) in segments.iter().enumerate() {
+        let length = segment_length(project, segment, 24)?;
+        if index < start_index {
+            start_distance += length;
+        }
+        if index == start_index {
+            start_segment_length = length;
+        }
+        total_length += length;
+    }
+    let start_finish = if total_length > 1e-4 {
+        (start_distance + start_segment_length * layout.start_finish.fraction) / total_length
+    } else {
+        0.0
+    }
+    .clamp(0.0, 0.999_999);
+    Ok((points, start_finish))
+}
+
+#[allow(dead_code)]
+pub fn layout_centerline(
+    project: &TrackProject,
+    layout: &LayoutProject,
+) -> Result<Vec<[f32; 3]>, String> {
+    let (points, _) = sample_layout_loop(project, layout)?;
+    Ok(points.iter().map(|point| point.to_array()).collect())
+}
+
+pub fn track_from_project(project: &TrackProject) -> Result<EditorTrack, String> {
+    track_from_project_with_default(project, None)
+}
+
+pub fn track_from_project_with_default(
+    project: &TrackProject,
+    default_layout: Option<&str>,
+) -> Result<EditorTrack, String> {
+    let project = project.clone().normalize()?;
+    let index = default_layout
+        .and_then(|id| project.layout_index(id))
+        .unwrap_or(0);
+    let layout = project
+        .layouts
+        .get(index)
+        .ok_or_else(|| "track project needs at least one layout".to_string())?;
+    let (points, start_finish) = sample_layout_loop(&project, layout)?;
+    let kerb_spans = sanitize_kerb_spans(&default_kerb_spans(), points.len());
+    let prop_lines = default_prop_lines(&points);
+    build_editor_track(
+        points,
+        kerb_spans,
+        prop_lines,
+        TrackBuildMetadata {
+            name: layout.name.clone(),
+            manifest_id: layout.id.clone(),
+            start_finish,
+            sectors: layout.sectors.clone(),
+            cameras: layout.cameras.clone(),
+            spawns: layout.spawns.clone(),
+        },
+    )
+}
+
+#[allow(dead_code)]
+pub fn pack_from_project(project: &TrackProject) -> Result<Vec<u8>, String> {
+    pack_from_project_with_default(project, None)
+}
+
+#[allow(dead_code)]
+pub fn pack_from_project_with_default(
+    project: &TrackProject,
+    default_layout: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let track = track_from_project_with_default(project, default_layout)?;
+    pack_from_track(&track)
+}
+
 pub fn track_from_control_points_with_spans(
     control_points: &[[f32; 3]],
     kerb_spans: Option<&[KerbSpan]>,
@@ -520,6 +1453,96 @@ pub fn track_from_control_points_with_spans(
     let prop_lines = prop_lines
         .map(|lines| sanitize_prop_lines(lines, points.len()))
         .unwrap_or_else(|| default_prop_lines(&points));
+    build_editor_track(
+        points,
+        kerb_spans,
+        prop_lines,
+        TrackBuildMetadata::ring("Procedural Drift Loop", "procedural-drift-loop"),
+    )
+}
+
+fn spawn_at_fraction(points: &[Vec3], fraction: f32) -> SpawnPoint {
+    let count = points.len();
+    let fraction = if fraction.is_finite() {
+        fraction.clamp(0.0, 0.999_999)
+    } else {
+        0.0
+    };
+    let (position, tangent) = if fraction <= 0.0 {
+        (points[0], points[1] - points[0])
+    } else {
+        let total = points
+            .iter()
+            .enumerate()
+            .map(|(index, point)| point.distance(points[(index + 1) % count]))
+            .sum::<f32>();
+        let target = total * fraction;
+        let mut travelled = 0.0;
+        let mut found = (points[0], points[1] - points[0]);
+        for index in 0..count {
+            let next = points[(index + 1) % count];
+            let length = points[index].distance(next);
+            if length > 1e-6 && travelled + length >= target {
+                let t = ((target - travelled) / length).clamp(0.0, 1.0);
+                found = (points[index].lerp(next, t), next - points[index]);
+                break;
+            }
+            travelled += length;
+        }
+        found
+    };
+    let tangent = tangent.normalize_or_zero();
+    let rotation = if tangent.length_squared() > 1e-6 {
+        Quat::from_rotation_y(PI) * Quat::from_rotation_arc(Vec3::NEG_Z, tangent)
+    } else {
+        Quat::IDENTITY
+    };
+    SpawnPoint {
+        name: "spawn".to_string(),
+        position: position.to_array(),
+        rotation_xyzw: rotation.to_array(),
+    }
+}
+
+struct TrackBuildMetadata {
+    name: String,
+    manifest_id: String,
+    start_finish: f32,
+    sectors: Vec<SectorSpec>,
+    cameras: Vec<CameraSpec>,
+    spawns: Vec<SpawnPoint>,
+}
+
+impl TrackBuildMetadata {
+    fn ring(name: &str, manifest_id: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            manifest_id: manifest_id.to_string(),
+            start_finish: 0.0,
+            sectors: Vec::new(),
+            cameras: Vec::new(),
+            spawns: Vec::new(),
+        }
+    }
+}
+
+fn build_editor_track(
+    points: Vec<Vec3>,
+    kerb_spans: Vec<KerbSpan>,
+    prop_lines: Vec<PropLine>,
+    metadata: TrackBuildMetadata,
+) -> Result<EditorTrack, String> {
+    if points.len() < 3 {
+        return Err("procedural track needs at least three samples".to_string());
+    }
+    let TrackBuildMetadata {
+        name,
+        manifest_id,
+        start_finish,
+        sectors,
+        cameras,
+        spawns,
+    } = metadata;
 
     let mut visual = TrackVisual {
         meshes: Vec::new(),
@@ -647,23 +1670,30 @@ pub fn track_from_control_points_with_spans(
     append_collision(&mut collision, &prop_walls, WALL_SURFACE);
     collision.bounds = collision_bounds(&collision.vertices);
 
-    let tangent = (points[1] - points[0]).normalize_or_zero();
-    let rotation = if tangent.length_squared() > 1e-6 {
-        Quat::from_rotation_y(PI) * Quat::from_rotation_arc(Vec3::NEG_Z, tangent)
+    let spawns = if spawns.is_empty() {
+        vec![spawn_at_fraction(&points, start_finish)]
     } else {
-        Quat::IDENTITY
-    };
-    let spawn = SpawnPoint {
-        name: "spawn".to_string(),
-        position: points[0].to_array(),
-        rotation_xyzw: rotation.to_array(),
+        spawns
     };
     let camera_y = terrain_height(0.0, 0.0);
-    let camera = CameraSpec {
-        name: "overview".to_string(),
-        position: [0.0, camera_y + 45.0, 65.0],
-        target: [0.0, camera_y, 0.0],
-        fov_y: 45.0_f32.to_radians(),
+    let cameras = if cameras.is_empty() {
+        vec![CameraSpec {
+            name: "overview".to_string(),
+            position: [0.0, camera_y + 45.0, 65.0],
+            target: [0.0, camera_y, 0.0],
+            fov_y: 45.0_f32.to_radians(),
+        }]
+    } else {
+        cameras
+    };
+    let sectors = if sectors.is_empty() {
+        vec![SectorSpec {
+            name: "loop".to_string(),
+            start_fraction: 0.0,
+            end_fraction: 1.0,
+        }]
+    } else {
+        sectors
     };
     let length = points
         .iter()
@@ -671,16 +1701,12 @@ pub fn track_from_control_points_with_spans(
         .map(|(index, point)| point.distance(points[(index + 1) % points.len()]))
         .sum::<f32>();
     let metadata = TrackMetadata {
-        name: "Procedural Drift Loop".to_string(),
+        name,
         length,
-        spawns: vec![spawn],
+        spawns,
         pit_boxes: Vec::new(),
-        cameras: vec![camera],
-        sectors: vec![SectorSpec {
-            name: "loop".to_string(),
-            start_fraction: 0.0,
-            end_fraction: 1.0,
-        }],
+        cameras,
+        sectors,
         surfaces: vec![
             SurfaceSpec {
                 id: TRACK_SURFACE,
@@ -730,7 +1756,7 @@ pub fn track_from_control_points_with_spans(
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
         kind: AssetKind::Track,
-        id: "procedural-drift-loop".to_string(),
+        id: manifest_id,
         source_hash: [0; 32],
         units: ENGINE_UNITS,
         frame: ENGINE_FRAME,
@@ -2487,6 +3513,111 @@ mod tests {
             120,
         );
         assert_eq!(spans.len(), 2);
+    }
+
+    #[test]
+    fn default_project_round_trips_through_json() {
+        let project = TrackProject::default_project();
+        let json = serde_json::to_string(&project).expect("serialize project");
+        let parsed = TrackProject::from_json(&json).expect("parse project");
+        let expected = project.clone().normalize().expect("normalize project");
+        assert_eq!(parsed, expected);
+        assert_eq!(expected.schema, TRACK_PROJECT_SCHEMA);
+        assert_eq!(expected.junctions.len(), CONTROL_POINTS.len());
+        assert_eq!(expected.segments.len(), CONTROL_POINTS.len());
+        assert_eq!(expected.layouts.len(), 1);
+        assert_eq!(expected.layouts[0].route.len(), CONTROL_POINTS.len());
+        assert!(expected.paths.is_empty());
+        assert!(expected.decorations.is_empty());
+    }
+
+    #[test]
+    fn default_project_centerline_matches_single_loop_sampler() {
+        let project = TrackProject::default_project();
+        let layout = &project.layouts[0];
+        let graph = layout_centerline(&project, layout).expect("graph centerline");
+        let expected = sample_track(&CONTROL_POINTS)
+            .iter()
+            .map(|point| point.to_array())
+            .collect::<Vec<_>>();
+        assert_eq!(graph.len(), SEGMENTS);
+        assert_eq!(graph, expected);
+    }
+
+    #[test]
+    fn default_graph_matches_single_loop_parity() {
+        let project = TrackProject::default_project();
+        let graph = track_from_project(&project).expect("graph track");
+        let single = track_from_control_points_with_spans(
+            &CONTROL_POINTS,
+            Some(&default_kerb_spans()),
+            None,
+        )
+        .expect("single loop track");
+        assert_eq!(graph.visual, single.visual);
+        assert_eq!(graph.collision, single.collision);
+        assert_eq!(graph.metadata, single.metadata);
+        assert_eq!(graph.manifest, single.manifest);
+        assert_eq!(graph.kerb_spans, single.kerb_spans);
+        assert_eq!(graph.prop_lines, single.prop_lines);
+    }
+
+    #[test]
+    fn default_graph_pack_matches_single_loop_pack() {
+        let project = TrackProject::default_project();
+        let graph = pack_from_project(&project).expect("graph pack");
+        let single = track_from_control_points_with_spans(
+            &CONTROL_POINTS,
+            Some(&default_kerb_spans()),
+            None,
+        )
+        .expect("single loop track");
+        let single = pack_from_track(&single).expect("single loop pack");
+        assert_eq!(graph, single);
+    }
+
+    #[test]
+    fn graph_centerline_is_deterministic() {
+        let project = TrackProject::default_project();
+        let layout = &project.layouts[0];
+        let first = layout_centerline(&project, layout).expect("first");
+        let second = layout_centerline(&project, layout).expect("second");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn graph_validation_rejects_dangling_and_open_routes() {
+        let mut dangling = TrackProject::default_project();
+        dangling.segments[0].to = "missing".to_string();
+        assert!(dangling.normalize().is_err());
+
+        let mut open = TrackProject::default_project();
+        open.layouts[0].route.pop();
+        assert!(open.normalize().is_err());
+
+        let mut bad_start = TrackProject::default_project();
+        bad_start.layouts[0].start_finish.fraction = 1.0;
+        assert!(bad_start.normalize().is_err());
+
+        let mut duplicate = TrackProject::default_project();
+        duplicate.junctions[1].id = duplicate.junctions[0].id.clone();
+        assert!(duplicate.normalize().is_err());
+    }
+
+    #[test]
+    fn graph_metadata_and_start_finish_come_from_the_layout() {
+        let mut project = TrackProject::default_project();
+        project.layouts[0].name = "Venue Loop".to_string();
+        project.layouts[0].start_finish.segment_id = "segment-3".to_string();
+        project.layouts[0].start_finish.fraction = 0.5;
+        let track = track_from_project(&project).expect("graph track");
+        assert_eq!(track.metadata.name, "Venue Loop");
+        assert_eq!(track.manifest.id, "procedural-drift-loop");
+        let expected = layout_centerline(&project, &project.layouts[0]).expect("centerline");
+        let spawn = &track.metadata.spawns[0];
+        assert!(expected.iter().any(|point| Vec3::from_array(*point)
+            .distance(Vec3::from_array(spawn.position))
+            < 1.0));
     }
 
     #[test]
