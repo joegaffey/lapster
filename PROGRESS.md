@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-12
-Current phase: **Venue graph rebuild — Phase 3 (editor persistence and segment editing)**
+Current phase: **Venue graph rebuild — `@6` section-point reset (Phase 3)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -52,17 +52,15 @@ Deployment:
 
 ## Current focus
 
-- Venue graph rebuild is in progress on `feat/venue-graph`. Phase 1 added the
-  canonical `lapster/track-project@5` junction/segment/layout model and built
-  the default procedural loop from that graph with parity to the single-loop
-  baseline. Phase 2 added canonical kerb/prop decoration paths, bake-time
-  per-segment slicing, continuous element phase/spacing, junction clearance,
-  and split/junction reparameterisation. Phase 3a added the project-based wasm
-  editor API (load/save/export/import, junction/segment point moves, tangents,
-  split/merge/delete). Phase 3b-1 moved the web editor onto that API for project
-  persistence and junction editing; kerb/prop painting is temporarily removed
-  (TD-0001). Phase 3b-2 (segment point/tangent/split/merge UI) and Phase 3b-3
-  (decoration-path painting) are next.
+- Venue graph rebuild is in progress on `feat/venue-graph`. The `@5` phases
+  added a canonical junction/section graph, canonical decoration paths, and a
+  project-based editor API, but junctions-as-endpoints forced a junction per
+  control point. ADR 0003 resets the model to `lapster/track-project@6`:
+  global points, open/closed sections with a seam, junctions as shared point
+  roles (including mid-section), per-layout start/finish point references,
+  route legs, loose ends with caps, and decoration fraction chains. Phase 3a
+  (`@6` render/bake migration) and Phase 3b (loop-first editor) are next; the
+  `@5` editor is superseded. Per-point width is deferred (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
