@@ -11,6 +11,7 @@ use sim_types::{
 
 pub const TRACK_PROJECT_SCHEMA: &str = "lapster/track-project@5";
 const SEGMENTS: usize = 120;
+const SEGMENT_CENTERLINE_STEPS: usize = 24;
 const TRACK_SURFACE: u16 = 0;
 const GRASS_SURFACE: u16 = 1;
 const DIRT_SURFACE: u16 = 2;
@@ -108,12 +109,6 @@ const DEFAULT_NEAR_PROP_SEGMENTS: usize = 4;
 const DEFAULT_NEAR_PROP_GAP: f32 = 2.0;
 const DEFAULT_TREE_RING_SEGMENTS: usize = 6;
 const DEFAULT_TREE_RING_GAP: f32 = 4.0;
-const DEFAULT_KERB_BENDS: usize = 4;
-const DEFAULT_KERB_BEND_HALF_LENGTH: f32 = 5.0;
-const DEFAULT_KERB_SEGMENTS_PER_BEND: usize = 2;
-const DEFAULT_KERB_SEGMENT_GAP: f32 = 2.0;
-const KERB_MIN_CURVATURE: f32 = 0.015;
-const KERB_PEAK_SPACING: f32 = 10.0;
 const PROP_LATERAL_JITTER: f32 = 0.03;
 const PROP_LONGITUDINAL_JITTER: f32 = 0.03;
 const PROP_YAW_JITTER: f32 = 0.025;
@@ -996,6 +991,319 @@ impl TrackProject {
         self.segments.retain(|segment| segment.id != id);
         self.normalize_in_place()
     }
+
+    /// Moves one interior point of a segment.
+    pub fn move_segment_point(
+        &mut self,
+        segment_id: &str,
+        index: usize,
+        x: f32,
+        z: f32,
+    ) -> Result<(), String> {
+        if !x.is_finite() || !z.is_finite() {
+            return Err("segment point position must be finite".to_string());
+        }
+        self.normalize_in_place()?;
+        let mut candidate = self.clone();
+        let segment = candidate
+            .segments
+            .iter_mut()
+            .find(|segment| segment.id == segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        if index >= segment.points.len() {
+            return Err(format!(
+                "segment '{segment_id}' interior point index {index} is out of range ({} points)",
+                segment.points.len()
+            ));
+        }
+        segment.points[index] = [x, z];
+        candidate.normalize_in_place()?;
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Inserts an interior point after `after_index`. The returned value is the
+    /// index of the inserted point.
+    pub fn insert_segment_point(
+        &mut self,
+        segment_id: &str,
+        after_index: usize,
+        x: f32,
+        z: f32,
+    ) -> Result<usize, String> {
+        if !x.is_finite() || !z.is_finite() {
+            return Err("segment point position must be finite".to_string());
+        }
+        self.normalize_in_place()?;
+        let mut candidate = self.clone();
+        let segment = candidate
+            .segments
+            .iter_mut()
+            .find(|segment| segment.id == segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let index = after_index.saturating_add(1).min(segment.points.len());
+        segment.points.insert(index, [x, z]);
+        candidate.normalize_in_place()?;
+        *self = candidate;
+        Ok(index)
+    }
+
+    /// Deletes one interior point of a segment.
+    pub fn delete_segment_point(&mut self, segment_id: &str, index: usize) -> Result<(), String> {
+        self.normalize_in_place()?;
+        let mut candidate = self.clone();
+        let segment = candidate
+            .segments
+            .iter_mut()
+            .find(|segment| segment.id == segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        if index >= segment.points.len() {
+            return Err(format!(
+                "segment '{segment_id}' interior point index {index} is out of range ({} points)",
+                segment.points.len()
+            ));
+        }
+        segment.points.remove(index);
+        candidate.normalize_in_place()?;
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Sets or clears the explicit endpoint tangents of a segment.
+    pub fn set_segment_tangents(
+        &mut self,
+        segment_id: &str,
+        from_tangent: Option<[f32; 2]>,
+        to_tangent: Option<[f32; 2]>,
+    ) -> Result<(), String> {
+        self.normalize_in_place()?;
+        let mut candidate = self.clone();
+        let segment = candidate
+            .segments
+            .iter_mut()
+            .find(|segment| segment.id == segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        segment.from_tangent = from_tangent;
+        segment.to_tangent = to_tangent;
+        candidate.normalize_in_place()?;
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Samples one canonical segment across its whole length.
+    pub fn segment_centerline(&self, segment_id: &str) -> Result<Vec<[f32; 3]>, String> {
+        let project = self.clone().normalize()?;
+        let segment = project
+            .segment_by_id(segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let mut points = Vec::with_capacity(SEGMENT_CENTERLINE_STEPS + 1);
+        for index in 0..=SEGMENT_CENTERLINE_STEPS {
+            let local = index as f32 / SEGMENT_CENTERLINE_STEPS as f32;
+            let mut point = sample_segment_at(&project, segment, local)?;
+            point.y = terrain_height(point.x, point.z);
+            points.push(point.to_array());
+        }
+        Ok(points)
+    }
+
+    /// Merges a segment with its outgoing neighbour. The shared junction must
+    /// have exactly two incident segments, and every layout, path, and
+    /// decoration chain must reference both segments adjacently or neither.
+    pub fn merge_segment(&mut self, segment_id: &str) -> Result<(), String> {
+        self.normalize_in_place()?;
+        let index = self
+            .segments
+            .iter()
+            .position(|segment| segment.id == segment_id)
+            .ok_or_else(|| format!("unknown segment id '{segment_id}'"))?;
+        let first = self.segments[index].clone();
+        let shared = first.to.clone();
+        let incident = self
+            .segments
+            .iter()
+            .filter(|segment| segment.from == shared || segment.to == shared)
+            .count();
+        if incident != 2 {
+            return Err(format!(
+                "cannot merge segment '{}': junction '{}' must have exactly two incident segments, found {incident}",
+                first.id, shared
+            ));
+        }
+        let outgoing = self
+            .segments
+            .iter()
+            .filter(|segment| segment.from == shared)
+            .collect::<Vec<_>>();
+        if outgoing.len() != 1 {
+            return Err(format!(
+                "cannot merge segment '{}': junction '{}' has an ambiguous outgoing segment",
+                first.id, shared
+            ));
+        }
+        let second = outgoing[0].clone();
+        if second.id == first.id {
+            return Err(format!(
+                "cannot merge segment '{}': it is its own outgoing neighbour",
+                first.id
+            ));
+        }
+
+        let first_length = segment_length(self, &first, 24)?;
+        let second_length = segment_length(self, &second, 24)?;
+        if first_length + second_length <= 1e-6 {
+            return Err(format!(
+                "cannot merge segments '{}' and '{}': combined length is zero",
+                first.id, second.id
+            ));
+        }
+
+        let mut candidate = self.clone();
+        for layout in &mut candidate.layouts {
+            let label = format!("layout '{}' route", layout.id);
+            if let Some(route) =
+                merge_chain_ids(&layout.route, &first.id, &second.id, true, &label)?
+            {
+                layout.route = route;
+            }
+            rebase_merged_start_finish(
+                &mut layout.start_finish,
+                &first.id,
+                &second.id,
+                first_length,
+                second_length,
+            );
+        }
+        for path in &mut candidate.paths {
+            let label = format!("path '{}' route", path.id);
+            if let Some(route) = merge_chain_ids(&path.route, &first.id, &second.id, false, &label)?
+            {
+                path.route = route;
+            }
+        }
+        for decoration in &mut candidate.decorations {
+            let label = format!("decoration '{}' chain", decoration.id);
+            if let Some(segments) =
+                merge_chain_ids(&decoration.segments, &first.id, &second.id, false, &label)?
+            {
+                decoration.segments = segments;
+            }
+            if let Some(anchor) = &mut decoration.start {
+                rebase_merged_anchor(anchor, &first.id, &second.id, first_length, second_length);
+            }
+            if let Some(anchor) = &mut decoration.end {
+                rebase_merged_anchor(anchor, &first.id, &second.id, first_length, second_length);
+            }
+        }
+
+        let merged = Segment {
+            id: first.id.clone(),
+            from: first.from.clone(),
+            to: second.to.clone(),
+            points: first
+                .points
+                .iter()
+                .chain(second.points.iter())
+                .copied()
+                .collect(),
+            from_tangent: first.from_tangent,
+            to_tangent: second.to_tangent,
+            start_profile: first.start_profile.clone(),
+            end_profile: second.end_profile.clone(),
+        };
+        candidate.segments[index] = merged;
+        let second_index = candidate
+            .segments
+            .iter()
+            .position(|segment| segment.id == second.id)
+            .expect("outgoing segment still present");
+        candidate.segments.remove(second_index);
+        candidate.junctions.retain(|junction| junction.id != shared);
+        candidate.normalize_in_place()?;
+        *self = candidate;
+        Ok(())
+    }
+}
+
+/// Removes `second_id` from a chain that references `first_id` and `second_id`
+/// adjacently. `None` means the chain references neither segment.
+fn merge_chain_ids(
+    chain: &[String],
+    first_id: &str,
+    second_id: &str,
+    closed: bool,
+    label: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let first_count = chain.iter().filter(|id| id.as_str() == first_id).count();
+    let second_count = chain.iter().filter(|id| id.as_str() == second_id).count();
+    if first_count > 1 || second_count > 1 {
+        return Err(format!(
+            "cannot merge segments '{first_id}' and '{second_id}': {label} references a segment more than once"
+        ));
+    }
+    let first_index = chain.iter().position(|id| id == first_id);
+    let second_index = chain.iter().position(|id| id == second_id);
+    let (Some(first_index), Some(second_index)) = (first_index, second_index) else {
+        if first_index.is_some() || second_index.is_some() {
+            return Err(format!(
+                "cannot merge segments '{first_id}' and '{second_id}': {label} references only one of them"
+            ));
+        }
+        return Ok(None);
+    };
+    let adjacent = if closed {
+        !chain.is_empty() && (first_index + 1) % chain.len() == second_index
+    } else {
+        first_index + 1 == second_index
+    };
+    if !adjacent {
+        return Err(format!(
+            "cannot merge segments '{first_id}' and '{second_id}': {label} does not reference them adjacently"
+        ));
+    }
+    let mut merged = chain.to_vec();
+    merged.remove(second_index);
+    Ok(Some(merged))
+}
+
+fn rebase_merged_anchor(
+    anchor: &mut DecorationAnchor,
+    first_id: &str,
+    second_id: &str,
+    first_length: f32,
+    second_length: f32,
+) {
+    let total = first_length + second_length;
+    if total <= 1e-6 {
+        return;
+    }
+    if anchor.segment_id == first_id {
+        anchor.fraction = (anchor.fraction * first_length / total).clamp(0.0, 1.0);
+    } else if anchor.segment_id == second_id {
+        anchor.fraction =
+            ((first_length + anchor.fraction * second_length) / total).clamp(0.0, 1.0);
+        anchor.segment_id = first_id.to_string();
+    }
+}
+
+fn rebase_merged_start_finish(
+    start_finish: &mut StartFinish,
+    first_id: &str,
+    second_id: &str,
+    first_length: f32,
+    second_length: f32,
+) {
+    let total = first_length + second_length;
+    if total <= 1e-6 {
+        return;
+    }
+    if start_finish.segment_id == first_id {
+        start_finish.fraction =
+            (start_finish.fraction * first_length / total).clamp(0.0, 0.999_999);
+    } else if start_finish.segment_id == second_id {
+        start_finish.fraction =
+            ((first_length + start_finish.fraction * second_length) / total).clamp(0.0, 0.999_999);
+        start_finish.segment_id = first_id.to_string();
+    }
 }
 
 #[allow(dead_code)]
@@ -1229,13 +1537,6 @@ fn normalize_tangent(
     Ok(())
 }
 
-pub fn default_control_points() -> Vec<[f32; 3]> {
-    CONTROL_POINTS
-        .iter()
-        .map(|point| [point[0], terrain_height(point[0], point[2]), point[2]])
-        .collect()
-}
-
 pub fn control_points_with_heights(points: &[[f32; 3]]) -> Vec<[f32; 3]> {
     points
         .iter()
@@ -1310,185 +1611,6 @@ fn default_prop_lines(points: &[Vec3]) -> Vec<PropLine> {
         }
     }
     lines
-}
-
-fn sanitize_prop_lines(lines: &[PropLine], count: usize) -> Vec<PropLine> {
-    if count < 2 {
-        return Vec::new();
-    }
-    let limit = count as f32;
-    let mut lines = lines
-        .iter()
-        .filter_map(|line| {
-            let start = line.start.clamp(0.0, limit);
-            let end = line.end.clamp(0.0, limit);
-            let offset = if line.offset.is_finite() {
-                line.offset.clamp(MIN_PROP_OFFSET, MAX_PROP_OFFSET)
-            } else {
-                PROP_OFFSET
-            };
-            (end - start > 1e-4).then_some(PropLine {
-                start,
-                end,
-                side: if line.side >= 0 { 1 } else { -1 },
-                offset,
-                kind: line.kind,
-                spacing: line.spacing,
-                phase: line.phase,
-            })
-        })
-        .collect::<Vec<_>>();
-    lines.sort_by(|a, b| {
-        a.side
-            .cmp(&b.side)
-            .then_with(|| a.offset.total_cmp(&b.offset))
-            .then_with(|| a.start.total_cmp(&b.start))
-    });
-
-    let mut lanes: Vec<(i8, f32, f32)> = Vec::new();
-    let mut sanitized = Vec::with_capacity(lines.len());
-    for line in lines {
-        let lane = lanes.iter().position(|(side, offset, _)| {
-            *side == line.side && (*offset - line.offset).abs() < 1e-4
-        });
-        let start = line
-            .start
-            .max(lane.map(|index| lanes[index].2).unwrap_or(0.0));
-        if start < line.end {
-            match lane {
-                Some(index) => lanes[index].2 = line.end,
-                None => lanes.push((line.side, line.offset, line.end)),
-            }
-            sanitized.push(PropLine { start, ..line });
-        }
-    }
-    sanitized
-}
-
-pub fn centerline_points(control_points: &[[f32; 3]]) -> Vec<[f32; 3]> {
-    sample_track(control_points)
-        .iter()
-        .map(|point| point.to_array())
-        .collect()
-}
-
-fn auto_kerb_spans(points: &[Vec3]) -> Vec<KerbSpan> {
-    let count = points.len();
-    if count < 4 {
-        return Vec::new();
-    }
-    let mut candidates = Vec::new();
-    for index in 0..count {
-        let previous = points[(index + count - 1) % count];
-        let current = points[index];
-        let next = points[(index + 1) % count];
-        let radius = curvature_radius(previous, current, next);
-        if !radius.is_finite() || radius <= 0.0 {
-            continue;
-        }
-        let curvature = 1.0 / radius;
-        if curvature < KERB_MIN_CURVATURE {
-            continue;
-        }
-        let tangent = (next - current).normalize_or_zero();
-        let future = points[(index + 2) % count];
-        let future_tangent = (future - next).normalize_or_zero();
-        let side = if tangent.cross(future_tangent).y > 0.0 {
-            1
-        } else {
-            -1
-        };
-        candidates.push((curvature, index, side));
-    }
-    candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
-
-    let mut peaks: Vec<(f32, usize, i8)> = Vec::new();
-    for candidate in candidates {
-        if peaks.len() >= DEFAULT_KERB_BENDS {
-            break;
-        }
-        let crowded = peaks.iter().any(|(_, index, side)| {
-            *side == candidate.2
-                && circular_distance(candidate.1, *index, count) <= KERB_PEAK_SPACING
-        });
-        if !crowded {
-            peaks.push(candidate);
-        }
-    }
-
-    let mut spans = Vec::new();
-    for (_, index, side) in peaks {
-        let center = index as f32;
-        let start = center - DEFAULT_KERB_BEND_HALF_LENGTH;
-        let end = center + DEFAULT_KERB_BEND_HALF_LENGTH;
-        for (piece_start, piece_end) in split_kerb_span(
-            start,
-            end,
-            DEFAULT_KERB_SEGMENTS_PER_BEND,
-            DEFAULT_KERB_SEGMENT_GAP,
-        ) {
-            push_wrapped_kerb_span(&mut spans, piece_start, piece_end, side, count as f32);
-        }
-    }
-    sanitize_kerb_spans(&spans, count)
-}
-
-fn circular_distance(a: usize, b: usize, count: usize) -> f32 {
-    let direct = (a as f32 - b as f32).abs();
-    direct.min(count as f32 - direct)
-}
-
-fn split_kerb_span(start: f32, end: f32, pieces: usize, gap: f32) -> Vec<(f32, f32)> {
-    if pieces == 0 || end <= start {
-        return Vec::new();
-    }
-    let piece = (end - start) / pieces as f32;
-    (0..pieces)
-        .filter_map(|index| {
-            let piece_start = start + index as f32 * piece + gap * 0.5;
-            let piece_end = start + (index + 1) as f32 * piece - gap * 0.5;
-            (piece_end - piece_start > 0.1).then_some((piece_start, piece_end))
-        })
-        .collect()
-}
-
-fn push_wrapped_kerb_span(spans: &mut Vec<KerbSpan>, start: f32, end: f32, side: i8, count: f32) {
-    if end <= start {
-        return;
-    }
-    if start < 0.0 {
-        let wrapped_start = start + count;
-        if wrapped_start < count {
-            spans.push(KerbSpan {
-                start: wrapped_start,
-                end: count,
-                side,
-            });
-        }
-        if end > 0.0 {
-            spans.push(KerbSpan {
-                start: 0.0,
-                end,
-                side,
-            });
-        }
-    } else if end > count {
-        spans.push(KerbSpan {
-            start,
-            end: count,
-            side,
-        });
-        let wrapped_end = end - count;
-        if wrapped_end > 0.0 {
-            spans.push(KerbSpan {
-                start: 0.0,
-                end: wrapped_end,
-                side,
-            });
-        }
-    } else {
-        spans.push(KerbSpan { start, end, side });
-    }
 }
 
 fn sanitize_kerb_spans(spans: &[KerbSpan], count: usize) -> Vec<KerbSpan> {
@@ -2194,10 +2316,6 @@ fn append_decorated_kerbs(
     }
 }
 
-pub fn track_from_project(project: &TrackProject) -> Result<EditorTrack, String> {
-    track_from_project_with_default(project, None)
-}
-
 pub fn track_from_project_with_default(
     project: &TrackProject,
     default_layout: Option<&str>,
@@ -2257,32 +2375,6 @@ pub fn pack_from_project_with_default(
     pack_from_track(&track)
 }
 
-pub fn track_from_control_points_with_spans(
-    control_points: &[[f32; 3]],
-    kerb_spans: Option<&[KerbSpan]>,
-    prop_lines: Option<&[PropLine]>,
-) -> Result<EditorTrack, String> {
-    if control_points.len() < 3 {
-        return Err("procedural track needs at least three control points".to_string());
-    }
-    let points = sample_track(control_points);
-    if points.len() < 3 {
-        return Err("procedural track needs at least three samples".to_string());
-    }
-    let kerb_spans = kerb_spans
-        .map(|spans| sanitize_kerb_spans(spans, points.len()))
-        .unwrap_or_else(|| auto_kerb_spans(&points));
-    let prop_lines = prop_lines
-        .map(|lines| sanitize_prop_lines(lines, points.len()))
-        .unwrap_or_else(|| default_prop_lines(&points));
-    build_editor_track(
-        points,
-        kerb_spans,
-        prop_lines,
-        TrackBuildMetadata::ring("Procedural Drift Loop", "procedural-drift-loop"),
-    )
-}
-
 fn spawn_at_fraction(points: &[Vec3], fraction: f32) -> SpawnPoint {
     let count = points.len();
     let fraction = if fraction.is_finite() {
@@ -2334,20 +2426,6 @@ struct TrackBuildMetadata {
     cameras: Vec<CameraSpec>,
     spawns: Vec<SpawnPoint>,
     kerb_runs: Option<Vec<KerbElementRun>>,
-}
-
-impl TrackBuildMetadata {
-    fn ring(name: &str, manifest_id: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            manifest_id: manifest_id.to_string(),
-            start_finish: 0.0,
-            sectors: Vec::new(),
-            cameras: Vec::new(),
-            spawns: Vec::new(),
-            kerb_runs: None,
-        }
-    }
 }
 
 fn build_editor_track(
@@ -2747,35 +2825,6 @@ fn material(name: &str, color: [f32; 4], outline: bool) -> MaterialRef {
         base_color_texture: None,
         outline,
     }
-}
-
-fn sample_track(control_points: &[[f32; 3]]) -> Vec<Vec3> {
-    let controls = control_points
-        .iter()
-        .map(|point| Vec3::new(point[0], 0.0, point[2]))
-        .collect::<Vec<_>>();
-    let count = controls.len();
-    let mut points = (0..SEGMENTS)
-        .map(|index| {
-            let global = index as f32 / SEGMENTS as f32 * count as f32;
-            let segment = (global.floor() as usize) % count;
-            let local = global - global.floor();
-            catmull_rom(
-                controls[(segment + count - 1) % count],
-                controls[segment],
-                controls[(segment + 1) % count],
-                controls[(segment + 2) % count],
-                local,
-            )
-        })
-        .collect::<Vec<_>>();
-
-    limit_centerline_curvature(&mut points);
-
-    for point in &mut points {
-        point.y = terrain_height(point.x, point.z);
-    }
-    points
 }
 
 fn limit_centerline_curvature(points: &mut [Vec3]) {
@@ -4285,6 +4334,32 @@ mod tests {
         [-3.0, 0.0, 13.0],
     ];
 
+    fn project_centerline(project: &TrackProject) -> Vec<Vec3> {
+        let layout = project.layouts.first().expect("layout");
+        layout_centerline(project, layout)
+            .expect("centerline")
+            .into_iter()
+            .map(Vec3::from_array)
+            .collect()
+    }
+
+    fn default_centerline() -> Vec<Vec3> {
+        project_centerline(&TrackProject::default_project())
+    }
+
+    fn ring_project_centerline(control_points: &[[f32; 3]]) -> Vec<Vec3> {
+        let points = control_points
+            .iter()
+            .map(|point| [point[0], point[2]])
+            .collect::<Vec<_>>();
+        project_centerline(&TrackProject::ring_project("test", "test", &points))
+    }
+
+    fn default_editor_track() -> EditorTrack {
+        track_from_project_with_default(&TrackProject::default_project(), None)
+            .expect("default editor track")
+    }
+
     fn minimum_radius(points: &[Vec3]) -> f32 {
         let count = points.len();
         (0..count)
@@ -4369,51 +4444,6 @@ mod tests {
     }
 
     #[test]
-    fn default_project_centerline_matches_single_loop_sampler() {
-        let project = TrackProject::default_project();
-        let layout = &project.layouts[0];
-        let graph = layout_centerline(&project, layout).expect("graph centerline");
-        let expected = sample_track(&CONTROL_POINTS)
-            .iter()
-            .map(|point| point.to_array())
-            .collect::<Vec<_>>();
-        assert_eq!(graph.len(), SEGMENTS);
-        assert_eq!(graph, expected);
-    }
-
-    #[test]
-    fn default_graph_matches_single_loop_parity() {
-        let project = TrackProject::default_project();
-        let graph = track_from_project(&project).expect("graph track");
-        let single = track_from_control_points_with_spans(
-            &CONTROL_POINTS,
-            Some(&default_kerb_spans()),
-            None,
-        )
-        .expect("single loop track");
-        assert_eq!(graph.visual, single.visual);
-        assert_eq!(graph.collision, single.collision);
-        assert_eq!(graph.metadata, single.metadata);
-        assert_eq!(graph.manifest, single.manifest);
-        assert_eq!(graph.kerb_spans, single.kerb_spans);
-        assert_eq!(graph.prop_lines, single.prop_lines);
-    }
-
-    #[test]
-    fn default_graph_pack_matches_single_loop_pack() {
-        let project = TrackProject::default_project();
-        let graph = pack_from_project(&project).expect("graph pack");
-        let single = track_from_control_points_with_spans(
-            &CONTROL_POINTS,
-            Some(&default_kerb_spans()),
-            None,
-        )
-        .expect("single loop track");
-        let single = pack_from_track(&single).expect("single loop pack");
-        assert_eq!(graph, single);
-    }
-
-    #[test]
     fn graph_centerline_is_deterministic() {
         let project = TrackProject::default_project();
         let layout = &project.layouts[0];
@@ -4447,7 +4477,7 @@ mod tests {
         project.layouts[0].name = "Venue Loop".to_string();
         project.layouts[0].start_finish.segment_id = "segment-3".to_string();
         project.layouts[0].start_finish.fraction = 0.5;
-        let track = track_from_project(&project).expect("graph track");
+        let track = track_from_project_with_default(&project, None).expect("graph track");
         assert_eq!(track.metadata.name, "Venue Loop");
         assert_eq!(track.manifest.id, "procedural-drift-loop");
         let expected = layout_centerline(&project, &project.layouts[0]).expect("centerline");
@@ -4537,7 +4567,7 @@ mod tests {
             "expected the run to cross the segment boundary"
         );
 
-        let track = track_from_project(&project).expect("track");
+        let track = track_from_project_with_default(&project, None).expect("track");
         let mesh = |name: &str| {
             track
                 .visual
@@ -4549,7 +4579,7 @@ mod tests {
         };
         assert!(!mesh("kerb_red").positions.is_empty());
         assert!(!mesh("kerb_white").positions.is_empty());
-        let again = track_from_project(&project).expect("deterministic track");
+        let again = track_from_project_with_default(&project, None).expect("deterministic track");
         assert_eq!(track.visual, again.visual);
         assert_eq!(track.collision, again.collision);
     }
@@ -4585,13 +4615,13 @@ mod tests {
             );
         }
 
-        let track = track_from_project(&project).expect("track");
+        let track = track_from_project_with_default(&project, None).expect("track");
         assert!(track
             .visual
             .meshes
             .iter()
             .any(|mesh| mesh.name == "tree_trunks_high"));
-        let again = track_from_project(&project).expect("deterministic track");
+        let again = track_from_project_with_default(&project, None).expect("deterministic track");
         assert_eq!(track.visual, again.visual);
     }
 
@@ -4681,7 +4711,7 @@ mod tests {
         assert_eq!(end.segment_id, "segment-2");
         assert!((end.fraction - 0.75).abs() < 1e-5);
 
-        track_from_project(&project).expect("track after split");
+        track_from_project_with_default(&project, None).expect("track after split");
 
         let second = project
             .split_segment("segment-2", 0.5)
@@ -4689,7 +4719,7 @@ mod tests {
         let end = project.decorations[0].end.as_ref().expect("end");
         assert_eq!(end.segment_id, second);
         assert!((end.fraction - 0.5).abs() < 1e-5);
-        track_from_project(&project).expect("track after second split");
+        track_from_project_with_default(&project, None).expect("track after second split");
     }
 
     #[test]
@@ -4703,12 +4733,12 @@ mod tests {
             1,
             vec![2.0],
         ));
-        let before = track_from_project(&project).expect("before move");
+        let before = track_from_project_with_default(&project, None).expect("before move");
         let path_before = project.decorations[0].clone();
         project
             .move_junction("junction-1", 48.0, -42.0)
             .expect("move");
-        let after = track_from_project(&project).expect("after move");
+        let after = track_from_project_with_default(&project, None).expect("after move");
         assert_ne!(before.visual, after.visual);
         assert_eq!(project.decorations[0], path_before);
     }
@@ -4758,9 +4788,213 @@ mod tests {
     }
 
     #[test]
+    fn project_with_decorations_round_trips_through_json() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(kerb_decoration(
+            "kerb-a",
+            &["segment-1", "segment-2"],
+            Some(("segment-1", 0.25)),
+            Some(("segment-2", 0.75)),
+            1,
+            vec![1.5, 2.5],
+        ));
+        project.decorations.push(prop_decoration(
+            "props-a",
+            &["segment-3"],
+            1,
+            "far",
+            PropKind::Trees,
+            6.0,
+            2.0,
+        ));
+        project.paths.push(PathProject {
+            id: "pit-path".to_string(),
+            kind: "pit".to_string(),
+            route: vec!["segment-4".to_string(), "segment-5".to_string()],
+            boxes: Vec::new(),
+        });
+
+        let json = project.to_json().expect("serialize project");
+        let parsed = TrackProject::from_json(&json).expect("parse project");
+        assert_eq!(parsed, project.clone().normalize().expect("normalize"));
+        assert_eq!(parsed.decorations.len(), 2);
+        assert_eq!(parsed.paths.len(), 1);
+        assert_eq!(parsed.decorations[0].segments, ["segment-1", "segment-2"]);
+    }
+
+    #[test]
+    fn split_then_merge_restores_route_closure_and_decoration_continuity() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(kerb_decoration(
+            "kerb-a",
+            &["segment-1", "segment-2"],
+            Some(("segment-1", 0.25)),
+            Some(("segment-2", 0.75)),
+            1,
+            vec![2.0],
+        ));
+        project = project.normalize().expect("normalize project");
+        let original_route = project.layouts[0].route.clone();
+        let original_segments = project.segments.len();
+
+        let new_segment = project.split_segment("segment-1", 0.5).expect("split");
+        assert_eq!(
+            project.decorations[0].segments,
+            ["segment-1", new_segment.as_str(), "segment-2"]
+        );
+        assert_eq!(project.layouts[0].route.len(), original_route.len() + 1);
+
+        project.merge_segment("segment-1").expect("merge");
+        assert_eq!(project.layouts[0].route, original_route);
+        assert_eq!(project.segments.len(), original_segments);
+        assert_eq!(project.decorations[0].segments, ["segment-1", "segment-2"]);
+        let start = project.decorations[0].start.as_ref().expect("start");
+        assert_eq!(start.segment_id, "segment-1");
+        let end = project.decorations[0].end.as_ref().expect("end");
+        assert_eq!(end.segment_id, "segment-2");
+        track_from_project_with_default(&project, None).expect("track after merge");
+    }
+
+    #[test]
+    fn interior_segment_points_can_be_inserted_moved_and_deleted() {
+        let mut project = TrackProject::default_project();
+        let before = project.segment_centerline("segment-0").expect("centerline");
+
+        let index = project
+            .insert_segment_point("segment-0", 0, 10.0, -10.0)
+            .expect("insert");
+        assert_eq!(index, 0);
+        assert_eq!(
+            project.segment_by_id("segment-0").expect("segment").points,
+            vec![[10.0, -10.0]]
+        );
+
+        project
+            .move_segment_point("segment-0", 0, 12.0, -8.0)
+            .expect("move");
+        assert_eq!(
+            project.segment_by_id("segment-0").expect("segment").points,
+            vec![[12.0, -8.0]]
+        );
+        assert!(project
+            .move_segment_point("segment-0", 1, 0.0, 0.0)
+            .is_err());
+
+        project
+            .delete_segment_point("segment-0", 0)
+            .expect("delete");
+        assert!(project
+            .segment_by_id("segment-0")
+            .expect("segment")
+            .points
+            .is_empty());
+        assert!(project.delete_segment_point("segment-0", 0).is_err());
+        let after = project.segment_centerline("segment-0").expect("centerline");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn segment_tangents_can_be_set_and_cleared() {
+        let mut project = TrackProject::default_project();
+        project
+            .set_segment_tangents("segment-0", Some([1.0, 0.0]), Some([0.0, 2.0]))
+            .expect("set tangents");
+        let segment = project.segment_by_id("segment-0").expect("segment");
+        assert_eq!(segment.from_tangent, Some([1.0, 0.0]));
+        assert_eq!(segment.to_tangent, Some([0.0, 1.0]));
+        track_from_project_with_default(&project, None).expect("track after tangents");
+
+        project
+            .set_segment_tangents("segment-0", None, None)
+            .expect("clear tangents");
+        let segment = project.segment_by_id("segment-0").expect("segment");
+        assert_eq!(segment.from_tangent, None);
+        assert_eq!(segment.to_tangent, None);
+
+        let before = project
+            .segment_by_id("segment-0")
+            .cloned()
+            .expect("segment");
+        assert!(project
+            .set_segment_tangents("segment-0", Some([0.0, 0.0]), None)
+            .is_err());
+        assert_eq!(
+            project
+                .segment_by_id("segment-0")
+                .cloned()
+                .expect("segment"),
+            before
+        );
+    }
+
+    #[test]
+    fn merge_rejects_ambiguous_junctions_and_one_sided_decorations() {
+        let mut ambiguous = TrackProject::default_project();
+        ambiguous.junctions.push(Junction {
+            id: "junction-spur".to_string(),
+            position: [70.0, 70.0],
+            kind: JunctionKind::Normal,
+            profile: None,
+        });
+        ambiguous.segments.push(Segment {
+            id: "segment-spur".to_string(),
+            from: ambiguous.segments[0].to.clone(),
+            to: "junction-spur".to_string(),
+            points: Vec::new(),
+            from_tangent: None,
+            to_tangent: None,
+            start_profile: None,
+            end_profile: None,
+        });
+        let mut ambiguous = ambiguous.normalize().expect("ambiguous project");
+        assert!(ambiguous.merge_segment("segment-0").is_err());
+        assert!(ambiguous.segment_by_id("segment-0").is_some());
+
+        let mut one_sided = TrackProject::default_project();
+        one_sided.decorations.push(kerb_decoration(
+            "kerb-a",
+            &["segment-0"],
+            None,
+            None,
+            1,
+            Vec::new(),
+        ));
+        let mut one_sided = one_sided.normalize().expect("one-sided project");
+        assert!(one_sided.merge_segment("segment-0").is_err());
+        assert_eq!(one_sided.decorations[0].segments, ["segment-0"]);
+        assert!(one_sided.segment_by_id("segment-0").is_some());
+    }
+
+    #[test]
+    fn bake_is_deterministic_after_segment_edits() {
+        let mut project = TrackProject::default_project();
+        project
+            .insert_segment_point("segment-2", 0, 4.0, -6.0)
+            .expect("insert");
+        project
+            .move_junction("junction-3", 42.0, 4.0)
+            .expect("move junction");
+        project
+            .set_segment_tangents("segment-2", Some([1.0, 0.0]), None)
+            .expect("tangents");
+        project = project.normalize().expect("normalize");
+
+        let first = track_from_project_with_default(&project, None).expect("first bake");
+        let second = track_from_project_with_default(&project, None).expect("second bake");
+        assert_eq!(first.visual, second.visual);
+        assert_eq!(first.collision, second.collision);
+        assert_eq!(first.metadata, second.metadata);
+        assert_eq!(first.manifest, second.manifest);
+
+        let centerline = project
+            .segment_centerline("segment-2")
+            .expect("segment centerline");
+        assert_eq!(centerline.len(), SEGMENT_CENTERLINE_STEPS + 1);
+    }
+
+    #[test]
     fn spawn_faces_increasing_track_direction_after_drive_flip() {
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let track = default_editor_track();
         let spawn = &track.metadata.spawns[0];
         let rotation = Quat::from_xyzw(
             spawn.rotation_xyzw[0],
@@ -4770,15 +5004,14 @@ mod tests {
         );
         let drive_rotation = Quat::from_rotation_y(PI) * rotation;
         let forward = drive_rotation * Vec3::NEG_Z;
-        let points = sample_track(&CONTROL_POINTS);
+        let points = default_centerline();
         let tangent = (points[1] - points[0]).normalize_or_zero();
         assert!(forward.dot(tangent) > 0.99);
     }
 
     #[test]
     fn editor_track_has_a_mountain_backdrop() {
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let track = default_editor_track();
         let index = track
             .visual
             .meshes
@@ -4800,8 +5033,7 @@ mod tests {
 
     #[test]
     fn track_surface_uses_one_continuous_ribbon() {
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let track = default_editor_track();
         let surface_meshes = track
             .visual
             .meshes
@@ -4830,8 +5062,10 @@ mod tests {
 
     #[test]
     fn racing_line_offsets_stay_inside_the_asphalt() {
-        for control_points in [&CONTROL_POINTS[..], &TIGHT_CONTROL_POINTS[..]] {
-            let points = sample_track(control_points);
+        for points in [
+            default_centerline(),
+            ring_project_centerline(&TIGHT_CONTROL_POINTS),
+        ] {
             let offsets = racing_line_offsets(&points);
             assert_eq!(offsets.len(), points.len());
             assert!(offsets.iter().all(|offset| offset.is_finite()));
@@ -4843,7 +5077,7 @@ mod tests {
 
     #[test]
     fn racing_line_biases_into_corners_and_centres_on_straights() {
-        let points = sample_track(&CONTROL_POINTS);
+        let points = default_centerline();
         let offsets = racing_line_offsets(&points);
         let count = points.len();
         let (corner, turn) = (0..count)
@@ -4875,7 +5109,7 @@ mod tests {
 
     #[test]
     fn racing_line_mesh_sits_above_asphalt_within_the_lane() {
-        let points = sample_track(&CONTROL_POINTS);
+        let points = default_centerline();
         let offsets = racing_line_offsets(&points);
         let buffers = racing_line_ribbon(&points, &offsets);
         let profile_count = RACING_LINE_PROFILE.len();
@@ -4925,8 +5159,7 @@ mod tests {
 
     #[test]
     fn editor_track_includes_a_racing_line_mesh() {
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let track = default_editor_track();
         let index = track
             .visual
             .meshes
@@ -5011,8 +5244,7 @@ mod tests {
 
     #[test]
     fn editor_track_assigns_the_tarmac_texture() {
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let track = default_editor_track();
         let tarmac_index = track
             .visual
             .textures
@@ -5065,9 +5297,8 @@ mod tests {
     fn editor_shoulders_collide_as_dirt() {
         use sim_core::TrackCollider;
 
-        let points = sample_track(&CONTROL_POINTS);
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let points = default_centerline();
+        let track = default_editor_track();
         let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
         let (point, binormal) = track_frame(&points, 10.0);
         for lateral in [7.0, 8.0, 9.0, 10.0, 11.0] {
@@ -5091,8 +5322,7 @@ mod tests {
 
     #[test]
     fn editor_track_exports_a_valid_pack() {
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let track = default_editor_track();
         let bytes = pack_from_track(&track).expect("export pack");
         let pack = sim_asset::Pack::from_bytes(&bytes).expect("parse pack");
         assert_eq!(pack.kind(), sim_types::AssetKind::Track);
@@ -5118,9 +5348,8 @@ mod tests {
     fn prop_lines_use_simplified_wall_collision() {
         use sim_core::TrackCollider;
 
-        let points = sample_track(&CONTROL_POINTS);
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, None, None)
-            .expect("editor track");
+        let points = default_centerline();
+        let track = default_editor_track();
         let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
         let lines = default_prop_lines(&points);
         assert!(lines.iter().any(|line| line.kind != PropKind::Off));
@@ -5153,14 +5382,8 @@ mod tests {
     fn kerb_top_is_driveable_collision() {
         use sim_core::TrackCollider;
 
-        let points = sample_track(&CONTROL_POINTS);
-        let spans = [KerbSpan {
-            start: 10.25,
-            end: 10.75,
-            side: 1,
-        }];
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&spans), Some(&[]))
-            .expect("editor track");
+        let points = default_centerline();
+        let track = default_editor_track();
         assert!(track
             .metadata
             .surfaces
@@ -5168,8 +5391,10 @@ mod tests {
             .any(|surface| surface.name == "kerb"));
         let collider = TrackCollider::from_collision(&track.collision, &track.metadata);
 
-        let (point, binormal) = track_frame(&points, 10.5);
-        let sample = point + binormal * 6.4;
+        let span = *track.kerb_spans.first().expect("kerb span");
+        let station = (span.start + span.end) * 0.5;
+        let (point, binormal) = track_frame(&points, station);
+        let sample = point + binormal * (6.4 * span.side as f32);
         let hit = collider
             .raycast(
                 Vec3::new(sample.x, sample.y + 20.0, sample.z),
@@ -5190,7 +5415,7 @@ mod tests {
 
     #[test]
     fn jagged_kerb_segments_are_closed_by_risers() {
-        let points = sample_track(&CONTROL_POINTS);
+        let points = default_centerline();
         let index = 10.0;
         let (start, start_binormal) = track_frame(&points, index);
         let (middle, middle_binormal) = track_frame(&points, index + 1.0);
@@ -5226,40 +5451,40 @@ mod tests {
     }
 
     #[test]
-    fn auto_kerbs_cover_only_split_severe_bends() {
-        let points = sample_track(&CONTROL_POINTS);
-        let spans = auto_kerb_spans(&points);
-        assert!(!spans.is_empty());
-        assert!(
-            spans.len() <= DEFAULT_KERB_BENDS * DEFAULT_KERB_SEGMENTS_PER_BEND,
-            "unexpected kerb span count: {}",
-            spans.len()
-        );
-        let covered = spans.iter().map(|span| span.end - span.start).sum::<f32>();
-        assert!(covered < points.len() as f32 * 0.6);
-        assert!(spans
-            .windows(2)
-            .any(|pair| { pair[0].side == pair[1].side && pair[1].start - pair[0].end > 0.5 }));
-    }
-
-    #[test]
     fn low_speed_turn_can_cross_the_kerb() {
         use sim_core::{Controls, Vehicle};
 
-        let spans = [
-            KerbSpan {
-                start: 0.0,
-                end: 120.0,
-                side: -1,
-            },
-            KerbSpan {
-                start: 0.0,
-                end: 120.0,
-                side: 1,
-            },
-        ];
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&spans), Some(&[]))
-            .expect("editor track");
+        let mut project = TrackProject::default_project();
+        let route = project.layouts[0].route.clone();
+        for (index, side) in [-1i8, 1i8].into_iter().enumerate() {
+            project.decorations.push(DecorationPath {
+                id: format!("kerb-{index}"),
+                kind: DecorationKind::Kerb,
+                side,
+                lane: None,
+                segments: route.clone(),
+                start: None,
+                end: None,
+                elements: vec![project.settings.kerb.element_length],
+                phase: 0.0,
+                prop_kind: None,
+                spacing: None,
+            });
+        }
+        project.decorations.push(DecorationPath {
+            id: "props-off".to_string(),
+            kind: DecorationKind::Prop,
+            side: 1,
+            lane: Some("far".to_string()),
+            segments: route,
+            start: None,
+            end: None,
+            elements: Vec::new(),
+            phase: 0.0,
+            prop_kind: Some(PropKind::Off),
+            spacing: None,
+        });
+        let track = track_from_project_with_default(&project, None).expect("editor track");
         let collider = sim_core::TrackCollider::from_collision(&track.collision, &track.metadata);
         let car_bytes = include_bytes!("../../../fixtures/cars/mazda-rx7/mazda-rx7.sima").to_vec();
         let pack = sim_asset::Pack::from_bytes(&car_bytes).expect("car pack");
@@ -5309,7 +5534,7 @@ mod tests {
 
     #[test]
     fn tight_control_points_are_smoothed_to_the_minimum_radius() {
-        let points = sample_track(&TIGHT_CONTROL_POINTS);
+        let points = ring_project_centerline(&TIGHT_CONTROL_POINTS);
         assert!(minimum_radius(&points) >= MIN_TURN_RADIUS - 0.01);
         assert_eq!(offset_crossings(&points, OUTER_EDGE_RADIUS), 0);
         assert_eq!(offset_crossings(&points, -OUTER_EDGE_RADIUS), 0);
@@ -5321,7 +5546,7 @@ mod tests {
 
     #[test]
     fn prop_spacing_is_uniform_along_offset_paths() {
-        let points = sample_track(&TIGHT_CONTROL_POINTS);
+        let points = ring_project_centerline(&TIGHT_CONTROL_POINTS);
         for line in default_prop_lines(&points) {
             let spacing = match line.kind {
                 PropKind::Blocks => BLOCK_SPACING,
@@ -5352,17 +5577,20 @@ mod tests {
 
     #[test]
     fn tree_prop_lines_build_canopies_and_trunk_collision() {
-        let lines = [PropLine {
-            start: 10.0,
-            end: 18.0,
-            side: 1,
-            offset: PROP_FAR_OFFSET,
-            kind: PropKind::Trees,
-            spacing: None,
-            phase: 0.0,
-        }];
-        let track = track_from_control_points_with_spans(&CONTROL_POINTS, Some(&[]), Some(&lines))
-            .expect("editor track");
+        let mut project = TrackProject::default_project();
+        let segments = project.layouts[0].route.clone();
+        let segment_refs = segments.iter().map(String::as_str).collect::<Vec<_>>();
+        project.decorations.push(prop_decoration(
+            "trees-a",
+            &segment_refs,
+            1,
+            "far",
+            PropKind::Trees,
+            TREE_SPACING,
+            0.0,
+        ));
+        let project = project.normalize().expect("normalize project");
+        let track = track_from_project_with_default(&project, None).expect("editor track");
         let mesh = |name: &str| {
             track
                 .visual
@@ -5386,7 +5614,14 @@ mod tests {
                 "{name} colors"
             );
         }
-        let placements = prop_placements(&sample_track(&CONTROL_POINTS), &lines[0]).len();
+        let cards = mesh("tree_cards");
+        assert_eq!(cards.uvs.len(), cards.positions.len(), "tree_cards uvs");
+        let points = project_centerline(&project);
+        let placements = track
+            .prop_lines
+            .iter()
+            .map(|line| prop_placements(&points, line).len())
+            .sum::<usize>();
         assert!(placements > 0);
         let triangles = |name: &str| mesh(name).indices.len() / 3;
         let high = triangles("tree_trunks_high") + triangles("tree_foliage_high");
@@ -5401,11 +5636,10 @@ mod tests {
             "high tree detail too low: {high} tris for {placements} trees"
         );
         assert!(!track.visual.textures.is_empty());
-        assert!(!mesh("tree_cards").uvs.is_empty());
-        let cards = triangles("tree_cards");
+        let card_triangles = triangles("tree_cards");
         assert!(
-            cards <= placements * 8,
-            "card tree budget exceeded: {cards} tris for {placements} trees"
+            card_triangles <= placements * 8,
+            "card tree budget exceeded: {card_triangles} tris for {placements} trees"
         );
         assert!(track.collision.surface_ids.contains(&WALL_SURFACE));
         assert!(track
@@ -5413,11 +5647,13 @@ mod tests {
             .meshes
             .iter()
             .all(|mesh| mesh.name != "barriers" && !mesh.name.starts_with("tires_")));
+        let again = track_from_project_with_default(&project, None).expect("deterministic track");
+        assert_eq!(track.visual, again.visual);
     }
 
     #[test]
     fn fractional_prop_range_follows_the_offset_path() {
-        let points = sample_track(&CONTROL_POINTS);
+        let points = default_centerline();
         let line = PropLine {
             start: 10.25,
             end: 12.75,
@@ -5449,7 +5685,7 @@ mod tests {
 
     #[test]
     fn prop_jitter_is_tiny_and_deterministic() {
-        let points = sample_track(&CONTROL_POINTS);
+        let points = default_centerline();
         let mut moved = false;
         for line in default_prop_lines(&points) {
             for (index, (position, tangent)) in
@@ -5470,7 +5706,7 @@ mod tests {
 
     #[test]
     fn default_track_meets_the_minimum_radius() {
-        let points = sample_track(&CONTROL_POINTS);
+        let points = default_centerline();
         assert!(minimum_radius(&points) >= MIN_TURN_RADIUS - 0.01);
         assert_eq!(offset_crossings(&points, OUTER_EDGE_RADIUS), 0);
         assert_eq!(offset_crossings(&points, -OUTER_EDGE_RADIUS), 0);

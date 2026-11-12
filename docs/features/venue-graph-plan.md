@@ -1,6 +1,6 @@
 # Plan: canonical venue graph rebuild
 
-Status: Phase 1 and Phase 2 complete on `feat/venue-graph`; Phase 3 not started
+Status: Phase 1 and Phase 2 complete on `feat/venue-graph`; Phase 3 in progress
 Created: 2026-11-11
 Owner: @joegaffey
 Reference branch: `feat/multi-circuit-track` (`e03e138`)
@@ -105,6 +105,44 @@ directly and never serialized as a second source of truth.
 - No two decoration paths may overlap on the same side/lane and segment range.
 - Every segment referenced by a decoration path is part of the baked world even
   if no layout or path references it.
+
+### Phase 3 editor interface
+
+The web editor consumes the `@5` project through these `TrackViewer` wasm
+bindings. Signatures are the cross-domain contract; the render worker owns the
+implementation, the web worker owns the caller.
+
+Read-only (return JSON strings):
+
+- `editor_project()` — normalized `@5` document, or `{}`.
+- `editor_active_layout()` — active layout id, or `""`.
+- `editor_loop_points()` — active route junctions in order:
+  `{ id, position, kind, degree }[]`.
+- `editor_centerline()` — active layout centerline points.
+- `editor_loop_centerlines()` — every layout centerline keyed by layout id.
+- `editor_segment_centerline(id)` — one segment centerline.
+- `editor_segment_centerlines()` — every segment centerline keyed by id.
+- `editor_route_segments(id)` — ordered segment ids for a layout.
+- `editor_kerb_spans()` / `editor_prop_lines()` — bake-derived decoration.
+
+Editing (async, rebuild the scene before resolving):
+
+- `set_editor_project(json)` — parse, normalize, validate, rebuild.
+- `set_editor_active_layout(id)` — selection changes spawn/metadata only.
+- `move_editor_control_point(id, x, z)` — move a junction.
+- `move_editor_segment_point(segmentId, index, x, z)`.
+- `insert_editor_segment_point(segmentId, afterIndex, x, z) -> index`.
+- `delete_editor_segment_point(segmentId, index)`.
+- `set_editor_segment_tangents(segmentId, fromJson, toJson)` — `null` clears.
+- `split_editor_segment(segmentId, fraction) -> newSegmentId`.
+- `merge_editor_segment(segmentId)` — merge with the outgoing neighbour.
+- `delete_editor_segment(segmentId)`.
+- `editor_track_pack()` — pack from the current project and active layout.
+
+Merge is only allowed when the shared junction has exactly two incident
+segments and every layout, path, and decoration chain references both segments
+adjacently (or neither). Otherwise it returns an error; decoration is never
+silently joined across a gap. Start/finish and decoration anchors are rebased.
 
 ## 4. Decoration paths
 

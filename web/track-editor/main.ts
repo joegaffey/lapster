@@ -23,66 +23,50 @@ interface CameraView {
   fovY: number;
 }
 
-interface KerbSpan {
-  start: number;
-  end: number;
-  side: number;
+interface LoopPointData {
+  id: string;
+  position: [number, number];
+  kind: string;
+  degree: number;
 }
 
-type PropKind = "blocks" | "tyres" | "trees" | "off";
-
-interface PropLine {
-  start: number;
-  end: number;
-  side: number;
-  offset: number;
-  kind: PropKind;
+interface LoopPoint {
+  id: string;
+  position: Vec3;
+  kind: string;
+  degree: number;
 }
 
-interface GuideDef {
-  kind: "kerb" | "prop";
-  side: number;
-  radius: number;
-  color: string;
+interface ProjectJunction {
+  id: string;
+  position: [number, number];
+  kind?: string;
 }
 
-interface GuidePoint {
-  guide: GuideDef;
-  index: number;
-  screen: [number, number];
+interface ProjectSegment {
+  id: string;
+  from: string;
+  to: string;
 }
 
-type SegmentKind = "kerb" | "prop";
-
-interface SegmentSelection {
-  kind: SegmentKind;
-  side: number;
-  offset: number;
-  start: number;
-  end: number;
+interface ProjectLayout {
+  id: string;
+  route?: string[];
 }
 
-interface GuideDrag {
-  kind: "kerb" | "prop";
-  side: number;
-  offset: number;
-  edge: "start" | "end";
-  pointerId: number;
+interface TrackProjectDocument {
+  schema?: string;
+  name?: string;
+  junctions?: ProjectJunction[];
+  segments?: ProjectSegment[];
+  layouts?: ProjectLayout[];
 }
 
 const MAX_CAMERA_HEIGHT = 140;
 const CONTROL_POINT_RADIUS = 9;
 const CONTROL_POINT_HIT_RADIUS = 18;
-const CENTERLINE_HIT_RADIUS = 12;
-const KERB_RADIUS = 6.4;
-const PROP_OFFSET = 14;
-const PROP_FAR_OFFSET = 19;
-const GUIDE_HIT_RADIUS = 12;
-const GUIDE_HANDLE_RADIUS = 7;
-const GUIDE_HANDLE_HIT_RADIUS = 16;
-const DEFAULT_KERB_SEGMENT_LENGTH = 6;
-const PROP_SEGMENT_LENGTH_METERS = 3;
-const MIN_SEGMENT_LENGTH = 0.5;
+const PROJECT_STORAGE_KEY = "lapster.track-editor.project.v5";
+const PROJECT_SCHEMA = "lapster/track-project@5";
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
   1: "#33ff59",
@@ -104,35 +88,37 @@ const meshes = document.querySelector<HTMLElement>("#meshes")!;
 const fpsLabel = document.querySelector<HTMLElement>("#fps")!;
 const frameLabel = document.querySelector<HTMLElement>("#frame-ms")!;
 const drawsLabel = document.querySelector<HTMLElement>("#draws")!;
-const propToggle = document.querySelector<HTMLButtonElement>("#prop-toggle")!;
 const treeDetailButton = document.querySelector<HTMLButtonElement>("#tree-detail")!;
-const deleteSegmentButton =
-  document.querySelector<HTMLButtonElement>("#delete-segment")!;
 const overlayToggle = document.querySelector<HTMLButtonElement>("#toggle-overlay")!;
 const cameraViewButton = document.querySelector<HTMLButtonElement>("#camera-view")!;
 const testDriveButton = document.querySelector<HTMLButtonElement>("#test-drive")!;
+const saveProjectButton =
+  document.querySelector<HTMLButtonElement>("#save-project")!;
+const loadProjectButton =
+  document.querySelector<HTMLButtonElement>("#load-project")!;
+const exportProjectButton =
+  document.querySelector<HTMLButtonElement>("#export-project")!;
+const importProjectButton =
+  document.querySelector<HTMLButtonElement>("#import-project")!;
+const importProjectInput =
+  document.querySelector<HTMLInputElement>("#import-project-file")!;
+const resetProjectButton =
+  document.querySelector<HTMLButtonElement>("#reset-project")!;
 
 let editorViewer: TrackViewer | undefined;
 let cameraController: OrbitCameraController | undefined;
-let controlPoints: Vec3[] = [];
+let project: TrackProjectDocument = {};
+let activeLayoutId = "";
+let loopPoints: LoopPoint[] = [];
 let centerline: Vec3[] = [];
+let defaultProjectJson = "";
 let dragIndex: number | null = null;
 let dragPointerId: number | null = null;
 let dragPlaneY = 0;
 let rebuilding = false;
 let suspended = false;
 let cameraDragging = false;
-let deleteMode = false;
-let hoverDeleteIndex: number | null = null;
 let lastPointer: [number, number] | null = null;
-let hoverInsert: { point: Vec3; screen: [number, number]; insertIndex: number } | null = null;
-let kerbSpans: KerbSpan[] = [];
-let propLines: PropLine[] = [];
-let hoverPoint: GuidePoint | null = null;
-let hoverHandleEdge: "start" | "end" | null = null;
-let selectedSegment: SegmentSelection | null = null;
-let guideDrag: GuideDrag | null = null;
-let paintKind: PropKind = "blocks";
 const TREE_DETAIL_MODES = ["high", "low", "cards"] as const;
 type TreeDetailMode = (typeof TREE_DETAIL_MODES)[number];
 const TREE_DETAIL_LABELS: Record<TreeDetailMode, string> = {
@@ -142,7 +128,6 @@ const TREE_DETAIL_LABELS: Record<TreeDetailMode, string> = {
 };
 let treeDetailMode: TreeDetailMode = "high";
 let overlayVisible = true;
-const PROP_KINDS: PropKind[] = ["blocks", "tyres", "trees", "off"];
 const CAMERA_VIEWS = ["front", "back", "left", "right", "car"] as const;
 type CameraViewMode = (typeof CAMERA_VIEWS)[number];
 const CAMERA_VIEW_LABELS: Record<CameraViewMode, string> = {
@@ -430,8 +415,8 @@ function hitTestControlPoint(x: number, y: number): number {
   const height = canvas.clientHeight;
   let best = -1;
   let bestDistance = CONTROL_POINT_HIT_RADIUS;
-  controlPoints.forEach((point, index) => {
-    const projected = projectPoint(point, camera, width, height);
+  loopPoints.forEach((point, index) => {
+    const projected = projectPoint(point.position, camera, width, height);
     if (!projected) {
       return;
     }
@@ -444,534 +429,25 @@ function hitTestControlPoint(x: number, y: number): number {
   return best;
 }
 
-function loopOutsideSide(): number {
-  let area = 0;
-  for (let index = 0; index < centerline.length; index += 1) {
-    const point = centerline[index];
-    const next = centerline[(index + 1) % centerline.length];
-    area += point[0] * next[2] - next[0] * point[2];
-  }
-  return area > 0 ? -1 : 1;
-}
-
-function guideDefinitions(): GuideDef[] {
-  const outside = loopOutsideSide();
-  return [
-    { kind: "kerb", side: -1, radius: KERB_RADIUS, color: "#fb7185" },
-    { kind: "kerb", side: 1, radius: KERB_RADIUS, color: "#fb7185" },
-    { kind: "prop", side: outside, radius: PROP_OFFSET, color: "#fb923c" },
-    { kind: "prop", side: -outside, radius: PROP_OFFSET, color: "#2dd4bf" },
-    { kind: "prop", side: outside, radius: PROP_FAR_OFFSET, color: "#f472b6" },
-    { kind: "prop", side: -outside, radius: PROP_FAR_OFFSET, color: "#c084fc" },
-  ];
-}
-
-function binormalAt(sample: number): Vec3 {
-  const count = centerline.length;
-  const index = ((sample % count) + count) % count;
-  const incoming = normalize(
-    sub(centerline[index], centerline[(index + count - 1) % count]),
-  );
-  const outgoing = normalize(
-    sub(centerline[(index + 1) % count], centerline[index]),
-  );
-  const tangent = normalize(add(incoming, outgoing));
-  return [-tangent[2], 0, tangent[0]];
-}
-
-function offsetPoint(
-  index: number,
-  side: number,
-  radius: number,
-): Vec3 | null {
-  if (centerline.length < 2) {
-    return null;
-  }
-  const count = centerline.length;
-  const position = Math.max(0, Math.min(count, index));
-  const base = Math.floor(position) % count;
-  const next = (base + 1) % count;
-  const t = position - Math.floor(position);
-  const point = lerp(centerline[base], centerline[next], t);
-  const binormal = normalize(lerp(binormalAt(base), binormalAt(next), t));
-  return add(point, scale(binormal, radius * side));
-}
-
-function guidePoint(guide: GuideDef, index: number): Vec3 | null {
-  return offsetPoint(index, guide.side, guide.radius);
-}
-
-function guidePoints(guide: GuideDef): Vec3[] {
-  const points: Vec3[] = [];
-  for (let index = 0; index <= centerline.length; index += 1) {
-    const point = guidePoint(guide, index);
-    if (point) {
-      points.push(point);
-    }
-  }
-  return points;
-}
-
-function hitGuidePoint(
-  x: number,
-  y: number,
-  guides: GuideDef[] = guideDefinitions(),
-): GuidePoint | null {
-  const camera = currentCamera();
-  if (!camera) {
-    return null;
-  }
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  let best: GuidePoint | null = null;
-  let bestDistance = GUIDE_HIT_RADIUS;
-
-  for (const guide of guides) {
-    const projected = guidePoints(guide).map((point) =>
-      projectPoint(point, camera, width, height),
-    );
-    for (let index = 0; index + 1 < projected.length; index += 1) {
-      const start = projected[index];
-      const end = projected[index + 1];
-      if (!start || !end) {
-        continue;
-      }
-      const segmentX = end[0] - start[0];
-      const segmentY = end[1] - start[1];
-      const lengthSquared = segmentX * segmentX + segmentY * segmentY;
-      const t =
-        lengthSquared > 1e-6
-          ? Math.max(
-              0,
-              Math.min(
-                1,
-                ((x - start[0]) * segmentX + (y - start[1]) * segmentY) /
-                  lengthSquared,
-              ),
-            )
-          : 0;
-      const hitX = start[0] + segmentX * t;
-      const hitY = start[1] + segmentY * t;
-      const distance = Math.hypot(x - hitX, y - hitY);
-      if (distance >= bestDistance) {
-        continue;
-      }
-      bestDistance = distance;
-      best = {
-        guide,
-        index: Math.max(0, Math.min(centerline.length, index + t)),
-        screen: [hitX, hitY],
-      };
-    }
-  }
-  return best;
-}
-
-function sameOffset(a: number, b: number): boolean {
-  return Math.abs(a - b) < 1e-4;
-}
-
-function guideFor(
-  kind: SegmentKind,
-  side: number,
-  offset: number,
-): GuideDef | null {
-  return (
-    guideDefinitions().find(
-      (guide) =>
-        guide.kind === kind &&
-        guide.side === side &&
-        (kind === "kerb" || sameOffset(guide.radius, offset)),
-    ) ?? null
-  );
-}
-
-function matchesLane(
-  kind: SegmentKind,
-  range: { side: number; offset?: number },
-  side: number,
-  offset: number,
-): boolean {
-  return (
-    range.side === side &&
-    (kind === "kerb" || sameOffset(range.offset ?? PROP_OFFSET, offset))
-  );
-}
-
-function findRange(
-  kind: SegmentKind,
-  side: number,
-  offset: number,
-  index: number,
-): { start: number; end: number; side: number; offset?: number } | null {
-  const ranges = kind === "kerb" ? kerbSpans : propLines;
-  return (
-    ranges.find(
-      (range) =>
-        matchesLane(kind, range, side, offset) &&
-        index >= range.start - 1e-4 &&
-        index <= range.end + 1e-4,
-    ) ?? null
-  );
-}
-
-function findRangeExact(
-  kind: SegmentKind,
-  side: number,
-  offset: number,
-  start: number,
-  end: number,
-): { start: number; end: number; side: number; offset?: number } | null {
-  const ranges = kind === "kerb" ? kerbSpans : propLines;
-  return (
-    ranges.find(
-      (range) =>
-        matchesLane(kind, range, side, offset) &&
-        Math.abs(range.start - start) < 1e-4 &&
-        Math.abs(range.end - end) < 1e-4,
-    ) ?? null
-  );
-}
-
-function selectedPropLine(): PropLine | undefined {
-  if (!selectedSegment || selectedSegment.kind !== "prop") {
-    return undefined;
-  }
-  return propLines.find(
-    (line) =>
-      matchesLane(
-        "prop",
-        line,
-        selectedSegment!.side,
-        selectedSegment!.offset,
-      ) &&
-      Math.abs(line.start - selectedSegment!.start) < 1e-4 &&
-      Math.abs(line.end - selectedSegment!.end) < 1e-4,
-  );
-}
-
-function resolveSelection(): void {
-  if (!selectedSegment) {
+function updateCursor(): void {
+  if (
+    !overlayVisible ||
+    !lastPointer ||
+    dragIndex !== null ||
+    carDragPointerId !== null ||
+    rebuilding ||
+    cameraDragging
+  ) {
     return;
   }
-  const range =
-    findRangeExact(
-      selectedSegment.kind,
-      selectedSegment.side,
-      selectedSegment.offset,
-      selectedSegment.start,
-      selectedSegment.end,
-    ) ??
-    findRange(
-      selectedSegment.kind,
-      selectedSegment.side,
-      selectedSegment.offset,
-      (selectedSegment.start + selectedSegment.end) * 0.5,
-    );
-  if (range) {
-    selectedSegment.start = range.start;
-    selectedSegment.end = range.end;
-    if (range.offset !== undefined) {
-      selectedSegment.offset = range.offset;
-    }
-  } else {
-    selectedSegment = null;
-  }
-}
-
-function subtractRanges<
-  T extends { start: number; end: number; side: number; offset?: number },
->(
-  items: T[],
-  kind: SegmentKind,
-  side: number,
-  offset: number,
-  start: number,
-  end: number,
-): T[] {
-  const result: T[] = [];
-  for (const item of items) {
-    if (
-      !matchesLane(kind, item, side, offset) ||
-      item.end <= start ||
-      item.start >= end
-    ) {
-      result.push(item);
-    } else {
-      if (item.start < start) {
-        result.push({ ...item, end: start });
-      }
-      if (item.end > end) {
-        result.push({ ...item, start: end });
-      }
-    }
-  }
-  return result;
-}
-
-function selectSegment(
-  kind: SegmentKind,
-  side: number,
-  offset: number,
-  index: number,
-): boolean {
-  const range = findRange(kind, side, offset, index);
-  if (!range) {
-    return false;
-  }
-  selectedSegment = {
-    kind,
-    side,
-    offset: range.offset ?? offset,
-    start: range.start,
-    end: range.end,
-  };
-  if (kind === "prop") {
-    const line = propLines.find(
-      (item) =>
-        matchesLane("prop", item, range.side, offset) &&
-        Math.abs(item.start - range.start) < 1e-4 &&
-        Math.abs(item.end - range.end) < 1e-4,
-    );
-    if (line) {
-      paintKind = line.kind;
-    }
-  }
-  syncPaintControls();
-  return true;
-}
-
-function propSegmentLength(): number {
-  const count = centerline.length;
-  if (count < 2) {
-    return MIN_SEGMENT_LENGTH;
-  }
-  let perimeter = 0;
-  for (let index = 0; index < count; index += 1) {
-    const point = centerline[index];
-    const next = centerline[(index + 1) % count];
-    perimeter += Math.hypot(
-      next[0] - point[0],
-      next[1] - point[1],
-      next[2] - point[2],
-    );
-  }
-  const sampleSpacing = perimeter / count;
-  return Math.max(
-    MIN_SEGMENT_LENGTH,
-    PROP_SEGMENT_LENGTH_METERS / Math.max(sampleSpacing, 1e-4),
-  );
-}
-
-function createSegment(guide: GuideDef, index: number): void {
-  const count = centerline.length;
-  if (guide.kind === "prop" && paintKind === "off") {
-    flashStatus("Choose a prop type to add props");
+  if (
+    hitTestCarMarker(lastPointer[0], lastPointer[1]) ||
+    hitTestControlPoint(lastPointer[0], lastPointer[1]) >= 0
+  ) {
+    canvas.style.cursor = "grab";
     return;
   }
-  const defaultLength =
-    guide.kind === "prop"
-      ? propSegmentLength()
-      : DEFAULT_KERB_SEGMENT_LENGTH;
-  const length = Math.min(defaultLength, count);
-  const start = Math.max(0, Math.min(count - length, index - length * 0.5));
-  const end = Math.min(count, start + length);
-  if (end - start < MIN_SEGMENT_LENGTH) {
-    return;
-  }
-
-  if (guide.kind === "kerb") {
-    kerbSpans = subtractRanges(
-      kerbSpans,
-      "kerb",
-      guide.side,
-      guide.radius,
-      start,
-      end,
-    );
-    kerbSpans.push({ start, end, side: guide.side });
-    kerbSpans.sort((a, b) => a.side - b.side || a.start - b.start);
-    selectedSegment = {
-      kind: "kerb",
-      side: guide.side,
-      offset: guide.radius,
-      start,
-      end,
-    };
-    hoverPoint = null;
-    syncPaintControls();
-    drawControlPoints();
-    void rebuildKerbSpans();
-    return;
-  }
-
-  propLines = subtractRanges(
-    propLines,
-    "prop",
-    guide.side,
-    guide.radius,
-    start,
-    end,
-  );
-  propLines.push({
-    start,
-    end,
-    side: guide.side,
-    offset: guide.radius,
-    kind: paintKind,
-  });
-  propLines.sort(
-    (a, b) => a.side - b.side || a.offset - b.offset || a.start - b.start,
-  );
-  selectedSegment = {
-    kind: "prop",
-    side: guide.side,
-    offset: guide.radius,
-    start,
-    end,
-  };
-  hoverPoint = null;
-  syncPaintControls();
-  drawControlPoints();
-  void rebuildPropLines();
-}
-
-function updateSelectedEdge(edge: "start" | "end", index: number): void {
-  if (!selectedSegment) {
-    return;
-  }
-  const oldStart = selectedSegment.start;
-  const oldEnd = selectedSegment.end;
-  const range = findRangeExact(
-    selectedSegment.kind,
-    selectedSegment.side,
-    selectedSegment.offset,
-    oldStart,
-    oldEnd,
-  );
-  if (!range) {
-    return;
-  }
-  if (edge === "start") {
-    selectedSegment.start = Math.max(
-      0,
-      Math.min(index, selectedSegment.end - MIN_SEGMENT_LENGTH),
-    );
-  } else {
-    selectedSegment.end = Math.min(
-      centerline.length,
-      Math.max(index, selectedSegment.start + MIN_SEGMENT_LENGTH),
-    );
-  }
-  range.start = selectedSegment.start;
-  range.end = selectedSegment.end;
-}
-
-function hitGuideHandle(
-  x: number,
-  y: number,
-): { edge: "start" | "end"; guide: GuideDef } | null {
-  if (!selectedSegment) {
-    return null;
-  }
-  const guide = guideFor(
-    selectedSegment.kind,
-    selectedSegment.side,
-    selectedSegment.offset,
-  );
-  const camera = currentCamera();
-  if (!guide || !camera) {
-    return null;
-  }
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  let best: { edge: "start" | "end"; guide: GuideDef } | null = null;
-  let bestDistance = GUIDE_HANDLE_HIT_RADIUS;
-  for (const edge of ["start", "end"] as const) {
-    const point = guidePoint(guide, selectedSegment[edge]);
-    const projected = point
-      ? projectPoint(point, camera, width, height)
-      : null;
-    if (!projected) {
-      continue;
-    }
-    const distance = Math.hypot(projected[0] - x, projected[1] - y);
-    if (distance <= bestDistance) {
-      bestDistance = distance;
-      best = { edge, guide };
-    }
-  }
-  return best;
-}
-
-function paintLabel(kind: PropKind): string {
-  switch (kind) {
-    case "blocks":
-      return "Blocks";
-    case "tyres":
-      return "Tyres";
-    case "trees":
-      return "Trees";
-    default:
-      return "Off";
-  }
-}
-
-function syncPaintControls(): void {
-  propToggle.textContent = `Prop: ${paintLabel(paintKind)}`;
-  deleteSegmentButton.disabled = selectedSegment === null;
-}
-
-function syncTreeDetailButton(): void {
-  treeDetailButton.textContent = `Trees: ${TREE_DETAIL_LABELS[treeDetailMode]}`;
-}
-
-function deleteSelectedSegment(): void {
-  if (!selectedSegment || rebuilding) {
-    return;
-  }
-  const { kind, side, offset, start, end } = selectedSegment;
-  selectedSegment = null;
-  hoverPoint = null;
-  hoverHandleEdge = null;
-  if (kind === "kerb") {
-    kerbSpans = kerbSpans.filter(
-      (span) =>
-        !(
-          span.side === side &&
-          Math.abs(span.start - start) < 1e-4 &&
-          Math.abs(span.end - end) < 1e-4
-        ),
-    );
-    syncPaintControls();
-    drawControlPoints();
-    void rebuildKerbSpans();
-    return;
-  }
-  propLines = propLines.filter(
-    (line) =>
-      !(
-        matchesLane("prop", line, side, offset) &&
-        Math.abs(line.start - start) < 1e-4 &&
-        Math.abs(line.end - end) < 1e-4
-      ),
-  );
-  syncPaintControls();
-  drawControlPoints();
-  void rebuildPropLines();
-}
-
-function setPaintKind(kind: PropKind): void {
-  paintKind = kind;
-  const line = selectedPropLine();
-  if (line) {
-    line.kind = kind;
-    syncPaintControls();
-    drawControlPoints();
-    void rebuildPropLines();
-    return;
-  }
-  syncPaintControls();
+  canvas.style.cursor = "";
 }
 
 function setOverlayVisible(visible: boolean): void {
@@ -979,142 +455,20 @@ function setOverlayVisible(visible: boolean): void {
   overlay.hidden = !visible;
   overlayToggle.textContent = visible ? "Hide overlay" : "Show overlay";
   overlayToggle.setAttribute("aria-pressed", String(visible));
-  hoverInsert = null;
-  hoverDeleteIndex = null;
-  hoverPoint = null;
-  hoverHandleEdge = null;
   if (!visible) {
-    selectedSegment = null;
-    guideDrag = null;
-    syncPaintControls();
     canvas.style.cursor = "";
   }
   drawControlPoints();
 }
 
-function updateHover(): void {
-  hoverInsert = null;
-  hoverDeleteIndex = null;
-  hoverPoint = null;
-  hoverHandleEdge = null;
-  if (
-    !overlayVisible ||
-    !lastPointer ||
-    dragIndex !== null ||
-    guideDrag !== null ||
-    carDragPointerId !== null ||
-    rebuilding ||
-    cameraDragging
-  ) {
-    canvas.style.cursor = "";
-    return;
-  }
-  if (deleteMode) {
-    const index = hitTestControlPoint(lastPointer[0], lastPointer[1]);
-    hoverDeleteIndex = index >= 0 ? index : null;
-    canvas.style.cursor = index >= 0 ? "crosshair" : "";
-    return;
-  }
-  if (hitTestCarMarker(lastPointer[0], lastPointer[1])) {
-    canvas.style.cursor = "grab";
-    return;
-  }
-  const handle = hitGuideHandle(lastPointer[0], lastPointer[1]);
-  if (handle) {
-    hoverHandleEdge = handle.edge;
-    canvas.style.cursor = "grab";
-    return;
-  }
-  const point = hitGuidePoint(lastPointer[0], lastPointer[1]);
-  if (point) {
-    hoverPoint = point;
-    canvas.style.cursor = findRange(
-      point.guide.kind,
-      point.guide.side,
-      point.guide.radius,
-      point.index,
-    )
-      ? "pointer"
-      : "copy";
-    return;
-  }
-  if (centerline.length < 2 || controlPoints.length === 0) {
-    canvas.style.cursor = "";
-    return;
-  }
-  const camera = currentCamera();
-  if (!camera) {
-    canvas.style.cursor = "";
-    return;
-  }
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const projected = centerline.map((point) => projectPoint(point, camera, width, height));
-  let bestDistance = CENTERLINE_HIT_RADIUS;
-  for (let index = 0; index < projected.length; index += 1) {
-    const start = projected[index];
-    const end = projected[(index + 1) % projected.length];
-    if (!start || !end) {
-      continue;
-    }
-    const segmentX = end[0] - start[0];
-    const segmentY = end[1] - start[1];
-    const lengthSquared = segmentX * segmentX + segmentY * segmentY;
-    const t =
-      lengthSquared > 1e-6
-        ? Math.max(
-            0,
-            Math.min(
-              1,
-              ((lastPointer[0] - start[0]) * segmentX +
-                (lastPointer[1] - start[1]) * segmentY) /
-                lengthSquared,
-            ),
-          )
-        : 0;
-    const hitX = start[0] + segmentX * t;
-    const hitY = start[1] + segmentY * t;
-    const distance = Math.hypot(lastPointer[0] - hitX, lastPointer[1] - hitY);
-    if (distance >= bestDistance) {
-      continue;
-    }
-    bestDistance = distance;
-    const next = (index + 1) % centerline.length;
-    const insertIndex =
-      (Math.floor((index * controlPoints.length) / centerline.length) %
-        controlPoints.length) +
-      1;
-    hoverInsert = {
-      point: lerp(centerline[index], centerline[next], t),
-      screen: [hitX, hitY],
-      insertIndex,
-    };
-  }
-  canvas.style.cursor = hoverInsert ? "copy" : "";
-}
-
-function setDeleteMode(enabled: boolean): void {
-  if (deleteMode === enabled) {
-    return;
-  }
-  deleteMode = enabled;
-  hoverInsert = null;
-  hoverDeleteIndex = null;
-  hoverPoint = null;
-  hoverHandleEdge = null;
-  syncPaintControls();
-  drawControlPoints();
-}
-
-function flashStatus(message: string): void {
+function setStatus(message: string, state: "" | "ready" | "error" = ""): void {
   status.textContent = message;
-  status.className = "status error";
-  window.setTimeout(() => {
-    if (!rebuilding && !window.__trackEditorError) {
-      status.textContent = "ready";
-      status.className = "status ready";
-    }
-  }, 1200);
+  status.className = `status${state ? ` ${state}` : ""}`;
+}
+
+function reportProjectError(prefix: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  setStatus(`${prefix}: ${message}`, "error");
 }
 
 function drawControlPoints(): void {
@@ -1139,7 +493,7 @@ function drawControlPoints(): void {
   if (!camera) {
     return;
   }
-  updateHover();
+  updateCursor();
   if (centerline.length > 1) {
     overlayContext.beginPath();
     let drawing = false;
@@ -1164,152 +518,6 @@ function drawControlPoints(): void {
     overlayContext.lineWidth = 2;
     overlayContext.strokeStyle = "rgba(56, 189, 248, 0.9)";
     overlayContext.stroke();
-  }
-  if (hoverInsert) {
-    const [hitX, hitY] = hoverInsert.screen;
-    overlayContext.save();
-    overlayContext.setLineDash([4, 3]);
-    overlayContext.beginPath();
-    overlayContext.arc(hitX, hitY, CONTROL_POINT_RADIUS, 0, Math.PI * 2);
-    overlayContext.lineWidth = 2;
-    overlayContext.strokeStyle = "#38bdf8";
-    overlayContext.stroke();
-    overlayContext.fillStyle = "rgba(56, 189, 248, 0.22)";
-    overlayContext.fill();
-    overlayContext.restore();
-    overlayContext.beginPath();
-    overlayContext.moveTo(hitX - 3, hitY);
-    overlayContext.lineTo(hitX + 3, hitY);
-    overlayContext.moveTo(hitX, hitY - 3);
-    overlayContext.lineTo(hitX, hitY + 3);
-    overlayContext.lineWidth = 1.5;
-    overlayContext.strokeStyle = "#e6f7ff";
-    overlayContext.stroke();
-  }
-  const drawGuide = (
-    points: Vec3[],
-    color: string,
-    active: boolean,
-  ) => {
-    const projected = points
-      .map((point) => projectPoint(point, camera, width, height))
-      .filter((point): point is [number, number] => point !== null);
-    if (projected.length < 2) {
-      return;
-    }
-    overlayContext.save();
-    overlayContext.setLineDash([2, 5]);
-    overlayContext.globalAlpha = active ? 0.85 : 0.32;
-    overlayContext.beginPath();
-    overlayContext.moveTo(projected[0][0], projected[0][1]);
-    for (let index = 1; index < projected.length; index += 1) {
-      overlayContext.lineTo(projected[index][0], projected[index][1]);
-    }
-    overlayContext.lineWidth = active ? 2 : 1;
-    overlayContext.strokeStyle = color;
-    overlayContext.stroke();
-    overlayContext.restore();
-  };
-
-  const guides = guideDefinitions();
-  const selectedGuide = selectedSegment
-    ? guideFor(
-        selectedSegment.kind,
-        selectedSegment.side,
-        selectedSegment.offset,
-      )
-    : null;
-  const draggedGuide = guideDrag
-    ? guideFor(guideDrag.kind, guideDrag.side, guideDrag.offset)
-    : null;
-  const activeGuide = draggedGuide ?? hoverPoint?.guide ?? selectedGuide;
-  for (const guide of guides) {
-    const active =
-      activeGuide?.kind === guide.kind &&
-      activeGuide.side === guide.side &&
-      (guide.kind === "kerb" || sameOffset(activeGuide.radius, guide.radius));
-    drawGuide(guidePoints(guide), guide.color, active);
-  }
-
-  if (hoverPoint) {
-    const [hitX, hitY] = hoverPoint.screen;
-    overlayContext.save();
-    overlayContext.setLineDash([3, 3]);
-    overlayContext.beginPath();
-    overlayContext.arc(hitX, hitY, 8, 0, Math.PI * 2);
-    overlayContext.lineWidth = 2;
-    overlayContext.strokeStyle = "#e6f7ff";
-    overlayContext.stroke();
-    overlayContext.fillStyle = "rgba(230, 247, 255, 0.18)";
-    overlayContext.fill();
-    overlayContext.restore();
-    overlayContext.beginPath();
-    overlayContext.moveTo(hitX - 3, hitY);
-    overlayContext.lineTo(hitX + 3, hitY);
-    overlayContext.moveTo(hitX, hitY - 3);
-    overlayContext.lineTo(hitX, hitY + 3);
-    overlayContext.lineWidth = 1.5;
-    overlayContext.strokeStyle = "#e6f7ff";
-    overlayContext.stroke();
-  }
-
-  if (selectedSegment && selectedGuide) {
-    const preview: Vec3[] = [];
-    const steps = Math.max(
-      2,
-      Math.ceil((selectedSegment.end - selectedSegment.start) * 8),
-    );
-    for (let step = 0; step <= steps; step += 1) {
-      const index =
-        selectedSegment.start +
-        ((selectedSegment.end - selectedSegment.start) * step) / steps;
-      const point = guidePoint(selectedGuide, index);
-      if (point) {
-        preview.push(point);
-      }
-    }
-    const projected = preview
-      .map((point) => projectPoint(point, camera, width, height))
-      .filter((point): point is [number, number] => point !== null);
-    if (projected.length > 1) {
-      overlayContext.save();
-      overlayContext.globalAlpha = 0.9;
-      overlayContext.beginPath();
-      overlayContext.moveTo(projected[0][0], projected[0][1]);
-      for (let index = 1; index < projected.length; index += 1) {
-        overlayContext.lineTo(projected[index][0], projected[index][1]);
-      }
-      overlayContext.lineWidth = 3;
-      overlayContext.strokeStyle = selectedGuide.color;
-      overlayContext.stroke();
-      overlayContext.restore();
-    }
-
-    for (const edge of ["start", "end"] as const) {
-      const point = guidePoint(selectedGuide, selectedSegment[edge]);
-      const projected = point
-        ? projectPoint(point, camera, width, height)
-        : null;
-      if (!projected) {
-        continue;
-      }
-      const active =
-        hoverHandleEdge === edge ||
-        (guideDrag?.edge === edge && guideDrag.kind === selectedSegment.kind);
-      overlayContext.beginPath();
-      overlayContext.arc(
-        projected[0],
-        projected[1],
-        GUIDE_HANDLE_RADIUS + (active ? 2 : 0),
-        0,
-        Math.PI * 2,
-      );
-      overlayContext.fillStyle = active ? "#f8fafc" : selectedGuide.color;
-      overlayContext.fill();
-      overlayContext.lineWidth = 2;
-      overlayContext.strokeStyle = "#080a0d";
-      overlayContext.stroke();
-    }
   }
 
   const carMarker = carMarkerPoint();
@@ -1356,30 +564,23 @@ function drawControlPoints(): void {
     overlayContext.restore();
   }
 
-  controlPoints.forEach((point, index) => {
-    const projected = projectPoint(point, camera, width, height);
+  loopPoints.forEach((point, index) => {
+    const projected = projectPoint(point.position, camera, width, height);
     if (!projected) {
       return;
     }
-    const deleteTarget = deleteMode && index === hoverDeleteIndex;
     overlayContext.beginPath();
     overlayContext.arc(
       projected[0],
       projected[1],
-      CONTROL_POINT_RADIUS + (deleteTarget ? 3 : 0),
+      CONTROL_POINT_RADIUS,
       0,
       Math.PI * 2,
     );
-    overlayContext.fillStyle = deleteTarget
-      ? "#ef4444"
-      : deleteMode
-        ? "#fca5a5"
-        : index === dragIndex
-          ? "#38bdf8"
-          : "#fbbf24";
+    overlayContext.fillStyle = index === dragIndex ? "#38bdf8" : "#fbbf24";
     overlayContext.fill();
-    overlayContext.lineWidth = deleteTarget ? 3 : 2;
-    overlayContext.strokeStyle = deleteTarget ? "#fff1f2" : "#080a0d";
+    overlayContext.lineWidth = 2;
+    overlayContext.strokeStyle = "#080a0d";
     overlayContext.stroke();
     overlayContext.fillStyle = "#080a0d";
     overlayContext.font = "600 10px ui-monospace, monospace";
@@ -1405,26 +606,59 @@ function moveControlPoint(index: number, x: number, y: number): void {
     return;
   }
   const world = add(ray.origin, scale(ray.direction, distance));
-  const current = controlPoints[index];
-  controlPoints[index] = [
+  const current = loopPoints[index];
+  if (!current) {
+    return;
+  }
+  current.position = [
     Math.max(-140, Math.min(140, world[0])),
-    current[1],
+    current.position[1],
     Math.max(-140, Math.min(140, world[2])),
   ];
+}
+
+function junctionHeights(
+  document: TrackProjectDocument,
+  segmentCenterlines: Record<string, Vec3[]>,
+): Map<string, number> {
+  const heights = new Map<string, number>();
+  for (const segment of document.segments ?? []) {
+    const points = segmentCenterlines[segment.id];
+    if (!points || points.length === 0) {
+      continue;
+    }
+    if (!heights.has(segment.from)) {
+      heights.set(segment.from, points[0][1]);
+    }
+    if (!heights.has(segment.to)) {
+      heights.set(segment.to, points[points.length - 1][1]);
+    }
+  }
+  return heights;
 }
 
 function refreshEditorState(): void {
   if (!editorViewer) {
     return;
   }
-  controlPoints = JSON.parse(editorViewer.editor_control_points()) as Vec3[];
+  project = JSON.parse(editorViewer.editor_project()) as TrackProjectDocument;
+  activeLayoutId = editorViewer.editor_active_layout();
+  const loopData = JSON.parse(editorViewer.editor_loop_points()) as LoopPointData[];
+  const segmentCenterlines = JSON.parse(
+    editorViewer.editor_segment_centerlines(),
+  ) as Record<string, Vec3[]>;
+  const heights = junctionHeights(project, segmentCenterlines);
+  loopPoints = loopData.map((point) => ({
+    id: point.id,
+    position: [
+      point.position[0],
+      heights.get(point.id) ?? 0,
+      point.position[1],
+    ],
+    kind: point.kind,
+    degree: point.degree,
+  }));
   centerline = JSON.parse(editorViewer.editor_centerline()) as Vec3[];
-  kerbSpans = (
-    JSON.parse(editorViewer.editor_kerb_spans()) as KerbSpan[]
-  ).sort((a, b) => a.side - b.side || a.start - b.start);
-  propLines = JSON.parse(editorViewer.editor_prop_lines()) as PropLine[];
-  resolveSelection();
-  syncPaintControls();
   const debug = JSON.parse(editorViewer.debug_info());
   renderStats(debug);
   drawsLabel.textContent = String(debug.stats.drawCalls);
@@ -1435,8 +669,7 @@ async function testDrive(): Promise<void> {
     return;
   }
   testDriveButton.disabled = true;
-  status.textContent = "exporting track";
-  status.className = "status";
+  setStatus("exporting track");
   try {
     const bytes = editorViewer.editor_track_pack();
     await new IndexedDbPackCache().put(EDITOR_TRACK_CACHE_KEY, bytes);
@@ -1469,17 +702,16 @@ async function rebuildEditor(
   suspended = true;
   testDriveButton.disabled = true;
   cameraController?.setEnabled(false);
-  status.textContent = message;
-  status.className = "status";
+  setStatus(message);
   try {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     await action();
     refreshEditorState();
     testDriveButton.disabled = false;
-    status.textContent = "ready";
-    status.className = "status ready";
+    setStatus("ready", "ready");
   } catch (error) {
-    fail(error);
+    reportProjectError("edit failed", error);
+    testDriveButton.disabled = false;
   } finally {
     suspended = false;
     rebuilding = false;
@@ -1488,45 +720,149 @@ async function rebuildEditor(
   }
 }
 
-async function rebuildControlPoints(): Promise<void> {
+async function moveJunction(point: LoopPoint): Promise<void> {
   await rebuildEditor("rebuilding track", () =>
-    editorViewer!.set_editor_control_points(
-      JSON.stringify(
-        controlPoints.map((point) => [point[0], point[1], point[2]]),
-      ),
+    editorViewer!.move_editor_control_point(
+      point.id,
+      point.position[0],
+      point.position[2],
     ),
   );
 }
 
-async function rebuildKerbSpans(): Promise<void> {
-  await rebuildEditor("rebuilding kerbs", () =>
-    editorViewer!.set_editor_kerb_spans(JSON.stringify(kerbSpans)),
-  );
+function projectJson(): string {
+  return editorViewer?.editor_project() ?? "{}";
 }
 
-async function rebuildPropLines(): Promise<void> {
-  await rebuildEditor("rebuilding prop lines", () =>
-    editorViewer!.set_editor_prop_lines(JSON.stringify(propLines)),
-  );
+function projectFilename(): string {
+  const name = (project.name ?? "track-project")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${name || "track-project"}.json`;
 }
+
+function downloadProject(): void {
+  if (!editorViewer) {
+    return;
+  }
+  const blob = new Blob([projectJson()], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = projectFilename();
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function readStoredProject(): string | null {
+  try {
+    return localStorage.getItem(PROJECT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveProject(): void {
+  if (!editorViewer) {
+    return;
+  }
+  try {
+    localStorage.setItem(PROJECT_STORAGE_KEY, projectJson());
+    setStatus("ready", "ready");
+  } catch (error) {
+    reportProjectError("save failed", error);
+  }
+}
+
+async function loadProject(source: string, label: string): Promise<boolean> {
+  if (!editorViewer || rebuilding) {
+    return false;
+  }
+  rebuilding = true;
+  suspended = true;
+  testDriveButton.disabled = true;
+  cameraController?.setEnabled(false);
+  setStatus(label);
+  try {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await editorViewer.set_editor_project(source);
+    refreshEditorState();
+    testDriveButton.disabled = false;
+    setStatus("ready", "ready");
+    return true;
+  } catch (error) {
+    reportProjectError("import failed", error);
+    testDriveButton.disabled = false;
+    return false;
+  } finally {
+    suspended = false;
+    rebuilding = false;
+    cameraController?.setEnabled(true);
+    drawControlPoints();
+  }
+}
+
+async function importProjectFile(file: File): Promise<void> {
+  const source = await file.text();
+  if (!source.trim()) {
+    reportProjectError("import failed", "the selected file is empty");
+    return;
+  }
+  await loadProject(source, "importing project");
+}
+
+function loadStoredProject(): void {
+  const stored = readStoredProject();
+  if (!stored) {
+    reportProjectError("load failed", "no saved project in this browser");
+    return;
+  }
+  void loadProject(stored, "loading project");
+}
+
+function resetProject(): void {
+  if (!editorViewer) {
+    return;
+  }
+  void loadProject(defaultProjectJson, "resetting project").then((loaded) => {
+    if (loaded) {
+      try {
+        localStorage.removeItem(PROJECT_STORAGE_KEY);
+      } catch {
+        // Storage may be unavailable; the in-memory project is still reset.
+      }
+    }
+  });
+}
+
+saveProjectButton.addEventListener("click", saveProject);
+loadProjectButton.addEventListener("click", loadStoredProject);
+exportProjectButton.addEventListener("click", downloadProject);
+resetProjectButton.addEventListener("click", resetProject);
+importProjectButton.addEventListener("click", () => {
+  importProjectInput.value = "";
+  importProjectInput.click();
+});
+importProjectInput.addEventListener("change", () => {
+  const file = importProjectInput.files?.[0];
+  if (file) {
+    void importProjectFile(file);
+  }
+});
 
 canvas.addEventListener(
   "pointerdown",
   (event) => {
-    if (
-      event.button !== 0 ||
-      dragIndex !== null ||
-      rebuilding
-    ) {
+    if (event.button !== 0 || dragIndex !== null || rebuilding) {
       return;
-    }
-    if (event.shiftKey !== deleteMode) {
-      setDeleteMode(event.shiftKey);
     }
     const [x, y] = pointerPosition(event);
     if (
       overlayVisible &&
-      !deleteMode &&
       carDragPointerId === null &&
       hitTestCarMarker(x, y)
     ) {
@@ -1545,105 +881,26 @@ canvas.addEventListener(
       return;
     }
     const index = overlayVisible ? hitTestControlPoint(x, y) : -1;
-    if (deleteMode && index >= 0) {
+    if (index >= 0) {
       event.preventDefault();
       event.stopImmediatePropagation();
       cameraDragging = false;
-      if (controlPoints.length <= 3) {
-        flashStatus("minimum 3 control points");
-        return;
+      dragIndex = index;
+      dragPointerId = event.pointerId;
+      dragPlaneY = loopPoints[index].position[1];
+      cameraController?.setEnabled(false);
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic pointers may not support capture.
       }
-      controlPoints.splice(index, 1);
-      hoverInsert = null;
-      hoverDeleteIndex = null;
       drawControlPoints();
-      void rebuildControlPoints();
       return;
-    }
-    if (index < 0) {
-      if (overlayVisible && !deleteMode) {
-        const handle = hitGuideHandle(x, y);
-        if (handle && selectedSegment) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          cameraDragging = false;
-          guideDrag = {
-            kind: selectedSegment.kind,
-            side: selectedSegment.side,
-            offset: selectedSegment.offset,
-            edge: handle.edge,
-            pointerId: event.pointerId,
-          };
-          hoverHandleEdge = handle.edge;
-          cameraController?.setEnabled(false);
-          try {
-            canvas.setPointerCapture(event.pointerId);
-          } catch {
-            // Synthetic pointers may not support capture.
-          }
-          canvas.style.cursor = "grabbing";
-          drawControlPoints();
-          return;
-        }
-        const point = hitGuidePoint(x, y);
-        if (point) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          cameraDragging = false;
-          if (
-            selectSegment(
-              point.guide.kind,
-              point.guide.side,
-              point.guide.radius,
-              point.index,
-            )
-          ) {
-            hoverPoint = point;
-            drawControlPoints();
-          } else {
-            createSegment(point.guide, point.index);
-          }
-          return;
-        }
-      }
-      if (selectedSegment) {
-        selectedSegment = null;
-        hoverPoint = null;
-        hoverHandleEdge = null;
-        syncPaintControls();
-      }
-      if (hoverInsert) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        controlPoints.splice(hoverInsert.insertIndex, 0, [
-          hoverInsert.point[0],
-          hoverInsert.point[1],
-          hoverInsert.point[2],
-        ]);
-        hoverInsert = null;
-        drawControlPoints();
-        void rebuildControlPoints();
-      } else {
-        drawControlPoints();
-        if (event.button === 0) {
-          cameraDragging = true;
-        }
-      }
-      return;
-    }
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    cameraDragging = false;
-    dragIndex = index;
-    dragPointerId = event.pointerId;
-    dragPlaneY = controlPoints[index][1];
-    cameraController?.setEnabled(false);
-    try {
-      canvas.setPointerCapture(event.pointerId);
-    } catch {
-      // Synthetic pointers may not support capture.
     }
     drawControlPoints();
+    if (event.button === 0) {
+      cameraDragging = true;
+    }
   },
   { capture: true },
 );
@@ -1664,23 +921,6 @@ window.addEventListener(
       }
       return;
     }
-    if (guideDrag && event.pointerId === guideDrag.pointerId) {
-      event.preventDefault();
-      const guide = guideFor(
-        guideDrag.kind,
-        guideDrag.side,
-        guideDrag.offset,
-      );
-      if (guide) {
-        const [x, y] = pointerPosition(event);
-        const point = hitGuidePoint(x, y, [guide]);
-        if (point) {
-          updateSelectedEdge(guideDrag.edge, point.index);
-          drawControlPoints();
-        }
-      }
-      return;
-    }
     if (dragIndex === null || event.pointerId !== dragPointerId) {
       return;
     }
@@ -1696,6 +936,7 @@ const endDrag = (event: PointerEvent) => {
   if (dragIndex === null || event.pointerId !== dragPointerId) {
     return;
   }
+  const point = loopPoints[dragIndex];
   dragIndex = null;
   dragPointerId = null;
   try {
@@ -1704,25 +945,9 @@ const endDrag = (event: PointerEvent) => {
     // Pointer capture may already be released.
   }
   drawControlPoints();
-  void rebuildControlPoints();
-};
-
-const endGuideDrag = (event: PointerEvent) => {
-  if (!guideDrag || event.pointerId !== guideDrag.pointerId) {
-    return;
+  if (point) {
+    void moveJunction(point);
   }
-  const kind = guideDrag.kind;
-  guideDrag = null;
-  hoverHandleEdge = null;
-  try {
-    canvas.releasePointerCapture(event.pointerId);
-  } catch {
-    // Pointer capture may already be released.
-  }
-  cameraController?.setEnabled(true);
-  canvas.style.cursor = "";
-  drawControlPoints();
-  void (kind === "kerb" ? rebuildKerbSpans() : rebuildPropLines());
 };
 
 const endCarDrag = (event: PointerEvent) => {
@@ -1745,18 +970,11 @@ const endCarDrag = (event: PointerEvent) => {
 
 canvas.addEventListener("pointermove", (event) => {
   lastPointer = pointerPosition(event);
-  if (event.shiftKey !== deleteMode) {
-    setDeleteMode(event.shiftKey);
-  }
   drawControlPoints();
 });
 
 canvas.addEventListener("pointerleave", () => {
   lastPointer = null;
-  hoverInsert = null;
-  hoverDeleteIndex = null;
-  hoverPoint = null;
-  hoverHandleEdge = null;
   canvas.style.cursor = "";
   drawControlPoints();
 });
@@ -1771,16 +989,7 @@ window.addEventListener("keydown", (event) => {
   ) {
     return;
   }
-  if (
-    (event.key === "Delete" || event.key === "Backspace") &&
-    selectedSegment &&
-    !guideDrag
-  ) {
-    event.preventDefault();
-    deleteSelectedSegment();
-    return;
-  }
-  if (cameraViewMode === "car" && carDragPointerId === null && !guideDrag) {
+  if (cameraViewMode === "car" && carDragPointerId === null) {
     if (event.key === "ArrowUp" || event.key === "ArrowRight") {
       event.preventDefault();
       moveCar(CAR_ARROW_STEP);
@@ -1792,31 +1001,6 @@ window.addEventListener("keydown", (event) => {
       return;
     }
   }
-  if (event.key === "Shift") {
-    setDeleteMode(true);
-  }
-  if (event.key === "Escape" && selectedSegment && !guideDrag) {
-    selectedSegment = null;
-    hoverPoint = null;
-    hoverHandleEdge = null;
-    syncPaintControls();
-    drawControlPoints();
-  }
-});
-
-window.addEventListener("keyup", (event) => {
-  if (event.key === "Shift") {
-    setDeleteMode(false);
-  }
-});
-
-window.addEventListener("blur", () => {
-  setDeleteMode(false);
-});
-
-propToggle.addEventListener("click", () => {
-  const index = PROP_KINDS.indexOf(paintKind);
-  setPaintKind(PROP_KINDS[(index + 1) % PROP_KINDS.length]);
 });
 
 treeDetailButton.addEventListener("click", () => {
@@ -1830,10 +1014,6 @@ cameraViewButton.addEventListener("click", () => {
   cycleCameraView();
 });
 
-deleteSegmentButton.addEventListener("click", () => {
-  deleteSelectedSegment();
-});
-
 overlayToggle.addEventListener("click", () => {
   setOverlayVisible(!overlayVisible);
 });
@@ -1844,12 +1024,14 @@ const endCameraDrag = () => {
 
 window.addEventListener("pointerup", endDrag, { capture: true });
 window.addEventListener("pointercancel", endDrag, { capture: true });
-window.addEventListener("pointerup", endGuideDrag, { capture: true });
-window.addEventListener("pointercancel", endGuideDrag, { capture: true });
 window.addEventListener("pointerup", endCarDrag, { capture: true });
 window.addEventListener("pointercancel", endCarDrag, { capture: true });
 window.addEventListener("pointerup", endCameraDrag, { capture: true });
 window.addEventListener("pointercancel", endCameraDrag, { capture: true });
+
+function syncTreeDetailButton(): void {
+  treeDetailButton.textContent = `Trees: ${TREE_DETAIL_LABELS[treeDetailMode]}`;
+}
 
 function resizeCanvas(): boolean {
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -1923,24 +1105,27 @@ function renderStats(debug: {
 }
 
 async function boot() {
-  status.textContent = "loading wasm";
+  setStatus("loading wasm");
   await init();
 
   resizeCanvas();
-  status.textContent = "generating track";
+  setStatus("generating track");
   const viewer = await TrackViewer.create_editor(canvas);
   editorViewer = viewer;
   window.__trackEditor = viewer;
+  defaultProjectJson = viewer.editor_project();
+  const stored = readStoredProject();
+  if (stored) {
+    try {
+      await viewer.set_editor_project(stored);
+    } catch (error) {
+      console.warn("ignoring invalid saved track project", error);
+    }
+  }
   if (devMode) {
     setupTrackDevMenu(viewer);
   }
-  controlPoints = JSON.parse(viewer.editor_control_points()) as Vec3[];
-  centerline = JSON.parse(viewer.editor_centerline()) as Vec3[];
-  kerbSpans = (
-    JSON.parse(viewer.editor_kerb_spans()) as KerbSpan[]
-  ).sort((a, b) => a.start - b.start);
-  propLines = JSON.parse(viewer.editor_prop_lines()) as PropLine[];
-  syncPaintControls();
+  refreshEditorState();
   cameraController = setupTrackCamera(canvas, viewer, {
     maxHeight: MAX_CAMERA_HEIGHT,
     attachResetButton: false,
@@ -1948,10 +1133,6 @@ async function boot() {
   syncCameraViewButton();
   syncTreeDetailButton();
   applyCameraView();
-
-  const debug = JSON.parse(viewer.debug_info());
-  renderStats(debug);
-  drawsLabel.textContent = String(debug.stats.drawCalls);
 
   const observer = new ResizeObserver(() => {
     if (resizeCanvas()) {
@@ -1991,8 +1172,7 @@ async function boot() {
   };
 
   testDriveButton.disabled = false;
-  status.textContent = "ready";
-  status.className = "status ready";
+  setStatus("ready", "ready");
   window.__trackEditorReady = true;
   requestAnimationFrame(frame);
   requestAnimationFrame(hideLoading);
@@ -2002,9 +1182,10 @@ function fail(error: unknown) {
   showLoadingFailure(error);
   const message = error instanceof Error ? error.message : String(error);
   window.__trackEditorError = message;
-  status.textContent = message;
-  status.className = "status error";
+  setStatus(message, "error");
   console.error(error);
 }
 
 boot().catch(fail);
+
+export { PROJECT_SCHEMA, PROJECT_STORAGE_KEY, type TrackProjectDocument };

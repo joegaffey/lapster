@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-11
-Current phase: **Venue graph rebuild — Phase 1**
+Last updated: 2026-11-12
+Current phase: **Venue graph rebuild — Phase 3 (editor persistence and segment editing)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -57,8 +57,12 @@ Deployment:
   the default procedural loop from that graph with parity to the single-loop
   baseline. Phase 2 added canonical kerb/prop decoration paths, bake-time
   per-segment slicing, continuous element phase/spacing, junction clearance,
-  and split/junction reparameterisation. Phase 3 (project persistence and
-  segment editing UI) is next.
+  and split/junction reparameterisation. Phase 3a added the project-based wasm
+  editor API (load/save/export/import, junction/segment point moves, tangents,
+  split/merge/delete). Phase 3b-1 moved the web editor onto that API for project
+  persistence and junction editing; kerb/prop painting is temporarily removed
+  (TD-0001). Phase 3b-2 (segment point/tangent/split/merge UI) and Phase 3b-3
+  (decoration-path painting) are next.
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
@@ -113,10 +117,10 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 54 tests
+- `cargo test --workspace` — 135 tests
 - `cargo check ... --target wasm32-unknown-unknown`
-- `npm test` — 22 tests
-- `npm run test:viewer` — 37 Playwright tests plus an opt-in physics benchmark
+- `npm test` — 38 tests
+- `npm run test:viewer` — 77 passed, 1 skipped
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
