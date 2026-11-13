@@ -64,6 +64,17 @@ async function readRouteCenterline(page: Page): Promise<number[][]> {
   );
 }
 
+async function readSectionCenterlines(
+  page: Page,
+): Promise<Record<string, number[][]>> {
+  return page.evaluate(
+    () =>
+      JSON.parse(
+        (window as any).__trackEditor.editor_section_centerlines(),
+      ) as Record<string, number[][]>,
+  );
+}
+
 async function waitForProject(page: Page, expected: unknown) {
   await page.waitForFunction(
     (expectedJson) => {
@@ -93,6 +104,31 @@ async function readSelectionRows(page: Page): Promise<Record<string, string>> {
       rows[dt.textContent ?? ""] = dt.nextElementSibling?.textContent ?? "";
     });
     return rows;
+  });
+}
+
+interface PointEditorState {
+  open: boolean;
+  visible: boolean;
+  modal: boolean;
+  pointId: string;
+  rows: Record<string, string>;
+}
+
+async function readPointEditor(page: Page): Promise<PointEditorState> {
+  return page.evaluate(() => {
+    const dialog = document.querySelector<HTMLDialogElement>("#point-editor");
+    const rows: Record<string, string> = {};
+    dialog?.querySelectorAll("#point-editor-rows dt").forEach((dt) => {
+      rows[dt.textContent ?? ""] = dt.nextElementSibling?.textContent ?? "";
+    });
+    return {
+      open: dialog?.open ?? false,
+      visible: dialog ? dialog.getClientRects().length > 0 : false,
+      modal: dialog?.matches(":modal") ?? false,
+      pointId: document.querySelector("#point-editor-id")?.textContent ?? "",
+      rows,
+    };
   });
 }
 
@@ -315,6 +351,123 @@ async function clearSectionScreen(
       }
     });
     return { screen: bestScreen!, index: bestIndex };
+  });
+}
+
+async function emptyCanvasScreen(
+  page: Page,
+): Promise<{ screen: [number, number]; distance: number }> {
+  return page.evaluate(() => {
+    const viewer = (window as any).__trackEditor;
+    const canvas = document.querySelector("#view") as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    const camera = JSON.parse(viewer.camera_info()) as {
+      eye: number[];
+      target: number[];
+      fovY: number;
+    };
+    const route = JSON.parse(viewer.editor_route_centerline()) as number[][];
+    const points = JSON.parse(viewer.editor_points()) as PointData[];
+    const centerlines = JSON.parse(viewer.editor_section_centerlines()) as Record<
+      string,
+      number[][]
+    >;
+    const sub = (a: number[], b: number[]) => [
+      a[0] - b[0],
+      a[1] - b[1],
+      a[2] - b[2],
+    ];
+    const dot = (a: number[], b: number[]) =>
+      a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a: number[], b: number[]) => [
+      a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2],
+      a[0] * b[1] - a[1] * b[0],
+    ];
+    const normalize = (value: number[]) => {
+      const length = Math.hypot(value[0], value[1], value[2]);
+      return length > 1e-8
+        ? value.map((component) => component / length)
+        : [0, 0, 0];
+    };
+    const eye = camera.eye;
+    const forward = normalize(sub(camera.target, eye));
+    const right = normalize(cross(forward, [0, 1, 0]));
+    const up = normalize(cross(right, forward));
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    const tanHalf = Math.tan(camera.fovY * 0.5);
+    const aspect = width / Math.max(height, 1);
+    const project = (point: number[]): [number, number] | null => {
+      const offset = sub(point, eye);
+      const depth = dot(offset, forward);
+      if (depth <= 0.01) {
+        return null;
+      }
+      const ndcX = dot(offset, right) / (depth * tanHalf * aspect);
+      const ndcY = dot(offset, up) / (depth * tanHalf);
+      return [
+        (ndcX * 0.5 + 0.5) * width + rect.left,
+        (0.5 - ndcY * 0.5) * height + rect.top,
+      ];
+    };
+
+    const obstacles: Array<[number, number]> = [];
+    for (const sample of route) {
+      const screen = project(sample);
+      if (screen) obstacles.push(screen);
+    }
+    for (const point of points) {
+      let best = Infinity;
+      let pointHeight = 0;
+      for (const sectionId of point.sections) {
+        for (const sample of centerlines[sectionId] ?? []) {
+          const dx = sample[0] - point.position[0];
+          const dz = sample[2] - point.position[1];
+          const distance = dx * dx + dz * dz;
+          if (distance < best) {
+            best = distance;
+            pointHeight = sample[1];
+          }
+        }
+      }
+      const screen = project([
+        point.position[0],
+        pointHeight,
+        point.position[1],
+      ]);
+      if (screen) obstacles.push(screen);
+    }
+
+    const margin = 24;
+    const top = 110;
+    let bestScreen: [number, number] = [
+      rect.left + width - margin,
+      rect.top + height - margin,
+    ];
+    let bestDistance = -1;
+    for (let gx = 0; gx <= 12; gx += 1) {
+      for (let gy = 0; gy <= 12; gy += 1) {
+        const x = rect.left + margin + ((width - 2 * margin) * gx) / 12;
+        const y = rect.top + top + ((height - top - 2 * margin) * gy) / 12;
+        // Keep clear of the bottom-left HUD/dialog panel.
+        if (x < rect.left + 380 && y > rect.top + height - 320) {
+          continue;
+        }
+        let nearest = Infinity;
+        for (const obstacle of obstacles) {
+          nearest = Math.min(
+            nearest,
+            Math.hypot(x - obstacle[0], y - obstacle[1]),
+          );
+        }
+        if (nearest > bestDistance) {
+          bestDistance = nearest;
+          bestScreen = [x, y];
+        }
+      }
+    }
+    return { screen: bestScreen, distance: bestDistance };
   });
 }
 
@@ -545,22 +698,30 @@ test("selecting a handle shows its id, role, and off-curve contact", async ({
   await page.mouse.click(screen![0], screen![1]);
   await waitForReady(page);
 
-  const rows = await readSelectionRows(page);
-  expect(rows.kind).toBe("point");
-  expect(rows.id).toBe("point-0");
-  expect(rows["point kind"]).toBe("handle");
-  expect(rows.role).toBe("start/finish");
-  expect(rows.sections).toBe("section-0");
+  const editor = await readPointEditor(page);
+  expect(editor.open).toBe(true);
+  expect(editor.visible).toBe(true);
+  expect(editor.pointId).toBe("point-0");
+  expect(editor.rows.kind).toBe("point");
+  expect(editor.rows.id).toBe("point-0");
+  expect(editor.rows["point kind"]).toBe("handle");
+  expect(editor.rows.role).toBe("start/finish");
+  expect(editor.rows.sections).toBe("section-0");
 
   // point-0 is an off-road start/finish handle: its contact is > 1 m away.
-  const contact = Number.parseFloat(rows.contact);
+  const contact = Number.parseFloat(editor.rows.contact);
   expect(Number.isFinite(contact)).toBe(true);
   expect(contact).toBeGreaterThan(0.5);
+
+  // The HUD keeps only a short hint; point rows live in the dialog.
+  const selection = await readSelectionRows(page);
+  expect(selection.kind).toBeUndefined();
+  expect(selection.hint).toContain("point-0");
 
   expect(pageErrors).toEqual([]);
 });
 
-test("selecting the route centerline selects the closed section", async ({
+test("Alt-clicking the route centerline selects the closed section", async ({
   page,
 }) => {
   const pageErrors = collectPageErrors(page);
@@ -570,7 +731,9 @@ test("selecting the route centerline selects the closed section", async ({
 
   const target = await clearSectionScreen(page);
   expect(target.index).toBeGreaterThanOrEqual(0);
+  await page.keyboard.down("Alt");
   await page.mouse.click(target.screen[0], target.screen[1]);
+  await page.keyboard.up("Alt");
   await waitForReady(page);
 
   const rows = await readSelectionRows(page);
@@ -578,6 +741,248 @@ test("selecting the route centerline selects the closed section", async ({
   expect(rows.id).toBe("section-0");
   expect(rows.state).toBe("closed");
   expect(rows.points).toBe("8");
+  expect((await readPointEditor(page)).open).toBe(false);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("clicking the road inserts and selects a new point", async ({ page }) => {
+  test.setTimeout(120_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=point-insert");
+  await waitForEditor(page);
+  await waitForReady(page);
+
+  const beforePoints = await readPoints(page);
+  const beforeIds = new Set(beforePoints.map((point) => point.id));
+  const beforeCenterlines = await readSectionCenterlines(page);
+  const target = await clearSectionScreen(page);
+  expect(target.index).toBeGreaterThanOrEqual(0);
+
+  await page.mouse.move(target.screen[0], target.screen[1]);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (document.querySelector("#view") as HTMLCanvasElement).style.cursor,
+      ),
+    )
+    .toBe("copy");
+
+  await page.mouse.click(target.screen[0], target.screen[1]);
+  await waitForReady(page);
+  await expect.poll(async () => (await readPoints(page)).length).toBe(
+    beforePoints.length + 1,
+  );
+
+  const afterPoints = await readPoints(page);
+  const inserted = afterPoints.find((point) => !beforeIds.has(point.id));
+  expect(inserted, "inserted point").toBeDefined();
+  const editor = await readPointEditor(page);
+  expect(editor.open).toBe(true);
+  expect(editor.pointId).toBe(inserted!.id);
+  expect(editor.rows.kind).toBe("point");
+  expect(editor.rows.id).toBe(inserted!.id);
+
+  const project = await readProject(page);
+  expect(project.points?.some((point) => point.id === inserted!.id)).toBe(true);
+  const afterCenterlines = await readSectionCenterlines(page);
+  expect(afterCenterlines["section-0"]).not.toEqual(
+    beforeCenterlines["section-0"],
+  );
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("an inserted point can be dragged and deleted", async ({ page }) => {
+  test.setTimeout(120_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=point-insert-drag-delete");
+  await waitForEditor(page);
+  await waitForReady(page);
+
+  const beforePoints = await readPoints(page);
+  const beforeIds = new Set(beforePoints.map((point) => point.id));
+  const target = await clearSectionScreen(page);
+  await page.mouse.click(target.screen[0], target.screen[1]);
+  await waitForReady(page);
+  await expect.poll(async () => (await readPoints(page)).length).toBe(
+    beforePoints.length + 1,
+  );
+
+  const inserted = (await readPoints(page)).find(
+    (point) => !beforeIds.has(point.id),
+  )!;
+  const moved = await dragPoint(page, inserted.id);
+  expect(
+    Math.abs(moved.position[0] - inserted.position[0]) +
+      Math.abs(moved.position[1] - inserted.position[1]),
+  ).toBeGreaterThan(1e-3);
+
+  await page.locator("#delete-point").click();
+  await waitForReady(page);
+  await expect.poll(async () => (await readPoints(page)).length).toBe(
+    beforePoints.length,
+  );
+
+  const editor = await readPointEditor(page);
+  expect(editor.open).toBe(false);
+  expect(editor.visible).toBe(false);
+  const rows = await readSelectionRows(page);
+  expect(rows.kind).toBe("none");
+  expect((await readPoints(page)).some((point) => point.id === inserted.id)).toBe(
+    false,
+  );
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("a layout start/finish point cannot be deleted", async ({ page }) => {
+  test.setTimeout(120_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=point-delete-blocked");
+  await waitForEditor(page);
+  await waitForReady(page);
+
+  const beforePoints = await readPoints(page);
+  const screen = await pointScreen(page, "point-0");
+  expect(screen).not.toBeNull();
+  await page.mouse.click(screen![0], screen![1]);
+  await waitForReady(page);
+
+  await page.locator("#delete-point").click();
+  await page.waitForFunction(() => {
+    const status = document.querySelector("#status");
+    return (
+      status?.classList.contains("error") === true &&
+      /cannot delete point 'point-0'/.test(status.textContent ?? "")
+    );
+  });
+
+  expect((await readPoints(page)).length).toBe(beforePoints.length);
+  expect((await readPoints(page)).some((point) => point.id === "point-0")).toBe(
+    true,
+  );
+  const editor = await readPointEditor(page);
+  expect(editor.open).toBe(true);
+  expect(editor.visible).toBe(true);
+  expect(editor.rows.kind).toBe("point");
+  expect(editor.rows.id).toBe("point-0");
+  expect((await readSelectionRows(page)).hint).toContain("point-0");
+  expect((await readProject(page)).layouts?.[0].startFinish).toBe("point-0");
+  expect(pageErrors).toEqual([]);
+});
+
+test("setting start/finish updates the active layout and point", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=point-start-finish");
+  await waitForEditor(page);
+  await waitForReady(page);
+
+  const screen = await pointScreen(page, "point-3");
+  expect(screen).not.toBeNull();
+  await page.mouse.click(screen![0], screen![1]);
+  const editor = await readPointEditor(page);
+  expect(editor.open).toBe(true);
+  expect(editor.rows.kind).toBe("point");
+  expect(editor.rows.id).toBe("point-3");
+
+  await page.locator("#set-start-finish").click();
+  await waitForReady(page);
+  await expect
+    .poll(async () => (await readProject(page)).layouts?.[0].startFinish)
+    .toBe("point-3");
+
+  const points = await readPoints(page);
+  expect(points.find((point) => point.id === "point-3")?.startFinish).toBe(true);
+  expect(points.find((point) => point.id === "point-0")?.startFinish).toBe(
+    false,
+  );
+  const after = await readPointEditor(page);
+  expect(after.open).toBe(true);
+  expect(after.rows.role).toBe("start/finish");
+  expect(pageErrors).toEqual([]);
+});
+
+test("point editor stays open while non-modal and closes with selection", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=point-editor-lifecycle");
+  await waitForEditor(page);
+  await waitForReady(page);
+
+  const selectPoint = async (id: string) => {
+    const screen = await pointScreen(page, id);
+    expect(screen, `point ${id} is visible`).not.toBeNull();
+    await page.mouse.click(screen![0], screen![1]);
+    const editor = await readPointEditor(page);
+    expect(editor.open).toBe(true);
+    expect(editor.visible).toBe(true);
+    expect(editor.pointId).toBe(id);
+    return editor;
+  };
+
+  const editor = await selectPoint("point-3");
+  expect(editor.modal).toBe(false);
+
+  // A non-modal dialog has no backdrop: canvas is still the hit target.
+  expect(
+    await page.evaluate(() => {
+      const dialog = document.querySelector<HTMLDialogElement>("#point-editor")!;
+      const canvas = document.querySelector("#view") as HTMLCanvasElement;
+      const rect = canvas.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        rect.left + rect.width * 0.75,
+        rect.top + rect.height * 0.5,
+      );
+      return { modal: dialog.matches(":modal"), hit: hit?.id ?? "" };
+    }),
+  ).toEqual({ modal: false, hit: "view" });
+
+  await page.keyboard.press("Escape");
+  expect((await readPointEditor(page)).open).toBe(false);
+  expect((await readSelectionRows(page)).kind).toBe("none");
+
+  await selectPoint("point-4");
+  const section = await clearSectionScreen(page);
+  expect(section.index).toBeGreaterThanOrEqual(0);
+  await page.keyboard.down("Alt");
+  await page.mouse.click(section.screen[0], section.screen[1]);
+  await page.keyboard.up("Alt");
+  expect((await readPointEditor(page)).open).toBe(false);
+  const sectionRows = await readSelectionRows(page);
+  expect(sectionRows.kind).toBe("section");
+  expect(sectionRows.id).toBe("section-0");
+
+  await selectPoint("point-5");
+  const empty = await emptyCanvasScreen(page);
+  expect(empty.distance).toBeGreaterThan(20);
+  await page.mouse.click(empty.screen[0], empty.screen[1]);
+  expect((await readPointEditor(page)).open).toBe(false);
+  expect((await readSelectionRows(page)).kind).toBe("none");
+
+  await selectPoint("point-3");
+  const before = (await readPoints(page)).find(
+    (point) => point.id === "point-3",
+  )!;
+  const dragged = await dragPoint(page, "point-3");
+  expect(
+    Math.abs(dragged.position[0] - before.position[0]) +
+      Math.abs(dragged.position[1] - before.position[1]),
+  ).toBeGreaterThan(1e-3);
+  const afterDrag = await readPointEditor(page);
+  expect(afterDrag.open).toBe(true);
+  expect(afterDrag.pointId).toBe("point-3");
 
   expect(pageErrors).toEqual([]);
 });

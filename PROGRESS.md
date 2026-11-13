@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-12
+Last updated: 2026-11-13
 Current phase: **Venue graph rebuild — `@6` section-point reset (Phase 3)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
@@ -59,10 +59,13 @@ Deployment:
   replaces Catmull-Rom with a cubic B-spline: all authored control points are
   off-curve handles; start/finish and junction contact points are derived on the
   road. The render side is migrated and green (66 tests); the web editor boots
-  on `@6`, selects/drags points and sections, persists the project, and draws
-  the control polygon and dotted contact lines. Section overlays now sample at
-  route density (TD-0005 resolved). Phase 3b and Step 0b remain. Per-point width
-  is deferred (TD-0002, TD-0003).
+  on `@6`, selects/drags points and sections, persists the project, draws the
+  control polygon and dotted contact lines, and now has the core point-editing
+  tools: click the road to insert, delete, and set start/finish, with point
+  details/actions in a non-modal point-editor dialog. Section overlays now
+  sample at route density (TD-0005 resolved). Decoration-path painting
+  (TD-0001) and Step 0b junctions are next. Per-point width is deferred
+  (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
@@ -120,8 +123,7 @@ Deployment:
 - `cargo test --workspace` — 138 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 38 tests
-- `npm run test:viewer` — 80 passed, 1 skipped (final full run pending after the
-  `editor-drive` fix; that test passes in isolation)
+- `npm run test:viewer` — 85 passed, 1 skipped
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
@@ -159,27 +161,27 @@ State on `feat/venue-graph`:
   handles; start/finish and junction contacts are derived; section overlays
   sample at route density. `cargo test -p sim-render` — 66 passing.
 - Web editor on `@6`: point/section selection, point drag, save/load/export/
-  import, Test Drive, dashed control polygon, and dotted contact lines. Local
-  page: `http://127.0.0.1:8123/web/track-editor/`.
+  import, Test Drive, dashed control polygon, dotted contact lines, and a
+  non-modal point-editor dialog. Click the road to insert, Delete/Backspace or
+  the dialog to delete, and Set start/finish in the dialog. Alt/Option-click a
+  section centerline to select it.
+- Full gate green: 38 web unit tests, 85 viewer tests passed / 1 skipped,
+  138 workspace tests, clippy, fmt, wasm.
 - Docs: ADR 0003, ADR 0004, venue-graph plan, tech debt updated.
-- Local commits: `682bf60 docs: lock section-point venue graph @6 model`.
-  Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
+- Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
-- The `@6` code/web/test changes are **uncommitted**.
-- The full viewer run's only failure (`editor-drive.spec.ts` called the removed
-  `editor_centerline`; now `editor_route_centerline`) is fixed and passes in
-  isolation. Re-run the full viewer suite before committing.
+- Local page: `http://127.0.0.1:8123/web/track-editor/`.
+- Dev preview: `https://joegaffey.com/lapster-dev/web/track-editor/`.
 
 Resume in this order:
 
-1. `CI=1 npm --prefix web run test:viewer` — confirm the full viewer gate.
-2. Commit the `@6`/B-spline checkpoint; push only on explicit approval. The dev
-   preview still serves the old `@5` build.
-3. Step 0b (render): junction contact derivation, branch caps, partial route
+1. Decoration-path painting (TD-0001): kerbs/props on canonical decoration
+   chains, with kind/side/lane and phase controls. This is a new authoring UI,
+   not a restoration of the removed `@5` per-segment painting.
+2. Step 0b (render): junction contact derivation, branch caps, partial route
    legs, cross-section/seam decoration wrap.
-4. Web UX: insert/delete points, start/finish edit, Make junction + capped
-   branch; update the Playwright suite.
-5. Full gate, dev preview validation, then a PR to `dev`.
+3. Web UX: Make junction + capped branch; then multi-layout and pit lane.
+4. Full gate, dev preview validation, then a PR to `dev`.
 
 ## Next steps
 

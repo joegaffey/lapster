@@ -966,6 +966,12 @@ var importProjectButton = document.querySelector("#import-project");
 var importProjectInput = document.querySelector("#import-project-file");
 var resetProjectButton = document.querySelector("#reset-project");
 var selectionDetails = document.querySelector("#selection-details");
+var pointEditor = document.querySelector("#point-editor");
+var pointEditorId = document.querySelector("#point-editor-id");
+var pointEditorRows = document.querySelector("#point-editor-rows");
+var pointEditorClose = document.querySelector("#point-editor-close");
+var deletePointButton = document.querySelector("#delete-point");
+var setStartFinishButton = document.querySelector("#set-start-finish");
 var editorViewer;
 var cameraController;
 var project = {};
@@ -979,7 +985,10 @@ var defaultProjectJson = "";
 var dragIndex = null;
 var dragPointerId = null;
 var dragPlaneY = 0;
+var dragStartPosition = null;
+var insertHover = null;
 var rebuilding = false;
+var rebuildWaiters = [];
 var suspended = false;
 var cameraDragging = false;
 var lastPointer = null;
@@ -1253,7 +1262,7 @@ function hitTestControlPoint(x, y) {
   });
   return best;
 }
-function hitTestSectionCenterline(x, y) {
+function hitTestRouteSection(x, y) {
   const camera = currentCamera();
   if (!camera || routeSectionIds.size === 0) {
     return null;
@@ -1274,6 +1283,7 @@ function hitTestSectionCenterline(x, y) {
       (point) => projectPoint(point, camera, width, height)
     );
     const segmentCount = section.closed === false ? projected.length - 1 : projected.length;
+    const denominator = Math.max(1, samples.length - 1);
     for (let index = 0; index < segmentCount; index += 1) {
       const start = projected[index];
       const end = projected[(index + 1) % projected.length];
@@ -1283,7 +1293,7 @@ function hitTestSectionCenterline(x, y) {
       const segmentX = end[0] - start[0];
       const segmentY = end[1] - start[1];
       const lengthSquared = segmentX * segmentX + segmentY * segmentY;
-      const t = lengthSquared > 1e-6 ? Math.max(
+      const segmentT = lengthSquared > 1e-6 ? Math.max(
         0,
         Math.min(
           1,
@@ -1291,19 +1301,55 @@ function hitTestSectionCenterline(x, y) {
         )
       ) : 0;
       const distance = Math.hypot(
-        x - (start[0] + segmentX * t),
-        y - (start[1] + segmentY * t)
+        x - (start[0] + segmentX * segmentT),
+        y - (start[1] + segmentY * segmentT)
       );
       if (distance < bestDistance) {
         bestDistance = distance;
-        best = section.id;
+        const next = (index + 1) % samples.length;
+        best = {
+          sectionId: section.id,
+          position: lerp2(samples[index], samples[next], segmentT),
+          t: Math.max(
+            0,
+            Math.min(1, (index + segmentT) / denominator)
+          )
+        };
       }
     }
   }
   return best;
 }
+function insertAfterIndex(section, t) {
+  const count = section.points.length;
+  const raw = section.closed === false ? Math.floor(t * (count - 1)) : Math.floor(t * count);
+  return Math.max(0, Math.min(count - 1, raw));
+}
+function updateInsertHover() {
+  insertHover = null;
+  const camera = currentCamera();
+  if (!camera || !overlayVisible || !lastPointer || dragIndex !== null || carDragPointerId !== null || rebuilding || cameraDragging) {
+    return;
+  }
+  const [x, y] = lastPointer;
+  if (hitTestCarMarker(x, y) || hitTestControlPoint(x, y) >= 0) {
+    return;
+  }
+  insertHover = hitTestRouteSection(x, y);
+}
 function updateCursor() {
-  if (!overlayVisible || !lastPointer || dragIndex !== null || carDragPointerId !== null || rebuilding || cameraDragging) {
+  if (rebuilding || cameraDragging) {
+    return;
+  }
+  if (dragIndex !== null || carDragPointerId !== null) {
+    return;
+  }
+  if (!overlayVisible || !lastPointer) {
+    canvas.style.cursor = "";
+    return;
+  }
+  if (insertHover) {
+    canvas.style.cursor = "copy";
     return;
   }
   if (hitTestCarMarker(lastPointer[0], lastPointer[1]) || hitTestControlPoint(lastPointer[0], lastPointer[1]) >= 0) {
@@ -1352,6 +1398,7 @@ function drawControlPoints() {
   if (!camera) {
     return;
   }
+  updateInsertHover();
   updateCursor();
   if (centerline.length > 1) {
     overlayContext.beginPath();
@@ -1399,6 +1446,34 @@ function drawControlPoints() {
       overlayContext.lineWidth = 5;
       overlayContext.strokeStyle = "rgba(245, 158, 11, 0.9)";
       overlayContext.stroke();
+    }
+  }
+  if (insertHover) {
+    const projected = projectPoint(
+      insertHover.position,
+      camera,
+      width,
+      height
+    );
+    if (projected) {
+      const [insertX, insertY] = projected;
+      overlayContext.save();
+      overlayContext.beginPath();
+      overlayContext.arc(insertX, insertY, 7, 0, Math.PI * 2);
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "rgba(56, 189, 248, 0.95)";
+      overlayContext.setLineDash([3, 3]);
+      overlayContext.stroke();
+      overlayContext.setLineDash([]);
+      overlayContext.beginPath();
+      overlayContext.moveTo(insertX - 4, insertY);
+      overlayContext.lineTo(insertX + 4, insertY);
+      overlayContext.moveTo(insertX, insertY - 4);
+      overlayContext.lineTo(insertX, insertY + 4);
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "rgba(56, 189, 248, 0.95)";
+      overlayContext.stroke();
+      overlayContext.restore();
     }
   }
   const pointPositions = new Map(
@@ -1691,16 +1766,28 @@ function contactColors(point) {
 }
 function renderSelection() {
   selectionDetails.replaceChildren();
-  const addRow = (label, value) => {
+  pointEditorRows.replaceChildren();
+  const addRow = (target, label, value) => {
     const dt = document.createElement("dt");
     dt.textContent = label;
     const dd = document.createElement("dd");
     dd.textContent = value;
-    selectionDetails.append(dt, dd);
+    target.append(dt, dd);
+  };
+  const closePointEditor = () => {
+    pointEditorId.textContent = "";
+    if (pointEditor.open) {
+      pointEditor.close();
+    }
   };
   if (!selection) {
-    addRow("kind", "none");
-    addRow("hint", "click a point or section");
+    closePointEditor();
+    addRow(selectionDetails, "kind", "none");
+    addRow(
+      selectionDetails,
+      "hint",
+      "click a point, Alt-click a section, or click the road to insert"
+    );
     return;
   }
   if (selection.kind === "point") {
@@ -1710,22 +1797,30 @@ function renderSelection() {
       renderSelection();
       return;
     }
-    addRow("kind", "point");
-    addRow("id", point.id);
-    addRow("point kind", point.kind);
+    pointEditorId.textContent = point.id;
+    addRow(pointEditorRows, "kind", "point");
+    addRow(pointEditorRows, "id", point.id);
+    addRow(pointEditorRows, "point kind", point.kind);
     addRow(
+      pointEditorRows,
       "role",
       point.startFinish ? "start/finish" : point.junction ? "junction" : point.looseEnd ? "loose end" : "point"
     );
     const contact = pointContactDistance(point);
     addRow(
+      pointEditorRows,
       "contact",
       contact === null ? "n/a" : contact < CONTACT_TOLERANCE ? "on curve" : `${contact.toFixed(1)} m`
     );
-    addRow("section degree", String(point.degree));
-    addRow("sections", point.sections.join(", ") || "none");
+    addRow(pointEditorRows, "section degree", String(point.degree));
+    addRow(pointEditorRows, "sections", point.sections.join(", ") || "none");
+    if (!pointEditor.open) {
+      pointEditor.show();
+    }
+    addRow(selectionDetails, "hint", `point ${point.id} selected`);
     return;
   }
+  closePointEditor();
   const section = (project.sections ?? []).find(
     (item) => item.id === selection?.id
   );
@@ -1734,10 +1829,10 @@ function renderSelection() {
     renderSelection();
     return;
   }
-  addRow("kind", "section");
-  addRow("id", section.id);
-  addRow("state", section.closed ? "closed" : "open");
-  addRow("points", String(section.points.length));
+  addRow(selectionDetails, "kind", "section");
+  addRow(selectionDetails, "id", section.id);
+  addRow(selectionDetails, "state", section.closed ? "closed" : "open");
+  addRow(selectionDetails, "points", String(section.points.length));
 }
 function refreshEditorState() {
   if (!editorViewer) {
@@ -1812,7 +1907,18 @@ async function testDrive() {
 testDriveButton.addEventListener("click", () => {
   void testDrive();
 });
-async function rebuildEditor(message, action) {
+deletePointButton.addEventListener("click", () => {
+  void deleteSelectedPoint();
+});
+setStartFinishButton.addEventListener("click", () => {
+  void setStartFinishPoint();
+});
+pointEditorClose.addEventListener("click", () => {
+  selection = null;
+  renderSelection();
+  drawControlPoints();
+});
+async function rebuildEditor(message, action, errorPrefix = "edit failed") {
   if (!editorViewer || rebuilding) {
     return;
   }
@@ -1828,14 +1934,77 @@ async function rebuildEditor(message, action) {
     testDriveButton.disabled = false;
     setStatus("ready", "ready");
   } catch (error) {
-    reportProjectError("edit failed", error);
+    if (errorPrefix === null) {
+      const text = error instanceof Error ? error.message : String(error);
+      setStatus(text, "error");
+    } else {
+      reportProjectError(errorPrefix, error);
+    }
     testDriveButton.disabled = false;
   } finally {
     suspended = false;
     rebuilding = false;
+    const waiters = rebuildWaiters;
+    rebuildWaiters = [];
+    for (const resolve of waiters) {
+      resolve();
+    }
     cameraController?.setEnabled(true);
     drawControlPoints();
   }
+}
+function waitForRebuild() {
+  if (!rebuilding) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => rebuildWaiters.push(resolve));
+}
+async function insertPointAt(hit) {
+  const section = (project.sections ?? []).find(
+    (item) => item.id === hit.sectionId
+  );
+  if (!section || !editorViewer) {
+    return;
+  }
+  const afterIndex = insertAfterIndex(section, hit.t);
+  await rebuildEditor("inserting point", async () => {
+    const pointId = await editorViewer.insert_editor_point(
+      hit.sectionId,
+      afterIndex,
+      hit.position[0],
+      hit.position[2]
+    );
+    selection = { kind: "point", id: pointId };
+  });
+}
+async function deleteSelectedPoint() {
+  if (!editorViewer || selection?.kind !== "point") {
+    return;
+  }
+  const pointId = selection.id;
+  while (rebuilding) {
+    await waitForRebuild();
+  }
+  if (selection?.kind !== "point" || selection.id !== pointId) {
+    return;
+  }
+  await rebuildEditor(
+    "deleting point",
+    async () => {
+      await editorViewer.delete_editor_point(pointId);
+      selection = null;
+    },
+    null
+  );
+}
+async function setStartFinishPoint() {
+  if (!editorViewer || selection?.kind !== "point" || rebuilding) {
+    return;
+  }
+  const pointId = selection.id;
+  await rebuildEditor("setting start/finish", async () => {
+    await editorViewer.set_editor_start_finish(pointId);
+  });
 }
 async function moveEditorPoint(point) {
   await rebuildEditor(
@@ -1987,6 +2156,7 @@ canvas.addEventListener(
       dragIndex = index;
       dragPointerId = event.pointerId;
       dragPlaneY = editorPoints[index].position[1];
+      dragStartPosition = [...editorPoints[index].position];
       cameraController?.setEnabled(false);
       try {
         canvas.setPointerCapture(event.pointerId);
@@ -1995,15 +2165,22 @@ canvas.addEventListener(
       drawControlPoints();
       return;
     }
-    const sectionId = overlayVisible ? hitTestSectionCenterline(x, y) : null;
-    if (sectionId) {
-      selection = { kind: "section", id: sectionId };
-      renderSelection();
-      drawControlPoints();
-    } else {
-      selection = null;
-      renderSelection();
+    const sectionHit = overlayVisible ? hitTestRouteSection(x, y) : null;
+    if (sectionHit) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cameraDragging = false;
+      if (event.altKey) {
+        selection = { kind: "section", id: sectionHit.sectionId };
+        renderSelection();
+        drawControlPoints();
+      } else {
+        void insertPointAt(sectionHit);
+      }
+      return;
     }
+    selection = null;
+    renderSelection();
     drawControlPoints();
     if (event.button === 0) {
       cameraDragging = true;
@@ -2042,14 +2219,16 @@ var endDrag = (event) => {
     return;
   }
   const point = editorPoints[dragIndex];
+  const startPosition = dragStartPosition;
   dragIndex = null;
   dragPointerId = null;
+  dragStartPosition = null;
   try {
     canvas.releasePointerCapture(event.pointerId);
   } catch {
   }
   drawControlPoints();
-  if (point) {
+  if (point && startPosition && (Math.abs(point.position[0] - startPosition[0]) > 1e-6 || Math.abs(point.position[1] - startPosition[1]) > 1e-6 || Math.abs(point.position[2] - startPosition[2]) > 1e-6)) {
     void moveEditorPoint(point);
   }
 };
@@ -2081,6 +2260,11 @@ canvas.addEventListener("pointerleave", () => {
 window.addEventListener("keydown", (event) => {
   const target = event.target;
   if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+    return;
+  }
+  if ((event.key === "Delete" || event.key === "Backspace") && selection?.kind === "point" && !event.repeat) {
+    event.preventDefault();
+    void deleteSelectedPoint();
     return;
   }
   if (event.key === "Escape") {
