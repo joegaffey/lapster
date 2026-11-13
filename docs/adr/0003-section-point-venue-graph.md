@@ -1,6 +1,6 @@
 # 0003. Section-point venue graph with mid-section junctions
 
-- Status: accepted
+- Status: accepted; spline evaluation superseded by ADR-0004
 - Date: 2026-11-12
 - Deciders: architect, @joegaffey
 - Related: `docs/features/venue-graph-plan.md`, `AGENTS.md`, ADR-0002

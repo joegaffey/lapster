@@ -23,50 +23,83 @@ interface CameraView {
   fovY: number;
 }
 
-interface LoopPointData {
+type PointKind = "anchor" | "handle";
+
+interface EditorPointData {
   id: string;
   position: [number, number];
-  kind: string;
+  kind: PointKind;
+  junction: string | null;
+  end: string | null;
   degree: number;
+  sections: string[];
+  startFinish: boolean;
 }
 
-interface LoopPoint {
+interface EditorPoint {
   id: string;
   position: Vec3;
-  kind: string;
+  kind: PointKind;
+  junction: string | null;
+  end: string | null;
   degree: number;
+  sections: string[];
+  startFinish: boolean;
+  looseEnd: boolean;
 }
 
-interface ProjectJunction {
+interface RouteLeg {
+  sectionId: string;
+  entry: string;
+  exit: string;
+  wrap?: boolean;
+}
+
+interface ProjectPoint {
   id: string;
   position: [number, number];
-  kind?: string;
+  kind?: PointKind;
+  junction?: { kind?: string } | null;
+  end?: string | null;
 }
 
-interface ProjectSegment {
+interface ContactInfo {
+  point: Vec3;
+  distance: number;
+}
+
+interface ProjectSection {
   id: string;
-  from: string;
-  to: string;
+  closed?: boolean;
+  points: string[];
 }
 
 interface ProjectLayout {
   id: string;
-  route?: string[];
+  name?: string;
+  route?: RouteLeg[];
+  startFinish?: string;
 }
 
 interface TrackProjectDocument {
   schema?: string;
   name?: string;
-  junctions?: ProjectJunction[];
-  segments?: ProjectSegment[];
+  points?: ProjectPoint[];
+  sections?: ProjectSection[];
   layouts?: ProjectLayout[];
 }
+
+type Selection =
+  | { kind: "point"; id: string }
+  | { kind: "section"; id: string }
+  | null;
 
 const MAX_CAMERA_HEIGHT = 140;
 const CONTROL_POINT_RADIUS = 9;
 const CONTROL_POINT_HIT_RADIUS = 18;
-const PROJECT_STORAGE_KEY = "lapster.track-editor.project.v5";
-const PROJECT_SCHEMA = "lapster/track-project@5";
+const SECTION_HIT_RADIUS = 10;
+const PROJECT_STORAGE_KEY = "lapster.track-editor.project.v6";
+const PROJECT_SCHEMA = "lapster/track-project@6";
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
   1: "#33ff59",
@@ -104,12 +137,17 @@ const importProjectInput =
   document.querySelector<HTMLInputElement>("#import-project-file")!;
 const resetProjectButton =
   document.querySelector<HTMLButtonElement>("#reset-project")!;
+const selectionDetails =
+  document.querySelector<HTMLElement>("#selection-details")!;
 
 let editorViewer: TrackViewer | undefined;
 let cameraController: OrbitCameraController | undefined;
 let project: TrackProjectDocument = {};
 let activeLayoutId = "";
-let loopPoints: LoopPoint[] = [];
+let editorPoints: EditorPoint[] = [];
+let sectionCenterlines: Record<string, Vec3[]> = {};
+let routeSectionIds = new Set<string>();
+let selection: Selection = null;
 let centerline: Vec3[] = [];
 let defaultProjectJson = "";
 let dragIndex: number | null = null;
@@ -415,7 +453,7 @@ function hitTestControlPoint(x: number, y: number): number {
   const height = canvas.clientHeight;
   let best = -1;
   let bestDistance = CONTROL_POINT_HIT_RADIUS;
-  loopPoints.forEach((point, index) => {
+  editorPoints.forEach((point, index) => {
     const projected = projectPoint(point.position, camera, width, height);
     if (!projected) {
       return;
@@ -426,6 +464,60 @@ function hitTestControlPoint(x: number, y: number): number {
       best = index;
     }
   });
+  return best;
+}
+
+function hitTestSectionCenterline(x: number, y: number): string | null {
+  const camera = currentCamera();
+  if (!camera || routeSectionIds.size === 0) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  let best: string | null = null;
+  let bestDistance = SECTION_HIT_RADIUS;
+  for (const section of project.sections ?? []) {
+    if (!routeSectionIds.has(section.id)) {
+      continue;
+    }
+    const samples = sectionCenterlines[section.id];
+    if (!samples || samples.length < 2) {
+      continue;
+    }
+    const projected = samples.map((point) =>
+      projectPoint(point, camera, width, height),
+    );
+    const segmentCount = section.closed === false ? projected.length - 1 : projected.length;
+    for (let index = 0; index < segmentCount; index += 1) {
+      const start = projected[index];
+      const end = projected[(index + 1) % projected.length];
+      if (!start || !end) {
+        continue;
+      }
+      const segmentX = end[0] - start[0];
+      const segmentY = end[1] - start[1];
+      const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+      const t =
+        lengthSquared > 1e-6
+          ? Math.max(
+              0,
+              Math.min(
+                1,
+                ((x - start[0]) * segmentX + (y - start[1]) * segmentY) /
+                  lengthSquared,
+              ),
+            )
+          : 0;
+      const distance = Math.hypot(
+        x - (start[0] + segmentX * t),
+        y - (start[1] + segmentY * t),
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = section.id;
+      }
+    }
+  }
   return best;
 }
 
@@ -520,6 +612,117 @@ function drawControlPoints(): void {
     overlayContext.stroke();
   }
 
+  if (selection?.kind === "section") {
+    const samples = sectionCenterlines[selection.id];
+    if (samples && samples.length > 1) {
+      overlayContext.beginPath();
+      let drawing = false;
+      for (const sample of samples) {
+        const projected = projectPoint(sample, camera, width, height);
+        if (!projected) {
+          drawing = false;
+          continue;
+        }
+        if (!drawing) {
+          overlayContext.moveTo(projected[0], projected[1]);
+          drawing = true;
+        } else {
+          overlayContext.lineTo(projected[0], projected[1]);
+        }
+      }
+      overlayContext.lineWidth = 5;
+      overlayContext.strokeStyle = "rgba(245, 158, 11, 0.9)";
+      overlayContext.stroke();
+    }
+  }
+
+  const pointPositions = new Map(
+    editorPoints.map((point) => [point.id, point.position]),
+  );
+  const pointsById = new Map(editorPoints.map((point) => [point.id, point]));
+  const drawnSections =
+    selection?.kind === "section"
+      ? (project.sections ?? []).filter(
+          (section) => section.id === selection?.id,
+        )
+      : (project.sections ?? []).filter((section) =>
+          routeSectionIds.has(section.id),
+        );
+
+  for (const section of drawnSections) {
+    const positions: Vec3[] = [];
+    for (const id of section.points) {
+      const position = pointPositions.get(id);
+      if (position) {
+        positions.push(position);
+      }
+    }
+    if (positions.length > 1) {
+      const polygon = section.closed ? [...positions, positions[0]] : positions;
+      overlayContext.save();
+      overlayContext.beginPath();
+      let drawing = false;
+      for (const position of polygon) {
+        const projected = projectPoint(position, camera, width, height);
+        if (!projected) {
+          drawing = false;
+          continue;
+        }
+        if (!drawing) {
+          overlayContext.moveTo(projected[0], projected[1]);
+          drawing = true;
+        } else {
+          overlayContext.lineTo(projected[0], projected[1]);
+        }
+      }
+      overlayContext.lineWidth = 1;
+      overlayContext.strokeStyle = "rgba(148, 163, 184, 0.65)";
+      overlayContext.setLineDash([4, 4]);
+      overlayContext.stroke();
+      overlayContext.restore();
+    }
+
+    const samples = sectionCenterlines[section.id];
+    if (!samples || samples.length === 0) {
+      continue;
+    }
+    const seen = new Set<string>();
+    for (const id of section.points) {
+      if (seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      const point = pointsById.get(id);
+      if (!point) {
+        continue;
+      }
+      const contact = nearestCenterlineContact(point.position, samples);
+      if (!contact || contact.distance <= CONTACT_TOLERANCE) {
+        continue;
+      }
+      const start = projectPoint(point.position, camera, width, height);
+      const end = projectPoint(contact.point, camera, width, height);
+      if (!start || !end) {
+        continue;
+      }
+      const colors = contactColors(point);
+      overlayContext.save();
+      overlayContext.beginPath();
+      overlayContext.moveTo(start[0], start[1]);
+      overlayContext.lineTo(end[0], end[1]);
+      overlayContext.lineWidth = 1;
+      overlayContext.strokeStyle = colors.line;
+      overlayContext.setLineDash([2, 4]);
+      overlayContext.stroke();
+      overlayContext.setLineDash([]);
+      overlayContext.beginPath();
+      overlayContext.arc(end[0], end[1], 2.5, 0, Math.PI * 2);
+      overlayContext.fillStyle = colors.dot;
+      overlayContext.fill();
+      overlayContext.restore();
+    }
+  }
+
   const carMarker = carMarkerPoint();
   const carProjected = projectPoint(carMarker, camera, width, height);
   const carAheadProjected = projectPoint(
@@ -564,25 +767,59 @@ function drawControlPoints(): void {
     overlayContext.restore();
   }
 
-  loopPoints.forEach((point, index) => {
+  editorPoints.forEach((point, index) => {
     const projected = projectPoint(point.position, camera, width, height);
     if (!projected) {
       return;
     }
+    const selected =
+      index === dragIndex ||
+      (selection?.kind === "point" && selection.id === point.id);
+    const roleColor = point.startFinish
+      ? "#22c55e"
+      : point.junction
+        ? "#f97316"
+        : point.looseEnd
+          ? "#a78bfa"
+          : "#fbbf24";
+    const anchor = point.kind === "anchor";
+    const radius = anchor ? CONTROL_POINT_RADIUS + 1 : CONTROL_POINT_RADIUS;
     overlayContext.beginPath();
     overlayContext.arc(
       projected[0],
       projected[1],
-      CONTROL_POINT_RADIUS,
+      radius,
       0,
       Math.PI * 2,
     );
-    overlayContext.fillStyle = index === dragIndex ? "#38bdf8" : "#fbbf24";
+    overlayContext.fillStyle = selected ? "#38bdf8" : roleColor;
     overlayContext.fill();
     overlayContext.lineWidth = 2;
-    overlayContext.strokeStyle = "#080a0d";
+    overlayContext.strokeStyle =
+      point.startFinish || point.junction || point.looseEnd || anchor
+        ? roleColor
+        : "#080a0d";
     overlayContext.stroke();
-    overlayContext.fillStyle = "#080a0d";
+    if (anchor) {
+      overlayContext.beginPath();
+      overlayContext.arc(
+        projected[0],
+        projected[1],
+        radius * 0.5,
+        0,
+        Math.PI * 2,
+      );
+      overlayContext.fillStyle = "#080a0d";
+      overlayContext.fill();
+      overlayContext.lineWidth = 1.5;
+      overlayContext.strokeStyle = selected ? "#38bdf8" : roleColor;
+      overlayContext.stroke();
+    }
+    overlayContext.fillStyle = anchor
+      ? selected
+        ? "#38bdf8"
+        : roleColor
+      : "#080a0d";
     overlayContext.font = "600 10px ui-monospace, monospace";
     overlayContext.textAlign = "center";
     overlayContext.textBaseline = "middle";
@@ -606,7 +843,7 @@ function moveControlPoint(index: number, x: number, y: number): void {
     return;
   }
   const world = add(ray.origin, scale(ray.direction, distance));
-  const current = loopPoints[index];
+  const current = editorPoints[index];
   if (!current) {
     return;
   }
@@ -617,24 +854,174 @@ function moveControlPoint(index: number, x: number, y: number): void {
   ];
 }
 
-function junctionHeights(
+function pointHeights(
   document: TrackProjectDocument,
-  segmentCenterlines: Record<string, Vec3[]>,
+  centerlines: Record<string, Vec3[]>,
 ): Map<string, number> {
   const heights = new Map<string, number>();
-  for (const segment of document.segments ?? []) {
-    const points = segmentCenterlines[segment.id];
-    if (!points || points.length === 0) {
+  const pointsById = new Map(
+    (document.points ?? []).map((point) => [point.id, point]),
+  );
+  for (const section of document.sections ?? []) {
+    const samples = centerlines[section.id];
+    if (!samples || samples.length === 0) {
       continue;
     }
-    if (!heights.has(segment.from)) {
-      heights.set(segment.from, points[0][1]);
-    }
-    if (!heights.has(segment.to)) {
-      heights.set(segment.to, points[points.length - 1][1]);
+    for (const id of section.points) {
+      if (heights.has(id)) {
+        continue;
+      }
+      const point = pointsById.get(id);
+      if (!point) {
+        continue;
+      }
+      let best = Infinity;
+      let bestY = 0;
+      for (const sample of samples) {
+        const dx = sample[0] - point.position[0];
+        const dz = sample[2] - point.position[1];
+        const distance = dx * dx + dz * dz;
+        if (distance < best) {
+          best = distance;
+          bestY = sample[1];
+        }
+      }
+      if (best < Infinity) {
+        heights.set(id, bestY);
+      }
     }
   }
   return heights;
+}
+
+function isLooseEndPoint(point: EditorPointData): boolean {
+  if (point.junction || point.degree >= 2) {
+    return false;
+  }
+  return (project.sections ?? []).some(
+    (section) =>
+      section.closed !== true &&
+      (section.points[0] === point.id ||
+        section.points[section.points.length - 1] === point.id),
+  );
+}
+
+const CONTACT_TOLERANCE = 0.5;
+
+function nearestCenterlineContact(
+  position: Vec3,
+  samples: Vec3[],
+): ContactInfo | null {
+  let best = Infinity;
+  let bestPoint: Vec3 | null = null;
+  for (const sample of samples) {
+    const dx = sample[0] - position[0];
+    const dz = sample[2] - position[2];
+    const distanceSquared = dx * dx + dz * dz;
+    if (distanceSquared < best) {
+      best = distanceSquared;
+      bestPoint = [sample[0], sample[1], sample[2]];
+    }
+  }
+  if (!bestPoint) {
+    return null;
+  }
+  return { point: bestPoint, distance: Math.sqrt(best) };
+}
+
+function pointContactDistance(point: EditorPoint): number | null {
+  let best: number | null = null;
+  for (const sectionId of point.sections) {
+    const samples = sectionCenterlines[sectionId];
+    if (!samples || samples.length === 0) {
+      continue;
+    }
+    const contact = nearestCenterlineContact(point.position, samples);
+    if (contact && (best === null || contact.distance < best)) {
+      best = contact.distance;
+    }
+  }
+  return best;
+}
+
+function contactColors(point: EditorPoint): { dot: string; line: string } {
+  if (point.startFinish) {
+    return { dot: "#22c55e", line: "rgba(34, 197, 94, 0.45)" };
+  }
+  if (point.junction) {
+    return { dot: "#f97316", line: "rgba(249, 115, 22, 0.45)" };
+  }
+  if (point.kind === "anchor") {
+    return {
+      dot: "rgba(148, 163, 184, 0.9)",
+      line: "rgba(148, 163, 184, 0.35)",
+    };
+  }
+  return {
+    dot: "rgba(251, 191, 36, 0.85)",
+    line: "rgba(251, 191, 36, 0.38)",
+  };
+}
+
+function renderSelection(): void {
+  selectionDetails.replaceChildren();
+  const addRow = (label: string, value: string): void => {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    selectionDetails.append(dt, dd);
+  };
+  if (!selection) {
+    addRow("kind", "none");
+    addRow("hint", "click a point or section");
+    return;
+  }
+  if (selection.kind === "point") {
+    const point = editorPoints.find((item) => item.id === selection?.id);
+    if (!point) {
+      selection = null;
+      renderSelection();
+      return;
+    }
+    addRow("kind", "point");
+    addRow("id", point.id);
+    addRow("point kind", point.kind);
+    addRow(
+      "role",
+      point.startFinish
+        ? "start/finish"
+        : point.junction
+          ? "junction"
+          : point.looseEnd
+            ? "loose end"
+            : "point",
+    );
+    const contact = pointContactDistance(point);
+    addRow(
+      "contact",
+      contact === null
+        ? "n/a"
+        : contact < CONTACT_TOLERANCE
+          ? "on curve"
+          : `${contact.toFixed(1)} m`,
+    );
+    addRow("section degree", String(point.degree));
+    addRow("sections", point.sections.join(", ") || "none");
+    return;
+  }
+  const section = (project.sections ?? []).find(
+    (item) => item.id === selection?.id,
+  );
+  if (!section) {
+    selection = null;
+    renderSelection();
+    return;
+  }
+  addRow("kind", "section");
+  addRow("id", section.id);
+  addRow("state", section.closed ? "closed" : "open");
+  addRow("points", String(section.points.length));
 }
 
 function refreshEditorState(): void {
@@ -643,22 +1030,53 @@ function refreshEditorState(): void {
   }
   project = JSON.parse(editorViewer.editor_project()) as TrackProjectDocument;
   activeLayoutId = editorViewer.editor_active_layout();
-  const loopData = JSON.parse(editorViewer.editor_loop_points()) as LoopPointData[];
-  const segmentCenterlines = JSON.parse(
-    editorViewer.editor_segment_centerlines(),
+  const pointData = JSON.parse(
+    editorViewer.editor_points(),
+  ) as EditorPointData[];
+  const route = JSON.parse(editorViewer.editor_route()) as RouteLeg[];
+  routeSectionIds = new Set(route.map((leg) => leg.sectionId));
+  sectionCenterlines = JSON.parse(
+    editorViewer.editor_section_centerlines(),
   ) as Record<string, Vec3[]>;
-  const heights = junctionHeights(project, segmentCenterlines);
-  loopPoints = loopData.map((point) => ({
-    id: point.id,
-    position: [
-      point.position[0],
-      heights.get(point.id) ?? 0,
-      point.position[1],
-    ],
-    kind: point.kind,
-    degree: point.degree,
-  }));
-  centerline = JSON.parse(editorViewer.editor_centerline()) as Vec3[];
+  const heights = pointHeights(project, sectionCenterlines);
+  const activeLayout = (project.layouts ?? []).find(
+    (layout) => layout.id === activeLayoutId,
+  );
+  const startFinishId = activeLayout?.startFinish ?? "";
+  editorPoints = pointData
+    .filter((point) =>
+      point.sections.some((id) => routeSectionIds.has(id)),
+    )
+    .map((point) => ({
+      id: point.id,
+      position: [
+        point.position[0],
+        heights.get(point.id) ?? 0,
+        point.position[1],
+      ],
+      kind: point.kind ?? "handle",
+      junction: point.junction,
+      end: point.end,
+      degree: point.degree,
+      sections: point.sections,
+      startFinish:
+        startFinishId !== "" ? point.id === startFinishId : point.startFinish,
+      looseEnd: isLooseEndPoint(point),
+    }));
+  centerline = JSON.parse(editorViewer.editor_route_centerline()) as Vec3[];
+  if (
+    selection?.kind === "point" &&
+    !editorPoints.some((point) => point.id === selection?.id)
+  ) {
+    selection = null;
+  }
+  if (
+    selection?.kind === "section" &&
+    !(project.sections ?? []).some((section) => section.id === selection?.id)
+  ) {
+    selection = null;
+  }
+  renderSelection();
   const debug = JSON.parse(editorViewer.debug_info());
   renderStats(debug);
   drawsLabel.textContent = String(debug.stats.drawCalls);
@@ -720,9 +1138,9 @@ async function rebuildEditor(
   }
 }
 
-async function moveJunction(point: LoopPoint): Promise<void> {
+async function moveEditorPoint(point: EditorPoint): Promise<void> {
   await rebuildEditor("rebuilding track", () =>
-    editorViewer!.move_editor_control_point(
+    editorViewer!.move_editor_point(
       point.id,
       point.position[0],
       point.position[2],
@@ -882,12 +1300,14 @@ canvas.addEventListener(
     }
     const index = overlayVisible ? hitTestControlPoint(x, y) : -1;
     if (index >= 0) {
+      selection = { kind: "point", id: editorPoints[index].id };
+      renderSelection();
       event.preventDefault();
       event.stopImmediatePropagation();
       cameraDragging = false;
       dragIndex = index;
       dragPointerId = event.pointerId;
-      dragPlaneY = loopPoints[index].position[1];
+      dragPlaneY = editorPoints[index].position[1];
       cameraController?.setEnabled(false);
       try {
         canvas.setPointerCapture(event.pointerId);
@@ -896,6 +1316,17 @@ canvas.addEventListener(
       }
       drawControlPoints();
       return;
+    }
+    const sectionId = overlayVisible
+      ? hitTestSectionCenterline(x, y)
+      : null;
+    if (sectionId) {
+      selection = { kind: "section", id: sectionId };
+      renderSelection();
+      drawControlPoints();
+    } else {
+      selection = null;
+      renderSelection();
     }
     drawControlPoints();
     if (event.button === 0) {
@@ -936,7 +1367,7 @@ const endDrag = (event: PointerEvent) => {
   if (dragIndex === null || event.pointerId !== dragPointerId) {
     return;
   }
-  const point = loopPoints[dragIndex];
+  const point = editorPoints[dragIndex];
   dragIndex = null;
   dragPointerId = null;
   try {
@@ -946,7 +1377,7 @@ const endDrag = (event: PointerEvent) => {
   }
   drawControlPoints();
   if (point) {
-    void moveJunction(point);
+    void moveEditorPoint(point);
   }
 };
 
@@ -987,6 +1418,12 @@ window.addEventListener("keydown", (event) => {
       target.tagName === "TEXTAREA" ||
       target.isContentEditable)
   ) {
+    return;
+  }
+  if (event.key === "Escape") {
+    selection = null;
+    renderSelection();
+    drawControlPoints();
     return;
   }
   if (cameraViewMode === "car" && carDragPointerId === null) {

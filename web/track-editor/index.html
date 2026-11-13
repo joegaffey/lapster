@@ -280,6 +280,9 @@
       <h1>Track Editor</h1>
       <p class="muted">Procedural Drift Loop</p>
       <p class="status" id="status" role="status" aria-live="polite">booting</p>
+      <section id="selection-details">
+        <dl></dl>
+      </section>
 
       <h2>Frame</h2>
       <dl>
@@ -303,11 +306,11 @@
       <h2>Meshes</h2>
       <ul id="meshes"></ul>
 
-      <h2>Junctions</h2>
-      <p class="muted">Drag the numbered junction markers to reshape the track. Release to rebuild.</p>
+      <h2>Points and sections</h2>
+      <p class="muted">Handles shape the road; dotted lines show their contact points on the spline. Junctions and start/finish are derived on the road. Drag the numbered markers to reshape the track; click a section centerline to select it. Release a drag to rebuild.</p>
 
       <h2>Project</h2>
-      <p class="muted">Save and load the project in this browser, export normalized <code>lapster/track-project@5</code> JSON, import a local <code>.json</code> file, or reset to the default track. Imports are validated before the scene changes.</p>
+      <p class="muted">Save and load the project in this browser, export normalized <code>lapster/track-project@6</code> JSON, import a local <code>.json</code> file, or reset to the default track. Imports are validated before the scene changes.</p>
 
       <h2>Camera</h2>
       <p class="muted">Use the View button to cycle front, back, left, right, and car cameras. In car view, arrow keys move along the spline. Drag the car marker in other views to reposition it.</p>

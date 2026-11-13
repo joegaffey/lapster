@@ -352,40 +352,76 @@ impl TrackViewer {
         self.editor_active_layout.clone().unwrap_or_default()
     }
 
-    pub fn editor_loop_points(&self) -> String {
+    pub fn editor_points(&self) -> String {
         let Some(project) = &self.editor_project else {
             return "[]".to_string();
         };
-        let Some(layout) = self
-            .editor_active_layout
-            .as_ref()
-            .and_then(|id| project.layout_by_id(id))
-        else {
-            return "[]".to_string();
-        };
-        let points = layout
-            .route
+        let points = project
+            .points
             .iter()
-            .filter_map(|segment_id| {
-                let segment = project.segment_by_id(segment_id)?;
-                let junction = project.junction_by_id(&segment.from)?;
-                let degree = project
-                    .segments
+            .map(|point| {
+                let sections = project
+                    .sections
                     .iter()
-                    .filter(|other| other.from == junction.id || other.to == junction.id)
-                    .count();
-                Some(serde_json::json!({
-                    "id": junction.id,
-                    "position": junction.position,
-                    "kind": junction_kind_name(junction.kind),
-                    "degree": degree,
-                }))
+                    .filter(|section| section.points.iter().any(|id| id == &point.id))
+                    .map(|section| section.id.clone())
+                    .collect::<Vec<_>>();
+                let start_finish = project
+                    .layouts
+                    .iter()
+                    .any(|layout| layout.start_finish == point.id);
+                serde_json::json!({
+                    "id": point.id,
+                    "position": point.position,
+                    "kind": point.kind,
+                    "junction": point.junction.map(|junction| junction_kind_name(junction.kind)),
+                    "end": point.end.map(point_end_name),
+                    "degree": sections.len(),
+                    "sections": sections,
+                    "startFinish": start_finish,
+                })
             })
             .collect::<Vec<_>>();
         serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
     }
 
-    pub fn editor_centerline(&self) -> String {
+    pub fn editor_sections(&self) -> String {
+        let Some(project) = &self.editor_project else {
+            return "[]".to_string();
+        };
+        serde_json::to_string(&project.sections).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_route(&self) -> String {
+        let Some(project) = &self.editor_project else {
+            return "[]".to_string();
+        };
+        let route = self
+            .editor_active_layout
+            .as_ref()
+            .and_then(|id| project.layout_by_id(id))
+            .map(|layout| layout.route.clone())
+            .unwrap_or_default();
+        serde_json::to_string(&route).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn editor_section_centerlines(&self) -> String {
+        let Some(project) = &self.editor_project else {
+            return "{}".to_string();
+        };
+        let mut centerlines = serde_json::Map::new();
+        for section in &project.sections {
+            if let Ok(points) = project.section_centerline(&section.id) {
+                if let Ok(value) = serde_json::to_value(points) {
+                    centerlines.insert(section.id.clone(), value);
+                }
+            }
+        }
+        serde_json::to_string(&serde_json::Value::Object(centerlines))
+            .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    pub fn editor_route_centerline(&self) -> String {
         let Some(project) = &self.editor_project else {
             return "[]".to_string();
         };
@@ -397,73 +433,6 @@ impl TrackViewer {
             return "[]".to_string();
         };
         let points = crate::track_editor::layout_centerline(project, layout).unwrap_or_default();
-        serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
-    }
-
-    pub fn editor_loop_centerlines(&self) -> String {
-        let Some(project) = &self.editor_project else {
-            return "{}".to_string();
-        };
-        let mut centerlines = serde_json::Map::new();
-        for layout in &project.layouts {
-            if let Ok(points) = crate::track_editor::layout_centerline(project, layout) {
-                if let Ok(value) = serde_json::to_value(points) {
-                    centerlines.insert(layout.id.clone(), value);
-                }
-            }
-        }
-        serde_json::to_string(&serde_json::Value::Object(centerlines))
-            .unwrap_or_else(|_| "{}".to_string())
-    }
-
-    pub fn editor_segment_centerline(&self, id: &str) -> String {
-        let Some(project) = &self.editor_project else {
-            return "[]".to_string();
-        };
-        let points = project.segment_centerline(id).unwrap_or_default();
-        serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
-    }
-
-    pub fn editor_segment_centerlines(&self) -> String {
-        let Some(project) = &self.editor_project else {
-            return "{}".to_string();
-        };
-        let mut centerlines = serde_json::Map::new();
-        for segment in &project.segments {
-            if let Ok(points) = project.segment_centerline(&segment.id) {
-                if let Ok(value) = serde_json::to_value(points) {
-                    centerlines.insert(segment.id.clone(), value);
-                }
-            }
-        }
-        serde_json::to_string(&serde_json::Value::Object(centerlines))
-            .unwrap_or_else(|_| "{}".to_string())
-    }
-
-    pub fn editor_route_segments(&self, id: &str) -> String {
-        let Some(project) = &self.editor_project else {
-            return "[]".to_string();
-        };
-        let route = project
-            .layout_by_id(id)
-            .map(|layout| layout.route.clone())
-            .unwrap_or_default();
-        serde_json::to_string(&route).unwrap_or_else(|_| "[]".to_string())
-    }
-
-    pub fn editor_control_points(&self) -> String {
-        let points = self
-            .editor_project
-            .as_ref()
-            .map(|project| {
-                let points = project
-                    .junctions
-                    .iter()
-                    .map(|junction| [junction.position[0], 0.0, junction.position[1]])
-                    .collect::<Vec<_>>();
-                crate::track_editor::control_points_with_heights(&points)
-            })
-            .unwrap_or_default();
         serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string())
     }
 
@@ -530,144 +499,62 @@ impl TrackViewer {
             .await
     }
 
-    pub async fn set_editor_control_points(&mut self, points_json: &str) -> Result<(), JsValue> {
-        let points = serde_json::from_str::<Vec<[f32; 3]>>(points_json).map_err(js_error)?;
-        let mut project = self
-            .editor_project
-            .clone()
-            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        if points.len() != project.junctions.len() {
-            return Err(JsValue::from_str(
-                "control point count must match the project junction count",
-            ));
-        }
-        for (junction, point) in project.junctions.iter_mut().zip(points) {
-            junction.position = [point[0], point[2]];
-        }
-        self.apply_editor_project(project, self.editor_active_layout.clone())
-            .await
-    }
-
-    pub async fn move_editor_control_point(
+    pub async fn insert_editor_point(
         &mut self,
-        id: &str,
-        x: f32,
-        z: f32,
-    ) -> Result<(), JsValue> {
-        let mut project = self
-            .editor_project
-            .clone()
-            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        project.move_junction(id, x, z).map_err(js_error)?;
-        self.apply_editor_project(project, self.editor_active_layout.clone())
-            .await
-    }
-
-    pub async fn move_editor_segment_point(
-        &mut self,
-        segment_id: &str,
-        index: u32,
-        x: f32,
-        z: f32,
-    ) -> Result<(), JsValue> {
-        let mut project = self
-            .editor_project
-            .clone()
-            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        project
-            .move_segment_point(segment_id, index as usize, x, z)
-            .map_err(js_error)?;
-        self.apply_editor_project(project, self.editor_active_layout.clone())
-            .await
-    }
-
-    pub async fn insert_editor_segment_point(
-        &mut self,
-        segment_id: &str,
+        section_id: &str,
         after_index: u32,
         x: f32,
         z: f32,
-    ) -> Result<u32, JsValue> {
-        let mut project = self
-            .editor_project
-            .clone()
-            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        let index = project
-            .insert_segment_point(segment_id, after_index as usize, x, z)
-            .map_err(js_error)?;
-        self.apply_editor_project(project, self.editor_active_layout.clone())
-            .await?;
-        Ok(index as u32)
-    }
-
-    pub async fn delete_editor_segment_point(
-        &mut self,
-        segment_id: &str,
-        index: u32,
-    ) -> Result<(), JsValue> {
-        let mut project = self
-            .editor_project
-            .clone()
-            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        project
-            .delete_segment_point(segment_id, index as usize)
-            .map_err(js_error)?;
-        self.apply_editor_project(project, self.editor_active_layout.clone())
-            .await
-    }
-
-    pub async fn set_editor_segment_tangents(
-        &mut self,
-        segment_id: &str,
-        from_json: &str,
-        to_json: &str,
-    ) -> Result<(), JsValue> {
-        let from = serde_json::from_str::<Option<[f32; 2]>>(from_json).map_err(js_error)?;
-        let to = serde_json::from_str::<Option<[f32; 2]>>(to_json).map_err(js_error)?;
-        let mut project = self
-            .editor_project
-            .clone()
-            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        project
-            .set_segment_tangents(segment_id, from, to)
-            .map_err(js_error)?;
-        self.apply_editor_project(project, self.editor_active_layout.clone())
-            .await
-    }
-
-    pub async fn split_editor_segment(
-        &mut self,
-        segment_id: &str,
-        fraction: f32,
     ) -> Result<String, JsValue> {
         let mut project = self
             .editor_project
             .clone()
             .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        let new_segment = project
-            .split_segment(segment_id, fraction)
+        let point_id = project
+            .insert_point(section_id, after_index as usize, x, z)
             .map_err(js_error)?;
         self.apply_editor_project(project, self.editor_active_layout.clone())
             .await?;
-        Ok(new_segment)
+        Ok(point_id)
     }
 
-    pub async fn merge_editor_segment(&mut self, segment_id: &str) -> Result<(), JsValue> {
+    pub async fn move_editor_point(
+        &mut self,
+        point_id: &str,
+        x: f32,
+        z: f32,
+    ) -> Result<(), JsValue> {
         let mut project = self
             .editor_project
             .clone()
             .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        project.merge_segment(segment_id).map_err(js_error)?;
+        project.move_point(point_id, x, z).map_err(js_error)?;
         self.apply_editor_project(project, self.editor_active_layout.clone())
             .await
     }
 
-    pub async fn delete_editor_segment(&mut self, segment_id: &str) -> Result<(), JsValue> {
+    pub async fn delete_editor_point(&mut self, point_id: &str) -> Result<(), JsValue> {
         let mut project = self
             .editor_project
             .clone()
             .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
-        project.delete_segment(segment_id).map_err(js_error)?;
+        project.delete_point(point_id).map_err(js_error)?;
+        self.apply_editor_project(project, self.editor_active_layout.clone())
+            .await
+    }
+
+    pub async fn set_editor_start_finish(&mut self, point_id: &str) -> Result<(), JsValue> {
+        let mut project = self
+            .editor_project
+            .clone()
+            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+        let layout_id = self
+            .editor_active_layout
+            .clone()
+            .ok_or_else(|| JsValue::from_str("editor active layout unavailable"))?;
+        project
+            .set_start_finish(&layout_id, point_id)
+            .map_err(js_error)?;
         self.apply_editor_project(project, self.editor_active_layout.clone())
             .await
     }
@@ -1741,10 +1628,17 @@ fn auto_gear(speed_mps: f32) -> i32 {
 fn junction_kind_name(kind: track_editor::JunctionKind) -> &'static str {
     match kind {
         track_editor::JunctionKind::Normal => "normal",
-        track_editor::JunctionKind::StartFinish => "start_finish",
         track_editor::JunctionKind::Fork => "fork",
         track_editor::JunctionKind::PitEntry => "pit_entry",
         track_editor::JunctionKind::PitExit => "pit_exit",
+    }
+}
+
+fn point_end_name(end: track_editor::PointEnd) -> &'static str {
+    match end {
+        track_editor::PointEnd::Cap => "cap",
+        track_editor::PointEnd::Open => "open",
+        track_editor::PointEnd::Barrier => "barrier",
     }
 }
 

@@ -39,11 +39,13 @@ deployable; multi-layout ships only after the new path is validated.
 - **Sections** are one spline each, open or closed. A closed section has a
   **seam**: the first point in its ordered list. The seam is a parameter origin
   only; it is never a junction or start/finish.
-- **Junctions** are point roles: a point shared by two or more sections. A
-  junction may sit mid-section. Creating one does not split the authored
-  section; the renderer may subdivide internally at the anchor for bake and
-  collision.
-- **Start/finish** is a layout reference to a point id. A point may be both a
+- **Junctions** are handle roles: a point shared by two or more sections. The
+  handle may sit off the curve; its on-road **contact point** is derived from a
+  designated host section and is where attached sections connect. A junction
+  may sit mid-section. Creating one does not split the authored section; the
+  renderer may subdivide internally at the contact point for bake and collision.
+- **Start/finish** is a point role. The point may be a handle off the road; the
+  start/finish line is its contact point on the route. A point may be both a
   junction and a layout's start/finish. Start/finish may differ per layout.
 - **Routes are legs**: ordered `{ sectionId, entry, exit, wrap? }` where
   entry/exit are a point id or the seam. Layouts are closed leg loops; paths are
@@ -55,8 +57,10 @@ deployable; multi-layout ships only after the new path is validated.
   closed section's seam.
 - **All sections are baked**, including loose branches not referenced by a
   layout or path.
-- Spline: Catmull-Rom through points with per-section endpoint tangents and a
-  derived wrap-around closure tangent for closed sections.
+- Spline: cubic B-spline. All authored control points are **handles** and may
+  sit off the curve. On-road **connection anchors** are derived from handles
+  (start/finish, junctions) or are open-section endpoints. The host section is
+  never clamped at a junction. Sections and routes share one evaluator.
 - Per-control-point width, asymmetric profiles, and closed decoration loops are
   deferred.
 - No `@3`/`@4` compatibility layer, no `EditorProject`, no route-level
@@ -74,13 +78,13 @@ TrackProject {
   settings
   points: [{
     id, position,
+    kind: "anchor" | "handle",
     junction?: { kind },
     end?: "cap" | "open" | "barrier"     // loose-end treatment
   }]
   sections: [{
     id, closed,
-    points: [pointId...],                // ordered control points
-    fromTangent?, toTangent?             // open ends; closed derives closure
+    points: [pointId...]                 // ordered control points
   }]
   layouts: [{
     id, name,
@@ -112,9 +116,16 @@ not a junction kind.
 ### Schema rules
 
 - Unique ids for points, sections, layouts, paths, and decorations.
-- Finite points and tangents; tangents normalized on load.
+- Finite point positions.
 - Sections reference known points. Open sections need at least two points;
   closed sections need at least three.
+- Authored points are handles. Open-section endpoints are derived anchors. A
+  junction's connection point is the nearest point on a designated host
+  section; attached sections use it as their endpoint. A start/finish contact is
+  the nearest point on the route to its handle.
+- The host section is never clamped at a junction or start/finish handle. Open
+  sections are clamped at their connection anchors and are at least C1 across
+  interior anchors.
 - A shared point is the same point object. A junction role requires two or more
   section memberships; a loose end has none.
 - Layout routes are contiguous closed leg loops: each leg's exit matches the
@@ -129,6 +140,11 @@ not a junction kind.
 
 - Clicking a section point selects the shared point; dragging it moves every
   section that references it.
+- All authored points are handles and may sit off the curve. The editor draws
+  the curve, a dashed control polygon, and a dotted perpendicular from each
+  off-curve handle to its contact point on the curve.
+- Junction and start/finish contact points are derived from their handles; the
+  host section stays smooth.
 - Clicking a section selects the section; its points become editable handles.
 - Hovering/clicking the road inserts a new interior point at that fraction.
 - **Make junction** on a point adds the junction role and creates a short open
@@ -138,8 +154,8 @@ not a junction kind.
 - A point may be marked as the active layout's start/finish.
 - Deleting a point is blocked when it is shared, a junction, a start/finish, or
   would leave a section below its minimum point count.
-- Section tangents are per section; a shared junction may curve differently in
-  each section.
+- Handles are global points; each section evaluates their influence with its own
+  B-spline spans.
 
 ## 5. Decorations
 
@@ -203,8 +219,13 @@ forward with fraction anchors.
 
 - Replace `Segment`/endpoint junctions with global points and open/closed
   sections.
-- Add seam and wrap-around closure tangents.
-- Make junctions point roles, including mid-section anchors; subdivide at bake
+- Replace Catmull-Rom with the cubic B-spline evaluator: authored handles
+  off-curve, derived connection anchors on-curve, periodic closed loops with no
+  connection anchors.
+- Derive start/finish and junction contact points from their handles; do not
+  clamp the host section.
+- Remove `limit_centerline_curvature`; route and section share the evaluator.
+- Make junctions handle roles with mid-section contact points; subdivide at bake
   time without splitting the authored section.
 - Allow loose ends and cap them; bake all sections.
 - Add route legs with point/seam entry/exit and wrap.
@@ -220,7 +241,7 @@ forward with fraction anchors.
 - Hover/click the road to insert a point.
 - **Make junction** adds the role and a short capped branch; do not split.
 - Mark the layout start/finish point.
-- Edit section tangents.
+- Drag handles; the road reshapes.
 - Delete points/sections where safe.
 - Save/load/export/import `@6`; keep Test Drive working.
 - Rewrite the track-editor Playwright suite for the new model.
@@ -267,9 +288,12 @@ Acceptance:
 
 ## 8. Test strategy per phase
 
-- Rust: point/section graph validation, shared-point dedupe, seam/closure
-  tangents, mid-section junction subdivision, loose-end caps, route legs and
-  wrap, decoration fraction chains and seam wrap, bake determinism.
+- Rust: point/section graph validation, shared-point dedupe, B-spline handles
+  off-curve with derived connection anchors on-curve, start/finish and junction
+  contact points, C1 continuity across open-section anchors, periodic closed
+  loops, route/section equality, mid-section junction subdivision, loose-end
+  caps, route legs and wrap, decoration fraction chains and seam wrap, bake
+  determinism.
 - Web unit: `@6` schema round-trip, validation, editor state helpers.
 - Playwright: default loop, point insert/move/delete, make junction + branch,
   start/finish, decoration chains across sections, multiple loops, make unique,
@@ -281,6 +305,8 @@ Acceptance:
 
 - Mid-section T-junction bake and collision continuity is the highest-complexity
   area. Subdivide at anchors and validate visually on the dev preview.
+- B-spline anchor clamping and C1 continuity need tests; the default venue shape
+  will change and needs visual review.
 - Route legs and wrap can produce non-contiguous or doubled geometry if
   validation is loose.
 - Loose-end caps need a visual and collision policy.
@@ -314,7 +340,6 @@ Editing (async, rebuild before resolving):
 - `delete_editor_point(pointId)`.
 - `make_editor_junction(pointId) -> branchSectionId` — add the role and a short
   capped branch; never split.
-- `set_editor_section_tangents(sectionId, fromJson, toJson)`.
 - `set_editor_start_finish(pointId)`.
 - `editor_track_pack()`.
 
@@ -323,6 +348,9 @@ Editing (async, rebuild before resolving):
 - One `@6` document type only.
 - Global points with no duplication; junctions and start/finish are point
   references/roles.
+- The curve is a cubic B-spline shaped by off-curve handles with derived
+  connection anchors; sections and routes share one evaluator; no curvature
+  limiter.
 - Sections are open or closed; the seam is parameterization only.
 - Mid-section junctions bake without authored splits.
 - Loose ends render and drive with caps.
