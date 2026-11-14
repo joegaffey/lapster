@@ -109,6 +109,8 @@ const DEFAULT_TREE_RING_GAP: f32 = 4.0;
 const JUNCTION_BRANCH_LENGTH: f32 = 14.0;
 /// Fixed sample count for deriving a junction's nearest contact point.
 const JUNCTION_CONTACT_SAMPLES: usize = 256;
+/// Minimum branch/outward-normal dot product for a non-degenerate mouth.
+const MIN_JUNCTION_BRANCH_NORMAL_DOT: f32 = 1e-4;
 /// Fixed sample count for baking sections that are not on the active route.
 const EXTRA_SECTION_SEGMENTS: usize = 32;
 /// How far the flat loose-end cap extends past the section endpoint.
@@ -1286,6 +1288,223 @@ fn junction_contact(
         position,
         tangent: tangent.normalize_or_zero(),
     }))
+}
+
+fn vec3_is_finite(value: Vec3) -> bool {
+    value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
+}
+
+/// The asphalt mouth where an attached open branch meets its host section.
+///
+/// All positions lie on the XZ plane. `mouth_polygon` is ordered around the
+/// boundary: near branch edge, far host-edge endpoint, far host-edge endpoint,
+/// near branch edge.
+#[derive(Clone, Debug, PartialEq)]
+#[allow(dead_code)]
+pub struct JunctionMouth {
+    pub host_section_id: String,
+    pub branch_section_id: String,
+    pub contact_position: Vec3,
+    pub host_tangent: Vec3,
+    pub host_normal: Vec3,
+    pub branch_direction: Vec3,
+    pub branch_start_distance: f32,
+    pub mouth_polygon: [Vec3; 4],
+    pub mouth_edge_endpoints: [Vec3; 2],
+}
+
+/// Derives a single T-junction's asphalt mouth from its host and attached open
+/// branch sections.
+///
+/// The host asphalt strip is `|distance from centreline| <= ASPHALT_HALF_WIDTH`.
+/// The branch asphalt strip is the branch centreline widened by the same
+/// half-width. The mouth is the part of the branch strip from the contact to
+/// the outward host asphalt edge.
+#[allow(dead_code)]
+fn derive_junction_mouth(
+    project: &TrackProject,
+    host_section_id: &str,
+    branch_section_id: &str,
+) -> Result<JunctionMouth, String> {
+    if host_section_id == branch_section_id {
+        return Err("junction mouth needs distinct host and branch sections".to_string());
+    }
+    let host = project
+        .section_by_id(host_section_id)
+        .ok_or_else(|| format!("unknown host section '{host_section_id}'"))?;
+    let branch = project
+        .section_by_id(branch_section_id)
+        .ok_or_else(|| format!("unknown branch section '{branch_section_id}'"))?;
+    if branch.closed {
+        return Err(format!(
+            "junction branch section '{branch_section_id}' must be open"
+        ));
+    }
+    let last = branch.points.len().saturating_sub(1);
+    if last < 1 {
+        return Err(format!(
+            "junction branch section '{branch_section_id}' has no loose end"
+        ));
+    }
+
+    let mut attachment = None;
+    for (index, point_id) in branch.points.iter().enumerate() {
+        if index != 0 && index != last {
+            continue;
+        }
+        let Some(point) = project.point_by_id(point_id) else {
+            continue;
+        };
+        if point.junction.is_none() {
+            continue;
+        }
+        let Some(host_index) = host.points.iter().position(|id| id == point_id) else {
+            continue;
+        };
+        if !section_point_is_interior(host, host_index) {
+            continue;
+        }
+        if attachment.is_some() {
+            return Err(format!(
+                "junction branch section '{branch_section_id}' attaches to more than one junction"
+            ));
+        }
+        attachment = Some((point_id.clone(), index == 0));
+    }
+    let Some((junction_id, junction_at_start)) = attachment else {
+        return Err(format!(
+            "junction branch section '{branch_section_id}' has no junction endpoint on host section '{host_section_id}'"
+        ));
+    };
+
+    let contact = junction_contact(project, &junction_id)?
+        .ok_or_else(|| format!("cannot derive a contact point for junction '{junction_id}'"))?;
+    let Some((contact_host, _)) = junction_host_section(project, &junction_id) else {
+        return Err(format!(
+            "junction point '{junction_id}' has no interior host section"
+        ));
+    };
+    if contact_host.id != host_section_id {
+        return Err(format!(
+            "junction point '{junction_id}' is not hosted by section '{host_section_id}'"
+        ));
+    }
+    if !vec3_is_finite(contact.position) || !vec3_is_finite(contact.tangent) {
+        return Err(format!(
+            "junction point '{junction_id}' has non-finite contact geometry"
+        ));
+    }
+
+    // The clamped span triples its junction anchor, so the first (or last)
+    // non-anchor control gives the branch centreline direction at that end.
+    let branch_curve = section_curve(project, branch)?;
+    let SectionCurve::Spans { spans } = branch_curve else {
+        return Err(format!(
+            "junction branch section '{branch_section_id}' has no open branch span"
+        ));
+    };
+    let controls = if junction_at_start {
+        spans.first()
+    } else {
+        spans.last()
+    }
+    .ok_or_else(|| {
+        format!("junction branch section '{branch_section_id}' has no branch span at the junction")
+    })?;
+    let toward = if junction_at_start {
+        controls.get(3).copied()
+    } else {
+        controls
+            .len()
+            .checked_sub(4)
+            .and_then(|index| controls.get(index).copied())
+    };
+    let Some(anchor) = (if junction_at_start {
+        controls.first().copied()
+    } else {
+        controls.last().copied()
+    }) else {
+        return Err(format!(
+            "junction branch section '{branch_section_id}' has no endpoint anchor"
+        ));
+    };
+    let Some(toward) = toward else {
+        return Err(format!(
+            "junction branch section '{branch_section_id}' has no endpoint direction"
+        ));
+    };
+    let mut branch_direction = Vec3::new(toward.x - anchor.x, 0.0, toward.z - anchor.z);
+    if !vec3_is_finite(branch_direction) || branch_direction.length_squared() < 1e-8 {
+        return Err(format!(
+            "junction branch section '{branch_section_id}' has zero length at the junction"
+        ));
+    }
+    branch_direction = branch_direction.normalize();
+
+    let mut host_tangent = Vec3::new(contact.tangent.x, 0.0, contact.tangent.z);
+    if !vec3_is_finite(host_tangent) || host_tangent.length_squared() < 1e-8 {
+        return Err(format!(
+            "junction host section '{host_section_id}' has no tangent at the contact"
+        ));
+    }
+    host_tangent = host_tangent.normalize();
+
+    let outward_candidate = Vec3::new(-host_tangent.z, 0.0, host_tangent.x);
+    let candidate_dot = branch_direction.dot(outward_candidate);
+    if candidate_dot.abs() < MIN_JUNCTION_BRANCH_NORMAL_DOT {
+        return Err(format!(
+            "junction branch at '{junction_id}' is parallel to the host asphalt edge"
+        ));
+    }
+    let host_normal = if candidate_dot > 0.0 {
+        outward_candidate
+    } else {
+        -outward_candidate
+    };
+    let normal_dot = candidate_dot.abs();
+
+    let branch_start_distance = ASPHALT_HALF_WIDTH / normal_dot;
+    if !branch_start_distance.is_finite() || branch_start_distance <= 0.0 {
+        return Err(format!(
+            "junction branch at '{junction_id}' has no finite asphalt mouth"
+        ));
+    }
+
+    let branch_lateral = Vec3::new(-branch_direction.z, 0.0, branch_direction.x);
+    let lateral_normal = branch_lateral.dot(host_normal);
+    let near_plus = contact.position + branch_lateral * ASPHALT_HALF_WIDTH;
+    let near_minus = contact.position - branch_lateral * ASPHALT_HALF_WIDTH;
+    let far_plus_distance = ASPHALT_HALF_WIDTH * (1.0 - lateral_normal) / normal_dot;
+    let far_minus_distance = ASPHALT_HALF_WIDTH * (1.0 + lateral_normal) / normal_dot;
+    let far_plus = contact.position
+        + branch_direction * far_plus_distance
+        + branch_lateral * ASPHALT_HALF_WIDTH;
+    let far_minus = contact.position + branch_direction * far_minus_distance
+        - branch_lateral * ASPHALT_HALF_WIDTH;
+    let mouth_polygon = [near_plus, far_plus, far_minus, near_minus];
+    let mouth_edge_endpoints = [far_plus, far_minus];
+
+    if !mouth_polygon.iter().all(|point| vec3_is_finite(*point))
+        || !mouth_edge_endpoints
+            .iter()
+            .all(|point| vec3_is_finite(*point))
+    {
+        return Err(format!(
+            "junction branch at '{junction_id}' produced non-finite mouth geometry"
+        ));
+    }
+
+    Ok(JunctionMouth {
+        host_section_id: host_section_id.to_string(),
+        branch_section_id: branch_section_id.to_string(),
+        contact_position: contact.position,
+        host_tangent,
+        host_normal,
+        branch_direction,
+        branch_start_distance,
+        mouth_polygon,
+        mouth_edge_endpoints,
+    })
 }
 
 fn anchor_point_id<'a>(section: &'a Section, anchor: &'a Anchor) -> Result<&'a str, String> {
@@ -6861,5 +7080,190 @@ mod tests {
                 "unexpected error: {error}"
             );
         }
+    }
+
+    fn polygon_area_xz(polygon: &[Vec3]) -> f32 {
+        let mut twice = 0.0;
+        for index in 0..polygon.len() {
+            let current = polygon[index];
+            let next = polygon[(index + 1) % polygon.len()];
+            twice += current.x * next.z - next.x * current.z;
+        }
+        twice * 0.5
+    }
+
+    fn cross_xz(origin: Vec3, a: Vec3, b: Vec3) -> f32 {
+        (a.x - origin.x) * (b.z - origin.z) - (a.z - origin.z) * (b.x - origin.x)
+    }
+
+    fn segments_cross_xz(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> bool {
+        cross_xz(a, b, c) * cross_xz(a, b, d) < 0.0 && cross_xz(c, d, a) * cross_xz(c, d, b) < 0.0
+    }
+
+    fn polygon_is_simple_xz(polygon: &[Vec3]) -> bool {
+        let count = polygon.len();
+        if count < 3 {
+            return false;
+        }
+        for index in 0..count {
+            if polygon[index].distance(polygon[(index + 1) % count]) < 1e-6 {
+                return false;
+            }
+        }
+        for first in 0..count {
+            let first_a = polygon[first];
+            let first_b = polygon[(first + 1) % count];
+            for second in (first + 1)..count {
+                if second == first + 1 || (first == 0 && second + 1 == count) {
+                    continue;
+                }
+                let second_a = polygon[second];
+                let second_b = polygon[(second + 1) % count];
+                if segments_cross_xz(first_a, first_b, second_a, second_b) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn junction_project_at_angle(angle_degrees: f32) -> (TrackProject, JunctionMouth) {
+        let mut project = TrackProject::default_project();
+        let branch_id = project.make_junction("point-3").expect("make junction");
+        let loose_id = project
+            .section_by_id(&branch_id)
+            .expect("branch")
+            .points
+            .last()
+            .expect("loose end")
+            .clone();
+        let fresh = derive_junction_mouth(&project, "section-0", &branch_id).expect("fresh mouth");
+        let angle = angle_degrees.to_radians();
+        let base = fresh.branch_direction;
+        let direction = Vec3::new(
+            base.x * angle.cos() - base.z * angle.sin(),
+            0.0,
+            base.z * angle.cos() + base.x * angle.sin(),
+        )
+        .normalize();
+        let target = fresh.contact_position + direction * JUNCTION_BRANCH_LENGTH;
+        project
+            .move_point(&loose_id, target.x, target.z)
+            .expect("move branch");
+        let mouth = derive_junction_mouth(&project, "section-0", &branch_id).expect("angled mouth");
+        (project, mouth)
+    }
+
+    fn assert_angled_mouth(angle_degrees: f32) {
+        let (_project, mouth) = junction_project_at_angle(angle_degrees);
+        let angle = angle_degrees.to_radians();
+        let expected_start = ASPHALT_HALF_WIDTH / angle.cos();
+        assert!(
+            (mouth.branch_start_distance - expected_start).abs() < 1e-3,
+            "branch start distance {} should be {expected_start}",
+            mouth.branch_start_distance
+        );
+        let normal_dot = mouth.branch_direction.dot(mouth.host_normal);
+        assert!(
+            (normal_dot - angle.cos()).abs() < 1e-4,
+            "branch/outward-normal dot {normal_dot} should be {}",
+            angle.cos()
+        );
+        assert!(
+            polygon_is_simple_xz(&mouth.mouth_polygon),
+            "mouth polygon must be simple: {:?}",
+            mouth.mouth_polygon
+        );
+        for endpoint in mouth.mouth_edge_endpoints {
+            let signed = (endpoint - mouth.contact_position).dot(mouth.host_normal);
+            assert!(
+                (signed - ASPHALT_HALF_WIDTH).abs() < 1e-3,
+                "mouth edge endpoint {endpoint:?} is not on the host asphalt edge"
+            );
+        }
+        let expected_edge = ASPHALT_HALF_WIDTH * 2.0 / normal_dot;
+        let edge_length = mouth.mouth_edge_endpoints[0].distance(mouth.mouth_edge_endpoints[1]);
+        assert!(
+            (edge_length - expected_edge).abs() < 1e-2,
+            "mouth edge length {edge_length} should be {expected_edge}"
+        );
+        let branch_lateral = Vec3::new(-mouth.branch_direction.z, 0.0, mouth.branch_direction.x);
+        for vertex in mouth.mouth_polygon {
+            let from_contact = vertex - mouth.contact_position;
+            let normal = from_contact.dot(mouth.host_normal);
+            assert!(
+                normal <= ASPHALT_HALF_WIDTH + 1e-3 && normal >= -ASPHALT_HALF_WIDTH - 1e-3,
+                "mouth vertex {vertex:?} is outside the host asphalt strip"
+            );
+            let lateral = from_contact.dot(branch_lateral);
+            assert!(
+                lateral.abs() <= ASPHALT_HALF_WIDTH + 1e-3,
+                "mouth vertex {vertex:?} is outside the branch asphalt strip"
+            );
+            assert!(
+                vertex.y.abs() < 1e-6,
+                "mouth vertex {vertex:?} is not on the XZ plane"
+            );
+        }
+    }
+
+    #[test]
+    fn junction_mouth_perpendicular_branch_is_expected_rectangle() {
+        let mut project = TrackProject::default_project();
+        let branch_id = project.make_junction("point-3").expect("make junction");
+        let mouth =
+            derive_junction_mouth(&project, "section-0", &branch_id).expect("perpendicular mouth");
+
+        assert_eq!(mouth.host_section_id, "section-0");
+        assert_eq!(mouth.branch_section_id, branch_id);
+        assert!(mouth.branch_direction.dot(mouth.host_normal) > 0.999);
+        assert!((mouth.branch_start_distance - ASPHALT_HALF_WIDTH).abs() < 1e-4);
+
+        let [near_plus, far_plus, far_minus, near_minus] = mouth.mouth_polygon;
+        let near_edge = near_plus.distance(near_minus);
+        let far_edge = far_plus.distance(far_minus);
+        let first_side = near_plus.distance(far_plus);
+        let second_side = near_minus.distance(far_minus);
+        assert!((near_edge - 12.0).abs() < 1e-4, "near edge {near_edge}");
+        assert!((far_edge - 12.0).abs() < 1e-4, "far edge {far_edge}");
+        assert!((first_side - 6.0).abs() < 1e-4, "first side {first_side}");
+        assert!(
+            (second_side - 6.0).abs() < 1e-4,
+            "second side {second_side}"
+        );
+        assert!(
+            (polygon_area_xz(&mouth.mouth_polygon).abs() - 72.0).abs() < 1e-3,
+            "mouth polygon area should be 72"
+        );
+        assert!(
+            ((near_plus + near_minus) * 0.5).distance(mouth.contact_position) < 1e-5,
+            "the near mouth edge must be centred on the contact"
+        );
+
+        let edge_length = mouth.mouth_edge_endpoints[0].distance(mouth.mouth_edge_endpoints[1]);
+        assert!((edge_length - 12.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn junction_mouth_45_degree_branch_is_valid() {
+        assert_angled_mouth(45.0);
+    }
+
+    #[test]
+    fn junction_mouth_30_degree_branch_is_valid() {
+        assert_angled_mouth(30.0);
+    }
+
+    #[test]
+    fn junction_mouth_is_deterministic_for_the_same_project() {
+        let (project, first) = junction_project_at_angle(45.0);
+        let branch_id = first.branch_section_id.clone();
+        let second =
+            derive_junction_mouth(&project, "section-0", &branch_id).expect("second mouth");
+        assert_eq!(first, second);
+        let clone = project.clone();
+        let from_clone =
+            derive_junction_mouth(&clone, "section-0", &branch_id).expect("clone mouth");
+        assert_eq!(first, from_clone);
     }
 }
