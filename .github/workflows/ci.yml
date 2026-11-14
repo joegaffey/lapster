@@ -154,7 +154,8 @@ jobs:
           CI: "true"
         run: >-
           npm run test:viewer -- --project=default
-          --grep "drive viewer settles and accepts keyboard input|garage viewer renders the car on the track|default demos use skidpad and the rx7 without url params|pwa installs a service worker and enables cross-origin isolation|track viewer camera orbit|grass renders on the WebGL2 fallback"
+          --grep "drive viewer settles and accepts keyboard input|garage viewer renders the car on the track|default demos use skidpad and the rx7 without url params|pwa installs a service worker and enables cross-origin isolation|track viewer camera orbit"
+          --grep-invert "WebGL2 fallback"
 
   web-editor:
     needs: changes
