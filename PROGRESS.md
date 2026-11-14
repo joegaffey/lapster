@@ -213,6 +213,9 @@ junction branch, cap, host preservation, and track-pack export:
   from both the sharded `web` job and `web-smoke`. `.githooks/pre-push` runs
   both fallback tests locally after `bash scripts/setup-hooks.sh`; the hook
   passed 2/2 and the post-merge `dev` CI run is green.
+- Released to `main` as `506abaf` (PR #28); `dev` was synced with `main`
+  afterwards. Production now includes the venue graph `@6`, seam decoration
+  authoring, and the CI fast path.
 - Docs: ADR 0003, ADR 0004, venue-graph plan, tech debt updated.
 - Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
