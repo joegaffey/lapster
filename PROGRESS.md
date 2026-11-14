@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-08
-Current phase: **Relay multiplayer prototype**
+Last updated: 2026-11-14
+Current phase: **Venue graph rebuild — `@6` section-point reset (Phase 3)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -52,12 +52,37 @@ Deployment:
 
 ## Current focus
 
+- Venue graph rebuild is integrated on `dev` (PR #26). The `@5` phases
+  added a canonical graph, decoration paths, and a project editor API. ADR 0003
+  resets the model to `lapster/track-project@6` (global points, open/closed
+  sections, route legs, loose ends, decoration fraction chains), and ADR 0004
+  replaces Catmull-Rom with a cubic B-spline: all authored control points are
+  off-curve handles; start/finish and junction contact points are derived on the
+  road. The render side is migrated and green (70 tests); the web editor boots
+  on `@6`, selects/drags points and sections, persists the project, draws the
+  control polygon and dotted contact lines, and has the core point-editing
+  tools: click the road to insert, delete, and set start/finish, with point
+  details/actions in a non-modal point-editor dialog. Decoration editing is
+  mode-based: `Points | Kerbs | Props`, with renderer-derived lane rails,
+  baked-default import, click-to-select, endpoint-handle resize, a single-item
+  inspector for properties/delete, paint on empty rails, overlap errors, and
+  persistence. Section overlays sample at route density (TD-0005 resolved).
+  Step 0b is integrated on `dev` (`aae590d`): derived junction contacts,
+  capped loose-end branches, partial/wrapped route legs, cross-section and
+  seam-wrapped decoration chains, and a Make junction editor action. The
+  Seam-wrapped decoration authoring is complete on
+  `feat/venue-decoration-editor`: paint across the closed-section seam and
+  endpoint drag across the seam both produce a wrapped leg, with Playwright
+  coverage. Custom-lane authoring remains dropped for now, and junction chain
+  continuation is blocked on multi-leg routes (Phase 4). Per-point width is
+  deferred (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
-  integration.
+- Next: multi-layout and pit lane (venue Phases 4–5), then the remaining
+  TD-0006 junction-continuation work, Speed Dreams physics, wheel/FFB hardware
+  validation, and CP7 HID/audio integration.
 
 ## Completed checkpoints
 
@@ -106,10 +131,11 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 54 tests
+- `cargo test --workspace` — 153 tests
 - `cargo check ... --target wasm32-unknown-unknown`
-- `npm test` — 22 tests
-- `npm run test:viewer` — 37 Playwright tests plus an opt-in physics benchmark
+- `npm test` — 38 tests
+- `CI=1 npm run test:viewer` — 95 passed, 1 skipped, 1 pre-existing
+  garage-camera timing flake
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
@@ -138,6 +164,66 @@ Deployment:
 - GitHub Pages has no COOP/COEP; the service worker injects them and the first
   controlled load needs one reload.
 - Full history: `docs/history/progress-archive-2026-11-08.md`.
+
+## Venue graph resume checkpoint
+
+State on `dev` at `aae590d`, merged from `feat/venue-graph-step0b` (branched at
+`662527e`) after the `@6` integration (`11622a7`). Dev preview validated the
+junction branch, cap, host preservation, and track-pack export:
+
+- PR CI runs `web-smoke` + the editor smoke; the full sharded web suite runs on
+  `dev`/`main` pushes and manual dispatch.
+- `@6` render model and B-spline evaluator: authored points are off-curve
+  handles; start/finish and junction contacts are derived; section overlays
+  sample at route density. `cargo test -p sim-render` — 81 passing.
+- Step 0b render: `make_junction` adds a Normal role and a short open capped
+  branch perpendicular to the host tangent without splitting the host; junction
+  contacts are the nearest host-section point and drive both host smoothness and
+  attached-section endpoints; all non-route sections bake into the visual and
+  collision world; `PointEnd::Cap` loose ends get cap geometry and collision;
+  partial/wrapped route legs sample correctly; decoration chains map across
+  sections and closed-section seams with continuous element/phase/spacing.
+  Unsupported loose-end treatments and non-contiguous/absent chains fail loudly.
+- Step 0b web: Make junction in the point editor, branch centerlines and
+  loose-end points are visible/selectable/draggable, host point lists stay
+  unchanged, and the branch persists. The new Playwright test covers creation,
+  dragging, Test Drive export, and reload. A pre-existing wasm reentrancy race
+  in the prop-decoration test was fixed by waiting for the rebuild to settle.
+- Web editor on `@6`: point/section selection, point drag, save/load/export/
+  import, Test Drive, dashed control polygon, dotted contact lines, and a
+  non-modal point-editor dialog. Click the road to insert, Delete/Backspace or
+  the dialog to delete, and Set start/finish in the dialog. Alt/Option-click a
+  section centerline to select it.
+- Decoration editor: `Points | Kerbs | Props` modes; `editor_guide_rails()`
+  lane rails; baked-default import on first entry (28 decorations);
+  click-to-select with endpoint handles and resize; a single-item inspector for
+  side/lane/prop kind/spacing/phase/elements and Delete; drag an empty rail to
+  paint a single-section kerb/prop/tree; overlap errors; save/load persistence.
+  Follow-up: cross-section chains, seam wrap, custom lanes, and multi-leg
+  endpoint editing (TD-0006).
+- Full gate green on this branch: 38 web unit tests, 95 viewer tests passed /
+  1 skipped (1 pre-existing garage-camera flake), 153 workspace tests, clippy,
+  fmt, wasm. TD-0001 resolved; TD-0005 resolved.
+- TD-0006 seam batch on `feat/venue-decoration-editor` (`b5c494a` plus the
+  seam Playwright tests): painting across a closed-section seam wraps a single
+  leg (`wrap: true`, entry > exit) with the drag hint `painting across the
+  seam`; dragging an endpoint across the seam wraps the leg and keeps the far
+  endpoint. Both are covered in `web/tests/track-editor.spec.ts`. Custom-lane
+  authoring stays dropped for now; junction chain continuation is blocked on
+  multi-leg routes (Phase 4).
+- Docs: ADR 0003, ADR 0004, venue-graph plan, tech debt updated.
+- Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
+- `stash@{0}` holds the superseded `@5` selection UX.
+- Local page: `http://127.0.0.1:8123/web/track-editor/`.
+- Dev preview: `https://joegaffey.com/lapster-dev/web/track-editor/`.
+
+Resume in this order:
+
+1. TD-0006 remainder: junction chain continuation after multi-leg routes
+   (Phase 4); custom-lane authoring is still dropped. Seam paint and seam
+   endpoint resize are complete and tested.
+2. Multi-layout and pit lane (Phases 4–5).
+3. Full gate, dev preview validation, then a PR to `dev` for the next batch.
 
 ## Next steps
 

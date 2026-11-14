@@ -27,7 +27,7 @@ test("track editor can test drive the procedural track", async ({ page }) => {
   await waitForEditor(page);
   const startDirection = await page.evaluate(() => {
     const centerline = JSON.parse(
-      (window as any).__trackEditor.editor_centerline(),
+      (window as any).__trackEditor.editor_route_centerline(),
     ) as number[][];
     const dx = centerline[1][0] - centerline[0][0];
     const dz = centerline[1][2] - centerline[0][2];
