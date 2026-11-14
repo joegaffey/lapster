@@ -149,7 +149,9 @@ not a junction kind.
 - Hovering/clicking the road inserts a new interior point at that fraction.
 - **Make junction** on a point adds the junction role and creates a short open
   branch section from that point to a loose end, perpendicular to the local
-  tangent by default. The parent section is not split.
+  tangent (outward from a closed host by default). The parent section is not
+  split. The branch is a graph primitive; the road surface is produced by the
+  Phase 3d junction bake (ADR-0005), not by overlapping full-width ribbons.
 - The loose end renders with a cap until it is connected to another junction.
 - A point may be marked as the active layout's start/finish.
 - Deleting a point is blocked when it is shared, a junction, a start/finish, or
@@ -169,7 +171,8 @@ not a junction kind.
   section boundaries.
 - Decorations refer to lanes, not absolute world offsets, so width/profile
   changes move them with the road. Width variation is deferred.
-- Junction clearance and mouth clipping are bake-time concerns.
+- Junction clearance and mouth clipping are Phase 3d bake concerns (ADR-0005);
+  decoration clearance follows the stitched junction pad.
 - Editing a point reparameterises the decoration; it does not rewrite it into
   point anchors.
 - If sections are split by an explicit tool later, split affected decoration
@@ -266,10 +269,35 @@ Follow-up (TD-0006): cross-section chain continuation, seam wrap, custom-lane
 controls, and multi-leg endpoint editing. Width-aware rails wait on
 TD-0002/0003.
 
+#### 3d — Junction road geometry (ADR-0005)
+
+Junctions are currently a graph primitive: the renderer bakes independent
+full-width host and branch ribbons, so angled joins overlap dirt/grass/tarmac,
+z-fight, and leave holes. Replace that with a clipped, stitched junction
+surface.
+
+- Derive host/branch asphalt and shoulder boundary loops and a junction mouth
+  polygon with clearance.
+- Clip ribbons back to the mouth; never emit overlapping road surfaces.
+- Triangulate one junction pad, stitch asphalt boundaries with shared vertices,
+  and stitch shoulder/grass transitions around it.
+- Bake collision from the same surfaces with asphalt/shoulder surface IDs.
+- Support 30/45/90° joins, T/Y junctions, multiple attached sections, and
+  closed/open hosts.
+- Keep branch direction/length as authoring/graph concerns.
+- Do not cut kerbs, props, decorations, or barriers yet; leave room for the
+  later mouth-clearance step.
+
+Acceptance:
+- no dirt/grass over tarmac and no holes at 30/45/90°;
+- watertight boundaries (no T-junctions/gaps) with no overlapping triangles;
+- collision continuous across the junction;
+- deterministic bake; full gate and dev preview validated.
+
 ### Phase 4 — Multiple loops over shared sections
 
 - Add/duplicate/delete layouts; route selector.
-- Route legs across shared sections and junctions.
+- Route legs across shared sections and junctions (requires Phase 3d).
 - Make unique clones a section for one layout.
 - Per-layout start/finish and spawn metadata.
 
@@ -305,19 +333,22 @@ Acceptance:
   off-curve with derived connection anchors on-curve, start/finish and junction
   contact points, C1 continuity across open-section anchors, periodic closed
   loops, route/section equality, mid-section junction subdivision, loose-end
-  caps, route legs and wrap, decoration fraction chains and seam wrap, bake
-  determinism.
+  caps, angled junction mouth clipping, watertight stitched junction pads,
+  junction collision continuity, route legs and wrap, decoration fraction chains
+  and seam wrap, bake determinism.
 - Web unit: `@6` schema round-trip, validation, editor state helpers.
 - Playwright: default loop, point insert/move/delete, make junction + branch,
-  start/finish, decoration chains across sections, multiple loops, make unique,
-  pit path.
+  angled junction preview validation, start/finish, decoration chains across
+  sections, multiple loops, make unique, pit path.
 - Every phase: `cargo fmt --check`, clippy, workspace tests, wasm check,
   `npm --prefix web test`, `npm --prefix web run test:viewer`.
 
 ## 9. Risks
 
-- Mid-section T-junction bake and collision continuity is the highest-complexity
-  area. Subdivide at anchors and validate visually on the dev preview.
+- Junction road geometry is the highest-complexity area. Phase 3d/ADR-0005
+  replaces overlapping ribbons with a clipped and stitched junction pad. Validate
+  at 30/45/90° on the dev preview and test watertight boundaries plus collision
+  continuity.
 - B-spline anchor clamping and C1 continuity need tests; the default venue shape
   will change and needs visual review.
 - Route legs and wrap can produce non-contiguous or doubled geometry if
@@ -370,6 +401,8 @@ Editing (async, rebuild before resolving):
   limiter.
 - Sections are open or closed; the seam is parameterization only.
 - Mid-section junctions bake without authored splits.
+- Junction roads are clipped and stitched: no overlapping ribbons, dirt/grass
+  over tarmac, holes, or discontinuous collision at angles.
 - Loose ends render and drive with caps.
 - Route legs and decoration fraction chains, including seam wrap.
 - Per-point width and closed decoration loops are explicitly deferred.
