@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Run the browser tests that CI cannot run reliably: the WebGL2 fallback paths
+# are excluded from .github/workflows/ci.yml, so run them locally before a
+# commit becomes external (git push).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+echo "Running WebGL2 fallback browser tests (excluded from CI)..."
+npm --prefix web run test:viewer -- --project=default --grep "WebGL2 fallback"

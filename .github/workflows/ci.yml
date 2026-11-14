@@ -111,7 +111,13 @@ jobs:
         working-directory: web
         env:
           CI: "true"
-        run: npm run test:viewer -- --project=default --shard=${{ matrix.shard }}/3
+        # WebGL2 fallback tests are excluded from CI because hosted runners
+        # cannot provide a reliable WebGL context. Run them locally before
+        # pushing (see .githooks/pre-push).
+        run: >-
+          npm run test:viewer -- --project=default
+          --grep-invert "WebGL2 fallback"
+          --shard=${{ matrix.shard }}/3
 
   web-smoke:
     needs: changes
