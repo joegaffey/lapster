@@ -355,6 +355,54 @@
       #decoration-status {
         margin: 0;
       }
+      #decoration-legs {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-bottom: 8px;
+        max-height: 132px;
+        overflow: auto;
+      }
+      #decoration-legs:empty {
+        display: none;
+      }
+      .decoration-leg {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 3px 6px;
+        font: inherit;
+        font-size: 10px;
+        line-height: 1.35;
+        text-align: left;
+        cursor: pointer;
+      }
+      .decoration-leg:hover {
+        background: #1c2430;
+      }
+      .decoration-leg[aria-pressed="true"] {
+        border-color: #1d4ed8;
+        background: #1c2430;
+        color: #eff6ff;
+      }
+      .decoration-leg .leg-section {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .decoration-leg .wrap-badge {
+        border: 1px solid #a16207;
+        border-radius: 999px;
+        padding: 0 5px;
+        color: #fcd34d;
+        font-size: 9px;
+      }
       @media (max-width: 720px) {
         #decoration-inspector {
           right: 12px;
@@ -589,6 +637,30 @@
             <option value="far">Far</option>
           </select>
         </label>
+        <label class="decoration-field" id="decoration-lane-offset-field" hidden>
+          <span>Lane offset (m)</span>
+          <input
+            id="decoration-lane-offset"
+            type="number"
+            value="14"
+            min="1"
+            max="19"
+            step="0.1"
+            aria-label="Prop lane offset (m)"
+          />
+        </label>
+        <label class="decoration-field" id="decoration-paint-offset-field" hidden>
+          <span>Paint offset (m)</span>
+          <input
+            id="decoration-paint-offset"
+            type="number"
+            value="14"
+            min="1"
+            max="19"
+            step="0.1"
+            aria-label="Prop paint offset (m)"
+          />
+        </label>
         <label class="decoration-field" id="decoration-prop-kind-field" hidden>
           <span>Prop kind</span>
           <select id="decoration-prop-kind" aria-label="Prop kind">
@@ -630,8 +702,11 @@
           />
         </label>
       </div>
+      <div id="decoration-legs" aria-label="Decoration chain legs"></div>
       <div id="decoration-actions">
         <button id="decoration-apply" type="button">Apply</button>
+        <button id="decoration-continue-leg" type="button" hidden>Continue chain</button>
+        <button id="decoration-remove-leg" type="button" hidden>Remove leg</button>
         <button id="decoration-delete" type="button" hidden>Delete</button>
       </div>
       <p id="decoration-status" class="status" role="status" aria-live="polite"></p>

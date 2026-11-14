@@ -949,6 +949,8 @@ var RAIL_HIT_RADIUS = 14;
 var KERB_RAIL_OFFSET = 6.4;
 var NEAR_PROP_OFFSET = 14;
 var FAR_PROP_OFFSET = 19;
+var MIN_PROP_OFFSET = 1;
+var MAX_PROP_OFFSET = 19;
 var DECORATION_HIT_RADIUS = 12;
 var HANDLE_HIT_RADIUS = 14;
 var MIN_DECORATION_FRACTION = 0.01;
@@ -998,6 +1000,13 @@ var decorationSide = document.querySelector("#decoration-side");
 var decorationSideField = document.querySelector("#decoration-side-field");
 var decorationLane = document.querySelector("#decoration-lane");
 var decorationLaneField = document.querySelector("#decoration-lane-field");
+var decorationLaneOffset = document.querySelector("#decoration-lane-offset");
+var decorationLaneOffsetField = document.querySelector("#decoration-lane-offset-field");
+var decorationPaintOffset = document.querySelector("#decoration-paint-offset");
+var decorationPaintOffsetField = document.querySelector("#decoration-paint-offset-field");
+var decorationLegs = document.querySelector("#decoration-legs");
+var decorationContinueLeg = document.querySelector("#decoration-continue-leg");
+var decorationRemoveLeg = document.querySelector("#decoration-remove-leg");
 var decorationPropKind = document.querySelector("#decoration-prop-kind");
 var decorationPropKindField = document.querySelector("#decoration-prop-kind-field");
 var decorationSpacing = document.querySelector("#decoration-spacing");
@@ -1067,6 +1076,10 @@ var newPropPhase = 0;
 var newPropSpacing = "";
 var newPropKind = "trees";
 var newPropKindExplicit = false;
+var newPropOffset = NEAR_PROP_OFFSET;
+var laneOffsetEdited = false;
+var selectedChainLegIndex = 0;
+var renderedDecorationId = null;
 setupHud();
 var add2 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 var sub2 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -1151,7 +1164,24 @@ function railsForMode(mode) {
   if (!kind) {
     return [];
   }
-  return guideRails.filter((rail) => rail.kind === kind);
+  const rails = guideRails.filter((rail) => rail.kind === kind);
+  if (kind === "prop") {
+    const offset = clampPropOffset(newPropOffset);
+    for (const side of [-1, 1]) {
+      const exists = rails.some(
+        (rail) => rail.kind === "prop" && rail.side === side && Math.abs(rail.offset - offset) < 1e-4
+      );
+      if (!exists) {
+        rails.push({
+          kind: "prop",
+          side,
+          offset,
+          lane: String(offset)
+        });
+      }
+    }
+  }
+  return rails;
 }
 function decorationsForMode(mode) {
   const kind = modeDecorationKind(mode);
@@ -1321,6 +1351,229 @@ function railFractionOnSection(sectionId, rail, x, y) {
     }
   }
   return bestFraction;
+}
+function routeLegIndexForSection(sectionId) {
+  const index = routeLegs.findIndex((leg) => leg.sectionId === sectionId);
+  return index >= 0 ? index : 0;
+}
+function sectionFirstPointId(sectionId) {
+  const section = (project.sections ?? []).find((item) => item.id === sectionId);
+  return section?.points[0] ?? "";
+}
+function routeAnchorsMatch(exitSectionId, exit, entrySectionId, entry) {
+  const resolvedExit = exit === "seam" ? sectionFirstPointId(exitSectionId) : exit;
+  const resolvedEntry = entry === "seam" ? sectionFirstPointId(entrySectionId) : entry;
+  return resolvedExit !== "" && resolvedExit === resolvedEntry;
+}
+function routeIsClosedLoop() {
+  if (routeLegs.length === 0) {
+    return false;
+  }
+  const last = routeLegs[routeLegs.length - 1];
+  const first = routeLegs[0];
+  return routeAnchorsMatch(
+    last.sectionId,
+    last.exit,
+    first.sectionId,
+    first.entry
+  );
+}
+function nextRouteLegIndex(index) {
+  if (routeLegs.length < 2) {
+    return null;
+  }
+  const current = routeLegs[index];
+  const nextIndex = index + 1 < routeLegs.length ? index + 1 : null;
+  if (!current) {
+    return null;
+  }
+  if (nextIndex !== null) {
+    const next2 = routeLegs[nextIndex];
+    return next2 && routeAnchorsMatch(current.sectionId, current.exit, next2.sectionId, next2.entry) ? nextIndex : null;
+  }
+  if (!routeIsClosedLoop()) {
+    return null;
+  }
+  const next = routeLegs[0];
+  return next && routeAnchorsMatch(current.sectionId, current.exit, next.sectionId, next.entry) ? 0 : null;
+}
+function prevRouteLegIndex(index) {
+  if (routeLegs.length < 2) {
+    return null;
+  }
+  const current = routeLegs[index];
+  if (!current) {
+    return null;
+  }
+  const previousIndex = index - 1 >= 0 ? index - 1 : null;
+  if (previousIndex !== null) {
+    const previous2 = routeLegs[previousIndex];
+    return previous2 && routeAnchorsMatch(
+      previous2.sectionId,
+      previous2.exit,
+      current.sectionId,
+      current.entry
+    ) ? previousIndex : null;
+  }
+  if (!routeIsClosedLoop()) {
+    return null;
+  }
+  const previous = routeLegs[routeLegs.length - 1];
+  return previous && routeAnchorsMatch(
+    previous.sectionId,
+    previous.exit,
+    current.sectionId,
+    current.entry
+  ) ? routeLegs.length - 1 : null;
+}
+function resolvePaintTarget(stroke, x, y) {
+  const currentLeg = routeLegs[stroke.cursorLegIndex];
+  const currentSectionId = currentLeg?.sectionId ?? "";
+  const clampToCurrent = () => ({
+    legIndex: stroke.cursorLegIndex,
+    fraction: railFractionOnSection(currentSectionId, stroke.rail, x, y),
+    kind: "clamp"
+  });
+  const hit = railScreenHit(x, y, stroke.rail);
+  if (!hit) {
+    return clampToCurrent();
+  }
+  if (hit.sectionId === currentSectionId) {
+    return {
+      legIndex: stroke.cursorLegIndex,
+      fraction: hit.fraction,
+      kind: "current"
+    };
+  }
+  const nextIndex = nextRouteLegIndex(stroke.cursorLegIndex);
+  if (nextIndex !== null && routeLegs[nextIndex]?.sectionId === hit.sectionId) {
+    return { legIndex: nextIndex, fraction: hit.fraction, kind: "next" };
+  }
+  const prevIndex = prevRouteLegIndex(stroke.cursorLegIndex);
+  if (prevIndex !== null && routeLegs[prevIndex]?.sectionId === hit.sectionId) {
+    return { legIndex: prevIndex, fraction: hit.fraction, kind: "prev" };
+  }
+  return clampToCurrent();
+}
+function detectSeamJump(sectionId, rail, previousFraction, nextFraction) {
+  if (!sectionIsClosed(sectionId)) {
+    return null;
+  }
+  const forward = previousFraction > 0.75 && nextFraction < 0.25;
+  const backward = previousFraction < 0.25 && nextFraction > 0.75;
+  if (!forward && !backward) {
+    return null;
+  }
+  const camera = currentCamera();
+  if (!camera) {
+    return forward ? "forward" : "backward";
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const before = railPointAtFraction(sectionId, rail, previousFraction);
+  const after = railPointAtFraction(sectionId, rail, nextFraction);
+  const projectedBefore = before ? projectPoint(before, camera, width, height) : null;
+  const projectedAfter = after ? projectPoint(after, camera, width, height) : null;
+  if (projectedBefore && projectedAfter && Math.hypot(
+    projectedAfter[0] - projectedBefore[0],
+    projectedAfter[1] - projectedBefore[1]
+  ) > 64) {
+    return null;
+  }
+  return forward ? "forward" : "backward";
+}
+function paintChainForStroke(stroke) {
+  const count = routeLegs.length;
+  if (count === 0) {
+    return [];
+  }
+  const startLeg = routeLegs[stroke.startLegIndex];
+  if (!startLeg) {
+    return [];
+  }
+  const start = clampFraction(stroke.startFraction);
+  const raw = clampFraction(stroke.cursorFraction);
+  if (stroke.legDelta === 0) {
+    const forwardWrap = stroke.cursorTurns > 0 && start > raw + 1e-4;
+    const backwardWrap = stroke.cursorTurns < 0 && raw > start + 1e-4;
+    if (forwardWrap) {
+      return [
+        {
+          sectionId: startLeg.sectionId,
+          entryFraction: start,
+          exitFraction: raw,
+          wrap: true
+        }
+      ];
+    }
+    if (backwardWrap) {
+      return [
+        {
+          sectionId: startLeg.sectionId,
+          entryFraction: raw,
+          exitFraction: start,
+          wrap: true
+        }
+      ];
+    }
+    return [
+      {
+        sectionId: startLeg.sectionId,
+        entryFraction: Math.min(start, raw),
+        exitFraction: Math.max(start, raw),
+        wrap: false
+      }
+    ];
+  }
+  const chain = [];
+  const pushLeg = (sectionId, entryFraction, exitFraction) => {
+    const entry = clampFraction(entryFraction);
+    const exit = clampFraction(exitFraction);
+    if (exit - entry <= 1e-4) {
+      return;
+    }
+    chain.push({
+      sectionId,
+      entryFraction: entry,
+      exitFraction: exit,
+      wrap: false
+    });
+  };
+  if (stroke.legDelta > 0) {
+    const steps = Math.min(stroke.legDelta, count);
+    pushLeg(startLeg.sectionId, start, 1);
+    for (let offset = 1; offset < steps; offset += 1) {
+      const leg = routeLegs[(stroke.startLegIndex + offset) % count];
+      if (leg) {
+        pushLeg(leg.sectionId, 0, 1);
+      }
+    }
+    const lastIndex = (stroke.startLegIndex + steps) % count;
+    const lastLeg = routeLegs[lastIndex];
+    if (lastLeg) {
+      pushLeg(lastLeg.sectionId, 0, raw);
+    }
+  } else {
+    const steps = Math.min(-stroke.legDelta, count);
+    const cursorIndex = ((stroke.startLegIndex - steps) % count + count) % count;
+    const firstLeg = routeLegs[cursorIndex];
+    if (firstLeg) {
+      pushLeg(firstLeg.sectionId, raw, 1);
+    }
+    for (let offset = 1; offset < steps; offset += 1) {
+      const leg = routeLegs[(cursorIndex + offset) % count];
+      if (leg) {
+        pushLeg(leg.sectionId, 0, 1);
+      }
+    }
+    pushLeg(startLeg.sectionId, 0, start);
+  }
+  return chain;
+}
+function paintChainHasSpan(chain) {
+  return chain.some(
+    (leg) => leg.wrap ? 1 - leg.entryFraction + leg.exitFraction > 1e-4 : leg.exitFraction - leg.entryFraction > 1e-4
+  );
 }
 function centerlinePoint(index) {
   const count = centerline.length;
@@ -1692,6 +1945,29 @@ function laneForOffset(offset) {
   }
   return String(offset);
 }
+function clampPropOffset(offset) {
+  return Math.max(MIN_PROP_OFFSET, Math.min(MAX_PROP_OFFSET, offset));
+}
+function parsePropOffset(value) {
+  if (value.trim() === "") {
+    return null;
+  }
+  const offset = Number(value);
+  if (!Number.isFinite(offset)) {
+    return null;
+  }
+  return clampPropOffset(offset);
+}
+function propLaneOffset(lane) {
+  if (lane === "near") {
+    return NEAR_PROP_OFFSET;
+  }
+  if (lane === "far") {
+    return FAR_PROP_OFFSET;
+  }
+  const offset = Number(lane ?? "");
+  return Number.isFinite(offset) && lane?.trim() !== "" ? clampPropOffset(offset) : NEAR_PROP_OFFSET;
+}
 function parseElementLengths(value) {
   const parts = value.split(",").map((part) => part.trim()).filter((part) => part !== "");
   const lengths = [];
@@ -1743,12 +2019,15 @@ function decorationScreenDistance(x, y, decoration) {
   const height = canvas.clientHeight;
   let best = Infinity;
   for (const leg of decoration.chain) {
-    const start = Math.min(leg.entryFraction, leg.exitFraction);
-    const end = Math.max(leg.entryFraction, leg.exitFraction);
-    const steps = Math.max(6, Math.ceil((end - start) * 120));
+    const start = leg.wrap ? leg.entryFraction : Math.min(leg.entryFraction, leg.exitFraction);
+    const end = leg.wrap ? 1 - leg.entryFraction + leg.exitFraction : Math.max(leg.entryFraction, leg.exitFraction) - start;
+    const steps = Math.max(6, Math.ceil(end * 120));
     let previous = null;
     for (let index = 0; index <= steps; index += 1) {
-      const fraction = start + (end - start) * index / steps;
+      let fraction = start + end * index / steps;
+      if (leg.wrap && fraction > 1) {
+        fraction -= 1;
+      }
       const world = railPointAtFraction(leg.sectionId, rail, fraction);
       const projected = world ? projectPoint(world, camera, width, height) : null;
       if (!projected) {
@@ -1794,17 +2073,45 @@ function hitTestDecoration(x, y) {
   }
   return bestId;
 }
-function decorationEndpoint(decoration, endpoint) {
+function decorationHandles(decoration) {
   const rail = railForDecoration(decoration);
   if (!rail || decoration.chain.length === 0) {
-    return null;
+    return [];
   }
-  const leg = endpoint === "entry" ? decoration.chain[0] : decoration.chain[decoration.chain.length - 1];
-  return {
-    sectionId: leg.sectionId,
-    fraction: endpoint === "entry" ? leg.entryFraction : leg.exitFraction,
-    rail
-  };
+  const handles = [];
+  const first = decoration.chain[0];
+  handles.push({
+    kind: "entry",
+    legIndex: 0,
+    sectionId: first.sectionId,
+    fraction: first.entryFraction,
+    rail,
+    source: "entry"
+  });
+  for (let index = 1; index < decoration.chain.length; index += 1) {
+    const previous = decoration.chain[index - 1];
+    const leg = decoration.chain[index];
+    const useNextEntry = previous.wrap === true;
+    handles.push({
+      kind: "boundary",
+      legIndex: index,
+      sectionId: useNextEntry ? leg.sectionId : previous.sectionId,
+      fraction: useNextEntry ? leg.entryFraction : previous.exitFraction,
+      rail,
+      source: useNextEntry ? "nextEntry" : "prevExit"
+    });
+  }
+  const lastIndex = decoration.chain.length - 1;
+  const last = decoration.chain[lastIndex];
+  handles.push({
+    kind: "exit",
+    legIndex: lastIndex,
+    sectionId: last.sectionId,
+    fraction: last.exitFraction,
+    rail,
+    source: "exit"
+  });
+  return handles;
 }
 function hitTestDecorationHandle(x, y) {
   const decoration = selectedDecoration();
@@ -1816,15 +2123,11 @@ function hitTestDecorationHandle(x, y) {
   const height = canvas.clientHeight;
   let best = null;
   let bestDistance = HANDLE_HIT_RADIUS;
-  for (const endpoint of ["entry", "exit"]) {
-    const target = decorationEndpoint(decoration, endpoint);
-    if (!target) {
-      continue;
-    }
+  for (const handle of decorationHandles(decoration)) {
     const world = railPointAtFraction(
-      target.sectionId,
-      target.rail,
-      target.fraction
+      handle.sectionId,
+      handle.rail,
+      handle.fraction
     );
     const projected = world ? projectPoint(world, camera, width, height) : null;
     if (!projected) {
@@ -1833,10 +2136,126 @@ function hitTestDecorationHandle(x, y) {
     const distance = Math.hypot(projected[0] - x, projected[1] - y);
     if (distance < bestDistance) {
       bestDistance = distance;
-      best = { endpoint, ...target };
+      best = handle;
     }
   }
   return best;
+}
+function computeResizeUpdate(decoration, drag) {
+  const chain = decoration.chain;
+  if (drag.kind === "entry" || drag.kind === "exit") {
+    const leg = chain[drag.legIndex];
+    if (!leg) {
+      return { updates: [], hint: "" };
+    }
+    if (leg.wrap) {
+      if (drag.kind === "entry") {
+        const lower2 = Math.min(1, leg.exitFraction + MIN_DECORATION_FRACTION);
+        const entry = Math.max(
+          clampFraction(drag.currentFraction),
+          lower2
+        );
+        return {
+          updates: [
+            {
+              legIndex: drag.legIndex,
+              entryFraction: entry,
+              exitFraction: leg.exitFraction,
+              wrap: true
+            }
+          ],
+          hint: entry > clampFraction(drag.currentFraction) + 1e-5 ? "wrapped leg entry clamped to stay after its exit" : ""
+        };
+      }
+      const upper2 = Math.max(0, leg.entryFraction - MIN_DECORATION_FRACTION);
+      const exit = Math.min(
+        clampFraction(drag.currentFraction),
+        upper2
+      );
+      return {
+        updates: [
+          {
+            legIndex: drag.legIndex,
+            entryFraction: leg.entryFraction,
+            exitFraction: exit,
+            wrap: true
+          }
+        ],
+        hint: exit < clampFraction(drag.currentFraction) - 1e-5 ? "wrapped leg exit clamped to stay before its entry" : ""
+      };
+    }
+    const fractions = resizedFractions(
+      leg.entryFraction,
+      leg.exitFraction,
+      drag.kind,
+      drag.currentFraction
+    );
+    return {
+      updates: [
+        {
+          legIndex: drag.legIndex,
+          entryFraction: fractions.entry,
+          exitFraction: fractions.exit,
+          wrap: false
+        }
+      ],
+      hint: ""
+    };
+  }
+  const previousIndex = drag.legIndex - 1;
+  const nextIndex = drag.legIndex;
+  const previous = chain[previousIndex];
+  const next = chain[nextIndex];
+  if (!previous || !next) {
+    return { updates: [], hint: "" };
+  }
+  if (previous.sectionId !== next.sectionId) {
+    return {
+      updates: [
+        {
+          legIndex: previousIndex,
+          entryFraction: previous.entryFraction,
+          exitFraction: 1,
+          wrap: previous.wrap ?? false
+        },
+        {
+          legIndex: nextIndex,
+          entryFraction: 0,
+          exitFraction: next.exitFraction,
+          wrap: next.wrap ?? false
+        }
+      ],
+      hint: "junction boundary stays at the shared point"
+    };
+  }
+  const lower = previous.entryFraction + MIN_DECORATION_FRACTION;
+  const upper = next.exitFraction - MIN_DECORATION_FRACTION;
+  let value = clampFraction(drag.currentFraction);
+  let hint = "";
+  if (upper <= lower) {
+    value = clampFraction((lower + upper) * 0.5);
+    hint = "chain legs are too small to move the boundary";
+  } else if (value < lower || value > upper) {
+    value = Math.min(upper, Math.max(lower, value));
+    hint = "boundary clamped to keep the chain ordered";
+  }
+  return {
+    updates: [
+      {
+        legIndex: previousIndex,
+        entryFraction: previous.entryFraction,
+        exitFraction: value,
+        wrap: previous.wrap ?? false
+      },
+      {
+        legIndex: nextIndex,
+        entryFraction: value,
+        exitFraction: next.exitFraction,
+        wrap: next.wrap ?? false
+      }
+    ],
+    hint
+  };
 }
 function resizedFractions(entry, exit, endpoint, fraction) {
   let nextEntry = entry;
@@ -1910,18 +2329,21 @@ function drawRailLine(camera, width, height, rail, color, lineWidth, dash) {
     overlayContext.restore();
   }
 }
-function drawRailSpan(camera, width, height, sectionId, rail, entry, exit, color, lineWidth) {
-  const start = Math.min(entry, exit);
-  const end = Math.max(entry, exit);
-  if (end - start <= 1e-5) {
+function drawRailSpan(camera, width, height, sectionId, rail, entry, exit, color, lineWidth, wrap = false) {
+  const start = wrap ? entry : Math.min(entry, exit);
+  const end = wrap ? 1 - entry + exit : Math.max(entry, exit) - start;
+  if (end <= 1e-5) {
     return;
   }
-  const steps = Math.max(8, Math.ceil((end - start) * 120));
+  const steps = Math.max(8, Math.ceil(end * 120));
   overlayContext.save();
   overlayContext.beginPath();
   let drawing = false;
   for (let index = 0; index <= steps; index += 1) {
-    const fraction = start + (end - start) * index / steps;
+    let fraction = start + end * index / steps;
+    if (wrap && fraction > 1) {
+      fraction -= 1;
+    }
     const world = railPointAtFraction(sectionId, rail, fraction);
     const projected = world ? projectPoint(world, camera, width, height) : null;
     if (!projected) {
@@ -2004,7 +2426,8 @@ function drawDecorationOverlay(camera, width, height) {
         leg.entryFraction,
         leg.exitFraction,
         color,
-        lineWidth
+        lineWidth,
+        leg.wrap ?? false
       );
       drawRailTick(
         camera,
@@ -2030,49 +2453,42 @@ function drawDecorationOverlay(camera, width, height) {
     const decoration = findDecoration(resizeDrag.decorationId);
     const rail = decoration ? railForDecoration(decoration) : null;
     if (decoration && rail) {
-      const legIndex = resizeDrag.endpoint === "entry" ? 0 : decoration.chain.length - 1;
-      const leg = decoration.chain[legIndex];
-      if (leg) {
-        const fractions = resizedFractions(
-          leg.entryFraction,
-          leg.exitFraction,
-          resizeDrag.endpoint,
-          resizeDrag.currentFraction
-        );
+      const result = computeResizeUpdate(decoration, resizeDrag);
+      for (const update of result.updates) {
+        const leg = decoration.chain[update.legIndex];
+        if (!leg) {
+          continue;
+        }
         drawRailSpan(
           camera,
           width,
           height,
           leg.sectionId,
           rail,
-          fractions.entry,
-          fractions.exit,
+          update.entryFraction,
+          update.exitFraction,
           "rgba(250, 204, 21, 0.95)",
-          4
+          4,
+          update.wrap
         );
       }
     }
   }
   if (paintStroke) {
-    const start = Math.min(
-      paintStroke.entryFraction,
-      paintStroke.currentFraction
-    );
-    const end = Math.max(
-      paintStroke.entryFraction,
-      paintStroke.currentFraction
-    );
-    drawRailSpan(
-      camera,
-      width,
-      height,
-      paintStroke.sectionId,
-      paintStroke.rail,
-      start,
-      end,
-      "rgba(250, 204, 21, 0.95)",
-      4
-    );
+    for (const leg of paintChainForStroke(paintStroke)) {
+      drawRailSpan(
+        camera,
+        width,
+        height,
+        leg.sectionId,
+        paintStroke.rail,
+        leg.entryFraction,
+        leg.exitFraction,
+        "rgba(250, 204, 21, 0.95)",
+        4,
+        leg.wrap ?? false
+      );
+    }
   }
   const selected = selectedDecoration();
   if (selected) {
@@ -2080,28 +2496,41 @@ function drawDecorationOverlay(camera, width, height) {
     if (!cameraTarget) {
       return;
     }
-    for (const endpoint of ["entry", "exit"]) {
-      const target = decorationEndpoint(selected, endpoint);
-      if (!target) {
-        continue;
-      }
-      let fraction = target.fraction;
-      if (resizeDrag && resizeDrag.decorationId === selected.id) {
-        const legIndex = resizeDrag.endpoint === "entry" ? 0 : selected.chain.length - 1;
-        const leg = selected.chain[legIndex];
-        if (leg) {
-          const fractions = resizedFractions(
-            leg.entryFraction,
-            leg.exitFraction,
-            resizeDrag.endpoint,
-            resizeDrag.currentFraction
+    const resizeUpdates = resizeDrag && resizeDrag.decorationId === selected.id ? computeResizeUpdate(selected, resizeDrag).updates : [];
+    for (const handle of decorationHandles(selected)) {
+      let fraction = handle.fraction;
+      if (resizeUpdates.length > 0) {
+        if (handle.kind === "entry") {
+          const update = resizeUpdates.find(
+            (item) => item.legIndex === handle.legIndex
           );
-          fraction = resizeDrag.endpoint === "entry" ? fractions.entry : fractions.exit;
+          if (update) {
+            fraction = update.entryFraction;
+          }
+        } else if (handle.kind === "exit") {
+          const update = resizeUpdates.find(
+            (item) => item.legIndex === handle.legIndex
+          );
+          if (update) {
+            fraction = update.exitFraction;
+          }
+        } else {
+          const previousUpdate = resizeUpdates.find(
+            (item) => item.legIndex === handle.legIndex - 1
+          );
+          const nextUpdate = resizeUpdates.find(
+            (item) => item.legIndex === handle.legIndex
+          );
+          if (handle.source === "prevExit" && previousUpdate) {
+            fraction = previousUpdate.exitFraction;
+          } else if (handle.source === "nextEntry" && nextUpdate) {
+            fraction = nextUpdate.entryFraction;
+          }
         }
       }
       const world = railPointAtFraction(
-        target.sectionId,
-        target.rail,
+        handle.sectionId,
+        handle.rail,
         fraction
       );
       const projected = world ? projectPoint(world, cameraTarget, width, height) : null;
@@ -2132,15 +2561,62 @@ function renderDecorationInspector() {
   }
   const isKerb = editorMode === "kerbs";
   const decoration = selectedDecoration();
+  const decorationId = decoration?.id ?? null;
+  if (decorationId !== renderedDecorationId) {
+    renderedDecorationId = decorationId;
+    laneOffsetEdited = false;
+    selectedChainLegIndex = 0;
+  }
+  if (decoration && decoration.chain.length > 0) {
+    selectedChainLegIndex = Math.min(
+      selectedChainLegIndex,
+      decoration.chain.length - 1
+    );
+  } else {
+    selectedChainLegIndex = 0;
+  }
   decorationTitle.textContent = isKerb ? "Kerb" : "Prop";
-  decorationHint.textContent = decoration ? `${sideLabel(decoration.side)} ${isKerb ? "kerb" : "prop"} selected \xB7 drag an endpoint handle to resize` : isKerb ? "Drag a kerb rail to paint a new span." : "Drag a prop rail to paint. Trees default on far, blocks on near.";
+  decorationHint.textContent = decoration ? `${sideLabel(decoration.side)} ${isKerb ? "kerb" : "prop"} selected \xB7 drag a handle to resize` : isKerb ? "Drag a kerb rail to paint a new span." : "Drag a prop rail to paint. Trees default on far, blocks on near.";
   decorationSideField.hidden = !decoration;
   decorationLaneField.hidden = !decoration || isKerb;
+  decorationLaneOffsetField.hidden = !decoration || isKerb;
+  decorationPaintOffsetField.hidden = isKerb;
   decorationPropKindField.hidden = isKerb;
   decorationSpacingField.hidden = isKerb;
   decorationElementsField.hidden = !isKerb;
   decorationApply.disabled = !decoration;
   decorationDelete.hidden = !decoration;
+  decorationContinueLeg.hidden = !decoration;
+  decorationRemoveLeg.hidden = !decoration || decoration.chain.length <= 1;
+  if (document.activeElement !== decorationPaintOffset) {
+    decorationPaintOffset.value = String(newPropOffset);
+  }
+  decorationLegs.replaceChildren();
+  if (decoration) {
+    decoration.chain.forEach((leg, index) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "decoration-leg";
+      row.dataset.legIndex = String(index);
+      row.setAttribute(
+        "aria-pressed",
+        String(index === selectedChainLegIndex)
+      );
+      const section = document.createElement("span");
+      section.className = "leg-section";
+      section.textContent = `${index + 1}. ${leg.sectionId}`;
+      const fractions = document.createElement("span");
+      fractions.textContent = `${Math.round(leg.entryFraction * 100)}% \u2192 ${Math.round(leg.exitFraction * 100)}%`;
+      row.append(section, fractions);
+      if (leg.wrap) {
+        const badge = document.createElement("span");
+        badge.className = "wrap-badge";
+        badge.textContent = "wrap";
+        row.append(badge);
+      }
+      decorationLegs.append(row);
+    });
+  }
   if (decoration) {
     decorationSide.value = decoration.side < 0 ? "-1" : "1";
     decorationPhase.value = String(decoration.phase ?? 0);
@@ -2148,6 +2624,11 @@ function renderDecorationInspector() {
       decorationElements.value = (decoration.elements ?? []).join(", ");
     } else {
       decorationLane.value = (decoration.lane ?? "near") === "far" ? "far" : "near";
+      if (!laneOffsetEdited || document.activeElement !== decorationLaneOffset) {
+        decorationLaneOffset.value = String(
+          propLaneOffset(decoration.lane)
+        );
+      }
       decorationPropKind.value = propKindValue(decoration.propKind ?? "blocks");
       decorationSpacing.value = typeof decoration.spacing === "number" ? String(decoration.spacing) : "";
     }
@@ -2244,6 +2725,7 @@ async function applyDecorationProperties() {
   const updated = cloneDecoration(decoration);
   updated.side = Number(decorationSide.value) < 0 ? -1 : 1;
   updated.phase = numberInputValue(decorationPhase, updated.phase ?? 0);
+  let laneNote = "";
   if (updated.kind === "kerb") {
     const elements = parseElementLengths(decorationElements.value);
     if (elements === null) {
@@ -2255,7 +2737,22 @@ async function applyDecorationProperties() {
     }
     updated.elements = elements;
   } else {
-    updated.lane = decorationLane.value === "far" ? "far" : "near";
+    const laneInput = decorationLaneOffset.value;
+    const rawLaneOffset = Number(laneInput);
+    if (laneInput.trim() === "" || !Number.isFinite(rawLaneOffset)) {
+      setDecorationStatus("lane offset must be a finite number", "error");
+      return;
+    }
+    const laneOffset = clampPropOffset(rawLaneOffset);
+    if (rawLaneOffset < MIN_PROP_OFFSET || rawLaneOffset > MAX_PROP_OFFSET) {
+      laneNote = " \xB7 lane offset clamped to 1..19 m";
+    }
+    const isDefault = Math.abs(laneOffset - NEAR_PROP_OFFSET) < 1e-4 || Math.abs(laneOffset - FAR_PROP_OFFSET) < 1e-4;
+    if (laneOffsetEdited || !isDefault) {
+      updated.lane = String(laneOffset);
+    } else {
+      updated.lane = Math.abs(laneOffset - FAR_PROP_OFFSET) < 1e-4 ? "far" : "near";
+    }
     updated.propKind = propKindValue(decorationPropKind.value);
     const spacing = parseOptionalSpacing(decorationSpacing.value);
     if (spacing === null) {
@@ -2281,7 +2778,7 @@ async function applyDecorationProperties() {
     "updating decoration"
   );
   if (applied) {
-    setDecorationStatus("decoration updated", "ready");
+    setDecorationStatus(`decoration updated${laneNote}`, "ready");
   }
 }
 async function commitDecorationResize() {
@@ -2295,23 +2792,29 @@ async function commitDecorationResize() {
     return;
   }
   const updated = cloneDecoration(decoration);
-  const legIndex = drag.endpoint === "entry" ? 0 : updated.chain.length - 1;
-  const leg = updated.chain[legIndex];
-  if (!leg) {
-    return;
-  }
-  const fractions = resizedFractions(
-    leg.entryFraction,
-    leg.exitFraction,
-    drag.endpoint,
-    drag.currentFraction
-  );
-  if (Math.abs(fractions.entry - leg.entryFraction) < 1e-5 && Math.abs(fractions.exit - leg.exitFraction) < 1e-5) {
+  const result = computeResizeUpdate(updated, drag);
+  if (result.updates.length === 0) {
     drawControlPoints();
     return;
   }
-  leg.entryFraction = fractions.entry;
-  leg.exitFraction = fractions.exit;
+  let changed = false;
+  for (const update of result.updates) {
+    const leg = updated.chain[update.legIndex];
+    if (!leg) {
+      continue;
+    }
+    if (Math.abs(update.entryFraction - leg.entryFraction) > 1e-5 || Math.abs(update.exitFraction - leg.exitFraction) > 1e-5) {
+      changed = true;
+      leg.entryFraction = update.entryFraction;
+      leg.exitFraction = update.exitFraction;
+      leg.wrap = update.wrap;
+    }
+  }
+  if (!changed) {
+    setDecorationStatus(result.hint || "decoration unchanged");
+    drawControlPoints();
+    return;
+  }
   const applied = await applyDecorationProject(
     {
       ...project,
@@ -2322,7 +2825,10 @@ async function commitDecorationResize() {
     "resizing decoration"
   );
   if (applied) {
-    setDecorationStatus("decoration resized", "ready");
+    setDecorationStatus(
+      result.hint ? `decoration resized \xB7 ${result.hint}` : "decoration resized",
+      "ready"
+    );
   }
 }
 async function seedDefaultDecorations() {
@@ -2431,20 +2937,13 @@ function paintPropKindForRail(rail) {
   }
   return (rail.lane ?? "").toLowerCase() === "far" || Math.abs(rail.offset - FAR_PROP_OFFSET) < 1e-4 ? "trees" : "blocks";
 }
-function buildPaintDecoration(stroke, entryFraction, exitFraction) {
+function buildPaintDecoration(stroke, chain) {
   const kind = modeDecorationKind(editorMode) ?? "kerb";
   const decoration = {
     id: nextDecorationId(kind),
     kind,
     side: stroke.rail.side < 0 ? -1 : 1,
-    chain: [
-      {
-        sectionId: stroke.sectionId,
-        entryFraction,
-        exitFraction,
-        wrap: false
-      }
-    ],
+    chain: chain.map((leg) => ({ ...leg })),
     phase: kind === "kerb" ? newKerbPhase : newPropPhase
   };
   if (kind === "kerb") {
@@ -2460,7 +2959,7 @@ function buildPaintDecoration(stroke, entryFraction, exitFraction) {
   }
   return decoration;
 }
-async function commitPaint(stroke, entryFraction, exitFraction) {
+async function commitPaint(stroke, chain) {
   if (!editorViewer) {
     return;
   }
@@ -2478,7 +2977,7 @@ async function commitPaint(stroke, entryFraction, exitFraction) {
     );
     return;
   }
-  const decoration = buildPaintDecoration(stroke, entryFraction, exitFraction);
+  const decoration = buildPaintDecoration(stroke, chain);
   const applied = await applyDecorationProject(
     {
       ...project,
@@ -2516,6 +3015,118 @@ async function deleteDecoration(id) {
       drawControlPoints();
     }
     setDecorationStatus("decoration deleted", "ready");
+  }
+}
+async function extendDecorationChain() {
+  const decoration = selectedDecoration();
+  if (!decoration || !editorViewer) {
+    return;
+  }
+  if (decoration.chain.length === 0) {
+    return;
+  }
+  const last = decoration.chain[decoration.chain.length - 1];
+  const currentIndex = routeLegIndexForSection(last.sectionId);
+  const nextIndex = nextRouteLegIndex(currentIndex);
+  if (nextIndex === null) {
+    setDecorationStatus("no adjacent route leg to continue");
+    return;
+  }
+  const next = routeLegs[nextIndex];
+  if (!next) {
+    setDecorationStatus("no adjacent route leg to continue");
+    return;
+  }
+  const nextSection = (project.sections ?? []).find(
+    (section) => section.id === next.sectionId
+  );
+  const firstPoint = nextSection?.points[0] ?? "";
+  const lastPoint = nextSection?.points[nextSection.points.length - 1] ?? "";
+  const resolvedEntry = next.entry === "seam" ? firstPoint : next.entry;
+  if (resolvedEntry !== firstPoint) {
+    setDecorationStatus(
+      resolvedEntry === lastPoint ? "next route leg runs in reverse; cannot append forward" : "next route leg does not start at its section start; cannot append forward"
+    );
+    return;
+  }
+  const resolvedExit = next.exit === "seam" ? firstPoint : next.exit;
+  const nextClosed = sectionIsClosed(next.sectionId);
+  const coversFullForward = nextClosed ? resolvedExit === firstPoint : resolvedExit === lastPoint;
+  if (!coversFullForward) {
+    setDecorationStatus(
+      "next route leg does not cover a full forward section; cannot append"
+    );
+    return;
+  }
+  if (next.sectionId === last.sectionId) {
+    setDecorationStatus("next route leg repeats the current section; cannot append");
+    return;
+  }
+  const updated = cloneDecoration(decoration);
+  const updatedLast = updated.chain[updated.chain.length - 1];
+  if (!updatedLast.wrap) {
+    if (updatedLast.entryFraction >= 1 - 1e-4) {
+      setDecorationStatus(
+        "current leg starts at the junction; cannot extend it forward"
+      );
+      return;
+    }
+    if (updatedLast.exitFraction < 1) {
+      updatedLast.exitFraction = 1;
+    }
+  }
+  updated.chain.push({
+    sectionId: next.sectionId,
+    entryFraction: 0,
+    exitFraction: 1,
+    wrap: false
+  });
+  const applied = await applyDecorationProject(
+    {
+      ...project,
+      decorations: (project.decorations ?? []).map(
+        (item) => item.id === updated.id ? updated : item
+      )
+    },
+    "extending decoration chain"
+  );
+  if (applied) {
+    selectedChainLegIndex = updated.chain.length - 1;
+    renderDecorationInspector();
+    drawControlPoints();
+    setDecorationStatus(`chain extended onto ${next.sectionId}`, "ready");
+  }
+}
+async function removeDecorationChainLeg() {
+  const decoration = selectedDecoration();
+  if (!decoration || !editorViewer) {
+    return;
+  }
+  if (decoration.chain.length <= 1) {
+    setDecorationStatus("cannot remove the only chain leg");
+    return;
+  }
+  const lastIndex = decoration.chain.length - 1;
+  const removeIndex = selectedChainLegIndex === 0 || selectedChainLegIndex === lastIndex ? selectedChainLegIndex : lastIndex;
+  const updated = cloneDecoration(decoration);
+  updated.chain.splice(removeIndex, 1);
+  const applied = await applyDecorationProject(
+    {
+      ...project,
+      decorations: (project.decorations ?? []).map(
+        (item) => item.id === updated.id ? updated : item
+      )
+    },
+    "removing decoration chain leg"
+  );
+  if (applied) {
+    selectedChainLegIndex = Math.min(
+      removeIndex,
+      updated.chain.length - 1
+    );
+    renderDecorationInspector();
+    drawControlPoints();
+    setDecorationStatus("chain leg removed", "ready");
   }
 }
 function drawControlPoints() {
@@ -3373,6 +3984,57 @@ decorationDelete.addEventListener("click", () => {
     void deleteDecoration(decoration.id);
   }
 });
+decorationContinueLeg.addEventListener("click", () => {
+  void extendDecorationChain();
+});
+decorationRemoveLeg.addEventListener("click", () => {
+  void removeDecorationChainLeg();
+});
+decorationLegs.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return;
+  }
+  const button = target.closest(
+    "button[data-leg-index]"
+  );
+  if (!button) {
+    return;
+  }
+  const index = Number(button.dataset.legIndex);
+  if (!Number.isInteger(index)) {
+    return;
+  }
+  selectedChainLegIndex = index;
+  renderDecorationInspector();
+  drawControlPoints();
+});
+decorationLaneOffset.addEventListener("input", () => {
+  laneOffsetEdited = true;
+});
+var applyPaintOffset = () => {
+  const parsed = parsePropOffset(decorationPaintOffset.value);
+  if (parsed === null) {
+    setDecorationStatus(
+      "paint offset must be a number between 1 and 19 m",
+      "error"
+    );
+    return;
+  }
+  newPropOffset = clampPropOffset(parsed);
+  drawControlPoints();
+};
+decorationPaintOffset.addEventListener("input", () => {
+  const parsed = parsePropOffset(decorationPaintOffset.value);
+  if (parsed !== null) {
+    newPropOffset = clampPropOffset(parsed);
+    drawControlPoints();
+  }
+});
+decorationPaintOffset.addEventListener("change", () => {
+  applyPaintOffset();
+  decorationPaintOffset.value = String(newPropOffset);
+});
 decorationPhase.addEventListener("input", () => {
   if (selectedDecoration()) {
     return;
@@ -3398,6 +4060,10 @@ decorationPropKind.addEventListener("change", () => {
     newPropKind = propKindValue(decorationPropKind.value);
     newPropKindExplicit = true;
   }
+});
+decorationLane.addEventListener("change", () => {
+  decorationLaneOffset.value = decorationLane.value === "far" ? "19" : "14";
+  laneOffsetEdited = false;
 });
 for (const control of [decorationSide, decorationLane]) {
   control.addEventListener("change", () => {
@@ -3455,7 +4121,8 @@ canvas.addEventListener(
           resizeDrag = {
             pointerId: event.pointerId,
             decorationId: decoration.id,
-            endpoint: handle.endpoint,
+            kind: handle.kind,
+            legIndex: handle.legIndex,
             sectionId: handle.sectionId,
             rail: handle.rail,
             currentFraction: handle.fraction
@@ -3486,12 +4153,17 @@ canvas.addEventListener(
           cameraDragging = false;
           selectedDecorationId = null;
           renderDecorationInspector();
+          const startLegIndex = routeLegIndexForSection(railHit.sectionId);
           paintStroke = {
             pointerId: event.pointerId,
-            sectionId: railHit.sectionId,
             rail: railHit.rail,
-            entryFraction: railHit.fraction,
-            currentFraction: railHit.fraction
+            startLegIndex,
+            startFraction: railHit.fraction,
+            cursorLegIndex: startLegIndex,
+            cursorFraction: railHit.fraction,
+            legDelta: 0,
+            cursorTurns: 0,
+            hint: "drag along the rail to paint"
           };
           cameraController?.setEnabled(false);
           try {
@@ -3571,19 +4243,65 @@ window.addEventListener(
     if (paintStroke && event.pointerId === paintStroke.pointerId) {
       event.preventDefault();
       const [x2, y2] = pointerPosition(event);
-      const otherSection = railScreenHit(x2, y2, paintStroke.rail);
-      if (otherSection && otherSection.sectionId !== paintStroke.sectionId) {
-        setDecorationStatus(
-          "single-section paint: clamped to the starting section",
-          "error"
-        );
+      const stroke = paintStroke;
+      const target = resolvePaintTarget(stroke, x2, y2);
+      const currentLeg = routeLegs[stroke.cursorLegIndex];
+      const currentSectionId = currentLeg?.sectionId ?? "";
+      let hint = "";
+      if (target.kind === "next" || target.kind === "prev") {
+        const delta = target.kind === "next" ? 1 : -1;
+        const nextDelta = stroke.legDelta + delta;
+        if (routeLegs.length > 1 && Math.abs(nextDelta) <= routeLegs.length) {
+          stroke.legDelta = nextDelta;
+          stroke.cursorLegIndex = target.legIndex;
+          stroke.cursorFraction = target.fraction;
+          stroke.cursorTurns = 0;
+          hint = "painting across a route-leg boundary";
+        } else {
+          stroke.cursorFraction = railFractionOnSection(
+            currentSectionId,
+            stroke.rail,
+            x2,
+            y2
+          );
+          stroke.cursorTurns = 0;
+          hint = "paint follows the current section";
+        }
+      } else if (target.kind === "clamp") {
+        stroke.cursorFraction = target.fraction;
+        stroke.cursorTurns = 0;
+        hint = "paint follows the current section";
+      } else {
+        const previousFraction = stroke.cursorFraction;
+        const raw = target.fraction;
+        if (stroke.legDelta === 0) {
+          const seam = detectSeamJump(
+            currentSectionId,
+            stroke.rail,
+            previousFraction,
+            raw
+          );
+          if (seam === "forward") {
+            stroke.cursorTurns += 1;
+          } else if (seam === "backward") {
+            stroke.cursorTurns -= 1;
+          }
+        } else {
+          stroke.cursorTurns = 0;
+        }
+        stroke.cursorLegIndex = target.legIndex;
+        stroke.cursorFraction = raw;
+        const wrapped = stroke.legDelta === 0 && (stroke.cursorTurns > 0 && stroke.startFraction > raw + 1e-4 || stroke.cursorTurns < 0 && raw > stroke.startFraction + 1e-4);
+        if (wrapped) {
+          hint = "painting across the seam (wrap)";
+        } else if (stroke.legDelta !== 0) {
+          hint = "painting across a route-leg boundary";
+        }
       }
-      paintStroke.currentFraction = railFractionOnSection(
-        paintStroke.sectionId,
-        paintStroke.rail,
-        x2,
-        y2
-      );
+      if (hint && hint !== stroke.hint) {
+        stroke.hint = hint;
+        setDecorationStatus(hint);
+      }
       drawControlPoints();
       return;
     }
@@ -3643,19 +4361,12 @@ var endPaint = (event) => {
     setDecorationStatus("paint cancelled");
     return;
   }
-  const entryFraction = Math.min(
-    stroke.entryFraction,
-    stroke.currentFraction
-  );
-  const exitFraction = Math.max(
-    stroke.entryFraction,
-    stroke.currentFraction
-  );
-  if (exitFraction - entryFraction <= 1e-4) {
+  const chain = paintChainForStroke(stroke);
+  if (!paintChainHasSpan(chain)) {
     setDecorationStatus("drag along the rail to paint");
     return;
   }
-  void commitPaint(stroke, entryFraction, exitFraction);
+  void commitPaint(stroke, chain);
 };
 var endResize = (event) => {
   if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) {
