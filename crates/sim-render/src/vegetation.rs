@@ -94,6 +94,7 @@ impl MeshBuilder {
             is_decal: false,
             foliage,
             billboard: false,
+            track_blend: None,
         }
     }
 
