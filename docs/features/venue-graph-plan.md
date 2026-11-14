@@ -329,11 +329,13 @@ Acceptance:
 - Pack size and draw calls with all sections baked.
 - Do not let `@5` or the reference branch become a co-equal model.
 
-## 10. Phase 3 `@6` wasm interface (proposed)
+## 10. Phase 3 `@6` wasm interface
 
 The web editor consumes the `@6` project through these `TrackViewer` bindings.
-The JSON schema is the contract; exact signatures may be refined by the render
-worker.
+The read/project/point/route/guide-rail APIs, `set_editor_project`,
+insert/move/delete point, and start/finish are implemented.
+`make_editor_junction` is pending Step 0b. The JSON schema is the contract;
+signatures may still be refined.
 
 Read-only (JSON strings):
 
@@ -344,6 +346,8 @@ Read-only (JSON strings):
 - `editor_section_centerlines()` — every section centerline keyed by id.
 - `editor_route_centerline()` — active layout centerline.
 - `editor_kerb_spans()` / `editor_prop_lines()` — bake-derived decoration.
+- `editor_guide_rails()` — lane rails for the decoration editor (kerb, prop
+  near/far).
 
 Editing (async, rebuild before resolving):
 
@@ -352,7 +356,7 @@ Editing (async, rebuild before resolving):
 - `move_editor_point(pointId, x, z)`.
 - `delete_editor_point(pointId)`.
 - `make_editor_junction(pointId) -> branchSectionId` — add the role and a short
-  capped branch; never split.
+  capped branch; never split. Pending Step 0b.
 - `set_editor_start_finish(pointId)`.
 - `editor_track_pack()`.
 

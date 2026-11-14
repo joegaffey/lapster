@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-13
+Last updated: 2026-11-14
 Current phase: **Venue graph rebuild — `@6` section-point reset (Phase 3)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
@@ -182,6 +182,7 @@ State on `feat/venue-graph`:
 - `stash@{0}` holds the superseded `@5` selection UX.
 - Local page: `http://127.0.0.1:8123/web/track-editor/`.
 - Dev preview: `https://joegaffey.com/lapster-dev/web/track-editor/`.
+- Deployed code tip `abcbbce` (decoration mode editor); the preview matches it.
 
 Resume in this order:
 
