@@ -1285,6 +1285,119 @@ test("setting start/finish updates the active layout and point", async ({
   expect(pageErrors).toEqual([]);
 });
 
+test("making a junction adds a capped branch without splitting the host", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=make-junction");
+  await waitForEditor(page);
+  await waitForReady(page);
+
+  const before = await readProject(page);
+  const host = before.sections!.find((section) => section.id === "section-0")!;
+  const hostPoints = [...host.points];
+
+  // Make junction is not offered on the layout start/finish point.
+  const startScreen = await pointScreen(page, "point-0");
+  expect(startScreen).not.toBeNull();
+  await page.mouse.click(startScreen![0], startScreen![1]);
+  await expect(page.locator("#point-editor")).toBeVisible();
+  await expect(page.locator("#make-junction")).toBeHidden();
+
+  // Make a junction on an eligible interior point.
+  const targetId = "point-3";
+  const screen = await pointScreen(page, targetId);
+  expect(screen).not.toBeNull();
+  await page.mouse.click(screen![0], screen![1]);
+  await expect(page.locator("#make-junction")).toBeVisible();
+  await page.locator("#make-junction").click();
+  await waitForReady(page);
+
+  const after = await readProject(page);
+  expect(after.sections).toHaveLength(2);
+  const hostAfter = after.sections!.find((section) => section.id === "section-0")!;
+  expect(hostAfter.points).toEqual(hostPoints);
+  const branch = after.sections!.find(
+    (section) => section.id !== "section-0",
+  )!;
+  expect(branch.closed).toBe(false);
+  expect(branch.points).toHaveLength(2);
+  expect(branch.points).toContain(targetId);
+
+  const points = await readPoints(page);
+  const junction = points.find((point) => point.id === targetId)!;
+  expect(junction.junction).toBe("normal");
+  const looseId = branch.points.find((id) => id !== targetId)!;
+  const loose = points.find((point) => point.id === looseId)!;
+  expect(loose.end).toBe("cap");
+  expect(loose.degree).toBe(1);
+  expect(loose.sections).toEqual([branch.id]);
+
+  // The new branch section is selected.
+  const rows = await readSelectionRows(page);
+  expect(rows.kind).toBe("section");
+  expect(rows.id).toBe(branch.id);
+  expect(rows.state).toBe("open");
+  expect(rows.points).toBe("2");
+
+  // The loose end reads as a loose end and stays draggable.
+  const looseScreen = await pointScreen(page, looseId);
+  expect(looseScreen).not.toBeNull();
+  await page.mouse.click(looseScreen![0], looseScreen![1]);
+  await expect
+    .poll(async () => (await readPointEditor(page)).pointId)
+    .toBe(looseId);
+  const looseEditor = await readPointEditor(page);
+  expect(looseEditor.rows.role).toBe("loose end");
+
+  const beforeLoose = (await readPoints(page)).find(
+    (point) => point.id === looseId,
+  )!;
+  const moved = await dragPoint(page, looseId);
+  expect(
+    Math.abs(moved.position[0] - beforeLoose.position[0]) +
+      Math.abs(moved.position[1] - beforeLoose.position[1]),
+  ).toBeGreaterThan(1e-3);
+
+  // Dragging the branch does not split or reshape the host point list.
+  const afterDrag = await readProject(page);
+  expect(afterDrag.sections).toHaveLength(2);
+  expect(
+    afterDrag.sections!.find((section) => section.id === "section-0")!.points,
+  ).toEqual(hostPoints);
+
+  // Test drive export still produces a pack.
+  const packLength = await page.evaluate(
+    () => ((window as any).__trackEditor.editor_track_pack() as Uint8Array).length,
+  );
+  expect(packLength).toBeGreaterThan(0);
+
+  // Save and reload keeps the branch.
+  await page.locator("#save-project").click();
+  await page.waitForFunction(
+    ({ key, expectedJson }) => {
+      const stored = localStorage.getItem(key);
+      return (
+        stored !== null && JSON.stringify(JSON.parse(stored)) === expectedJson
+      );
+    },
+    {
+      key: PROJECT_STORAGE_KEY,
+      expectedJson: JSON.stringify(afterDrag),
+    },
+  );
+  await page.reload();
+  await waitForEditor(page);
+  await waitForProject(page, afterDrag);
+  const reloaded = await readProject(page);
+  expect(
+    reloaded.sections!.some((section) => section.id === branch.id),
+  ).toBe(true);
+  expect(pageErrors).toEqual([]);
+});
+
 test("point editor stays open while non-modal and closes with selection", async ({
   page,
 }) => {
@@ -1997,11 +2110,11 @@ test("prop mode selects a tree and paints a replacement prop", async ({
 
   const before = decorations.length;
   await page.locator("#decoration-delete").click();
-  await expect
-    .poll(async () => (await readDecorations(page)).length, {
-      timeout: 30_000,
-    })
-    .toBe(before - 1);
+  // Reading editor_project() while set_editor_project() is in flight triggers
+  // a wasm reentrancy panic, so wait for the rebuild to settle first.
+  await waitForReady(page);
+  const afterDelete = await readDecorations(page);
+  expect(afterDelete.length).toBe(before - 1);
 
   await page.mouse.move(start![0], start![1]);
   await page.mouse.down();

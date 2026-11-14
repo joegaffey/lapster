@@ -564,6 +564,17 @@ impl TrackViewer {
             .await
     }
 
+    pub async fn make_editor_junction(&mut self, point_id: &str) -> Result<String, JsValue> {
+        let mut project = self
+            .editor_project
+            .clone()
+            .ok_or_else(|| JsValue::from_str("editor project unavailable"))?;
+        let branch_id = project.make_junction(point_id).map_err(js_error)?;
+        self.apply_editor_project(project, self.editor_active_layout.clone())
+            .await?;
+        Ok(branch_id)
+    }
+
     async fn apply_editor_project(
         &mut self,
         project: crate::track_editor::TrackProject,

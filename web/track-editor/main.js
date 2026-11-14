@@ -987,6 +987,7 @@ var pointEditorRows = document.querySelector("#point-editor-rows");
 var pointEditorClose = document.querySelector("#point-editor-close");
 var deletePointButton = document.querySelector("#delete-point");
 var setStartFinishButton = document.querySelector("#set-start-finish");
+var makeJunctionButton = document.querySelector("#make-junction");
 var modeButtons = Array.from(
   document.querySelectorAll("#editor-mode button")
 );
@@ -1545,7 +1546,7 @@ function hitTestControlPoint(x, y) {
 }
 function hitTestRouteSection(x, y) {
   const camera = currentCamera();
-  if (!camera || routeSectionIds.size === 0) {
+  if (!camera || (project.sections ?? []).length === 0) {
     return null;
   }
   const width = canvas.clientWidth;
@@ -1553,9 +1554,6 @@ function hitTestRouteSection(x, y) {
   let best = null;
   let bestDistance = SECTION_HIT_RADIUS;
   for (const section of project.sections ?? []) {
-    if (!routeSectionIds.has(section.id)) {
-      continue;
-    }
     const samples = sectionCenterlines[section.id];
     if (!samples || samples.length < 2) {
       continue;
@@ -2569,6 +2567,38 @@ function drawControlPoints() {
     overlayContext.strokeStyle = editorMode === "points" ? "rgba(56, 189, 248, 0.9)" : "rgba(56, 189, 248, 0.32)";
     overlayContext.stroke();
   }
+  if (editorMode === "points") {
+    for (const section of project.sections ?? []) {
+      if (routeSectionIds.has(section.id)) {
+        continue;
+      }
+      const samples = sectionCenterlines[section.id];
+      if (!samples || samples.length < 2) {
+        continue;
+      }
+      overlayContext.save();
+      overlayContext.beginPath();
+      let drawing = false;
+      for (const sample of samples) {
+        const projected = projectPoint(sample, camera, width, height);
+        if (!projected) {
+          drawing = false;
+          continue;
+        }
+        if (!drawing) {
+          overlayContext.moveTo(projected[0], projected[1]);
+          drawing = true;
+        } else {
+          overlayContext.lineTo(projected[0], projected[1]);
+        }
+      }
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "rgba(167, 139, 250, 0.8)";
+      overlayContext.setLineDash([6, 4]);
+      overlayContext.stroke();
+      overlayContext.restore();
+    }
+  }
   if (editorMode === "points" && selection?.kind === "section") {
     const samples = sectionCenterlines[selection.id];
     if (samples && samples.length > 1) {
@@ -2630,9 +2660,7 @@ function drawControlPoints() {
     const pointsById = new Map(editorPoints.map((point) => [point.id, point]));
     const drawnSections = selection?.kind === "section" ? (project.sections ?? []).filter(
       (section) => section.id === selection?.id
-    ) : (project.sections ?? []).filter(
-      (section) => routeSectionIds.has(section.id)
-    );
+    ) : project.sections ?? [];
     for (const section of drawnSections) {
       const positions = [];
       for (const id of section.points) {
@@ -2865,6 +2893,18 @@ function isLooseEndPoint(point) {
     (section) => section.closed !== true && (section.points[0] === point.id || section.points[section.points.length - 1] === point.id)
   );
 }
+function pointCanMakeJunction(point) {
+  if (point.startFinish || point.junction) {
+    return false;
+  }
+  return (project.sections ?? []).some((section) => {
+    if (section.points.length < 3) {
+      return false;
+    }
+    const index = section.points.indexOf(point.id);
+    return index > 0 && index + 1 < section.points.length;
+  });
+}
 var CONTACT_TOLERANCE = 0.5;
 function nearestCenterlineContact(position, samples) {
   let best = Infinity;
@@ -2918,6 +2958,8 @@ function contactColors(point) {
 function renderSelection() {
   selectionDetails.replaceChildren();
   pointEditorRows.replaceChildren();
+  makeJunctionButton.hidden = true;
+  makeJunctionButton.disabled = true;
   const addRow = (target, label, value) => {
     const dt = document.createElement("dt");
     dt.textContent = label;
@@ -2969,6 +3011,9 @@ function renderSelection() {
     );
     addRow(pointEditorRows, "section degree", String(point.degree));
     addRow(pointEditorRows, "sections", point.sections.join(", ") || "none");
+    const canMakeJunction = pointCanMakeJunction(point);
+    makeJunctionButton.hidden = !canMakeJunction;
+    makeJunctionButton.disabled = !canMakeJunction;
     if (editorMode === "points" && !pointEditor.open) {
       pointEditor.show();
     }
@@ -3014,9 +3059,7 @@ function refreshEditorState() {
     (layout) => layout.id === activeLayoutId
   );
   const startFinishId = activeLayout?.startFinish ?? "";
-  editorPoints = pointData.filter(
-    (point) => point.sections.some((id) => routeSectionIds.has(id))
-  ).map((point) => ({
+  editorPoints = pointData.map((point) => ({
     id: point.id,
     position: [
       point.position[0],
@@ -3083,6 +3126,9 @@ deletePointButton.addEventListener("click", () => {
 });
 setStartFinishButton.addEventListener("click", () => {
   void setStartFinishPoint();
+});
+makeJunctionButton.addEventListener("click", () => {
+  void makeJunctionFromSelection();
 });
 pointEditorClose.addEventListener("click", () => {
   selection = null;
@@ -3176,6 +3222,20 @@ async function setStartFinishPoint() {
   await rebuildEditor("setting start/finish", async () => {
     await editorViewer.set_editor_start_finish(pointId);
   });
+}
+async function makeJunctionFromSelection() {
+  if (!editorViewer || selection?.kind !== "point" || rebuilding) {
+    return;
+  }
+  const pointId = selection.id;
+  await rebuildEditor(
+    "making junction",
+    async () => {
+      const branchSectionId = await editorViewer.make_editor_junction(pointId);
+      selection = { kind: "section", id: branchSectionId };
+    },
+    null
+  );
 }
 async function moveEditorPoint(point) {
   await rebuildEditor(

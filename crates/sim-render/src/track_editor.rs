@@ -105,6 +105,14 @@ const DEFAULT_NEAR_PROP_SEGMENTS: usize = 4;
 const DEFAULT_NEAR_PROP_GAP: f32 = 2.0;
 const DEFAULT_TREE_RING_SEGMENTS: usize = 6;
 const DEFAULT_TREE_RING_GAP: f32 = 4.0;
+/// Length of the capped branch created by `make_junction`, in metres.
+const JUNCTION_BRANCH_LENGTH: f32 = 14.0;
+/// Fixed sample count for deriving a junction's nearest contact point.
+const JUNCTION_CONTACT_SAMPLES: usize = 256;
+/// Fixed sample count for baking sections that are not on the active route.
+const EXTRA_SECTION_SEGMENTS: usize = 32;
+/// How far the flat loose-end cap extends past the section endpoint.
+const LOOSE_END_CAP_LENGTH: f32 = 1.5;
 const PROP_LATERAL_JITTER: f32 = 0.03;
 const PROP_LONGITUDINAL_JITTER: f32 = 0.03;
 const PROP_YAW_JITTER: f32 = 0.025;
@@ -651,10 +659,11 @@ impl TrackProject {
             }
         }
 
-        // Authored points are handles. A junction is a handle with a future
-        // derived contact point on its host section, and start/finish contact
-        // lines are likewise derived from the handle. Only open-section
-        // endpoints are coerced to anchors.
+        // Authored points are handles. A junction is a handle with a derived
+        // contact point on its host section, and start/finish contact lines are
+        // likewise derived from the handle. Only open-section endpoints are
+        // coerced to anchors; a junction endpoint stays a handle because its
+        // attached section is clamped at the derived contact instead.
         for section in &self.sections {
             if section.closed {
                 continue;
@@ -664,7 +673,9 @@ impl TrackProject {
                 .flatten()
             {
                 if let Some(point) = self.points.iter_mut().find(|point| point.id == *point_id) {
-                    point.kind = PointKind::Anchor;
+                    if point.junction.is_none() {
+                        point.kind = PointKind::Anchor;
+                    }
                 }
             }
         }
@@ -1055,6 +1066,85 @@ impl TrackProject {
         Ok(())
     }
 
+    /// Adds the junction role to an interior host-section point and appends a
+    /// short open capped branch. The host section is never split.
+    pub fn make_junction(&mut self, point_id: &str) -> Result<String, String> {
+        self.normalize_in_place()?;
+        let mut candidate = self.clone();
+        let point = candidate
+            .point_by_id(point_id)
+            .cloned()
+            .ok_or_else(|| format!("unknown point id '{point_id}'"))?;
+        if point.junction.is_some() {
+            return Err(format!("point '{point_id}' already has a junction role"));
+        }
+        if candidate
+            .layouts
+            .iter()
+            .any(|layout| layout.start_finish == point_id)
+        {
+            return Err(format!(
+                "cannot make point '{point_id}' a junction: it is a layout start/finish"
+            ));
+        }
+        if junction_host_section(&candidate, point_id).is_none() {
+            return Err(format!(
+                "cannot make point '{point_id}' a junction: it must be an interior point of a host section"
+            ));
+        }
+        let contact = junction_contact(&candidate, point_id)?
+            .ok_or_else(|| format!("cannot derive a contact point for junction '{point_id}'"))?;
+
+        let mut tangent = Vec3::new(contact.tangent.x, 0.0, contact.tangent.z);
+        if tangent.length_squared() < 1e-8 {
+            tangent = Vec3::X;
+        }
+        tangent = tangent.normalize_or_zero();
+        let mut perpendicular = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
+        if perpendicular.length_squared() < 1e-8 {
+            perpendicular = Vec3::Z;
+        }
+        let end = contact.position + perpendicular * JUNCTION_BRANCH_LENGTH;
+        if !end.x.is_finite() || !end.z.is_finite() {
+            return Err(format!(
+                "cannot make point '{point_id}' a junction: branch geometry is not finite"
+            ));
+        }
+
+        let branch_id = unique_track_id(
+            &format!("section-branch-{point_id}"),
+            candidate.sections.iter().map(|section| section.id.as_str()),
+        );
+        let loose_id = unique_track_id(
+            &format!("point-branch-{point_id}"),
+            candidate.points.iter().map(|point| point.id.as_str()),
+        );
+        if let Some(point) = candidate
+            .points
+            .iter_mut()
+            .find(|point| point.id == point_id)
+        {
+            point.junction = Some(PointJunction {
+                kind: JunctionKind::Normal,
+            });
+        }
+        candidate.points.push(Point {
+            id: loose_id.clone(),
+            position: [end.x, end.z],
+            kind: PointKind::Handle,
+            junction: None,
+            end: Some(PointEnd::Cap),
+        });
+        candidate.sections.push(Section {
+            id: branch_id.clone(),
+            closed: false,
+            points: vec![point_id.to_string(), loose_id],
+        });
+        candidate.normalize_in_place()?;
+        *self = candidate;
+        Ok(branch_id)
+    }
+
     /// Sets a layout's start/finish point.
     pub fn set_start_finish(&mut self, layout_id: &str, point_id: &str) -> Result<(), String> {
         self.normalize_in_place()?;
@@ -1096,21 +1186,106 @@ fn validate_unique_ids<'a>(ids: impl Iterator<Item = &'a str>, label: &str) -> R
     Ok(())
 }
 
-fn point_is_anchor(project: &TrackProject, point_id: &str) -> bool {
-    project
-        .point_by_id(point_id)
-        .map(|point| point.kind == PointKind::Anchor)
-        .unwrap_or(false)
-}
-
 /// Indices of the section's on-curve anchors, in authored order.
+///
+/// Open-section endpoints that carry a junction role are anchors for that
+/// section even though the shared point stays a handle on its host section.
+/// The attached section is clamped at the junction's derived contact point.
 fn section_anchor_indices(project: &TrackProject, section: &Section) -> Vec<usize> {
+    let last = section.points.len().saturating_sub(1);
     section
         .points
         .iter()
         .enumerate()
-        .filter_map(|(index, point_id)| point_is_anchor(project, point_id).then_some(index))
+        .filter_map(|(index, point_id)| {
+            let point = project.point_by_id(point_id)?;
+            let junction_endpoint =
+                !section.closed && point.junction.is_some() && (index == 0 || index == last);
+            (point.kind == PointKind::Anchor || junction_endpoint).then_some(index)
+        })
         .collect()
+}
+
+fn section_point_is_interior(section: &Section, index: usize) -> bool {
+    section.points.len() >= 3 && index > 0 && index + 1 < section.points.len()
+}
+
+/// The first authored section in which `point_id` is an interior point.
+fn junction_host_section<'a>(
+    project: &'a TrackProject,
+    point_id: &str,
+) -> Option<(&'a Section, usize)> {
+    project.sections.iter().find_map(|section| {
+        let index = section
+            .points
+            .iter()
+            .position(|candidate| candidate == point_id)?;
+        section_point_is_interior(section, index).then_some((section, index))
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+struct JunctionContact {
+    position: Vec3,
+    tangent: Vec3,
+}
+
+/// Derives the nearest on-road contact point and tangent for a junction
+/// handle from its host section. The host section is evaluated without
+/// substituting junction endpoints so this cannot recurse.
+fn junction_contact(
+    project: &TrackProject,
+    point_id: &str,
+) -> Result<Option<JunctionContact>, String> {
+    let Some((host, _)) = junction_host_section(project, point_id) else {
+        return Ok(None);
+    };
+    let handle = point_position(project, point_id)?;
+    let curve = section_curve_raw(project, host)?;
+    let distance_squared = |parameter: f32| {
+        let point = curve.eval(parameter);
+        (point.x - handle.x).powi(2) + (point.z - handle.z).powi(2)
+    };
+
+    let samples = JUNCTION_CONTACT_SAMPLES;
+    let mut best_parameter = 0.0;
+    let mut best_distance = f32::INFINITY;
+    for index in 0..=samples {
+        let parameter = index as f32 / samples as f32;
+        let distance = distance_squared(parameter);
+        if distance < best_distance {
+            best_distance = distance;
+            best_parameter = parameter;
+        }
+    }
+
+    // Refine the sample bracket with a deterministic ternary search.
+    let step = 1.0 / samples as f32;
+    let mut low = (best_parameter - step).max(0.0);
+    let mut high = (best_parameter + step).min(1.0);
+    for _ in 0..40 {
+        let first = low + (high - low) / 3.0;
+        let second = high - (high - low) / 3.0;
+        if distance_squared(first) < distance_squared(second) {
+            high = second;
+        } else {
+            low = first;
+        }
+    }
+    let parameter = (low + high) * 0.5;
+    let mut position = curve.eval(parameter);
+    position.y = 0.0;
+    let epsilon = 1e-3;
+    let before = curve.eval((parameter - epsilon).max(0.0));
+    let after = curve.eval((parameter + epsilon).min(1.0));
+    let mut tangent = Vec3::new(after.x - before.x, 0.0, after.z - before.z);
+    if tangent.length_squared() < 1e-10 {
+        tangent = Vec3::X;
+    }
+    Ok(Some(JunctionContact {
+        position,
+        tangent: tangent.normalize_or_zero(),
+    }))
 }
 
 fn anchor_point_id<'a>(section: &'a Section, anchor: &'a Anchor) -> Result<&'a str, String> {
@@ -1463,10 +1638,38 @@ fn span_controls(positions: &[Vec3], from: usize, to: usize) -> Vec<Vec3> {
     controls
 }
 
+fn section_curve_raw(project: &TrackProject, section: &Section) -> Result<SectionCurve, String> {
+    section_curve_internal(project, section, false)
+}
+
 fn section_curve(project: &TrackProject, section: &Section) -> Result<SectionCurve, String> {
-    let positions = section_positions(project, section)?;
+    section_curve_internal(project, section, true)
+}
+
+fn section_curve_internal(
+    project: &TrackProject,
+    section: &Section,
+    substitute_junction_endpoints: bool,
+) -> Result<SectionCurve, String> {
+    let mut positions = section_positions(project, section)?;
     if positions.len() < 2 {
         return Err(format!("section '{}' cannot be sampled", section.id));
+    }
+    if substitute_junction_endpoints && !section.closed {
+        for index in [0, section.points.len().saturating_sub(1)] {
+            let Some(point_id) = section.points.get(index) else {
+                continue;
+            };
+            let Some(point) = project.point_by_id(point_id) else {
+                continue;
+            };
+            if point.junction.is_none() {
+                continue;
+            }
+            if let Some(contact) = junction_contact(project, point_id)? {
+                positions[index] = contact.position;
+            }
+        }
     }
     let anchors = section_anchor_indices(project, section);
     if section.closed && anchors.is_empty() {
@@ -1788,35 +1991,156 @@ fn decoration_prop_offset(lane: Option<&str>, kind: PropKind) -> f32 {
     .unwrap_or(default)
 }
 
-/// Returns the route station range covered by a single-section decoration leg.
-/// Cross-section and seam-wrapping chains are deferred to a later bake step.
+/// Maps one decoration leg onto the route parameter range of one route span.
+/// The returned interval is relative to the span's route start, and may exceed
+/// the span length when the leg wraps a closed section's seam.
+fn decoration_leg_span_interval(leg: &DecorationLeg, length: f32) -> Option<(f32, f32)> {
+    let start = length * leg.entry_fraction;
+    let mut end = length * leg.exit_fraction;
+    if leg.wrap && end <= start + 1e-4 {
+        end += length;
+    }
+    (end > start + 1e-4).then_some((start, end))
+}
+
+/// Continues a decoration chain from `leg_index` at absolute route parameter
+/// `cursor`, following route spans in cyclic order. Returns the absolute route
+/// parameter of the chain's end when every leg maps contiguously.
+#[allow(clippy::too_many_arguments)]
+fn match_decoration_chain(
+    chain: &[DecorationLeg],
+    spans: &[RouteLegSpan<'_>],
+    bases: &[f32],
+    lengths: &[f32],
+    total: f32,
+    leg_index: usize,
+    previous_span: usize,
+    cursor: f32,
+) -> Option<f32> {
+    if leg_index >= chain.len() {
+        return Some(cursor);
+    }
+    let leg = &chain[leg_index];
+    let tolerance = 1e-3 * total.max(1.0);
+    for offset in 0..spans.len() {
+        let span_index = (previous_span + offset) % spans.len();
+        if spans[span_index].section.id != leg.section_id {
+            continue;
+        }
+        let Some((relative_start, relative_end)) =
+            decoration_leg_span_interval(leg, lengths[span_index])
+        else {
+            continue;
+        };
+        let shift = ((cursor - bases[span_index] - relative_start) / total).round();
+        let absolute_start = bases[span_index] + shift * total + relative_start;
+        if (absolute_start - cursor).abs() > tolerance {
+            continue;
+        }
+        let absolute_end = bases[span_index] + shift * total + relative_end;
+        if absolute_end <= absolute_start + 1e-4 {
+            continue;
+        }
+        if let Some(end) = match_decoration_chain(
+            chain,
+            spans,
+            bases,
+            lengths,
+            total,
+            leg_index + 1,
+            span_index,
+            absolute_end,
+        ) {
+            return Some(end);
+        }
+    }
+    None
+}
+
+/// Returns the route station range covered by a decoration chain.
+///
+/// Every leg is mapped onto the matching route leg occurrence, so a chain may
+/// span sections, revisit one section, or wrap a closed section's seam while
+/// still producing one continuous range. `None` means the chain is empty. A
+/// chain that does not match the active route is an error rather than a silent
+/// drop.
 fn decoration_route_range(
     spans: &[RouteLegSpan<'_>],
     decoration: &DecorationPath,
     route_scale: f32,
-) -> Option<(f32, f32)> {
-    if decoration.chain.len() != 1 {
-        return None;
+) -> Result<Option<(f32, f32)>, String> {
+    if spans.is_empty() {
+        return Err(format!(
+            "decoration '{}' cannot be baked without a route",
+            decoration.id
+        ));
     }
-    let leg = decoration.chain.first()?;
-    let span = spans
+    let first = decoration.chain.first().ok_or_else(|| {
+        format!(
+            "decoration '{}' needs at least one section leg",
+            decoration.id
+        )
+    })?;
+
+    let lengths = spans
         .iter()
-        .find(|span| span.section.id == leg.section_id)?;
-    let length = span.end - span.start;
-    let start = span.start + length * leg.entry_fraction;
-    let mut end = span.start + length * leg.exit_fraction;
-    if leg.wrap {
-        if !span.section.closed {
-            return None;
+        .map(|span| span.end - span.start)
+        .collect::<Vec<_>>();
+    let mut bases = Vec::with_capacity(lengths.len());
+    let mut total = 0.0;
+    for length in &lengths {
+        bases.push(total);
+        total += *length;
+    }
+    if total <= 1e-6 {
+        return Err(format!(
+            "decoration '{}' cannot be baked on a zero-length route",
+            decoration.id
+        ));
+    }
+
+    let mut section_on_route = false;
+    let mut has_interval = false;
+    for span_index in 0..spans.len() {
+        if spans[span_index].section.id != first.section_id {
+            continue;
         }
-        if end <= start + 1e-4 {
-            end += length;
+        section_on_route = true;
+        let Some((relative_start, relative_end)) =
+            decoration_leg_span_interval(first, lengths[span_index])
+        else {
+            continue;
+        };
+        has_interval = true;
+        let start = bases[span_index] + relative_start;
+        let end = bases[span_index] + relative_end;
+        if let Some(chain_end) = match_decoration_chain(
+            &decoration.chain,
+            spans,
+            &bases,
+            &lengths,
+            total,
+            1,
+            span_index,
+            end,
+        ) {
+            return Ok(Some((start * route_scale, chain_end * route_scale)));
         }
     }
-    if end <= start + 1e-4 {
-        return None;
+
+    if !section_on_route {
+        return Err(format!(
+            "decoration '{}' references section '{}' outside the active route",
+            decoration.id, first.section_id
+        ));
     }
-    Some((start * route_scale, end * route_scale))
+    if !has_interval {
+        return Ok(None);
+    }
+    Err(format!(
+        "decoration '{}' chain is not contiguous on the active route",
+        decoration.id
+    ))
 }
 
 fn push_kerb_run(
@@ -1830,7 +2154,7 @@ fn push_kerb_run(
 ) {
     let limit = arc.cumulative.len().saturating_sub(1) as f32;
     let mut start = start.clamp(0.0, limit);
-    let mut end = end.clamp(0.0, limit);
+    let mut end = end.max(0.0);
     if end - start <= 1e-4 {
         return;
     }
@@ -1881,7 +2205,7 @@ fn push_prop_line(
 ) {
     let limit = arc.cumulative.len().saturating_sub(1) as f32;
     let mut start = start.clamp(0.0, limit);
-    let mut end = end.clamp(0.0, limit);
+    let mut end = end.max(0.0);
     if end - start <= 1e-4 {
         return;
     }
@@ -1988,7 +2312,7 @@ fn bake_route_decorations(
     };
     let mut decorations = BakedRouteDecorations::default();
     for decoration in &project.decorations {
-        let Some((start, end)) = decoration_route_range(&spans, decoration, route_scale) else {
+        let Some((start, end)) = decoration_route_range(&spans, decoration, route_scale)? else {
             continue;
         };
         let limit = points.len() as f32;
@@ -2149,7 +2473,9 @@ pub fn track_from_project_with_default(
         .layouts
         .get(index)
         .ok_or_else(|| "track project needs at least one layout".to_string())?;
+    validate_loose_end_treatments(&project)?;
     let (points, start_finish) = sample_layout_loop(&project, layout)?;
+    let extras = bake_extra_sections(&project, layout)?;
     let baked = bake_route_decorations(&project, layout, &points)?;
     let kerb_spans = if baked.has_kerbs {
         baked.kerb_spans
@@ -2170,6 +2496,7 @@ pub fn track_from_project_with_default(
         points,
         kerb_spans,
         prop_lines,
+        extras,
         TrackBuildMetadata {
             name: layout.name.clone(),
             manifest_id: layout.id.clone(),
@@ -2253,6 +2580,7 @@ fn build_editor_track(
     points: Vec<Vec3>,
     kerb_spans: Vec<KerbSpan>,
     prop_lines: Vec<PropLine>,
+    extras: BakedExtraSections,
     metadata: TrackBuildMetadata,
 ) -> Result<EditorTrack, String> {
     if points.len() < 3 {
@@ -2386,6 +2714,28 @@ fn build_editor_track(
     push_mesh(&mut visual, "tree_trunks_low", 9, tree_trunks_low, true);
     push_mesh(&mut visual, "tree_foliage_low", 10, tree_foliage_low, true);
     push_mesh(&mut visual, "tree_cards", 11, tree_cards, false);
+
+    if !extras.ribbon.buffers.positions.is_empty() {
+        append_collision_surfaces(&mut collision, &extras.ribbon.buffers, |index| {
+            extras
+                .ribbon
+                .surface_ids
+                .get(index)
+                .copied()
+                .unwrap_or(TRACK_SURFACE)
+        });
+        push_mesh(
+            &mut visual,
+            "branch_asphalt",
+            1,
+            extras.ribbon.buffers,
+            false,
+        );
+    }
+    if !extras.caps.positions.is_empty() {
+        append_collision(&mut collision, &extras.caps, TRACK_SURFACE);
+        push_mesh(&mut visual, "loose_end_caps", 1, extras.caps, false);
+    }
 
     for (index, mesh) in visual.meshes.iter().enumerate() {
         let surface = match mesh.name.as_str() {
@@ -2654,9 +3004,19 @@ struct TrackRibbon {
 }
 
 fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
+    ribbon_from_points(points, true)
+}
+
+fn ribbon_from_points(points: &[Vec3], closed: bool) -> TrackRibbon {
     let mut buffers = empty_buffers();
     let mut surface_ids = Vec::new();
     let count = points.len();
+    if count < 2 {
+        return TrackRibbon {
+            buffers,
+            surface_ids,
+        };
+    }
     let radii = [
         -OUTER_EDGE_RADIUS,
         -ASPHALT_HALF_WIDTH,
@@ -2664,16 +3024,22 @@ fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
         OUTER_EDGE_RADIUS,
     ];
     let surfaces = [DIRT_SURFACE, TRACK_SURFACE, DIRT_SURFACE];
-    let total_length = (0..count)
+    let segment_count = if closed { count } else { count - 1 };
+    let total_length = (0..segment_count)
         .map(|index| points[index].distance(points[(index + 1) % count]))
         .sum::<f32>();
     let tiles_along = (total_length / TARMAC_TILE_METERS).round().max(1.0);
     let mut distance = 0.0;
-    for index in 0..=count {
-        let sample = index % count;
+    for index in 0..=segment_count {
+        let sample = if closed { index % count } else { index };
         let point = points[sample];
-        let next = points[(sample + 1) % count];
-        let tangent = (next - point).normalize_or_zero();
+        let tangent = if closed {
+            (points[(sample + 1) % count] - point).normalize_or_zero()
+        } else if sample + 1 < count {
+            (points[sample + 1] - point).normalize_or_zero()
+        } else {
+            (point - points[sample - 1]).normalize_or_zero()
+        };
         let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
         let u = if total_length > 1e-4 {
             (distance / total_length) * tiles_along
@@ -2688,7 +3054,7 @@ fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
             let v = ((radius - radii[0]) / (radii[radii.len() - 1] - radii[0])) * TARMAC_UV_ACROSS;
             buffers.uvs.push([u, v]);
         }
-        if index < count {
+        if index < segment_count {
             for (band, surface) in surfaces.iter().enumerate() {
                 let base = (index * radii.len() + band) as u32;
                 let next_base = ((index + 1) * radii.len() + band) as u32;
@@ -2703,14 +3069,167 @@ fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
                 surface_ids.extend_from_slice(&[*surface, *surface]);
             }
         }
-        if index < count {
-            distance += point.distance(next);
+        if index < segment_count {
+            distance += point.distance(points[(sample + 1) % count]);
         }
     }
     TrackRibbon {
         buffers,
         surface_ids,
     }
+}
+
+fn append_track_ribbon(dst: &mut TrackRibbon, src: TrackRibbon) {
+    if src.buffers.positions.is_empty() {
+        return;
+    }
+    let offset = dst.buffers.positions.len() as u32;
+    dst.buffers.positions.extend(src.buffers.positions);
+    dst.buffers.normals.extend(src.buffers.normals);
+    dst.buffers.uvs.extend(src.buffers.uvs);
+    dst.buffers.colors.extend(src.buffers.colors);
+    dst.buffers
+        .indices
+        .extend(src.buffers.indices.into_iter().map(|index| index + offset));
+    dst.surface_ids.extend(src.surface_ids);
+}
+
+struct BakedExtraSections {
+    ribbon: TrackRibbon,
+    caps: MeshBuffers,
+}
+
+fn sample_extra_section(project: &TrackProject, section: &Section) -> Result<Vec<Vec3>, String> {
+    let segments = EXTRA_SECTION_SEGMENTS;
+    let count = if section.closed {
+        segments
+    } else {
+        segments + 1
+    };
+    let mut points = Vec::with_capacity(count);
+    for index in 0..count {
+        let parameter = index as f32 / segments as f32;
+        let mut point = sample_section_at(project, section, parameter)?;
+        point.y = terrain_height(point.x, point.z);
+        points.push(point);
+    }
+    Ok(points)
+}
+
+fn loose_end_treatment(point: &Point) -> PointEnd {
+    point.end.unwrap_or(PointEnd::Cap)
+}
+
+fn append_loose_end_cap(buffers: &mut MeshBuffers, points: &[Vec3], at_start: bool) {
+    let count = points.len();
+    if count < 2 {
+        return;
+    }
+    let point = if at_start {
+        points[0]
+    } else {
+        points[count - 1]
+    };
+    let neighbor = if at_start {
+        points[1]
+    } else {
+        points[count - 2]
+    };
+    let mut tangent = Vec3::new(point.x - neighbor.x, 0.0, point.z - neighbor.z);
+    if tangent.length_squared() < 1e-8 {
+        tangent = Vec3::X;
+    }
+    let tangent = tangent.normalize_or_zero();
+    let binormal = Vec3::new(-tangent.z, 0.0, tangent.x).normalize_or_zero();
+    let near_left = point - binormal * OUTER_EDGE_RADIUS;
+    let near_right = point + binormal * OUTER_EDGE_RADIUS;
+    let far_left = point + tangent * LOOSE_END_CAP_LENGTH - binormal * OUTER_EDGE_RADIUS;
+    let far_right = point + tangent * LOOSE_END_CAP_LENGTH + binormal * OUTER_EDGE_RADIUS;
+    let lift = |position: Vec3| {
+        let y = terrain_height(position.x, position.z) + SURFACE_HEIGHT_OFFSET + 0.01;
+        [position.x, y, position.z]
+    };
+    push_quad(
+        buffers,
+        [
+            lift(near_left),
+            lift(near_right),
+            lift(far_right),
+            lift(far_left),
+        ],
+        [0.0, 1.0, 0.0],
+    );
+}
+
+fn validate_loose_end_treatments(project: &TrackProject) -> Result<(), String> {
+    for section in &project.sections {
+        if section.closed {
+            continue;
+        }
+        for point_id in [section.points.first(), section.points.last()]
+            .into_iter()
+            .flatten()
+        {
+            let Some(point) = project.point_by_id(point_id) else {
+                continue;
+            };
+            if point.junction.is_some() {
+                continue;
+            }
+            let treatment = loose_end_treatment(point);
+            if treatment != PointEnd::Cap {
+                return Err(format!(
+                    "loose end '{}' uses an unsupported treatment; only 'cap' is supported",
+                    point.id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn bake_extra_sections(
+    project: &TrackProject,
+    layout: &LayoutProject,
+) -> Result<BakedExtraSections, String> {
+    let route_sections = layout
+        .route
+        .iter()
+        .map(|leg| leg.section_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut ribbon = TrackRibbon {
+        buffers: empty_buffers(),
+        surface_ids: Vec::new(),
+    };
+    let mut caps = empty_buffers();
+    for section in &project.sections {
+        if route_sections.contains(section.id.as_str()) {
+            continue;
+        }
+        let points = sample_extra_section(project, section)?;
+        append_track_ribbon(&mut ribbon, ribbon_from_points(&points, section.closed));
+        if section.closed {
+            continue;
+        }
+        for (at_start, point_id) in [
+            (true, section.points.first()),
+            (false, section.points.last()),
+        ] {
+            let Some(point_id) = point_id else {
+                continue;
+            };
+            let Some(point) = project.point_by_id(point_id) else {
+                continue;
+            };
+            if point.junction.is_some() {
+                continue;
+            }
+            if loose_end_treatment(point) == PointEnd::Cap {
+                append_loose_end_cap(&mut caps, &points, at_start);
+            }
+        }
+    }
+    Ok(BakedExtraSections { ribbon, caps })
 }
 
 fn racing_line_offsets(points: &[Vec3]) -> Vec<f32> {
@@ -4168,6 +4687,154 @@ mod tests {
         }
     }
 
+    fn chain_leg(section_id: &str, entry: f32, exit: f32, wrap: bool) -> DecorationLeg {
+        DecorationLeg {
+            section_id: section_id.to_string(),
+            entry_fraction: entry,
+            exit_fraction: exit,
+            wrap,
+        }
+    }
+
+    fn test_point(id: &str, position: [f32; 2]) -> Point {
+        Point {
+            id: id.to_string(),
+            position,
+            kind: PointKind::Handle,
+            junction: None,
+            end: None,
+        }
+    }
+
+    /// Two open sections that close into one loop: A from p0 to p2, B from p2
+    /// back to p0.
+    fn two_section_loop_project() -> TrackProject {
+        TrackProject {
+            schema: TRACK_PROJECT_SCHEMA.to_string(),
+            name: "Two Section Loop".to_string(),
+            settings: VenueSettings::default(),
+            points: vec![
+                test_point("p0", [0.0, 0.0]),
+                test_point("p1", [20.0, 0.0]),
+                test_point("p2", [40.0, 0.0]),
+                test_point("p3", [40.0, 20.0]),
+                test_point("p4", [0.0, 20.0]),
+            ],
+            sections: vec![
+                Section {
+                    id: "section-a".to_string(),
+                    closed: false,
+                    points: vec!["p0".to_string(), "p1".to_string(), "p2".to_string()],
+                },
+                Section {
+                    id: "section-b".to_string(),
+                    closed: false,
+                    points: vec![
+                        "p2".to_string(),
+                        "p3".to_string(),
+                        "p4".to_string(),
+                        "p0".to_string(),
+                    ],
+                },
+            ],
+            layouts: vec![LayoutProject {
+                id: "two-section".to_string(),
+                name: "Two Section Loop".to_string(),
+                route: vec![
+                    Leg {
+                        section_id: "section-a".to_string(),
+                        entry: Anchor::Point("p0".to_string()),
+                        exit: Anchor::Point("p2".to_string()),
+                        wrap: false,
+                    },
+                    Leg {
+                        section_id: "section-b".to_string(),
+                        entry: Anchor::Point("p2".to_string()),
+                        exit: Anchor::Point("p0".to_string()),
+                        wrap: false,
+                    },
+                ],
+                start_finish: "p0".to_string(),
+                spawns: Vec::new(),
+                sectors: Vec::new(),
+                cameras: Vec::new(),
+            }],
+            paths: Vec::new(),
+            decorations: Vec::new(),
+        }
+    }
+
+    /// A three-section closed loop whose first route leg is a partial section-A
+    /// leg (p0 to p1) rather than the whole section (p0 to p2).
+    fn partial_route_project() -> TrackProject {
+        let mut project = TrackProject {
+            schema: TRACK_PROJECT_SCHEMA.to_string(),
+            name: "Partial Route Loop".to_string(),
+            settings: VenueSettings::default(),
+            points: vec![
+                test_point("p0", [0.0, 0.0]),
+                test_point("p1", [20.0, 0.0]),
+                test_point("p2", [40.0, 0.0]),
+                test_point("p3", [40.0, 20.0]),
+                test_point("p4", [0.0, 20.0]),
+            ],
+            sections: vec![
+                Section {
+                    id: "section-a".to_string(),
+                    closed: false,
+                    points: vec!["p0".to_string(), "p1".to_string(), "p2".to_string()],
+                },
+                Section {
+                    id: "section-b".to_string(),
+                    closed: false,
+                    points: vec!["p1".to_string(), "p3".to_string(), "p2".to_string()],
+                },
+                Section {
+                    id: "section-c".to_string(),
+                    closed: false,
+                    points: vec!["p2".to_string(), "p4".to_string(), "p0".to_string()],
+                },
+            ],
+            layouts: vec![LayoutProject {
+                id: "partial-route".to_string(),
+                name: "Partial Route Loop".to_string(),
+                route: vec![
+                    Leg {
+                        section_id: "section-a".to_string(),
+                        entry: Anchor::Point("p0".to_string()),
+                        exit: Anchor::Point("p1".to_string()),
+                        wrap: false,
+                    },
+                    Leg {
+                        section_id: "section-b".to_string(),
+                        entry: Anchor::Point("p1".to_string()),
+                        exit: Anchor::Point("p2".to_string()),
+                        wrap: false,
+                    },
+                    Leg {
+                        section_id: "section-c".to_string(),
+                        entry: Anchor::Point("p2".to_string()),
+                        exit: Anchor::Point("p0".to_string()),
+                        wrap: false,
+                    },
+                ],
+                start_finish: "p0".to_string(),
+                spawns: Vec::new(),
+                sectors: Vec::new(),
+                cameras: Vec::new(),
+            }],
+            paths: Vec::new(),
+            decorations: Vec::new(),
+        };
+        project
+            .points
+            .iter_mut()
+            .find(|point| point.id == "p1")
+            .expect("p1")
+            .kind = PointKind::Anchor;
+        project
+    }
+
     #[test]
     fn kerb_spans_can_overlap_across_sides() {
         let spans = sanitize_kerb_spans(
@@ -4748,6 +5415,331 @@ mod tests {
         project.decorations[0].chain[0].section_id = "section-0".to_string();
         project.decorations[0].chain[1].section_id = "section-extra".to_string();
         assert!(project.normalize().is_ok());
+    }
+
+    #[test]
+    fn cross_section_chain_keeps_kerb_and_prop_phase() {
+        let mut project = two_section_loop_project();
+        project.decorations.push(DecorationPath {
+            id: "kerb-chain".to_string(),
+            kind: DecorationKind::Kerb,
+            side: 1,
+            lane: None,
+            chain: vec![
+                chain_leg("section-a", 0.0, 1.0, false),
+                chain_leg("section-b", 0.0, 1.0, false),
+            ],
+            elements: vec![1.5, 2.5],
+            phase: 0.4,
+            prop_kind: None,
+            spacing: None,
+        });
+        project.decorations.push(DecorationPath {
+            id: "prop-chain".to_string(),
+            kind: DecorationKind::Prop,
+            side: -1,
+            lane: Some("far".to_string()),
+            chain: vec![
+                chain_leg("section-a", 0.0, 1.0, false),
+                chain_leg("section-b", 0.0, 1.0, false),
+            ],
+            elements: Vec::new(),
+            phase: 1.25,
+            prop_kind: Some(PropKind::Trees),
+            spacing: Some(6.0),
+        });
+        let project = project.normalize().expect("normalize project");
+        let (points, _) = sample_layout_loop(&project, &project.layouts[0]).expect("points");
+        let baked = bake_route_decorations(&project, &project.layouts[0], &points)
+            .expect("bake decorations");
+
+        assert!(baked.has_kerbs);
+        assert_eq!(
+            baked.kerb_runs.len(),
+            1,
+            "a cross-section chain must bake as one continuous run"
+        );
+        let run = &baked.kerb_runs[0];
+        assert!(run.start.abs() < 1e-3);
+        assert!((run.end - points.len() as f32).abs() < 1e-3);
+        assert_eq!(run.elements, vec![1.5, 2.5]);
+        assert!((run.phase - 0.4).abs() < 1e-6);
+        let mut red = empty_buffers();
+        let mut white = empty_buffers();
+        append_decorated_kerbs(&points, &baked.kerb_runs, &mut red, &mut white);
+        assert!(!red.positions.is_empty());
+        assert!(!white.positions.is_empty());
+
+        assert!(baked.has_props);
+        assert_eq!(
+            baked.prop_lines.len(),
+            1,
+            "a cross-section chain must bake as one continuous prop line"
+        );
+        let line = &baked.prop_lines[0];
+        assert!(line.start.abs() < 1e-3);
+        assert!((line.end - points.len() as f32).abs() < 1e-3);
+        assert_eq!(line.spacing, Some(6.0));
+        assert!((line.phase - 1.25).abs() < 1e-6);
+        assert!(prop_placements(&points, line).len() > 4);
+    }
+
+    #[test]
+    fn seam_wrapped_chain_keeps_one_continuous_phase() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(DecorationPath {
+            id: "kerb-seam".to_string(),
+            kind: DecorationKind::Kerb,
+            side: 1,
+            lane: None,
+            chain: vec![chain_leg("section-0", 0.8, 0.3, true)],
+            elements: vec![1.5, 2.5],
+            phase: 0.4,
+            prop_kind: None,
+            spacing: None,
+        });
+        let project = project.normalize().expect("normalize project");
+        let (points, _) = sample_layout_loop(&project, &project.layouts[0]).expect("points");
+        let baked = bake_route_decorations(&project, &project.layouts[0], &points)
+            .expect("bake decorations");
+
+        assert!(baked.has_kerbs);
+        assert_eq!(
+            baked.kerb_runs.len(),
+            2,
+            "the seam run wraps at the route boundary"
+        );
+        let limit = points.len() as f32;
+        let first = &baked.kerb_runs[0];
+        let second = &baked.kerb_runs[1];
+        assert!((first.start - 0.8 * limit).abs() < 1e-3);
+        assert!((first.end - limit).abs() < 1e-3);
+        assert!(second.start.abs() < 1e-3);
+        assert!((second.end - 0.3 * limit).abs() < 1e-3);
+        let arc = RouteArc::new(&points);
+        let first_length = arc.distance_at_station(limit) - arc.distance_at_station(first.start);
+        assert!(
+            (second.phase - (first.phase + first_length)).abs() < 1e-4,
+            "phase must continue across the wrapped seam"
+        );
+        assert_eq!(second.elements, first.elements);
+    }
+
+    #[test]
+    fn partial_route_leg_samples_only_its_range() {
+        let project = partial_route_project()
+            .normalize()
+            .expect("normalize project");
+        let layout = &project.layouts[0];
+        let spans = route_leg_spans(&project, layout).expect("route spans");
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].section.id, "section-a");
+        assert!((spans[0].end - spans[0].start - 0.5).abs() < 1e-5);
+        let total = spans.iter().map(|span| span.end - span.start).sum::<f32>();
+        assert!((total - 2.5).abs() < 1e-5);
+
+        let (points, _) = sample_layout_loop(&project, layout).expect("loop");
+        let mut accumulated = 0.0;
+        let mut span_index = 0;
+        let mut last_partial_parameter = 0.0;
+        for (index, route_point) in points.iter().enumerate() {
+            let route_parameter = index as f32 / SEGMENTS as f32 * total;
+            while span_index + 1 < spans.len() {
+                let length = spans[span_index].end - spans[span_index].start;
+                if route_parameter < accumulated + length - 1e-6 {
+                    break;
+                }
+                accumulated += length;
+                span_index += 1;
+            }
+            let span = &spans[span_index];
+            let length = span.end - span.start;
+            let local = ((route_parameter - accumulated) / length).clamp(0.0, 0.999_999);
+            let parameter = span.start + length * local;
+            let mut expected =
+                sample_section_at(&project, span.section, parameter).expect("sample");
+            expected.y = terrain_height(expected.x, expected.z);
+            assert!(
+                expected.distance(*route_point) < 1e-4,
+                "station {index} ({:?}) does not match section '{}' at {parameter}",
+                route_point,
+                span.section.id
+            );
+            if span.section.id == "section-a" {
+                last_partial_parameter = parameter;
+            }
+        }
+        assert!(
+            last_partial_parameter < 0.5,
+            "the partial route leg must not sample the rest of section A"
+        );
+        assert_eq!(spans[0].section.id, "section-a");
+        assert_eq!(spans[1].section.id, "section-b");
+        assert_eq!(spans[2].section.id, "section-c");
+    }
+
+    #[test]
+    fn repeated_section_legs_map_to_the_correct_occurrence() {
+        let mut project = two_section_loop_project();
+        project.layouts[0].route = vec![
+            Leg {
+                section_id: "section-a".to_string(),
+                entry: Anchor::Point("p0".to_string()),
+                exit: Anchor::Point("p2".to_string()),
+                wrap: false,
+            },
+            Leg {
+                section_id: "section-b".to_string(),
+                entry: Anchor::Point("p2".to_string()),
+                exit: Anchor::Point("p0".to_string()),
+                wrap: false,
+            },
+            Leg {
+                section_id: "section-a".to_string(),
+                entry: Anchor::Point("p0".to_string()),
+                exit: Anchor::Point("p2".to_string()),
+                wrap: false,
+            },
+            Leg {
+                section_id: "section-b".to_string(),
+                entry: Anchor::Point("p2".to_string()),
+                exit: Anchor::Point("p0".to_string()),
+                wrap: false,
+            },
+        ];
+        project.decorations.push(DecorationPath {
+            id: "kerb-repeat".to_string(),
+            kind: DecorationKind::Kerb,
+            side: 1,
+            lane: None,
+            chain: vec![
+                chain_leg("section-a", 0.0, 1.0, false),
+                chain_leg("section-b", 0.0, 1.0, false),
+                chain_leg("section-a", 0.0, 1.0, false),
+            ],
+            elements: vec![1.5, 2.5],
+            phase: 0.0,
+            prop_kind: None,
+            spacing: None,
+        });
+        let project = project.normalize().expect("normalize project");
+        let (points, _) = sample_layout_loop(&project, &project.layouts[0]).expect("points");
+        let baked = bake_route_decorations(&project, &project.layouts[0], &points)
+            .expect("bake decorations");
+        assert_eq!(baked.kerb_runs.len(), 1);
+        let run = &baked.kerb_runs[0];
+        let limit = points.len() as f32;
+        assert!(run.start.abs() < 1e-3);
+        assert!(
+            (run.end - 0.75 * limit).abs() < 1e-3,
+            "the chain must cover the first three route legs, not restart at the first occurrence"
+        );
+    }
+
+    #[test]
+    fn non_contiguous_decoration_chain_is_rejected() {
+        let mut project = partial_route_project();
+        project.decorations.push(DecorationPath {
+            id: "kerb-skip".to_string(),
+            kind: DecorationKind::Kerb,
+            side: 1,
+            lane: None,
+            // A and C share a point, so validation accepts the chain, but the
+            // active route visits B between them.
+            chain: vec![
+                chain_leg("section-a", 0.0, 1.0, false),
+                chain_leg("section-c", 0.0, 1.0, false),
+            ],
+            elements: Vec::new(),
+            phase: 0.0,
+            prop_kind: None,
+            spacing: None,
+        });
+        let project = project.normalize().expect("normalize project");
+        let (points, _) = sample_layout_loop(&project, &project.layouts[0]).expect("points");
+        let error = match bake_route_decorations(&project, &project.layouts[0], &points) {
+            Ok(_) => panic!("a chain that skips route legs must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("kerb-skip"), "unexpected error: {error}");
+        assert!(
+            error.contains("not contiguous"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn decoration_chain_outside_the_active_route_is_rejected() {
+        let mut project = two_section_loop_project();
+        project.points.push(test_point("p5", [10.0, 30.0]));
+        project.points.push(test_point("p6", [10.0, 40.0]));
+        project.sections.push(Section {
+            id: "section-off-route".to_string(),
+            closed: false,
+            points: vec!["p5".to_string(), "p6".to_string()],
+        });
+        project.decorations.push(kerb_decoration(
+            "kerb-off-route",
+            "section-off-route",
+            0.0,
+            1.0,
+            1,
+            Vec::new(),
+        ));
+        let project = project.normalize().expect("normalize project");
+        let (points, _) = sample_layout_loop(&project, &project.layouts[0]).expect("points");
+        let error = match bake_route_decorations(&project, &project.layouts[0], &points) {
+            Ok(_) => panic!("a chain outside the route must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("kerb-off-route"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("outside the active route"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn cross_section_chain_bake_is_deterministic() {
+        let mut project = two_section_loop_project();
+        project.decorations.push(DecorationPath {
+            id: "kerb-chain".to_string(),
+            kind: DecorationKind::Kerb,
+            side: 1,
+            lane: None,
+            chain: vec![
+                chain_leg("section-a", 0.0, 1.0, false),
+                chain_leg("section-b", 0.0, 1.0, false),
+            ],
+            elements: vec![1.5, 2.5],
+            phase: 0.4,
+            prop_kind: None,
+            spacing: None,
+        });
+        project.decorations.push(DecorationPath {
+            id: "prop-chain".to_string(),
+            kind: DecorationKind::Prop,
+            side: 1,
+            lane: Some("near".to_string()),
+            chain: vec![
+                chain_leg("section-a", 0.0, 1.0, false),
+                chain_leg("section-b", 0.0, 1.0, false),
+            ],
+            elements: Vec::new(),
+            phase: 0.5,
+            prop_kind: Some(PropKind::Tyres),
+            spacing: Some(2.5),
+        });
+        let project = project.normalize().expect("normalize project");
+        let first = track_from_project_with_default(&project, None).expect("first bake");
+        let second = track_from_project_with_default(&project, None).expect("second bake");
+        assert_eq!(first.visual, second.visual);
+        assert_eq!(first.collision, second.collision);
+        assert_eq!(first.metadata, second.metadata);
+        assert_eq!(first.manifest, second.manifest);
     }
 
     #[test]
@@ -5652,5 +6644,222 @@ mod tests {
         assert!(first["lane"].is_null());
         assert_eq!(parsed[2]["lane"], "near");
         assert_eq!(parsed[4]["lane"], "far");
+    }
+
+    #[test]
+    fn make_junction_validates_and_never_splits_the_host_section() {
+        let mut project = TrackProject::default_project();
+        let host_before = project
+            .section_by_id("section-0")
+            .expect("host section")
+            .points
+            .clone();
+
+        assert!(project.make_junction("missing").is_err());
+        assert!(
+            project.make_junction("point-0").is_err(),
+            "start/finish points cannot become junctions"
+        );
+
+        let branch_id = project.make_junction("point-1").expect("make junction");
+        assert_eq!(
+            project
+                .section_by_id("section-0")
+                .expect("host section")
+                .points,
+            host_before,
+            "making a junction must not split the host section"
+        );
+        assert_eq!(project.sections.len(), 2);
+        let branch = project.section_by_id(&branch_id).expect("branch section");
+        assert!(!branch.closed);
+        assert_eq!(branch.points.len(), 2);
+        assert_eq!(branch.points[0], "point-1");
+        let loose = project
+            .point_by_id(branch.points.last().expect("loose end"))
+            .expect("loose point");
+        assert_eq!(loose.end, Some(PointEnd::Cap));
+        assert_eq!(
+            project
+                .point_by_id("point-1")
+                .expect("junction point")
+                .junction,
+            Some(PointJunction {
+                kind: JunctionKind::Normal
+            })
+        );
+        assert!(
+            project.make_junction("point-1").is_err(),
+            "a point may only have one junction role"
+        );
+
+        let second_branch = project.make_junction("point-2").expect("second junction");
+        assert_ne!(branch_id, second_branch, "branch ids must be unique");
+
+        let mut endpoint_host = TrackProject::default_project();
+        endpoint_host.points.push(Point {
+            id: "point-endpoint".to_string(),
+            position: [0.0, 80.0],
+            kind: PointKind::Handle,
+            junction: None,
+            end: Some(PointEnd::Cap),
+        });
+        endpoint_host.sections.push(Section {
+            id: "section-endpoint-host".to_string(),
+            closed: false,
+            points: vec!["point-endpoint".to_string(), "point-2".to_string()],
+        });
+        assert!(
+            endpoint_host.make_junction("point-endpoint").is_err(),
+            "an endpoint host is not an interior junction host"
+        );
+    }
+
+    #[test]
+    fn junction_contact_is_derived_on_the_host_and_moves_with_the_handle() {
+        let mut project = TrackProject::default_project();
+        let host_before = project
+            .section_centerline("section-0")
+            .expect("host before");
+        let branch_id = project.make_junction("point-1").expect("make junction");
+        let host_after = project.section_centerline("section-0").expect("host after");
+        assert_eq!(
+            host_before, host_after,
+            "the host section must stay smooth and unchanged at an interior junction"
+        );
+        assert!(
+            section_anchor_indices(&project, project.section_by_id("section-0").expect("host"))
+                .is_empty(),
+            "an interior junction handle must not clamp the host section"
+        );
+        assert_eq!(
+            project.point_by_id("point-1").expect("junction").kind,
+            PointKind::Handle
+        );
+
+        let contact = junction_contact(&project, "point-1")
+            .expect("contact")
+            .expect("interior host");
+        let host_points = project.section_centerline("section-0").expect("host");
+        let nearest = host_points
+            .iter()
+            .map(|point| {
+                ((point[0] - contact.position.x).powi(2) + (point[2] - contact.position.z).powi(2))
+                    .sqrt()
+            })
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            nearest < 0.5,
+            "host centerline should pass near the derived contact, nearest was {nearest} m"
+        );
+
+        let branch = project.section_by_id(&branch_id).expect("branch");
+        let branch_start = sample_section_at(&project, branch, 0.0).expect("branch start");
+        assert!(
+            branch_start.distance(contact.position) < 1e-4,
+            "branch start {:?} must coincide with contact {:?}",
+            branch_start,
+            contact.position
+        );
+
+        let old_contact = contact.position;
+        let handle = project.point_by_id("point-1").expect("handle");
+        let moved = [handle.position[0] + 6.0, handle.position[1] - 4.0];
+        project
+            .move_point("point-1", moved[0], moved[1])
+            .expect("move handle");
+        let moved_contact = junction_contact(&project, "point-1")
+            .expect("contact")
+            .expect("interior host");
+        assert!(
+            moved_contact.position.distance(old_contact) > 0.1,
+            "moving the handle must move the derived contact"
+        );
+        let branch = project
+            .section_by_id(&branch_id)
+            .expect("branch after move");
+        let branch_start = sample_section_at(&project, branch, 0.0).expect("branch start");
+        assert!(
+            branch_start.distance(moved_contact.position) < 1e-4,
+            "the attached branch must follow the re-derived contact"
+        );
+        assert_eq!(
+            project.point_by_id("point-1").expect("junction").kind,
+            PointKind::Handle,
+            "moving a junction handle must not turn the host point into an anchor"
+        );
+    }
+
+    #[test]
+    fn capped_branch_bakes_cap_visual_and_collision_deterministically() {
+        let mut project = TrackProject::default_project();
+        let base = track_from_project_with_default(&project, None).expect("base track");
+        let base_triangles = base.collision.indices.len() / 3;
+        project.make_junction("point-1").expect("make junction");
+
+        let track = track_from_project_with_default(&project, None).expect("junction track");
+        let mesh = |name: &str| {
+            track
+                .visual
+                .meshes
+                .iter()
+                .position(|mesh| mesh.name == name)
+                .and_then(|index| track.visual.mesh_buffers.get(index))
+                .unwrap_or_else(|| panic!("missing {name} mesh"))
+        };
+        let branch = mesh("branch_asphalt");
+        assert!(!branch.positions.is_empty());
+        assert!(!branch.indices.is_empty());
+        let caps = mesh("loose_end_caps");
+        assert!(!caps.positions.is_empty(), "loose-end cap visual missing");
+        assert!(!caps.indices.is_empty(), "loose-end cap visual missing");
+        assert!(
+            track.collision.indices.len() / 3 > base_triangles,
+            "branch and cap collision should add geometry"
+        );
+        let cap_vertex = Vec3::from_array(caps.positions[0]);
+        assert!(
+            track
+                .collision
+                .vertices
+                .iter()
+                .any(|vertex| Vec3::from_array(*vertex).distance(cap_vertex) < 1e-5),
+            "cap geometry must be present in collision"
+        );
+
+        let again = track_from_project_with_default(&project, None).expect("deterministic track");
+        assert_eq!(track.visual, again.visual);
+        assert_eq!(track.collision, again.collision);
+        assert_eq!(track.metadata, again.metadata);
+        assert_eq!(track.manifest, again.manifest);
+    }
+
+    #[test]
+    fn unsupported_loose_end_treatments_are_rejected() {
+        for treatment in [PointEnd::Open, PointEnd::Barrier] {
+            let mut project = TrackProject::default_project();
+            let branch_id = project.make_junction("point-1").expect("make junction");
+            let loose_id = project
+                .section_by_id(&branch_id)
+                .expect("branch")
+                .points
+                .last()
+                .expect("loose end")
+                .clone();
+            project
+                .points
+                .iter_mut()
+                .find(|point| point.id == loose_id)
+                .expect("loose point")
+                .end = Some(treatment);
+            let error = match track_from_project_with_default(&project, None) {
+                Ok(_) => panic!("unsupported end treatment must fail"),
+                Err(error) => error,
+            };
+            assert!(
+                error.contains("unsupported treatment"),
+                "unexpected error: {error}"
+            );
+        }
     }
 }

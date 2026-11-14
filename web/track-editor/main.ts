@@ -238,6 +238,8 @@ const deletePointButton =
   document.querySelector<HTMLButtonElement>("#delete-point")!;
 const setStartFinishButton =
   document.querySelector<HTMLButtonElement>("#set-start-finish")!;
+const makeJunctionButton =
+  document.querySelector<HTMLButtonElement>("#make-junction")!;
 const modeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>("#editor-mode button"),
 );
@@ -922,7 +924,7 @@ function hitTestControlPoint(x: number, y: number): number {
 
 function hitTestRouteSection(x: number, y: number): SectionHit | null {
   const camera = currentCamera();
-  if (!camera || routeSectionIds.size === 0) {
+  if (!camera || (project.sections ?? []).length === 0) {
     return null;
   }
   const width = canvas.clientWidth;
@@ -930,9 +932,6 @@ function hitTestRouteSection(x: number, y: number): SectionHit | null {
   let best: SectionHit | null = null;
   let bestDistance = SECTION_HIT_RADIUS;
   for (const section of project.sections ?? []) {
-    if (!routeSectionIds.has(section.id)) {
-      continue;
-    }
     const samples = sectionCenterlines[section.id];
     if (!samples || samples.length < 2) {
       continue;
@@ -2147,6 +2146,39 @@ function drawControlPoints(): void {
     overlayContext.stroke();
   }
 
+  if (editorMode === "points") {
+    for (const section of project.sections ?? []) {
+      if (routeSectionIds.has(section.id)) {
+        continue;
+      }
+      const samples = sectionCenterlines[section.id];
+      if (!samples || samples.length < 2) {
+        continue;
+      }
+      overlayContext.save();
+      overlayContext.beginPath();
+      let drawing = false;
+      for (const sample of samples) {
+        const projected = projectPoint(sample, camera, width, height);
+        if (!projected) {
+          drawing = false;
+          continue;
+        }
+        if (!drawing) {
+          overlayContext.moveTo(projected[0], projected[1]);
+          drawing = true;
+        } else {
+          overlayContext.lineTo(projected[0], projected[1]);
+        }
+      }
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "rgba(167, 139, 250, 0.8)";
+      overlayContext.setLineDash([6, 4]);
+      overlayContext.stroke();
+      overlayContext.restore();
+    }
+  }
+
   if (editorMode === "points" && selection?.kind === "section") {
     const samples = sectionCenterlines[selection.id];
     if (samples && samples.length > 1) {
@@ -2214,9 +2246,7 @@ function drawControlPoints(): void {
       ? (project.sections ?? []).filter(
           (section) => section.id === selection?.id,
         )
-      : (project.sections ?? []).filter((section) =>
-          routeSectionIds.has(section.id),
-        );
+      : (project.sections ?? []);
 
   for (const section of drawnSections) {
     const positions: Vec3[] = [];
@@ -2478,6 +2508,24 @@ function isLooseEndPoint(point: EditorPointData): boolean {
   );
 }
 
+/**
+ * Mirrors the model's `make_junction` eligibility: the point must not already
+ * be a junction or a layout start/finish, and it must be an interior point of
+ * at least one section with enough points to stay valid.
+ */
+function pointCanMakeJunction(point: EditorPoint): boolean {
+  if (point.startFinish || point.junction) {
+    return false;
+  }
+  return (project.sections ?? []).some((section) => {
+    if (section.points.length < 3) {
+      return false;
+    }
+    const index = section.points.indexOf(point.id);
+    return index > 0 && index + 1 < section.points.length;
+  });
+}
+
 const CONTACT_TOLERANCE = 0.5;
 
 function nearestCenterlineContact(
@@ -2538,6 +2586,8 @@ function contactColors(point: EditorPoint): { dot: string; line: string } {
 function renderSelection(): void {
   selectionDetails.replaceChildren();
   pointEditorRows.replaceChildren();
+  makeJunctionButton.hidden = true;
+  makeJunctionButton.disabled = true;
   const addRow = (
     target: HTMLElement,
     label: string,
@@ -2603,6 +2653,9 @@ function renderSelection(): void {
     );
     addRow(pointEditorRows, "section degree", String(point.degree));
     addRow(pointEditorRows, "sections", point.sections.join(", ") || "none");
+    const canMakeJunction = pointCanMakeJunction(point);
+    makeJunctionButton.hidden = !canMakeJunction;
+    makeJunctionButton.disabled = !canMakeJunction;
     if (editorMode === "points" && !pointEditor.open) {
       pointEditor.show();
     }
@@ -2650,9 +2703,6 @@ function refreshEditorState(): void {
   );
   const startFinishId = activeLayout?.startFinish ?? "";
   editorPoints = pointData
-    .filter((point) =>
-      point.sections.some((id) => routeSectionIds.has(id)),
-    )
     .map((point) => ({
       id: point.id,
       position: [
@@ -2731,6 +2781,10 @@ deletePointButton.addEventListener("click", () => {
 
 setStartFinishButton.addEventListener("click", () => {
   void setStartFinishPoint();
+});
+
+makeJunctionButton.addEventListener("click", () => {
+  void makeJunctionFromSelection();
 });
 
 pointEditorClose.addEventListener("click", () => {
@@ -2834,6 +2888,22 @@ async function setStartFinishPoint(): Promise<void> {
   await rebuildEditor("setting start/finish", async () => {
     await editorViewer!.set_editor_start_finish(pointId);
   });
+}
+
+async function makeJunctionFromSelection(): Promise<void> {
+  if (!editorViewer || selection?.kind !== "point" || rebuilding) {
+    return;
+  }
+  const pointId = selection.id;
+  await rebuildEditor(
+    "making junction",
+    async () => {
+      const branchSectionId =
+        await editorViewer!.make_editor_junction(pointId);
+      selection = { kind: "section", id: branchSectionId };
+    },
+    null,
+  );
 }
 
 async function moveEditorPoint(point: EditorPoint): Promise<void> {

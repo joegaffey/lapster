@@ -67,14 +67,18 @@ Deployment:
   baked-default import, click-to-select, endpoint-handle resize, a single-item
   inspector for properties/delete, paint on empty rails, overlap errors, and
   persistence. Section overlays sample at route density (TD-0005 resolved).
-  Step 0b junctions and the multi-section decoration follow-up are next.
-  Per-point width is deferred (TD-0002, TD-0003).
+  Step 0b is integrated on `feat/venue-graph-step0b`: derived junction contacts,
+  capped loose-end branches, partial/wrapped route legs, cross-section and
+  seam-wrapped decoration chains, and a Make junction editor action. The
+  multi-section decoration editor follow-up (TD-0006) is next. Per-point width
+  is deferred (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: venue graph Step 0b/web UX (see the resume checkpoint), Speed Dreams
-  physics, wheel/FFB hardware validation, and CP7 HID/audio integration.
+- Next: venue graph TD-0006 decoration-editor follow-up (see the resume
+  checkpoint), Speed Dreams physics, wheel/FFB hardware validation, and CP7
+  HID/audio integration.
 
 ## Completed checkpoints
 
@@ -123,10 +127,11 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 142 tests
+- `cargo test --workspace` — 153 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 38 tests
-- `npm run test:viewer` — 95 passed, 1 skipped
+- `CI=1 npm run test:viewer` — 95 passed, 1 skipped, 1 pre-existing
+  garage-camera timing flake
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
@@ -158,16 +163,27 @@ Deployment:
 
 ## Venue graph resume checkpoint
 
-State on `dev` after the `@6` integration (`11622a7`):
+State on `feat/venue-graph-step0b`, branched from `dev` at `662527e` after the
+`@6` integration (`11622a7`):
 
-- Integrated from `feat/venue-graph` via PR #26; the feature branch remains at
-  `a139bdd` as pre-squash history. Start Step 0b from `dev` on a new branch.
 - PR CI runs `web-smoke` + the editor smoke; the full sharded web suite runs on
   `dev`/`main` pushes and manual dispatch.
-
 - `@6` render model and B-spline evaluator: authored points are off-curve
   handles; start/finish and junction contacts are derived; section overlays
-  sample at route density. `cargo test -p sim-render` — 70 passing.
+  sample at route density. `cargo test -p sim-render` — 81 passing.
+- Step 0b render: `make_junction` adds a Normal role and a short open capped
+  branch perpendicular to the host tangent without splitting the host; junction
+  contacts are the nearest host-section point and drive both host smoothness and
+  attached-section endpoints; all non-route sections bake into the visual and
+  collision world; `PointEnd::Cap` loose ends get cap geometry and collision;
+  partial/wrapped route legs sample correctly; decoration chains map across
+  sections and closed-section seams with continuous element/phase/spacing.
+  Unsupported loose-end treatments and non-contiguous/absent chains fail loudly.
+- Step 0b web: Make junction in the point editor, branch centerlines and
+  loose-end points are visible/selectable/draggable, host point lists stay
+  unchanged, and the branch persists. The new Playwright test covers creation,
+  dragging, Test Drive export, and reload. A pre-existing wasm reentrancy race
+  in the prop-decoration test was fixed by waiting for the rebuild to settle.
 - Web editor on `@6`: point/section selection, point drag, save/load/export/
   import, Test Drive, dashed control polygon, dotted contact lines, and a
   non-modal point-editor dialog. Click the road to insert, Delete/Backspace or
@@ -180,22 +196,20 @@ State on `dev` after the `@6` integration (`11622a7`):
   paint a single-section kerb/prop/tree; overlap errors; save/load persistence.
   Follow-up: cross-section chains, seam wrap, custom lanes, and multi-leg
   endpoint editing (TD-0006).
-- Full gate green: 38 web unit tests, 95 viewer tests passed / 1 skipped,
-  142 workspace tests, clippy, fmt, wasm. TD-0001 resolved.
+- Full gate green on this branch: 38 web unit tests, 95 viewer tests passed /
+  1 skipped (1 pre-existing garage-camera flake), 153 workspace tests, clippy,
+  fmt, wasm. TD-0001 resolved; TD-0005 resolved.
 - Docs: ADR 0003, ADR 0004, venue-graph plan, tech debt updated.
 - Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
 - Local page: `http://127.0.0.1:8123/web/track-editor/`.
 - Dev preview: `https://joegaffey.com/lapster-dev/web/track-editor/`.
-- Dev preview is deployed from `feat/venue-graph` at `abcbbce`; the integrated
-  `dev` code is equivalent at `11622a7`.
 
 Resume in this order:
 
-1. Step 0b (render): junction contact derivation, branch caps, partial route
-   legs, cross-section/seam decoration wrap.
-2. Web UX: Make junction + capped branch; then decoration chain continuation,
-   seam wrap, custom-lane controls, and multi-leg endpoint editing (TD-0006).
+1. Merge `feat/venue-graph-step0b` to `dev` after preview validation.
+2. TD-0006 decoration-editor follow-up: chain continuation across junctions,
+   seam wrap authoring, custom-lane controls, and multi-leg endpoint editing.
 3. Multi-layout and pit lane (Phases 4–5).
 4. Full gate, dev preview validation, then a PR to `dev` for the next batch.
 
