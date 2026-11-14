@@ -949,8 +949,6 @@ var RAIL_HIT_RADIUS = 14;
 var KERB_RAIL_OFFSET = 6.4;
 var NEAR_PROP_OFFSET = 14;
 var FAR_PROP_OFFSET = 19;
-var MIN_PROP_OFFSET = 1;
-var MAX_PROP_OFFSET = 19;
 var DECORATION_HIT_RADIUS = 12;
 var HANDLE_HIT_RADIUS = 14;
 var MIN_DECORATION_FRACTION = 0.01;
@@ -1000,13 +998,6 @@ var decorationSide = document.querySelector("#decoration-side");
 var decorationSideField = document.querySelector("#decoration-side-field");
 var decorationLane = document.querySelector("#decoration-lane");
 var decorationLaneField = document.querySelector("#decoration-lane-field");
-var decorationLaneOffset = document.querySelector("#decoration-lane-offset");
-var decorationLaneOffsetField = document.querySelector("#decoration-lane-offset-field");
-var decorationPaintOffset = document.querySelector("#decoration-paint-offset");
-var decorationPaintOffsetField = document.querySelector("#decoration-paint-offset-field");
-var decorationLegs = document.querySelector("#decoration-legs");
-var decorationContinueLeg = document.querySelector("#decoration-continue-leg");
-var decorationRemoveLeg = document.querySelector("#decoration-remove-leg");
 var decorationPropKind = document.querySelector("#decoration-prop-kind");
 var decorationPropKindField = document.querySelector("#decoration-prop-kind-field");
 var decorationSpacing = document.querySelector("#decoration-spacing");
@@ -1076,10 +1067,6 @@ var newPropPhase = 0;
 var newPropSpacing = "";
 var newPropKind = "trees";
 var newPropKindExplicit = false;
-var newPropOffset = NEAR_PROP_OFFSET;
-var laneOffsetEdited = false;
-var selectedChainLegIndex = 0;
-var renderedDecorationId = null;
 setupHud();
 var add2 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 var sub2 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -1164,24 +1151,7 @@ function railsForMode(mode) {
   if (!kind) {
     return [];
   }
-  const rails = guideRails.filter((rail) => rail.kind === kind);
-  if (kind === "prop") {
-    const offset = clampPropOffset(newPropOffset);
-    for (const side of [-1, 1]) {
-      const exists = rails.some(
-        (rail) => rail.kind === "prop" && rail.side === side && Math.abs(rail.offset - offset) < 1e-4
-      );
-      if (!exists) {
-        rails.push({
-          kind: "prop",
-          side,
-          offset,
-          lane: String(offset)
-        });
-      }
-    }
-  }
-  return rails;
+  return guideRails.filter((rail) => rail.kind === kind);
 }
 function decorationsForMode(mode) {
   const kind = modeDecorationKind(mode);
@@ -1945,29 +1915,6 @@ function laneForOffset(offset) {
   }
   return String(offset);
 }
-function clampPropOffset(offset) {
-  return Math.max(MIN_PROP_OFFSET, Math.min(MAX_PROP_OFFSET, offset));
-}
-function parsePropOffset(value) {
-  if (value.trim() === "") {
-    return null;
-  }
-  const offset = Number(value);
-  if (!Number.isFinite(offset)) {
-    return null;
-  }
-  return clampPropOffset(offset);
-}
-function propLaneOffset(lane) {
-  if (lane === "near") {
-    return NEAR_PROP_OFFSET;
-  }
-  if (lane === "far") {
-    return FAR_PROP_OFFSET;
-  }
-  const offset = Number(lane ?? "");
-  return Number.isFinite(offset) && lane?.trim() !== "" ? clampPropOffset(offset) : NEAR_PROP_OFFSET;
-}
 function parseElementLengths(value) {
   const parts = value.split(",").map((part) => part.trim()).filter((part) => part !== "");
   const lengths = [];
@@ -2147,6 +2094,35 @@ function computeResizeUpdate(decoration, drag) {
     const leg = chain[drag.legIndex];
     if (!leg) {
       return { updates: [], hint: "" };
+    }
+    const rawFraction = clampFraction(drag.currentFraction);
+    if (sectionIsClosed(drag.sectionId) && drag.cursorTurns !== 0) {
+      if (drag.kind === "entry" && rawFraction > leg.exitFraction + MIN_DECORATION_FRACTION) {
+        return {
+          updates: [
+            {
+              legIndex: drag.legIndex,
+              entryFraction: rawFraction,
+              exitFraction: leg.exitFraction,
+              wrap: true
+            }
+          ],
+          hint: ""
+        };
+      }
+      if (drag.kind === "exit" && rawFraction < leg.entryFraction - MIN_DECORATION_FRACTION) {
+        return {
+          updates: [
+            {
+              legIndex: drag.legIndex,
+              entryFraction: leg.entryFraction,
+              exitFraction: rawFraction,
+              wrap: true
+            }
+          ],
+          hint: ""
+        };
+      }
     }
     if (leg.wrap) {
       if (drag.kind === "entry") {
@@ -2561,62 +2537,15 @@ function renderDecorationInspector() {
   }
   const isKerb = editorMode === "kerbs";
   const decoration = selectedDecoration();
-  const decorationId = decoration?.id ?? null;
-  if (decorationId !== renderedDecorationId) {
-    renderedDecorationId = decorationId;
-    laneOffsetEdited = false;
-    selectedChainLegIndex = 0;
-  }
-  if (decoration && decoration.chain.length > 0) {
-    selectedChainLegIndex = Math.min(
-      selectedChainLegIndex,
-      decoration.chain.length - 1
-    );
-  } else {
-    selectedChainLegIndex = 0;
-  }
   decorationTitle.textContent = isKerb ? "Kerb" : "Prop";
-  decorationHint.textContent = decoration ? `${sideLabel(decoration.side)} ${isKerb ? "kerb" : "prop"} selected \xB7 drag a handle to resize` : isKerb ? "Drag a kerb rail to paint a new span." : "Drag a prop rail to paint. Trees default on far, blocks on near.";
+  decorationHint.textContent = decoration ? `${sideLabel(decoration.side)} ${isKerb ? "kerb" : "prop"} selected \xB7 drag an endpoint handle to resize` : isKerb ? "Drag a kerb rail to paint a new span." : "Drag a prop rail to paint. Trees default on far, blocks on near.";
   decorationSideField.hidden = !decoration;
   decorationLaneField.hidden = !decoration || isKerb;
-  decorationLaneOffsetField.hidden = !decoration || isKerb;
-  decorationPaintOffsetField.hidden = isKerb;
   decorationPropKindField.hidden = isKerb;
   decorationSpacingField.hidden = isKerb;
   decorationElementsField.hidden = !isKerb;
   decorationApply.disabled = !decoration;
   decorationDelete.hidden = !decoration;
-  decorationContinueLeg.hidden = !decoration;
-  decorationRemoveLeg.hidden = !decoration || decoration.chain.length <= 1;
-  if (document.activeElement !== decorationPaintOffset) {
-    decorationPaintOffset.value = String(newPropOffset);
-  }
-  decorationLegs.replaceChildren();
-  if (decoration) {
-    decoration.chain.forEach((leg, index) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "decoration-leg";
-      row.dataset.legIndex = String(index);
-      row.setAttribute(
-        "aria-pressed",
-        String(index === selectedChainLegIndex)
-      );
-      const section = document.createElement("span");
-      section.className = "leg-section";
-      section.textContent = `${index + 1}. ${leg.sectionId}`;
-      const fractions = document.createElement("span");
-      fractions.textContent = `${Math.round(leg.entryFraction * 100)}% \u2192 ${Math.round(leg.exitFraction * 100)}%`;
-      row.append(section, fractions);
-      if (leg.wrap) {
-        const badge = document.createElement("span");
-        badge.className = "wrap-badge";
-        badge.textContent = "wrap";
-        row.append(badge);
-      }
-      decorationLegs.append(row);
-    });
-  }
   if (decoration) {
     decorationSide.value = decoration.side < 0 ? "-1" : "1";
     decorationPhase.value = String(decoration.phase ?? 0);
@@ -2624,11 +2553,6 @@ function renderDecorationInspector() {
       decorationElements.value = (decoration.elements ?? []).join(", ");
     } else {
       decorationLane.value = (decoration.lane ?? "near") === "far" ? "far" : "near";
-      if (!laneOffsetEdited || document.activeElement !== decorationLaneOffset) {
-        decorationLaneOffset.value = String(
-          propLaneOffset(decoration.lane)
-        );
-      }
       decorationPropKind.value = propKindValue(decoration.propKind ?? "blocks");
       decorationSpacing.value = typeof decoration.spacing === "number" ? String(decoration.spacing) : "";
     }
@@ -2725,7 +2649,6 @@ async function applyDecorationProperties() {
   const updated = cloneDecoration(decoration);
   updated.side = Number(decorationSide.value) < 0 ? -1 : 1;
   updated.phase = numberInputValue(decorationPhase, updated.phase ?? 0);
-  let laneNote = "";
   if (updated.kind === "kerb") {
     const elements = parseElementLengths(decorationElements.value);
     if (elements === null) {
@@ -2737,22 +2660,7 @@ async function applyDecorationProperties() {
     }
     updated.elements = elements;
   } else {
-    const laneInput = decorationLaneOffset.value;
-    const rawLaneOffset = Number(laneInput);
-    if (laneInput.trim() === "" || !Number.isFinite(rawLaneOffset)) {
-      setDecorationStatus("lane offset must be a finite number", "error");
-      return;
-    }
-    const laneOffset = clampPropOffset(rawLaneOffset);
-    if (rawLaneOffset < MIN_PROP_OFFSET || rawLaneOffset > MAX_PROP_OFFSET) {
-      laneNote = " \xB7 lane offset clamped to 1..19 m";
-    }
-    const isDefault = Math.abs(laneOffset - NEAR_PROP_OFFSET) < 1e-4 || Math.abs(laneOffset - FAR_PROP_OFFSET) < 1e-4;
-    if (laneOffsetEdited || !isDefault) {
-      updated.lane = String(laneOffset);
-    } else {
-      updated.lane = Math.abs(laneOffset - FAR_PROP_OFFSET) < 1e-4 ? "far" : "near";
-    }
+    updated.lane = decorationLane.value === "far" ? "far" : "near";
     updated.propKind = propKindValue(decorationPropKind.value);
     const spacing = parseOptionalSpacing(decorationSpacing.value);
     if (spacing === null) {
@@ -2778,7 +2686,7 @@ async function applyDecorationProperties() {
     "updating decoration"
   );
   if (applied) {
-    setDecorationStatus(`decoration updated${laneNote}`, "ready");
+    setDecorationStatus("decoration updated", "ready");
   }
 }
 async function commitDecorationResize() {
@@ -3015,118 +2923,6 @@ async function deleteDecoration(id) {
       drawControlPoints();
     }
     setDecorationStatus("decoration deleted", "ready");
-  }
-}
-async function extendDecorationChain() {
-  const decoration = selectedDecoration();
-  if (!decoration || !editorViewer) {
-    return;
-  }
-  if (decoration.chain.length === 0) {
-    return;
-  }
-  const last = decoration.chain[decoration.chain.length - 1];
-  const currentIndex = routeLegIndexForSection(last.sectionId);
-  const nextIndex = nextRouteLegIndex(currentIndex);
-  if (nextIndex === null) {
-    setDecorationStatus("no adjacent route leg to continue");
-    return;
-  }
-  const next = routeLegs[nextIndex];
-  if (!next) {
-    setDecorationStatus("no adjacent route leg to continue");
-    return;
-  }
-  const nextSection = (project.sections ?? []).find(
-    (section) => section.id === next.sectionId
-  );
-  const firstPoint = nextSection?.points[0] ?? "";
-  const lastPoint = nextSection?.points[nextSection.points.length - 1] ?? "";
-  const resolvedEntry = next.entry === "seam" ? firstPoint : next.entry;
-  if (resolvedEntry !== firstPoint) {
-    setDecorationStatus(
-      resolvedEntry === lastPoint ? "next route leg runs in reverse; cannot append forward" : "next route leg does not start at its section start; cannot append forward"
-    );
-    return;
-  }
-  const resolvedExit = next.exit === "seam" ? firstPoint : next.exit;
-  const nextClosed = sectionIsClosed(next.sectionId);
-  const coversFullForward = nextClosed ? resolvedExit === firstPoint : resolvedExit === lastPoint;
-  if (!coversFullForward) {
-    setDecorationStatus(
-      "next route leg does not cover a full forward section; cannot append"
-    );
-    return;
-  }
-  if (next.sectionId === last.sectionId) {
-    setDecorationStatus("next route leg repeats the current section; cannot append");
-    return;
-  }
-  const updated = cloneDecoration(decoration);
-  const updatedLast = updated.chain[updated.chain.length - 1];
-  if (!updatedLast.wrap) {
-    if (updatedLast.entryFraction >= 1 - 1e-4) {
-      setDecorationStatus(
-        "current leg starts at the junction; cannot extend it forward"
-      );
-      return;
-    }
-    if (updatedLast.exitFraction < 1) {
-      updatedLast.exitFraction = 1;
-    }
-  }
-  updated.chain.push({
-    sectionId: next.sectionId,
-    entryFraction: 0,
-    exitFraction: 1,
-    wrap: false
-  });
-  const applied = await applyDecorationProject(
-    {
-      ...project,
-      decorations: (project.decorations ?? []).map(
-        (item) => item.id === updated.id ? updated : item
-      )
-    },
-    "extending decoration chain"
-  );
-  if (applied) {
-    selectedChainLegIndex = updated.chain.length - 1;
-    renderDecorationInspector();
-    drawControlPoints();
-    setDecorationStatus(`chain extended onto ${next.sectionId}`, "ready");
-  }
-}
-async function removeDecorationChainLeg() {
-  const decoration = selectedDecoration();
-  if (!decoration || !editorViewer) {
-    return;
-  }
-  if (decoration.chain.length <= 1) {
-    setDecorationStatus("cannot remove the only chain leg");
-    return;
-  }
-  const lastIndex = decoration.chain.length - 1;
-  const removeIndex = selectedChainLegIndex === 0 || selectedChainLegIndex === lastIndex ? selectedChainLegIndex : lastIndex;
-  const updated = cloneDecoration(decoration);
-  updated.chain.splice(removeIndex, 1);
-  const applied = await applyDecorationProject(
-    {
-      ...project,
-      decorations: (project.decorations ?? []).map(
-        (item) => item.id === updated.id ? updated : item
-      )
-    },
-    "removing decoration chain leg"
-  );
-  if (applied) {
-    selectedChainLegIndex = Math.min(
-      removeIndex,
-      updated.chain.length - 1
-    );
-    renderDecorationInspector();
-    drawControlPoints();
-    setDecorationStatus("chain leg removed", "ready");
   }
 }
 function drawControlPoints() {
@@ -3984,57 +3780,6 @@ decorationDelete.addEventListener("click", () => {
     void deleteDecoration(decoration.id);
   }
 });
-decorationContinueLeg.addEventListener("click", () => {
-  void extendDecorationChain();
-});
-decorationRemoveLeg.addEventListener("click", () => {
-  void removeDecorationChainLeg();
-});
-decorationLegs.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof Element)) {
-    return;
-  }
-  const button = target.closest(
-    "button[data-leg-index]"
-  );
-  if (!button) {
-    return;
-  }
-  const index = Number(button.dataset.legIndex);
-  if (!Number.isInteger(index)) {
-    return;
-  }
-  selectedChainLegIndex = index;
-  renderDecorationInspector();
-  drawControlPoints();
-});
-decorationLaneOffset.addEventListener("input", () => {
-  laneOffsetEdited = true;
-});
-var applyPaintOffset = () => {
-  const parsed = parsePropOffset(decorationPaintOffset.value);
-  if (parsed === null) {
-    setDecorationStatus(
-      "paint offset must be a number between 1 and 19 m",
-      "error"
-    );
-    return;
-  }
-  newPropOffset = clampPropOffset(parsed);
-  drawControlPoints();
-};
-decorationPaintOffset.addEventListener("input", () => {
-  const parsed = parsePropOffset(decorationPaintOffset.value);
-  if (parsed !== null) {
-    newPropOffset = clampPropOffset(parsed);
-    drawControlPoints();
-  }
-});
-decorationPaintOffset.addEventListener("change", () => {
-  applyPaintOffset();
-  decorationPaintOffset.value = String(newPropOffset);
-});
 decorationPhase.addEventListener("input", () => {
   if (selectedDecoration()) {
     return;
@@ -4060,10 +3805,6 @@ decorationPropKind.addEventListener("change", () => {
     newPropKind = propKindValue(decorationPropKind.value);
     newPropKindExplicit = true;
   }
-});
-decorationLane.addEventListener("change", () => {
-  decorationLaneOffset.value = decorationLane.value === "far" ? "19" : "14";
-  laneOffsetEdited = false;
 });
 for (const control of [decorationSide, decorationLane]) {
   control.addEventListener("change", () => {
@@ -4125,7 +3866,8 @@ canvas.addEventListener(
             legIndex: handle.legIndex,
             sectionId: handle.sectionId,
             rail: handle.rail,
-            currentFraction: handle.fraction
+            currentFraction: handle.fraction,
+            cursorTurns: 0
           };
           cameraController?.setEnabled(false);
           try {
@@ -4231,12 +3973,24 @@ window.addEventListener(
     if (resizeDrag && event.pointerId === resizeDrag.pointerId) {
       event.preventDefault();
       const [x2, y2] = pointerPosition(event);
-      resizeDrag.currentFraction = railFractionOnSection(
+      const rawFraction = railFractionOnSection(
         resizeDrag.sectionId,
         resizeDrag.rail,
         x2,
         y2
       );
+      const seam = detectSeamJump(
+        resizeDrag.sectionId,
+        resizeDrag.rail,
+        resizeDrag.currentFraction,
+        rawFraction
+      );
+      if (seam === "forward") {
+        resizeDrag.cursorTurns += 1;
+      } else if (seam === "backward") {
+        resizeDrag.cursorTurns -= 1;
+      }
+      resizeDrag.currentFraction = rawFraction;
       drawControlPoints();
       return;
     }
