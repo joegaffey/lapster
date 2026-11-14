@@ -2236,3 +2236,226 @@ test("a painted decoration survives save, reload, and load", async ({
     )
     .toBe(true);
 });
+
+interface KerbSeamGap {
+  side: number;
+  startFraction: number;
+  endFraction: number;
+  firstEntry: number;
+  lastExit: number;
+  width: number;
+}
+
+/**
+ * Finds the empty gap that straddles the closed-section seam for a kerb rail.
+ * `startFraction` sits just before the seam and `endFraction` just after it.
+ */
+function kerbSeamGap(decorations: DecorationData[]): KerbSeamGap | null {
+  let best: KerbSeamGap | null = null;
+  for (const side of [-1, 1]) {
+    const legs = decorations
+      .filter(
+        (decoration) =>
+          decoration.kind === "kerb" &&
+          (decoration.side < 0 ? -1 : 1) === side,
+      )
+      .flatMap((decoration) => decoration.chain)
+      .filter((leg) => leg.wrap !== true);
+    if (legs.length === 0) {
+      continue;
+    }
+    const lastExit = Math.max(...legs.map((leg) => leg.exitFraction));
+    const firstEntry = Math.min(...legs.map((leg) => leg.entryFraction));
+    if (lastExit <= 0.75 || firstEntry >= 0.25) {
+      continue;
+    }
+    if (lastExit >= 0.999 || firstEntry <= 0.001) {
+      continue;
+    }
+    const gap: KerbSeamGap = {
+      side,
+      startFraction: lastExit + (1 - lastExit) * 0.5,
+      endFraction: firstEntry * 0.5,
+      firstEntry,
+      lastExit,
+      width: 1 - lastExit + firstEntry,
+    };
+    if (!best || gap.width > best.width) {
+      best = gap;
+    }
+  }
+  return best;
+}
+
+/**
+ * Picks a kerb whose exit ends just before the seam and whose far-side target
+ * fraction is not covered by any other decoration on the same rail.
+ */
+function seamResizeCandidate(
+  decorations: DecorationData[],
+): { decoration: DecorationData; targetFraction: number; firstEntry: number } | null {
+  const gap = kerbSeamGap(decorations);
+  if (!gap) {
+    return null;
+  }
+  const decoration = decorations.find(
+    (candidate) =>
+      candidate.kind === "kerb" &&
+      (candidate.side < 0 ? -1 : 1) === gap.side &&
+      candidate.chain.length === 1 &&
+      candidate.chain[0].wrap !== true &&
+      Math.abs(candidate.chain[0].exitFraction - gap.lastExit) < 1e-4 &&
+      candidate.chain[0].entryFraction > gap.endFraction + 1e-3,
+  );
+  return decoration
+    ? {
+        decoration,
+        targetFraction: gap.endFraction,
+        firstEntry: gap.firstEntry,
+      }
+    : null;
+}
+
+test("painting across a closed-section seam wraps the kerb leg", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=seam-paint");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const gap = kerbSeamGap(decorations);
+  expect(
+    gap,
+    "an empty kerb span straddling the closed-section seam",
+  ).not.toBeNull();
+  const rail = rails.find(
+    (candidate) =>
+      candidate.kind === "kerb" && candidate.side === gap!.side,
+  );
+  expect(rail, "the kerb rail for the seam gap exists").toBeDefined();
+  const spec: RailSpec = {
+    kind: "kerb",
+    side: gap!.side,
+    offset: rail!.offset,
+  };
+
+  const start = await railScreenAt(page, spec, gap!.startFraction);
+  const end = await railScreenAt(page, spec, gap!.endFraction);
+  expect(start, "the pre-seam paint start is visible").not.toBeNull();
+  expect(end, "the post-seam paint target is visible").not.toBeNull();
+
+  await page.mouse.move(start![0], start![1]);
+  await page.mouse.down();
+  const seamSteps = [
+    gap!.startFraction + (1 - gap!.startFraction) * 0.5,
+    0.999,
+    0.001,
+    Math.min(0.01, gap!.endFraction),
+    gap!.endFraction,
+  ];
+  for (const fraction of seamSteps) {
+    const screen = await railScreenAt(page, spec, fraction);
+    expect(screen, `seam paint step ${fraction} is visible`).not.toBeNull();
+    await page.mouse.move(screen![0], screen![1]);
+  }
+  await expect(page.locator("#decoration-status")).toContainText(
+    "painting across the seam",
+  );
+  await page.mouse.up();
+
+  // commitPaint applies asynchronously; reading editor_project() while
+  // set_editor_project() is in flight triggers a wasm reentrancy panic, so
+  // wait for the terminal status and the rebuild to settle first.
+  await expect(page.locator("#decoration-status")).toContainText("painted", {
+    timeout: 30_000,
+  });
+  await waitForReady(page);
+  const painted = (await readDecorations(page)).find((decoration) =>
+    decoration.id.startsWith("paint-kerb"),
+  );
+  expect(painted, "the seam paint produced a decoration").toBeDefined();
+  expect(painted!.chain).toHaveLength(1);
+  const leg = painted!.chain[0];
+  expect(leg.wrap).toBe(true);
+  expect(leg.entryFraction).toBeGreaterThan(leg.exitFraction);
+  expect(leg.entryFraction).toBeGreaterThan(gap!.lastExit - 1e-3);
+  expect(leg.exitFraction).toBeLessThan(gap!.firstEntry + 1e-3);
+  expect(leg.exitFraction).toBeLessThan(0.25);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("resizing a kerb endpoint across a closed-section seam wraps the leg", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const pageErrors = collectPageErrors(page);
+
+  await page.goto("/web/track-editor/?v=seam-resize");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const candidate = seamResizeCandidate(decorations);
+  expect(
+    candidate,
+    "a kerb span with empty room beyond the closed-section seam",
+  ).not.toBeNull();
+  const current = candidate!.decoration;
+  const selected = await selectDecoration(page, [current], rails);
+  expect(selected, "the seam kerb is selectable").not.toBeNull();
+  expect((await readDecorationInspector(page)).hint).toContain("selected");
+
+  const spec = railSpecForDecoration(current, rails);
+  expect(spec).not.toBeNull();
+  const original = current.chain[0];
+  const exitScreen = await railScreenAt(page, spec!, original.exitFraction);
+  const targetScreen = await railScreenAt(
+    page,
+    spec!,
+    candidate!.targetFraction,
+  );
+  expect(exitScreen, "the exit handle is visible").not.toBeNull();
+  expect(targetScreen, "the far-side resize target is visible").not.toBeNull();
+
+  await page.mouse.move(exitScreen![0], exitScreen![1]);
+  await page.mouse.down();
+  const seamSteps = [
+    original.exitFraction + (1 - original.exitFraction) * 0.5,
+    0.999,
+    0.001,
+    Math.min(0.01, candidate!.targetFraction),
+    candidate!.targetFraction,
+  ];
+  for (const fraction of seamSteps) {
+    const screen = await railScreenAt(page, spec!, fraction);
+    expect(screen, `seam resize step ${fraction} is visible`).not.toBeNull();
+    await page.mouse.move(screen![0], screen![1]);
+  }
+  await page.mouse.up();
+
+  await expect(page.locator("#decoration-status")).toContainText(
+    "decoration resized",
+    { timeout: 30_000 },
+  );
+  await waitForReady(page);
+  const after = (await readDecorations(page)).find(
+    (decoration) => decoration.id === current.id,
+  );
+  expect(after, "the resized kerb is saved").toBeDefined();
+  expect(after!.chain).toHaveLength(1);
+  const leg = after!.chain[0];
+  expect(leg.wrap).toBe(true);
+  expect(leg.exitFraction).toBeLessThan(leg.entryFraction);
+  expect(leg.exitFraction).toBeLessThan(0.25);
+  expect(leg.exitFraction).toBeLessThan(candidate!.firstEntry + 1e-3);
+  expect(leg.entryFraction).toBeCloseTo(original.entryFraction, 5);
+
+  expect(pageErrors).toEqual([]);
+});

@@ -70,15 +70,19 @@ Deployment:
   Step 0b is integrated on `dev` (`aae590d`): derived junction contacts,
   capped loose-end branches, partial/wrapped route legs, cross-section and
   seam-wrapped decoration chains, and a Make junction editor action. The
-  multi-section decoration editor follow-up (TD-0006) is next. Per-point width
-  is deferred (TD-0002, TD-0003).
+  Seam-wrapped decoration authoring is complete on
+  `feat/venue-decoration-editor`: paint across the closed-section seam and
+  endpoint drag across the seam both produce a wrapped leg, with Playwright
+  coverage. Custom-lane authoring remains dropped for now, and junction chain
+  continuation is blocked on multi-leg routes (Phase 4). Per-point width is
+  deferred (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: venue graph TD-0006 decoration-editor follow-up (see the resume
-  checkpoint), Speed Dreams physics, wheel/FFB hardware validation, and CP7
-  HID/audio integration.
+- Next: multi-layout and pit lane (venue Phases 4–5), then the remaining
+  TD-0006 junction-continuation work, Speed Dreams physics, wheel/FFB hardware
+  validation, and CP7 HID/audio integration.
 
 ## Completed checkpoints
 
@@ -200,6 +204,13 @@ junction branch, cap, host preservation, and track-pack export:
 - Full gate green on this branch: 38 web unit tests, 95 viewer tests passed /
   1 skipped (1 pre-existing garage-camera flake), 153 workspace tests, clippy,
   fmt, wasm. TD-0001 resolved; TD-0005 resolved.
+- TD-0006 seam batch on `feat/venue-decoration-editor` (`b5c494a` plus the
+  seam Playwright tests): painting across a closed-section seam wraps a single
+  leg (`wrap: true`, entry > exit) with the drag hint `painting across the
+  seam`; dragging an endpoint across the seam wraps the leg and keeps the far
+  endpoint. Both are covered in `web/tests/track-editor.spec.ts`. Custom-lane
+  authoring stays dropped for now; junction chain continuation is blocked on
+  multi-leg routes (Phase 4).
 - Docs: ADR 0003, ADR 0004, venue-graph plan, tech debt updated.
 - Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
@@ -208,8 +219,9 @@ junction branch, cap, host preservation, and track-pack export:
 
 Resume in this order:
 
-1. TD-0006 decoration-editor follow-up: chain continuation across junctions,
-   seam wrap authoring, custom-lane controls, and multi-leg endpoint editing.
+1. TD-0006 remainder: junction chain continuation after multi-leg routes
+   (Phase 4); custom-lane authoring is still dropped. Seam paint and seam
+   endpoint resize are complete and tested.
 2. Multi-layout and pit lane (Phases 4–5).
 3. Full gate, dev preview validation, then a PR to `dev` for the next batch.
 
