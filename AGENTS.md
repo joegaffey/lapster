@@ -160,6 +160,16 @@ Do not skip web tests for wasm crates (`sim-types`, `sim-asset`, `sim-core`,
 PR CI runs a three-test `track-editor` smoke subset. Run the full editor suite
 on demand with `npm --prefix web run test:viewer -- --project=track-editor`.
 
+CI excludes the two WebGL2 fallback browser tests. Run them before any external
+commit or push:
+
+```bash
+npm --prefix web run test:viewer -- --project=default --grep "WebGL2 fallback"
+```
+
+Once hooks are installed with `bash scripts/setup-hooks.sh`, the
+`.githooks/pre-push` hook runs these tests automatically before a push.
+
 The architect posts a PR comment with the gate result. See
 `agents/architect.md`.
 
