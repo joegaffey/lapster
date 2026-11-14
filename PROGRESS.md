@@ -67,7 +67,7 @@ Deployment:
   baked-default import, click-to-select, endpoint-handle resize, a single-item
   inspector for properties/delete, paint on empty rails, overlap errors, and
   persistence. Section overlays sample at route density (TD-0005 resolved).
-  Step 0b is integrated on `feat/venue-graph-step0b`: derived junction contacts,
+  Step 0b is integrated on `dev` (`aae590d`): derived junction contacts,
   capped loose-end branches, partial/wrapped route legs, cross-section and
   seam-wrapped decoration chains, and a Make junction editor action. The
   multi-section decoration editor follow-up (TD-0006) is next. Per-point width
@@ -163,8 +163,9 @@ Deployment:
 
 ## Venue graph resume checkpoint
 
-State on `feat/venue-graph-step0b`, branched from `dev` at `662527e` after the
-`@6` integration (`11622a7`):
+State on `dev` at `aae590d`, merged from `feat/venue-graph-step0b` (branched at
+`662527e`) after the `@6` integration (`11622a7`). Dev preview validated the
+junction branch, cap, host preservation, and track-pack export:
 
 - PR CI runs `web-smoke` + the editor smoke; the full sharded web suite runs on
   `dev`/`main` pushes and manual dispatch.
@@ -207,11 +208,10 @@ State on `feat/venue-graph-step0b`, branched from `dev` at `662527e` after the
 
 Resume in this order:
 
-1. Merge `feat/venue-graph-step0b` to `dev` after preview validation.
-2. TD-0006 decoration-editor follow-up: chain continuation across junctions,
+1. TD-0006 decoration-editor follow-up: chain continuation across junctions,
    seam wrap authoring, custom-lane controls, and multi-leg endpoint editing.
-3. Multi-layout and pit lane (Phases 4–5).
-4. Full gate, dev preview validation, then a PR to `dev` for the next batch.
+2. Multi-layout and pit lane (Phases 4–5).
+3. Full gate, dev preview validation, then a PR to `dev` for the next batch.
 
 ## Next steps
 
