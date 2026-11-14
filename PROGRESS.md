@@ -52,7 +52,7 @@ Deployment:
 
 ## Current focus
 
-- Venue graph rebuild is in progress on `feat/venue-graph`. The `@5` phases
+- Venue graph rebuild is integrated on `dev` (PR #26). The `@5` phases
   added a canonical graph, decoration paths, and a project editor API. ADR 0003
   resets the model to `lapster/track-project@6` (global points, open/closed
   sections, route legs, loose ends, decoration fraction chains), and ADR 0004
@@ -158,7 +158,12 @@ Deployment:
 
 ## Venue graph resume checkpoint
 
-State on `feat/venue-graph`:
+State on `dev` after the `@6` integration (`11622a7`):
+
+- Integrated from `feat/venue-graph` via PR #26; the feature branch remains at
+  `a139bdd` as pre-squash history. Start Step 0b from `dev` on a new branch.
+- PR CI runs `web-smoke` + the editor smoke; the full sharded web suite runs on
+  `dev`/`main` pushes and manual dispatch.
 
 - `@6` render model and B-spline evaluator: authored points are off-curve
   handles; start/finish and junction contacts are derived; section overlays
@@ -182,7 +187,8 @@ State on `feat/venue-graph`:
 - `stash@{0}` holds the superseded `@5` selection UX.
 - Local page: `http://127.0.0.1:8123/web/track-editor/`.
 - Dev preview: `https://joegaffey.com/lapster-dev/web/track-editor/`.
-- Deployed code tip `abcbbce` (decoration mode editor); the preview matches it.
+- Dev preview is deployed from `feat/venue-graph` at `abcbbce`; the integrated
+  `dev` code is equivalent at `11622a7`.
 
 Resume in this order:
 
@@ -191,7 +197,7 @@ Resume in this order:
 2. Web UX: Make junction + capped branch; then decoration chain continuation,
    seam wrap, custom-lane controls, and multi-leg endpoint editing (TD-0006).
 3. Multi-layout and pit lane (Phases 4–5).
-4. Full gate, dev preview validation, then a PR to `dev`.
+4. Full gate, dev preview validation, then a PR to `dev` for the next batch.
 
 ## Next steps
 
