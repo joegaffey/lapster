@@ -3777,7 +3777,7 @@ fn append_loose_end_cap(buffers: &mut MeshBuffers, points: &[Vec3], at_start: bo
         let y = terrain_height(position.x, position.z) + SURFACE_HEIGHT_OFFSET + 0.01;
         [position.x, y, position.z]
     };
-    push_quad(
+    push_cap_quad(
         buffers,
         [
             lift(near_left),
@@ -5123,6 +5123,17 @@ fn push_quad(buffers: &mut MeshBuffers, corners: [[f32; 3]; 4], normal: [f32; 3]
     buffers
         .indices
         .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// Loose-end cap geometry must sample the centre asphalt band of the shared
+/// track shader, so its UVs sit at the middle of the across-track range rather
+/// than the shoulder at `[0, 0]`.
+fn push_cap_quad(buffers: &mut MeshBuffers, corners: [[f32; 3]; 4], normal: [f32; 3]) {
+    let uv_start = buffers.uvs.len();
+    push_quad(buffers, corners, normal);
+    for uv in &mut buffers.uvs[uv_start..] {
+        *uv = [0.0, TARMAC_UV_ACROSS * 0.5];
+    }
 }
 
 fn push_triangle(buffers: &mut MeshBuffers, corners: [[f32; 3]; 3], normal: [f32; 3]) {
@@ -7516,6 +7527,43 @@ mod tests {
         assert_eq!(track.collision, again.collision);
         assert_eq!(track.metadata, again.metadata);
         assert_eq!(track.manifest, again.manifest);
+    }
+
+    #[test]
+    fn track_blend_is_material_driven_and_caps_use_asphalt_band() {
+        let mut project = TrackProject::default_project();
+        project.make_junction("point-1").expect("make junction");
+        let track = track_from_project_with_default(&project, None).expect("junction track");
+        let scene = crate::scene::Scene::build(
+            &track.visual,
+            &track.metadata,
+            &track.collision,
+            &track.manifest,
+        )
+        .expect("scene");
+
+        let mesh = |name: &str| {
+            scene
+                .meshes
+                .iter()
+                .find(|mesh| mesh.name == name)
+                .unwrap_or_else(|| panic!("missing {name} mesh"))
+        };
+        assert_eq!(mesh("asphalt_dither").track_blend, Some(1.0));
+        assert_eq!(mesh("branch_asphalt").track_blend, Some(1.0));
+        assert_eq!(mesh("terrain").track_blend, None);
+        assert_eq!(mesh("kerb_red").track_blend, None);
+
+        let caps = mesh("loose_end_caps");
+        assert!(!caps.vertices.is_empty(), "loose-end cap visual missing");
+        let centre = TARMAC_UV_ACROSS * 0.5;
+        for vertex in &caps.vertices {
+            assert!(
+                (vertex.uv[1] - centre).abs() < 1e-6,
+                "loose-end cap uv {:?} must sit on the centre asphalt band",
+                vertex.uv
+            );
+        }
     }
 
     #[test]
