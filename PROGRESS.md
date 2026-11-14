@@ -227,9 +227,11 @@ junction branch, cap, host preservation, and track-pack export:
 - Released to `main` as `506abaf` (PR #28); `dev` was synced with `main`
   afterwards. Production now includes the venue graph `@6`, seam decoration
   authoring, and the CI fast path.
-- PR #29 (`fix/track-section-shading`) keeps the material-driven `track_blend`
-  and cap-centre fixes: non-route sections and loose-end caps render as tarmac.
-  It is independent of junction geometry and remains open.
+- Road shading fix (PR #29): non-route sections and loose-end caps now use a
+  runtime, material-driven `track_blend` instead of mesh-name sniffing, so
+  junction branches and extra sections render as tarmac with dirt shoulders.
+  Loose-end caps sample the centre asphalt band. Covered by a sim-render test
+  and dev-preview validation; no asset-schema change.
 - Junction road geometry was re-assessed after angled-junction testing. The
   incremental branch outward/length/trim/cut experiments were reverted. ADR 0005
   (proposed) and venue Phase 3d define the replacement: clip ribbons to a
