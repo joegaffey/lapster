@@ -253,6 +253,19 @@ Acceptance:
 - loose ends render and drive;
 - full gate passes.
 
+#### 3c — Decoration editor (first version)
+
+Complete: `Points | Kerbs | Props` mode switch; `editor_guide_rails()` lane
+rails (kerb ±6.4, prop near ±14, tree/far ±19); baked-default import on first
+entry; click-to-select; endpoint handles and resize; a single-item inspector
+for side/lane/prop kind/spacing/phase/elements and delete; drag an empty rail to
+paint a single-section kerb/prop/tree; overlap validation; save/load
+persistence. The multi-item list was removed.
+
+Follow-up (TD-0006): cross-section chain continuation, seam wrap, custom-lane
+controls, and multi-leg endpoint editing. Width-aware rails wait on
+TD-0002/0003.
+
 ### Phase 4 — Multiple loops over shared sections
 
 - Add/duplicate/delete layouts; route selector.

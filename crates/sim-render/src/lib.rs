@@ -444,6 +444,11 @@ impl TrackViewer {
         serde_json::to_string(&self.editor_prop_lines).unwrap_or_else(|_| "[]".to_string())
     }
 
+    pub fn editor_guide_rails(&self) -> String {
+        serde_json::to_string(&crate::track_editor::guide_rails(&self.editor_prop_lines))
+            .unwrap_or_else(|_| "[]".to_string())
+    }
+
     pub fn set_track_blend_mode(&mut self, mode: &str) -> Result<(), JsValue> {
         self.track_blend = match mode {
             "off" => 0.0,

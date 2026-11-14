@@ -202,6 +202,72 @@ pub struct PropLine {
     pub phase: f32,
 }
 
+/// A lane guide rail for the web decoration painter. Rails are derived from
+/// the same baked prop lines and kerb radii as the renderer so the editor does
+/// not hard-code lane offsets.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GuideRail {
+    pub kind: String,
+    pub side: i8,
+    pub offset: f32,
+    pub lane: Option<String>,
+}
+
+fn guide_rail_lane(offset: f32) -> String {
+    if (offset - PROP_OFFSET).abs() < 1e-4 {
+        "near".to_string()
+    } else if (offset - PROP_FAR_OFFSET).abs() < 1e-4 {
+        "far".to_string()
+    } else {
+        offset.to_string()
+    }
+}
+
+/// Builds deterministic editor guide rails: two mid-kerb rails followed by one
+/// rail per unique non-`Off` `(side, offset)` prop pair.
+pub fn guide_rails(prop_lines: &[PropLine]) -> Vec<GuideRail> {
+    let mid_kerb = (KERB_INNER_RADIUS + KERB_OUTER_RADIUS) * 0.5;
+    let mut rails = vec![
+        GuideRail {
+            kind: "kerb".to_string(),
+            side: -1,
+            offset: mid_kerb,
+            lane: None,
+        },
+        GuideRail {
+            kind: "kerb".to_string(),
+            side: 1,
+            offset: mid_kerb,
+            lane: None,
+        },
+    ];
+    let mut prop_pairs: Vec<(i8, f32)> = Vec::new();
+    for line in prop_lines {
+        if line.kind == PropKind::Off {
+            continue;
+        }
+        let pair = (line.side, line.offset);
+        if !prop_pairs.contains(&pair) {
+            prop_pairs.push(pair);
+        }
+    }
+    prop_pairs.sort_by(|a, b| {
+        a.1.partial_cmp(&b.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    for (side, offset) in prop_pairs {
+        rails.push(GuideRail {
+            kind: "prop".to_string(),
+            side,
+            offset,
+            lane: Some(guide_rail_lane(offset)),
+        });
+    }
+    rails
+}
+
 pub struct EditorTrack {
     pub visual: TrackVisual,
     pub metadata: TrackMetadata,
@@ -5457,5 +5523,134 @@ mod tests {
             }
         }
         assert!(moved);
+    }
+
+    #[test]
+    fn guide_rails_cover_default_lanes_without_duplicates() {
+        let track = track_from_project_with_default(&TrackProject::default_project(), None)
+            .expect("default track");
+        let rails = guide_rails(&track.prop_lines);
+        assert_eq!(rails.len(), 6, "kerb rails plus one per unique prop lane");
+
+        assert_eq!(rails[0].kind, "kerb");
+        assert_eq!(rails[0].side, -1);
+        assert!((rails[0].offset - 6.4).abs() < 1e-4);
+        assert_eq!(rails[0].lane, None);
+        assert_eq!(rails[1].kind, "kerb");
+        assert_eq!(rails[1].side, 1);
+        assert!((rails[1].offset - 6.4).abs() < 1e-4);
+        assert_eq!(rails[1].lane, None);
+
+        let expected = [
+            (-1i8, PROP_OFFSET, "near"),
+            (1, PROP_OFFSET, "near"),
+            (-1, PROP_FAR_OFFSET, "far"),
+            (1, PROP_FAR_OFFSET, "far"),
+        ];
+        for (rail, (side, offset, lane)) in rails[2..].iter().zip(expected) {
+            assert_eq!(rail.kind, "prop");
+            assert_eq!(rail.side, side);
+            assert!((rail.offset - offset).abs() < 1e-4);
+            assert_eq!(rail.lane.as_deref(), Some(lane));
+        }
+    }
+
+    #[test]
+    fn guide_rails_use_custom_lane_offsets() {
+        let mut project = TrackProject::default_project();
+        project.decorations.push(prop_decoration(
+            "props-custom",
+            "section-0",
+            1,
+            "11.5",
+            PropKind::Blocks,
+            8.0,
+            0.0,
+        ));
+        let track = track_from_project_with_default(&project, None).expect("track");
+        let rails = guide_rails(&track.prop_lines);
+        let props = rails
+            .iter()
+            .filter(|rail| rail.kind == "prop")
+            .collect::<Vec<_>>();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].side, 1);
+        assert!((props[0].offset - 11.5).abs() < 1e-4);
+        assert_eq!(props[0].lane.as_deref(), Some("11.5"));
+    }
+
+    #[test]
+    fn guide_rails_skip_off_prop_lines() {
+        let lines = vec![PropLine {
+            start: 0.0,
+            end: 1.0,
+            side: 1,
+            offset: PROP_OFFSET,
+            kind: PropKind::Off,
+            spacing: None,
+            phase: 0.0,
+        }];
+        let rails = guide_rails(&lines);
+        assert_eq!(rails.len(), 2);
+        assert!(rails.iter().all(|rail| rail.kind == "kerb"));
+    }
+
+    #[test]
+    fn guide_rails_order_deterministically_and_serialize_camel_case() {
+        let line = |side: i8, offset: f32, kind: PropKind| PropLine {
+            start: 0.0,
+            end: 1.0,
+            side,
+            offset,
+            kind,
+            spacing: None,
+            phase: 0.0,
+        };
+        let lines = vec![
+            line(1, PROP_FAR_OFFSET, PropKind::Trees),
+            line(-1, PROP_OFFSET, PropKind::Blocks),
+            line(1, PROP_OFFSET, PropKind::Tyres),
+            line(-1, PROP_FAR_OFFSET, PropKind::Trees),
+            line(1, PROP_OFFSET, PropKind::Blocks),
+        ];
+        let rails = guide_rails(&lines);
+        assert_eq!(rails, guide_rails(&lines));
+        let summary = rails
+            .iter()
+            .map(|rail| {
+                (
+                    rail.kind.as_str(),
+                    rail.side,
+                    rail.offset,
+                    rail.lane.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            summary,
+            vec![
+                ("kerb", -1, 6.4, None),
+                ("kerb", 1, 6.4, None),
+                ("prop", -1, PROP_OFFSET, Some("near")),
+                ("prop", 1, PROP_OFFSET, Some("near")),
+                ("prop", -1, PROP_FAR_OFFSET, Some("far")),
+                ("prop", 1, PROP_FAR_OFFSET, Some("far")),
+            ]
+        );
+
+        let json = serde_json::to_string(&rails).expect("serialize guide rails");
+        assert!(json.contains("\"kind\":\"kerb\""));
+        assert!(json.contains("\"kind\":\"prop\""));
+        assert!(json.contains("\"lane\":null"));
+        assert!(json.contains("\"lane\":\"near\""));
+        assert!(json.contains("\"lane\":\"far\""));
+        let parsed = serde_json::from_str::<serde_json::Value>(&json).expect("parse guide rails");
+        let first = &parsed[0];
+        assert_eq!(first["kind"], "kerb");
+        assert_eq!(first["side"], -1);
+        assert_eq!(first["offset"], 6.4);
+        assert!(first["lane"].is_null());
+        assert_eq!(parsed[2]["lane"], "near");
+        assert_eq!(parsed[4]["lane"], "far");
     }
 }

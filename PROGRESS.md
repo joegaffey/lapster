@@ -58,14 +58,17 @@ Deployment:
   sections, route legs, loose ends, decoration fraction chains), and ADR 0004
   replaces Catmull-Rom with a cubic B-spline: all authored control points are
   off-curve handles; start/finish and junction contact points are derived on the
-  road. The render side is migrated and green (66 tests); the web editor boots
+  road. The render side is migrated and green (70 tests); the web editor boots
   on `@6`, selects/drags points and sections, persists the project, draws the
-  control polygon and dotted contact lines, and now has the core point-editing
+  control polygon and dotted contact lines, and has the core point-editing
   tools: click the road to insert, delete, and set start/finish, with point
-  details/actions in a non-modal point-editor dialog. Section overlays now
-  sample at route density (TD-0005 resolved). Decoration-path painting
-  (TD-0001) and Step 0b junctions are next. Per-point width is deferred
-  (TD-0002, TD-0003).
+  details/actions in a non-modal point-editor dialog. Decoration editing is
+  mode-based: `Points | Kerbs | Props`, with renderer-derived lane rails,
+  baked-default import, click-to-select, endpoint-handle resize, a single-item
+  inspector for properties/delete, paint on empty rails, overlap errors, and
+  persistence. Section overlays sample at route density (TD-0005 resolved).
+  Step 0b junctions and the multi-section decoration follow-up are next.
+  Per-point width is deferred (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
@@ -120,10 +123,10 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 138 tests
+- `cargo test --workspace` — 142 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 38 tests
-- `npm run test:viewer` — 85 passed, 1 skipped
+- `npm run test:viewer` — 95 passed, 1 skipped
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
@@ -159,14 +162,21 @@ State on `feat/venue-graph`:
 
 - `@6` render model and B-spline evaluator: authored points are off-curve
   handles; start/finish and junction contacts are derived; section overlays
-  sample at route density. `cargo test -p sim-render` — 66 passing.
+  sample at route density. `cargo test -p sim-render` — 70 passing.
 - Web editor on `@6`: point/section selection, point drag, save/load/export/
   import, Test Drive, dashed control polygon, dotted contact lines, and a
   non-modal point-editor dialog. Click the road to insert, Delete/Backspace or
   the dialog to delete, and Set start/finish in the dialog. Alt/Option-click a
   section centerline to select it.
-- Full gate green: 38 web unit tests, 85 viewer tests passed / 1 skipped,
-  138 workspace tests, clippy, fmt, wasm.
+- Decoration editor: `Points | Kerbs | Props` modes; `editor_guide_rails()`
+  lane rails; baked-default import on first entry (28 decorations);
+  click-to-select with endpoint handles and resize; a single-item inspector for
+  side/lane/prop kind/spacing/phase/elements and Delete; drag an empty rail to
+  paint a single-section kerb/prop/tree; overlap errors; save/load persistence.
+  Follow-up: cross-section chains, seam wrap, custom lanes, and multi-leg
+  endpoint editing (TD-0006).
+- Full gate green: 38 web unit tests, 95 viewer tests passed / 1 skipped,
+  142 workspace tests, clippy, fmt, wasm. TD-0001 resolved.
 - Docs: ADR 0003, ADR 0004, venue-graph plan, tech debt updated.
 - Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
@@ -175,12 +185,11 @@ State on `feat/venue-graph`:
 
 Resume in this order:
 
-1. Decoration-path painting (TD-0001): kerbs/props on canonical decoration
-   chains, with kind/side/lane and phase controls. This is a new authoring UI,
-   not a restoration of the removed `@5` per-segment painting.
-2. Step 0b (render): junction contact derivation, branch caps, partial route
+1. Step 0b (render): junction contact derivation, branch caps, partial route
    legs, cross-section/seam decoration wrap.
-3. Web UX: Make junction + capped branch; then multi-layout and pit lane.
+2. Web UX: Make junction + capped branch; then decoration chain continuation,
+   seam wrap, custom-lane controls, and multi-leg endpoint editing (TD-0006).
+3. Multi-layout and pit lane (Phases 4–5).
 4. Full gate, dev preview validation, then a PR to `dev`.
 
 ## Next steps

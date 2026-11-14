@@ -87,12 +87,87 @@ interface ProjectLayout {
   startFinish?: string;
 }
 
+type DecorationKind = "kerb" | "prop";
+type PropKind = "blocks" | "tyres" | "trees" | "off";
+
+interface DecorationLeg {
+  sectionId: string;
+  entryFraction: number;
+  exitFraction: number;
+  wrap?: boolean;
+}
+
+interface DecorationPath {
+  id: string;
+  kind: DecorationKind;
+  side: number;
+  lane?: string;
+  chain: DecorationLeg[];
+  elements?: number[];
+  phase?: number;
+  propKind?: PropKind;
+  spacing?: number;
+}
+
+interface GuideRail {
+  kind: DecorationKind;
+  side: number;
+  offset: number;
+  lane?: string | null;
+}
+
+interface KerbSpan {
+  start: number;
+  end: number;
+  side: number;
+}
+
+interface BakedPropLine {
+  start: number;
+  end: number;
+  side: number;
+  offset: number;
+  kind: PropKind;
+  spacing?: number | null;
+  phase?: number;
+}
+
 interface TrackProjectDocument {
   schema?: string;
   name?: string;
   points?: ProjectPoint[];
   sections?: ProjectSection[];
   layouts?: ProjectLayout[];
+  decorations?: DecorationPath[];
+}
+
+interface PaintStroke {
+  pointerId: number;
+  sectionId: string;
+  rail: GuideRail;
+  entryFraction: number;
+  currentFraction: number;
+}
+
+type EditorMode = "points" | "kerbs" | "props";
+
+function modeDecorationKind(mode: EditorMode): DecorationKind | null {
+  if (mode === "kerbs") {
+    return "kerb";
+  }
+  if (mode === "props") {
+    return "prop";
+  }
+  return null;
+}
+
+interface ResizeDrag {
+  pointerId: number;
+  decorationId: string;
+  endpoint: "entry" | "exit";
+  sectionId: string;
+  rail: GuideRail;
+  currentFraction: number;
 }
 
 type Selection =
@@ -104,6 +179,13 @@ const MAX_CAMERA_HEIGHT = 140;
 const CONTROL_POINT_RADIUS = 9;
 const CONTROL_POINT_HIT_RADIUS = 18;
 const SECTION_HIT_RADIUS = 10;
+const RAIL_HIT_RADIUS = 14;
+const KERB_RAIL_OFFSET = 6.4;
+const NEAR_PROP_OFFSET = 14;
+const FAR_PROP_OFFSET = 19;
+const DECORATION_HIT_RADIUS = 12;
+const HANDLE_HIT_RADIUS = 14;
+const MIN_DECORATION_FRACTION = 0.01;
 const PROJECT_STORAGE_KEY = "lapster.track-editor.project.v6";
 const PROJECT_SCHEMA = "lapster/track-project@6";
 const SURFACE_COLORS: Record<number, string> = {
@@ -156,6 +238,43 @@ const deletePointButton =
   document.querySelector<HTMLButtonElement>("#delete-point")!;
 const setStartFinishButton =
   document.querySelector<HTMLButtonElement>("#set-start-finish")!;
+const modeButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("#editor-mode button"),
+);
+const decorationInspector =
+  document.querySelector<HTMLDialogElement>("#decoration-inspector")!;
+const decorationTitle =
+  document.querySelector<HTMLElement>("#decoration-inspector-title")!;
+const decorationHint =
+  document.querySelector<HTMLElement>("#decoration-inspector-hint")!;
+const decorationSide =
+  document.querySelector<HTMLSelectElement>("#decoration-side")!;
+const decorationSideField =
+  document.querySelector<HTMLElement>("#decoration-side-field")!;
+const decorationLane =
+  document.querySelector<HTMLSelectElement>("#decoration-lane")!;
+const decorationLaneField =
+  document.querySelector<HTMLElement>("#decoration-lane-field")!;
+const decorationPropKind =
+  document.querySelector<HTMLSelectElement>("#decoration-prop-kind")!;
+const decorationPropKindField =
+  document.querySelector<HTMLElement>("#decoration-prop-kind-field")!;
+const decorationSpacing =
+  document.querySelector<HTMLInputElement>("#decoration-spacing")!;
+const decorationSpacingField =
+  document.querySelector<HTMLElement>("#decoration-spacing-field")!;
+const decorationPhase =
+  document.querySelector<HTMLInputElement>("#decoration-phase")!;
+const decorationElements =
+  document.querySelector<HTMLInputElement>("#decoration-elements")!;
+const decorationElementsField =
+  document.querySelector<HTMLElement>("#decoration-elements-field")!;
+const decorationApply =
+  document.querySelector<HTMLButtonElement>("#decoration-apply")!;
+const decorationDelete =
+  document.querySelector<HTMLButtonElement>("#decoration-delete")!;
+const decorationStatus =
+  document.querySelector<HTMLElement>("#decoration-status")!;
 
 let editorViewer: TrackViewer | undefined;
 let cameraController: OrbitCameraController | undefined;
@@ -203,6 +322,21 @@ const CAR_ARROW_STEP = 1;
 let cameraViewMode: CameraViewMode = "front";
 let carIndex = 0;
 let carDragPointerId: number | null = null;
+let routeLegs: RouteLeg[] = [];
+let guideRails: GuideRail[] = [];
+let editorMode: EditorMode = "points";
+let decorationSeedAttempted = false;
+let selectedDecorationId: string | null = null;
+let hoverDecorationId: string | null = null;
+let paintStroke: PaintStroke | null = null;
+let resizeDrag: ResizeDrag | null = null;
+let decorationIdSequence = 0;
+let newKerbPhase = 0;
+let newKerbElements = "";
+let newPropPhase = 0;
+let newPropSpacing = "";
+let newPropKind: PropKind = "trees";
+let newPropKindExplicit = false;
 
 setupHud();
 
@@ -230,6 +364,305 @@ const lerp = (a: Vec3, b: Vec3, t: number): Vec3 => [
   a[1] + (b[1] - a[1]) * t,
   a[2] + (b[2] - a[2]) * t,
 ];
+
+const clampFraction = (value: number): number =>
+  Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+
+function sectionIsClosed(sectionId: string): boolean {
+  const section = (project.sections ?? []).find((item) => item.id === sectionId);
+  return section?.closed !== false;
+}
+
+function railOffsetPoint(
+  samples: Vec3[],
+  index: number,
+  closed: boolean,
+  rail: GuideRail,
+): Vec3 {
+  const count = samples.length;
+  const wrapped = ((index % count) + count) % count;
+  const previousIndex = closed
+    ? (wrapped + count - 1) % count
+    : Math.max(0, wrapped - 1);
+  const nextIndex = closed
+    ? (wrapped + 1) % count
+    : Math.min(count - 1, wrapped + 1);
+  const previous = samples[previousIndex];
+  const next = samples[nextIndex];
+  let tangent = normalize([
+    next[0] - previous[0],
+    0,
+    next[2] - previous[2],
+  ]);
+  if (Math.abs(tangent[0]) < 1e-8 && Math.abs(tangent[2]) < 1e-8) {
+    tangent = [0, 0, -1];
+  }
+  const binormal: Vec3 = [-tangent[2], 0, tangent[0]];
+  const sample = samples[wrapped];
+  const lateral = rail.offset * rail.side;
+  return [
+    sample[0] + binormal[0] * lateral,
+    sample[1] + 0.05,
+    sample[2] + binormal[2] * lateral,
+  ];
+}
+
+function railOffsetPoints(sectionId: string, rail: GuideRail): Vec3[] {
+  const samples = sectionCenterlines[sectionId];
+  if (!samples || samples.length < 2) {
+    return [];
+  }
+  const closed = sectionIsClosed(sectionId);
+  return samples.map((_, index) =>
+    railOffsetPoint(samples, index, closed, rail),
+  );
+}
+
+function railPointAtFraction(
+  sectionId: string,
+  rail: GuideRail,
+  fraction: number,
+): Vec3 | null {
+  const samples = sectionCenterlines[sectionId];
+  if (!samples || samples.length < 2) {
+    return null;
+  }
+  const closed = sectionIsClosed(sectionId);
+  const position = clampFraction(fraction) * (samples.length - 1);
+  const first = Math.floor(position);
+  const second = Math.min(samples.length - 1, first + 1);
+  const t = position - first;
+  return lerp(
+    railOffsetPoint(samples, first, closed, rail),
+    railOffsetPoint(samples, second, closed, rail),
+    t,
+  );
+}
+
+function railsForMode(mode: EditorMode): GuideRail[] {
+  const kind = modeDecorationKind(mode);
+  if (!kind) {
+    return [];
+  }
+  return guideRails.filter((rail) => rail.kind === kind);
+}
+
+function decorationsForMode(mode: EditorMode): DecorationPath[] {
+  const kind = modeDecorationKind(mode);
+  if (!kind) {
+    return [];
+  }
+  return (project.decorations ?? []).filter(
+    (decoration) => decoration.kind === kind,
+  );
+}
+
+function findDecoration(id: string | null): DecorationPath | null {
+  if (!id) {
+    return null;
+  }
+  return (project.decorations ?? []).find((decoration) => decoration.id === id) ?? null;
+}
+
+function selectedDecoration(): DecorationPath | null {
+  const kind = modeDecorationKind(editorMode);
+  if (!kind) {
+    return null;
+  }
+  const decoration = findDecoration(selectedDecorationId);
+  return decoration && decoration.kind === kind ? decoration : null;
+}
+
+function railForDecoration(decoration: DecorationPath): GuideRail | null {
+  const side = decoration.side < 0 ? -1 : 1;
+  if (decoration.kind === "kerb") {
+    return (
+      guideRails.find(
+        (rail) => rail.kind === "kerb" && rail.side === side,
+      ) ?? {
+        kind: "kerb",
+        side,
+        offset: KERB_RAIL_OFFSET,
+        lane: null,
+      }
+    );
+  }
+  const lane = decoration.lane ?? "";
+  const byLane = guideRails.find(
+    (rail) =>
+      rail.kind === "prop" &&
+      rail.side === side &&
+      (rail.lane ?? "") === lane,
+  );
+  if (byLane) {
+    return byLane;
+  }
+  const numeric = Number(lane);
+  if (Number.isFinite(numeric) && lane.trim() !== "") {
+    return (
+      guideRails.find(
+        (rail) =>
+          rail.kind === "prop" &&
+          rail.side === side &&
+          Math.abs(rail.offset - numeric) < 1e-4,
+      ) ?? { kind: "prop", side, offset: numeric, lane }
+    );
+  }
+  const offset = lane === "far" ? FAR_PROP_OFFSET : NEAR_PROP_OFFSET;
+  return (
+    guideRails.find(
+      (rail) =>
+        rail.kind === "prop" &&
+        rail.side === side &&
+        Math.abs(rail.offset - offset) < 1e-4,
+    ) ?? { kind: "prop", side, offset, lane: lane === "far" ? "far" : "near" }
+  );
+}
+
+function railColor(rail: GuideRail, selected: boolean): string {
+  const lane = (rail.lane ?? "").toLowerCase();
+  if (rail.kind === "kerb") {
+    return selected ? "#f9a8d4" : "rgba(244, 114, 182, 0.82)";
+  }
+  if (lane === "far" || Math.abs(rail.offset - FAR_PROP_OFFSET) < 1e-4) {
+    return selected ? "#86efac" : "rgba(74, 222, 128, 0.82)";
+  }
+  if (rail.side < 0) {
+    return selected ? "#fdba74" : "rgba(251, 146, 60, 0.82)";
+  }
+  return selected ? "#5eead4" : "rgba(45, 212, 191, 0.82)";
+}
+
+function railHitForMode(
+  x: number,
+  y: number,
+  mode: EditorMode,
+): { sectionId: string; fraction: number; rail: GuideRail } | null {
+  for (const rail of railsForMode(mode)) {
+    const hit = railScreenHit(x, y, rail);
+    if (hit) {
+      return { ...hit, rail };
+    }
+  }
+  return null;
+}
+
+function railScreenHit(
+  x: number,
+  y: number,
+  rail: GuideRail,
+): { sectionId: string; fraction: number } | null {
+  const camera = currentCamera();
+  if (!camera) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  let best: { sectionId: string; fraction: number } | null = null;
+  let bestDistance = RAIL_HIT_RADIUS;
+  for (const sectionId of routeSectionIds) {
+    const points = railOffsetPoints(sectionId, rail);
+    if (points.length < 2) {
+      continue;
+    }
+    const projected = points.map((point) =>
+      projectPoint(point, camera, width, height),
+    );
+    const segmentCount = sectionIsClosed(sectionId)
+      ? projected.length
+      : projected.length - 1;
+    for (let index = 0; index < segmentCount; index += 1) {
+      const start = projected[index];
+      const end = projected[(index + 1) % projected.length];
+      if (!start || !end) {
+        continue;
+      }
+      const segmentX = end[0] - start[0];
+      const segmentY = end[1] - start[1];
+      const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+      const t =
+        lengthSquared > 1e-6
+          ? Math.max(
+              0,
+              Math.min(
+                1,
+                ((x - start[0]) * segmentX + (y - start[1]) * segmentY) /
+                  lengthSquared,
+              ),
+            )
+          : 0;
+      const distance = Math.hypot(
+        x - (start[0] + segmentX * t),
+        y - (start[1] + segmentY * t),
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = {
+          sectionId,
+          fraction: clampFraction(
+            (index + t) / Math.max(1, points.length - 1),
+          ),
+        };
+      }
+    }
+  }
+  return best;
+}
+
+function railFractionOnSection(
+  sectionId: string,
+  rail: GuideRail,
+  x: number,
+  y: number,
+): number {
+  const camera = currentCamera();
+  const points = railOffsetPoints(sectionId, rail);
+  if (!camera || points.length < 2) {
+    return 0;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const projected = points.map((point) =>
+    projectPoint(point, camera, width, height),
+  );
+  const segmentCount = sectionIsClosed(sectionId)
+    ? projected.length
+    : projected.length - 1;
+  let bestFraction = 0;
+  let bestDistance = Infinity;
+  for (let index = 0; index < segmentCount; index += 1) {
+    const start = projected[index];
+    const end = projected[(index + 1) % projected.length];
+    if (!start || !end) {
+      continue;
+    }
+    const segmentX = end[0] - start[0];
+    const segmentY = end[1] - start[1];
+    const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+    const t =
+      lengthSquared > 1e-6
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              ((x - start[0]) * segmentX + (y - start[1]) * segmentY) /
+                lengthSquared,
+            ),
+          )
+        : 0;
+    const distance = Math.hypot(
+      x - (start[0] + segmentX * t),
+      y - (start[1] + segmentY * t),
+    );
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestFraction = clampFraction(
+        (index + t) / Math.max(1, points.length - 1),
+      );
+    }
+  }
+  return bestFraction;
+}
 
 function centerlinePoint(index: number): Vec3 {
   const count = centerline.length;
@@ -566,6 +999,7 @@ function updateInsertHover(): void {
   insertHover = null;
   const camera = currentCamera();
   if (
+    editorMode !== "points" ||
     !camera ||
     !overlayVisible ||
     !lastPointer ||
@@ -594,13 +1028,34 @@ function updateCursor(): void {
     canvas.style.cursor = "";
     return;
   }
+  const [x, y] = lastPointer;
+  if (editorMode !== "points") {
+    if (resizeDrag) {
+      canvas.style.cursor = "ew-resize";
+      return;
+    }
+    if (hitTestDecorationHandle(x, y)) {
+      canvas.style.cursor = "ew-resize";
+      return;
+    }
+    if (hoverDecorationId) {
+      canvas.style.cursor = "pointer";
+      return;
+    }
+    if (railHitForMode(x, y, editorMode)) {
+      canvas.style.cursor = "crosshair";
+      return;
+    }
+    canvas.style.cursor = "";
+    return;
+  }
   if (insertHover) {
     canvas.style.cursor = "copy";
     return;
   }
   if (
-    hitTestCarMarker(lastPointer[0], lastPointer[1]) ||
-    hitTestControlPoint(lastPointer[0], lastPointer[1]) >= 0
+    hitTestCarMarker(x, y) ||
+    hitTestControlPoint(x, y) >= 0
   ) {
     canvas.style.cursor = "grab";
     return;
@@ -627,6 +1082,1016 @@ function setStatus(message: string, state: "" | "ready" | "error" = ""): void {
 function reportProjectError(prefix: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   setStatus(`${prefix}: ${message}`, "error");
+}
+
+function setDecorationStatus(
+  message: string,
+  state: "" | "ready" | "error" = "",
+): void {
+  decorationStatus.textContent = message;
+  decorationStatus.className = `status${state ? ` ${state}` : ""}`;
+}
+
+function sideLabel(side: number): string {
+  return side < 0 ? "Left" : "Right";
+}
+
+function laneForOffset(offset: number): string {
+  if (Math.abs(offset - NEAR_PROP_OFFSET) < 1e-4) {
+    return "near";
+  }
+  if (Math.abs(offset - FAR_PROP_OFFSET) < 1e-4) {
+    return "far";
+  }
+  return String(offset);
+}
+
+function parseElementLengths(value: string): number[] | null {
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  const lengths: number[] = [];
+  for (const part of parts) {
+    const length = Number(part);
+    if (!Number.isFinite(length) || length < 0) {
+      return null;
+    }
+    lengths.push(length);
+  }
+  return lengths;
+}
+
+function parseOptionalSpacing(value: string): number | undefined | null {
+  if (value.trim() === "") {
+    return undefined;
+  }
+  const spacing = Number(value);
+  if (!Number.isFinite(spacing) || spacing <= 0) {
+    return null;
+  }
+  return spacing;
+}
+
+function propKindValue(value: string): PropKind {
+  return value === "tyres" ? "tyres" : value === "trees" ? "trees" : "blocks";
+}
+
+function cloneDecoration(decoration: DecorationPath): DecorationPath {
+  const clone: DecorationPath = {
+    ...decoration,
+    chain: decoration.chain.map((leg) => ({ ...leg })),
+  };
+  if (decoration.elements) {
+    clone.elements = [...decoration.elements];
+  }
+  return clone;
+}
+
+function railLane(rail: GuideRail): string {
+  if (rail.lane) {
+    return rail.lane;
+  }
+  return laneForOffset(rail.offset);
+}
+
+function decorationScreenDistance(
+  x: number,
+  y: number,
+  decoration: DecorationPath,
+): number {
+  const rail = railForDecoration(decoration);
+  const camera = currentCamera();
+  if (!rail || !camera) {
+    return Infinity;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  let best = Infinity;
+  for (const leg of decoration.chain) {
+    const start = Math.min(leg.entryFraction, leg.exitFraction);
+    const end = Math.max(leg.entryFraction, leg.exitFraction);
+    const steps = Math.max(6, Math.ceil((end - start) * 120));
+    let previous: [number, number] | null = null;
+    for (let index = 0; index <= steps; index += 1) {
+      const fraction = start + ((end - start) * index) / steps;
+      const world = railPointAtFraction(leg.sectionId, rail, fraction);
+      const projected = world
+        ? projectPoint(world, camera, width, height)
+        : null;
+      if (!projected) {
+        previous = null;
+        continue;
+      }
+      if (previous) {
+        const segmentX = projected[0] - previous[0];
+        const segmentY = projected[1] - previous[1];
+        const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+        const t =
+          lengthSquared > 1e-6
+            ? Math.max(
+                0,
+                Math.min(
+                  1,
+                  ((x - previous[0]) * segmentX +
+                    (y - previous[1]) * segmentY) /
+                    lengthSquared,
+                ),
+              )
+            : 0;
+        const distance = Math.hypot(
+          x - (previous[0] + segmentX * t),
+          y - (previous[1] + segmentY * t),
+        );
+        if (distance < best) {
+          best = distance;
+        }
+      }
+      previous = projected;
+    }
+  }
+  return best;
+}
+
+function hitTestDecoration(x: number, y: number): string | null {
+  if (editorMode === "points") {
+    return null;
+  }
+  let bestId: string | null = null;
+  let bestDistance = DECORATION_HIT_RADIUS;
+  for (const decoration of decorationsForMode(editorMode)) {
+    const distance = decorationScreenDistance(x, y, decoration);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestId = decoration.id;
+    }
+  }
+  return bestId;
+}
+
+function decorationEndpoint(
+  decoration: DecorationPath,
+  endpoint: "entry" | "exit",
+): { sectionId: string; fraction: number; rail: GuideRail } | null {
+  const rail = railForDecoration(decoration);
+  if (!rail || decoration.chain.length === 0) {
+    return null;
+  }
+  const leg =
+    endpoint === "entry"
+      ? decoration.chain[0]
+      : decoration.chain[decoration.chain.length - 1];
+  return {
+    sectionId: leg.sectionId,
+    fraction: endpoint === "entry" ? leg.entryFraction : leg.exitFraction,
+    rail,
+  };
+}
+
+function hitTestDecorationHandle(
+  x: number,
+  y: number,
+): {
+  endpoint: "entry" | "exit";
+  sectionId: string;
+  fraction: number;
+  rail: GuideRail;
+} | null {
+  const decoration = selectedDecoration();
+  const camera = currentCamera();
+  if (!decoration || !camera) {
+    return null;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  let best: {
+    endpoint: "entry" | "exit";
+    sectionId: string;
+    fraction: number;
+    rail: GuideRail;
+  } | null = null;
+  let bestDistance = HANDLE_HIT_RADIUS;
+  for (const endpoint of ["entry", "exit"] as const) {
+    const target = decorationEndpoint(decoration, endpoint);
+    if (!target) {
+      continue;
+    }
+    const world = railPointAtFraction(
+      target.sectionId,
+      target.rail,
+      target.fraction,
+    );
+    const projected = world
+      ? projectPoint(world, camera, width, height)
+      : null;
+    if (!projected) {
+      continue;
+    }
+    const distance = Math.hypot(projected[0] - x, projected[1] - y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { endpoint, ...target };
+    }
+  }
+  return best;
+}
+
+function resizedFractions(
+  entry: number,
+  exit: number,
+  endpoint: "entry" | "exit",
+  fraction: number,
+): { entry: number; exit: number } {
+  let nextEntry = entry;
+  let nextExit = exit;
+  const clamped = clampFraction(fraction);
+  if (endpoint === "entry") {
+    nextEntry = Math.min(clamped, exit - MIN_DECORATION_FRACTION);
+  } else {
+    nextExit = Math.max(clamped, entry + MIN_DECORATION_FRACTION);
+  }
+  if (nextEntry < 0) {
+    nextEntry = 0;
+    nextExit = Math.max(nextExit, MIN_DECORATION_FRACTION);
+  }
+  if (nextExit > 1) {
+    nextExit = 1;
+    nextEntry = Math.min(nextEntry, 1 - MIN_DECORATION_FRACTION);
+  }
+  return {
+    entry: clampFraction(nextEntry),
+    exit: clampFraction(nextExit),
+  };
+}
+
+function decorationSpanColor(
+  decoration: DecorationPath,
+  selected: boolean,
+  hovered: boolean,
+): string {
+  const rail = railForDecoration(decoration);
+  const lane = rail ? railLane(rail).toLowerCase() : (decoration.lane ?? "near");
+  if (decoration.kind === "kerb") {
+    return selected
+      ? "rgba(252, 231, 243, 1)"
+      : hovered
+        ? "rgba(249, 168, 212, 0.98)"
+        : "rgba(244, 114, 182, 0.72)";
+  }
+  if (lane === "far") {
+    return selected
+      ? "rgba(220, 252, 231, 1)"
+      : hovered
+        ? "rgba(134, 239, 172, 0.98)"
+        : "rgba(74, 222, 128, 0.72)";
+  }
+  if (decoration.side < 0) {
+    return selected
+      ? "rgba(255, 237, 213, 1)"
+      : hovered
+        ? "rgba(253, 186, 116, 0.98)"
+        : "rgba(251, 146, 60, 0.72)";
+  }
+  return selected
+    ? "rgba(204, 251, 241, 1)"
+    : hovered
+      ? "rgba(94, 234, 212, 0.98)"
+      : "rgba(45, 212, 191, 0.72)";
+}
+
+function drawRailLine(
+  camera: CameraView,
+  width: number,
+  height: number,
+  rail: GuideRail,
+  color: string,
+  lineWidth: number,
+  dash: number[],
+): void {
+  for (const sectionId of routeSectionIds) {
+    const points = railOffsetPoints(sectionId, rail);
+    if (points.length < 2) {
+      continue;
+    }
+    overlayContext.save();
+    overlayContext.beginPath();
+    let drawing = false;
+    const closed = sectionIsClosed(sectionId);
+    const last = closed ? points.length : points.length - 1;
+    for (let index = 0; index <= last; index += 1) {
+      const projected = projectPoint(
+        points[index % points.length],
+        camera,
+        width,
+        height,
+      );
+      if (!projected) {
+        drawing = false;
+        continue;
+      }
+      if (!drawing) {
+        overlayContext.moveTo(projected[0], projected[1]);
+        drawing = true;
+      } else {
+        overlayContext.lineTo(projected[0], projected[1]);
+      }
+    }
+    overlayContext.lineWidth = lineWidth;
+    overlayContext.strokeStyle = color;
+    overlayContext.setLineDash(dash);
+    overlayContext.stroke();
+    overlayContext.restore();
+  }
+}
+
+function drawRailSpan(
+  camera: CameraView,
+  width: number,
+  height: number,
+  sectionId: string,
+  rail: GuideRail,
+  entry: number,
+  exit: number,
+  color: string,
+  lineWidth: number,
+): void {
+  const start = Math.min(entry, exit);
+  const end = Math.max(entry, exit);
+  if (end - start <= 1e-5) {
+    return;
+  }
+  const steps = Math.max(8, Math.ceil((end - start) * 120));
+  overlayContext.save();
+  overlayContext.beginPath();
+  let drawing = false;
+  for (let index = 0; index <= steps; index += 1) {
+    const fraction = start + ((end - start) * index) / steps;
+    const world = railPointAtFraction(sectionId, rail, fraction);
+    const projected = world
+      ? projectPoint(world, camera, width, height)
+      : null;
+    if (!projected) {
+      drawing = false;
+      continue;
+    }
+    if (!drawing) {
+      overlayContext.moveTo(projected[0], projected[1]);
+      drawing = true;
+    } else {
+      overlayContext.lineTo(projected[0], projected[1]);
+    }
+  }
+  overlayContext.lineWidth = lineWidth;
+  overlayContext.strokeStyle = color;
+  overlayContext.setLineDash([]);
+  overlayContext.stroke();
+  overlayContext.restore();
+}
+
+function drawRailTick(
+  camera: CameraView,
+  width: number,
+  height: number,
+  sectionId: string,
+  rail: GuideRail,
+  fraction: number,
+  color: string,
+): void {
+  const delta = 0.004;
+  const before = railPointAtFraction(sectionId, rail, fraction - delta);
+  const after = railPointAtFraction(sectionId, rail, fraction + delta);
+  const center = railPointAtFraction(sectionId, rail, fraction);
+  if (!before || !after || !center) {
+    return;
+  }
+  const a = projectPoint(before, camera, width, height);
+  const b = projectPoint(after, camera, width, height);
+  const c = projectPoint(center, camera, width, height);
+  if (!a || !b || !c) {
+    return;
+  }
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const length = Math.hypot(dx, dy) || 1;
+  const nx = -dy / length;
+  const ny = dx / length;
+  overlayContext.save();
+  overlayContext.beginPath();
+  overlayContext.moveTo(c[0] - nx * 4, c[1] - ny * 4);
+  overlayContext.lineTo(c[0] + nx * 4, c[1] + ny * 4);
+  overlayContext.lineWidth = 2;
+  overlayContext.strokeStyle = color;
+  overlayContext.setLineDash([]);
+  overlayContext.stroke();
+  overlayContext.restore();
+}
+
+function drawDecorationOverlay(
+  camera: CameraView,
+  width: number,
+  height: number,
+): void {
+  if (editorMode === "points") {
+    return;
+  }
+  for (const rail of railsForMode(editorMode)) {
+    drawRailLine(
+      camera,
+      width,
+      height,
+      rail,
+      railColor(rail, false),
+      1.1,
+      [4, 5],
+    );
+  }
+
+  for (const decoration of decorationsForMode(editorMode)) {
+    const rail = railForDecoration(decoration);
+    if (!rail) {
+      continue;
+    }
+    const selected = decoration.id === selectedDecorationId;
+    const hovered = decoration.id === hoverDecorationId && !selected;
+    const color = decorationSpanColor(decoration, selected, hovered);
+    const lineWidth = selected ? 6 : hovered ? 5 : 3.5;
+    for (const leg of decoration.chain) {
+      drawRailSpan(
+        camera,
+        width,
+        height,
+        leg.sectionId,
+        rail,
+        leg.entryFraction,
+        leg.exitFraction,
+        color,
+        lineWidth,
+      );
+      drawRailTick(
+        camera,
+        width,
+        height,
+        leg.sectionId,
+        rail,
+        leg.entryFraction,
+        color,
+      );
+      drawRailTick(
+        camera,
+        width,
+        height,
+        leg.sectionId,
+        rail,
+        leg.exitFraction,
+        color,
+      );
+    }
+  }
+
+  if (resizeDrag) {
+    const decoration = findDecoration(resizeDrag.decorationId);
+    const rail = decoration ? railForDecoration(decoration) : null;
+    if (decoration && rail) {
+      const legIndex =
+        resizeDrag.endpoint === "entry" ? 0 : decoration.chain.length - 1;
+      const leg = decoration.chain[legIndex];
+      if (leg) {
+        const fractions = resizedFractions(
+          leg.entryFraction,
+          leg.exitFraction,
+          resizeDrag.endpoint,
+          resizeDrag.currentFraction,
+        );
+        drawRailSpan(
+          camera,
+          width,
+          height,
+          leg.sectionId,
+          rail,
+          fractions.entry,
+          fractions.exit,
+          "rgba(250, 204, 21, 0.95)",
+          4,
+        );
+      }
+    }
+  }
+
+  if (paintStroke) {
+    const start = Math.min(
+      paintStroke.entryFraction,
+      paintStroke.currentFraction,
+    );
+    const end = Math.max(
+      paintStroke.entryFraction,
+      paintStroke.currentFraction,
+    );
+    drawRailSpan(
+      camera,
+      width,
+      height,
+      paintStroke.sectionId,
+      paintStroke.rail,
+      start,
+      end,
+      "rgba(250, 204, 21, 0.95)",
+      4,
+    );
+  }
+
+  const selected = selectedDecoration();
+  if (selected) {
+    const cameraTarget = currentCamera();
+    if (!cameraTarget) {
+      return;
+    }
+    for (const endpoint of ["entry", "exit"] as const) {
+      const target = decorationEndpoint(selected, endpoint);
+      if (!target) {
+        continue;
+      }
+      let fraction = target.fraction;
+      if (resizeDrag && resizeDrag.decorationId === selected.id) {
+        const legIndex =
+          resizeDrag.endpoint === "entry" ? 0 : selected.chain.length - 1;
+        const leg = selected.chain[legIndex];
+        if (leg) {
+          const fractions = resizedFractions(
+            leg.entryFraction,
+            leg.exitFraction,
+            resizeDrag.endpoint,
+            resizeDrag.currentFraction,
+          );
+          fraction =
+            resizeDrag.endpoint === "entry" ? fractions.entry : fractions.exit;
+        }
+      }
+      const world = railPointAtFraction(
+        target.sectionId,
+        target.rail,
+        fraction,
+      );
+      const projected = world
+        ? projectPoint(world, cameraTarget, width, height)
+        : null;
+      if (!projected) {
+        continue;
+      }
+      overlayContext.save();
+      overlayContext.beginPath();
+      overlayContext.arc(projected[0], projected[1], 6, 0, Math.PI * 2);
+      overlayContext.fillStyle = "#f8fafc";
+      overlayContext.fill();
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeStyle = "#0f172a";
+      overlayContext.stroke();
+      overlayContext.restore();
+    }
+  }
+}
+
+function renderDecorationInspector(): void {
+  if (editorMode === "points") {
+    if (decorationInspector.open) {
+      decorationInspector.close();
+    }
+    return;
+  }
+  if (!decorationInspector.open) {
+    decorationInspector.show();
+  }
+  const isKerb = editorMode === "kerbs";
+  const decoration = selectedDecoration();
+  decorationTitle.textContent = isKerb ? "Kerb" : "Prop";
+  decorationHint.textContent = decoration
+    ? `${sideLabel(decoration.side)} ${isKerb ? "kerb" : "prop"} selected · drag an endpoint handle to resize`
+    : isKerb
+      ? "Drag a kerb rail to paint a new span."
+      : "Drag a prop rail to paint. Trees default on far, blocks on near.";
+  decorationSideField.hidden = !decoration;
+  decorationLaneField.hidden = !decoration || isKerb;
+  decorationPropKindField.hidden = isKerb;
+  decorationSpacingField.hidden = isKerb;
+  decorationElementsField.hidden = !isKerb;
+  decorationApply.disabled = !decoration;
+  decorationDelete.hidden = !decoration;
+
+  if (decoration) {
+    decorationSide.value = decoration.side < 0 ? "-1" : "1";
+    decorationPhase.value = String(decoration.phase ?? 0);
+    if (isKerb) {
+      decorationElements.value = (decoration.elements ?? []).join(", ");
+    } else {
+      decorationLane.value =
+        (decoration.lane ?? "near") === "far" ? "far" : "near";
+      decorationPropKind.value = propKindValue(decoration.propKind ?? "blocks");
+      decorationSpacing.value =
+        typeof decoration.spacing === "number"
+          ? String(decoration.spacing)
+          : "";
+    }
+    return;
+  }
+
+  if (isKerb) {
+    decorationPhase.value = String(newKerbPhase);
+    decorationElements.value = newKerbElements;
+  } else {
+    decorationPhase.value = String(newPropPhase);
+    decorationSpacing.value = newPropSpacing;
+    decorationPropKind.value = newPropKind;
+  }
+}
+
+function syncModeButtons(): void {
+  for (const button of modeButtons) {
+    const active = button.dataset.mode === editorMode;
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
+
+function setMode(mode: EditorMode): void {
+  const changed = mode !== editorMode;
+  editorMode = mode;
+  selectedDecorationId = null;
+  hoverDecorationId = null;
+  paintStroke = null;
+  resizeDrag = null;
+  selection = null;
+  cameraDragging = false;
+  renderSelection();
+  syncModeButtons();
+  renderDecorationInspector();
+  if (changed) {
+    if (mode === "kerbs") {
+      setDecorationStatus("Drag a kerb rail to paint.");
+    } else if (mode === "props") {
+      setDecorationStatus("Drag a prop rail to paint.");
+    } else {
+      setDecorationStatus("");
+    }
+  }
+  if ((mode === "kerbs" || mode === "props") && !decorationSeedAttempted) {
+    decorationSeedAttempted = true;
+    void seedDefaultDecorations();
+  }
+  if (overlayVisible) {
+    canvas.style.cursor = "";
+  }
+  drawControlPoints();
+}
+
+async function applyDecorationProject(
+  next: TrackProjectDocument,
+  message = "updating decorations",
+): Promise<boolean> {
+  if (!editorViewer || rebuilding) {
+    return false;
+  }
+  rebuilding = true;
+  suspended = true;
+  testDriveButton.disabled = true;
+  cameraController?.setEnabled(false);
+  setStatus(message);
+  try {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    await editorViewer.set_editor_project(JSON.stringify(next));
+    refreshEditorState();
+    testDriveButton.disabled = false;
+    setStatus("ready", "ready");
+    return true;
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    try {
+      await editorViewer.set_editor_project(editorViewer.editor_project());
+    } catch (reloadError) {
+      console.warn("could not reload the previous track project", reloadError);
+    }
+    refreshEditorState();
+    setDecorationStatus(text, "error");
+    setStatus(`decoration failed: ${text}`, "error");
+    return false;
+  } finally {
+    suspended = false;
+    rebuilding = false;
+    testDriveButton.disabled = false;
+    cameraController?.setEnabled(true);
+    renderDecorationInspector();
+    drawControlPoints();
+  }
+}
+
+async function applyDecorationProperties(): Promise<void> {
+  const decoration = selectedDecoration();
+  if (!decoration || !editorViewer) {
+    return;
+  }
+  const updated = cloneDecoration(decoration);
+  updated.side = Number(decorationSide.value) < 0 ? -1 : 1;
+  updated.phase = numberInputValue(decorationPhase, updated.phase ?? 0);
+  if (updated.kind === "kerb") {
+    const elements = parseElementLengths(decorationElements.value);
+    if (elements === null) {
+      setDecorationStatus(
+        "element lengths must be comma-separated numbers",
+        "error",
+      );
+      return;
+    }
+    updated.elements = elements;
+  } else {
+    updated.lane = decorationLane.value === "far" ? "far" : "near";
+    updated.propKind = propKindValue(decorationPropKind.value);
+    const spacing = parseOptionalSpacing(decorationSpacing.value);
+    if (spacing === null) {
+      setDecorationStatus(
+        "spacing must be a positive number or empty",
+        "error",
+      );
+      return;
+    }
+    if (spacing === undefined) {
+      delete updated.spacing;
+    } else {
+      updated.spacing = spacing;
+    }
+  }
+  const applied = await applyDecorationProject(
+    {
+      ...project,
+      decorations: (project.decorations ?? []).map((item) =>
+        item.id === updated.id ? updated : item,
+      ),
+    },
+    "updating decoration",
+  );
+  if (applied) {
+    setDecorationStatus("decoration updated", "ready");
+  }
+}
+
+async function commitDecorationResize(): Promise<void> {
+  const drag = resizeDrag;
+  resizeDrag = null;
+  if (!drag || !editorViewer) {
+    return;
+  }
+  const decoration = findDecoration(drag.decorationId);
+  if (!decoration) {
+    return;
+  }
+  const updated = cloneDecoration(decoration);
+  const legIndex = drag.endpoint === "entry" ? 0 : updated.chain.length - 1;
+  const leg = updated.chain[legIndex];
+  if (!leg) {
+    return;
+  }
+  const fractions = resizedFractions(
+    leg.entryFraction,
+    leg.exitFraction,
+    drag.endpoint,
+    drag.currentFraction,
+  );
+  if (
+    Math.abs(fractions.entry - leg.entryFraction) < 1e-5 &&
+    Math.abs(fractions.exit - leg.exitFraction) < 1e-5
+  ) {
+    drawControlPoints();
+    return;
+  }
+  leg.entryFraction = fractions.entry;
+  leg.exitFraction = fractions.exit;
+  const applied = await applyDecorationProject(
+    {
+      ...project,
+      decorations: (project.decorations ?? []).map((item) =>
+        item.id === updated.id ? updated : item,
+      ),
+    },
+    "resizing decoration",
+  );
+  if (applied) {
+    setDecorationStatus("decoration resized", "ready");
+  }
+}
+
+async function seedDefaultDecorations(): Promise<void> {
+  if (!editorViewer) {
+    return;
+  }
+  if ((project.decorations ?? []).length > 0) {
+    return;
+  }
+  if (routeLegs.length !== 1 || routeSectionIds.size !== 1) {
+    setDecorationStatus("defaults not imported for multi-section routes yet");
+    return;
+  }
+  const sectionId = routeLegs[0]?.sectionId ?? "";
+  const routeLength = centerline.length;
+  if (!sectionId || routeLength <= 0) {
+    setDecorationStatus("no active route to import defaults onto");
+    return;
+  }
+  const decorations: DecorationPath[] = [];
+  const kerbSpans = JSON.parse(
+    editorViewer.editor_kerb_spans(),
+  ) as KerbSpan[];
+  kerbSpans.forEach((span, index) => {
+    const entryFraction = clampFraction(span.start / routeLength);
+    const exitFraction = clampFraction(span.end / routeLength);
+    if (exitFraction - entryFraction <= 1e-4) {
+      return;
+    }
+    decorations.push({
+      id: `default-kerb-${index}`,
+      kind: "kerb",
+      side: span.side < 0 ? -1 : 1,
+      chain: [
+        {
+          sectionId,
+          entryFraction,
+          exitFraction,
+          wrap: false,
+        },
+      ],
+      elements: [],
+      phase: 0,
+    });
+  });
+  const propLines = JSON.parse(
+    editorViewer.editor_prop_lines(),
+  ) as BakedPropLine[];
+  propLines.forEach((line, index) => {
+    if (line.kind === "off") {
+      return;
+    }
+    const entryFraction = clampFraction(line.start / routeLength);
+    const exitFraction = clampFraction(line.end / routeLength);
+    if (exitFraction - entryFraction <= 1e-4) {
+      return;
+    }
+    const decoration: DecorationPath = {
+      id: `default-prop-${index}`,
+      kind: "prop",
+      side: line.side < 0 ? -1 : 1,
+      lane: laneForOffset(line.offset),
+      chain: [
+        {
+          sectionId,
+          entryFraction,
+          exitFraction,
+          wrap: false,
+        },
+      ],
+      phase: line.phase ?? 0,
+      propKind: line.kind,
+    };
+    if (
+      typeof line.spacing === "number" &&
+      Number.isFinite(line.spacing)
+    ) {
+      decoration.spacing = line.spacing;
+    }
+    decorations.push(decoration);
+  });
+  if (decorations.length === 0) {
+    setDecorationStatus("no baked decorations to import");
+    return;
+  }
+  setDecorationStatus("importing default decorations…");
+  const applied = await applyDecorationProject(
+    { ...project, decorations },
+    "importing default decorations",
+  );
+  if (applied) {
+    setDecorationStatus(
+      `imported ${decorations.length} default decorations`,
+      "ready",
+    );
+  }
+}
+
+function nextDecorationId(kind: DecorationKind): string {
+  decorationIdSequence += 1;
+  return `paint-${kind}-${Date.now()}-${decorationIdSequence}`;
+}
+
+function numberInputValue(input: HTMLInputElement, fallback: number): number {
+  const value = Number(input.value);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function paintPropKindForRail(rail: GuideRail): PropKind {
+  if (newPropKindExplicit) {
+    return newPropKind;
+  }
+  return (rail.lane ?? "").toLowerCase() === "far" ||
+    Math.abs(rail.offset - FAR_PROP_OFFSET) < 1e-4
+    ? "trees"
+    : "blocks";
+}
+
+function buildPaintDecoration(
+  stroke: PaintStroke,
+  entryFraction: number,
+  exitFraction: number,
+): DecorationPath {
+  const kind = modeDecorationKind(editorMode) ?? "kerb";
+  const decoration: DecorationPath = {
+    id: nextDecorationId(kind),
+    kind,
+    side: stroke.rail.side < 0 ? -1 : 1,
+    chain: [
+      {
+        sectionId: stroke.sectionId,
+        entryFraction,
+        exitFraction,
+        wrap: false,
+      },
+    ],
+    phase: kind === "kerb" ? newKerbPhase : newPropPhase,
+  };
+  if (kind === "kerb") {
+    decoration.elements = parseElementLengths(newKerbElements) ?? [];
+    return decoration;
+  }
+  const lane = stroke.rail.lane ?? laneForOffset(stroke.rail.offset);
+  decoration.lane = lane;
+  decoration.propKind = paintPropKindForRail(stroke.rail);
+  const spacing = parseOptionalSpacing(newPropSpacing);
+  if (typeof spacing === "number") {
+    decoration.spacing = spacing;
+  }
+  return decoration;
+}
+
+async function commitPaint(
+  stroke: PaintStroke,
+  entryFraction: number,
+  exitFraction: number,
+): Promise<void> {
+  if (!editorViewer) {
+    return;
+  }
+  if (
+    editorMode === "kerbs" &&
+    parseElementLengths(newKerbElements) === null
+  ) {
+    setDecorationStatus(
+      "element lengths must be comma-separated numbers",
+      "error",
+    );
+    return;
+  }
+  if (editorMode === "props" && parseOptionalSpacing(newPropSpacing) === null) {
+    setDecorationStatus(
+      "spacing must be a positive number or empty",
+      "error",
+    );
+    return;
+  }
+  const decoration = buildPaintDecoration(stroke, entryFraction, exitFraction);
+  const applied = await applyDecorationProject(
+    {
+      ...project,
+      decorations: [...(project.decorations ?? []), decoration],
+    },
+    "painting decoration",
+  );
+  if (applied) {
+    selectedDecorationId = decoration.id;
+    renderDecorationInspector();
+    drawControlPoints();
+    setDecorationStatus(
+      `painted ${decoration.kind} ${sideLabel(decoration.side)}`,
+      "ready",
+    );
+  }
+}
+
+async function deleteDecoration(id: string): Promise<void> {
+  if (!editorViewer) {
+    return;
+  }
+  const applied = await applyDecorationProject(
+    {
+      ...project,
+      decorations: (project.decorations ?? []).filter(
+        (decoration) => decoration.id !== id,
+      ),
+    },
+    "deleting decoration",
+  );
+  if (applied) {
+    if (selectedDecorationId === id) {
+      selectedDecorationId = null;
+      renderDecorationInspector();
+      drawControlPoints();
+    }
+    setDecorationStatus("decoration deleted", "ready");
+  }
 }
 
 function drawControlPoints(): void {
@@ -674,12 +2139,15 @@ function drawControlPoints(): void {
         overlayContext.lineTo(projected[0], projected[1]);
       }
     }
-    overlayContext.lineWidth = 2;
-    overlayContext.strokeStyle = "rgba(56, 189, 248, 0.9)";
+    overlayContext.lineWidth = editorMode === "points" ? 2 : 1;
+    overlayContext.strokeStyle =
+      editorMode === "points"
+        ? "rgba(56, 189, 248, 0.9)"
+        : "rgba(56, 189, 248, 0.32)";
     overlayContext.stroke();
   }
 
-  if (selection?.kind === "section") {
+  if (editorMode === "points" && selection?.kind === "section") {
     const samples = sectionCenterlines[selection.id];
     if (samples && samples.length > 1) {
       overlayContext.beginPath();
@@ -703,7 +2171,11 @@ function drawControlPoints(): void {
     }
   }
 
-  if (insertHover) {
+  if (editorMode !== "points") {
+    drawDecorationOverlay(camera, width, height);
+  }
+
+  if (editorMode === "points" && insertHover) {
     const projected = projectPoint(
       insertHover.position,
       camera,
@@ -732,6 +2204,7 @@ function drawControlPoints(): void {
     }
   }
 
+  if (editorMode === "points") {
   const pointPositions = new Map(
     editorPoints.map((point) => [point.id, point.position]),
   );
@@ -818,6 +2291,7 @@ function drawControlPoints(): void {
       overlayContext.restore();
     }
   }
+  }
 
   const carMarker = carMarkerPoint();
   const carProjected = projectPoint(carMarker, camera, width, height);
@@ -863,6 +2337,7 @@ function drawControlPoints(): void {
     overlayContext.restore();
   }
 
+  if (editorMode === "points") {
   editorPoints.forEach((point, index) => {
     const projected = projectPoint(point.position, camera, width, height);
     if (!projected) {
@@ -921,6 +2396,7 @@ function drawControlPoints(): void {
     overlayContext.textBaseline = "middle";
     overlayContext.fillText(String(index + 1), projected[0], projected[1] + 0.5);
   });
+  }
 }
 
 function moveControlPoint(index: number, x: number, y: number): void {
@@ -1079,6 +2555,10 @@ function renderSelection(): void {
       pointEditor.close();
     }
   };
+  if (editorMode !== "points") {
+    closePointEditor();
+    return;
+  }
   if (!selection) {
     closePointEditor();
     addRow(selectionDetails, "kind", "none");
@@ -1123,7 +2603,7 @@ function renderSelection(): void {
     );
     addRow(pointEditorRows, "section degree", String(point.degree));
     addRow(pointEditorRows, "sections", point.sections.join(", ") || "none");
-    if (!pointEditor.open) {
+    if (editorMode === "points" && !pointEditor.open) {
       pointEditor.show();
     }
     addRow(selectionDetails, "hint", `point ${point.id} selected`);
@@ -1154,10 +2634,16 @@ function refreshEditorState(): void {
     editorViewer.editor_points(),
   ) as EditorPointData[];
   const route = JSON.parse(editorViewer.editor_route()) as RouteLeg[];
+  routeLegs = route;
   routeSectionIds = new Set(route.map((leg) => leg.sectionId));
   sectionCenterlines = JSON.parse(
     editorViewer.editor_section_centerlines(),
   ) as Record<string, Vec3[]>;
+  try {
+    guideRails = JSON.parse(editorViewer.editor_guide_rails()) as GuideRail[];
+  } catch {
+    guideRails = [];
+  }
   const heights = pointHeights(project, sectionCenterlines);
   const activeLayout = (project.layouts ?? []).find(
     (layout) => layout.id === activeLayoutId,
@@ -1197,6 +2683,16 @@ function refreshEditorState(): void {
     selection = null;
   }
   renderSelection();
+  if (selectedDecorationId) {
+    const selected = findDecoration(selectedDecorationId);
+    if (!selected || selected.kind !== modeDecorationKind(editorMode)) {
+      selectedDecorationId = null;
+    }
+  }
+  if (hoverDecorationId && !findDecoration(hoverDecorationId)) {
+    hoverDecorationId = null;
+  }
+  renderDecorationInspector();
   const debug = JSON.parse(editorViewer.debug_info());
   renderStats(debug);
   drawsLabel.textContent = String(debug.stats.drawCalls);
@@ -1474,6 +2970,83 @@ importProjectInput.addEventListener("change", () => {
   }
 });
 
+for (const button of modeButtons) {
+  button.addEventListener("click", () => {
+    const mode = button.dataset.mode;
+    if (mode === "points" || mode === "kerbs" || mode === "props") {
+      setMode(mode);
+    }
+  });
+}
+
+decorationApply.addEventListener("click", () => {
+  void applyDecorationProperties();
+});
+
+decorationDelete.addEventListener("click", () => {
+  const decoration = selectedDecoration();
+  if (decoration) {
+    void deleteDecoration(decoration.id);
+  }
+});
+
+decorationPhase.addEventListener("input", () => {
+  if (selectedDecoration()) {
+    return;
+  }
+  if (editorMode === "kerbs") {
+    newKerbPhase = numberInputValue(decorationPhase, newKerbPhase);
+  } else if (editorMode === "props") {
+    newPropPhase = numberInputValue(decorationPhase, newPropPhase);
+  }
+});
+
+decorationElements.addEventListener("input", () => {
+  if (editorMode === "kerbs" && !selectedDecoration()) {
+    newKerbElements = decorationElements.value;
+  }
+});
+
+decorationSpacing.addEventListener("input", () => {
+  if (editorMode === "props" && !selectedDecoration()) {
+    newPropSpacing = decorationSpacing.value;
+  }
+});
+
+decorationPropKind.addEventListener("change", () => {
+  if (editorMode === "props" && !selectedDecoration()) {
+    newPropKind = propKindValue(decorationPropKind.value);
+    newPropKindExplicit = true;
+  }
+});
+
+for (const control of [decorationSide, decorationLane]) {
+  control.addEventListener("change", () => {
+    if (selectedDecoration()) {
+      setDecorationStatus("press Apply to update the decoration");
+    }
+  });
+}
+
+for (const input of [
+  decorationSide,
+  decorationLane,
+  decorationPropKind,
+  decorationSpacing,
+  decorationPhase,
+  decorationElements,
+]) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && selectedDecoration()) {
+      event.preventDefault();
+      void applyDecorationProperties();
+    }
+  });
+}
+
+syncModeButtons();
+renderDecorationInspector();
+
 canvas.addEventListener(
   "pointerdown",
   (event) => {
@@ -1498,6 +3071,75 @@ canvas.addEventListener(
       }
       canvas.style.cursor = "grabbing";
       drawControlPoints();
+      return;
+    }
+    if (editorMode !== "points") {
+      if (overlayVisible) {
+        const handle = hitTestDecorationHandle(x, y);
+        const decoration = selectedDecoration();
+        if (handle && decoration) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          cameraDragging = false;
+          resizeDrag = {
+            pointerId: event.pointerId,
+            decorationId: decoration.id,
+            endpoint: handle.endpoint,
+            sectionId: handle.sectionId,
+            rail: handle.rail,
+            currentFraction: handle.fraction,
+          };
+          cameraController?.setEnabled(false);
+          try {
+            canvas.setPointerCapture(event.pointerId);
+          } catch {
+            // Synthetic pointers may not support capture.
+          }
+          setDecorationStatus("drag the handle to resize");
+          drawControlPoints();
+          return;
+        }
+        const hitId = hitTestDecoration(x, y);
+        if (hitId) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          cameraDragging = false;
+          selectedDecorationId = hitId;
+          renderDecorationInspector();
+          drawControlPoints();
+          return;
+        }
+        const railHit = railHitForMode(x, y, editorMode);
+        if (railHit) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          cameraDragging = false;
+          selectedDecorationId = null;
+          renderDecorationInspector();
+          paintStroke = {
+            pointerId: event.pointerId,
+            sectionId: railHit.sectionId,
+            rail: railHit.rail,
+            entryFraction: railHit.fraction,
+            currentFraction: railHit.fraction,
+          };
+          cameraController?.setEnabled(false);
+          try {
+            canvas.setPointerCapture(event.pointerId);
+          } catch {
+            // Synthetic pointers may not support capture.
+          }
+          setDecorationStatus("drag along the rail to paint");
+          drawControlPoints();
+          return;
+        }
+      }
+      selectedDecorationId = null;
+      renderDecorationInspector();
+      drawControlPoints();
+      if (event.button === 0) {
+        cameraDragging = true;
+      }
       return;
     }
     const index = overlayVisible ? hitTestControlPoint(x, y) : -1;
@@ -1549,6 +3191,40 @@ canvas.addEventListener(
 window.addEventListener(
   "pointermove",
   (event) => {
+    if (resizeDrag && event.pointerId === resizeDrag.pointerId) {
+      event.preventDefault();
+      const [x, y] = pointerPosition(event);
+      resizeDrag.currentFraction = railFractionOnSection(
+        resizeDrag.sectionId,
+        resizeDrag.rail,
+        x,
+        y,
+      );
+      drawControlPoints();
+      return;
+    }
+    if (paintStroke && event.pointerId === paintStroke.pointerId) {
+      event.preventDefault();
+      const [x, y] = pointerPosition(event);
+      const otherSection = railScreenHit(x, y, paintStroke.rail);
+      if (
+        otherSection &&
+        otherSection.sectionId !== paintStroke.sectionId
+      ) {
+        setDecorationStatus(
+          "single-section paint: clamped to the starting section",
+          "error",
+        );
+      }
+      paintStroke.currentFraction = railFractionOnSection(
+        paintStroke.sectionId,
+        paintStroke.rail,
+        x,
+        y,
+      );
+      drawControlPoints();
+      return;
+    }
     if (carDragPointerId !== null && event.pointerId === carDragPointerId) {
       event.preventDefault();
       const [x, y] = pointerPosition(event);
@@ -1599,6 +3275,57 @@ const endDrag = (event: PointerEvent) => {
   }
 };
 
+const endPaint = (event: PointerEvent) => {
+  if (!paintStroke || event.pointerId !== paintStroke.pointerId) {
+    return;
+  }
+  const stroke = paintStroke;
+  paintStroke = null;
+  try {
+    canvas.releasePointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture may already be released.
+  }
+  drawControlPoints();
+  if (event.type === "pointercancel") {
+    setDecorationStatus("paint cancelled");
+    return;
+  }
+  const entryFraction = Math.min(
+    stroke.entryFraction,
+    stroke.currentFraction,
+  );
+  const exitFraction = Math.max(
+    stroke.entryFraction,
+    stroke.currentFraction,
+  );
+  if (exitFraction - entryFraction <= 1e-4) {
+    setDecorationStatus("drag along the rail to paint");
+    return;
+  }
+  void commitPaint(stroke, entryFraction, exitFraction);
+};
+
+const endResize = (event: PointerEvent) => {
+  if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) {
+    return;
+  }
+  try {
+    canvas.releasePointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture may already be released.
+  }
+  if (event.type === "pointercancel") {
+    resizeDrag = null;
+    cameraController?.setEnabled(true);
+    setDecorationStatus("resize cancelled");
+    drawControlPoints();
+    return;
+  }
+  void commitDecorationResize();
+  cameraController?.setEnabled(true);
+};
+
 const endCarDrag = (event: PointerEvent) => {
   if (carDragPointerId === null || event.pointerId !== carDragPointerId) {
     return;
@@ -1619,11 +3346,23 @@ const endCarDrag = (event: PointerEvent) => {
 
 canvas.addEventListener("pointermove", (event) => {
   lastPointer = pointerPosition(event);
+  if (
+    editorMode !== "points" &&
+    overlayVisible &&
+    !paintStroke &&
+    !resizeDrag &&
+    carDragPointerId === null
+  ) {
+    hoverDecorationId = hitTestDecoration(lastPointer[0], lastPointer[1]);
+  } else if (editorMode === "points") {
+    hoverDecorationId = null;
+  }
   drawControlPoints();
 });
 
 canvas.addEventListener("pointerleave", () => {
   lastPointer = null;
+  hoverDecorationId = null;
   canvas.style.cursor = "";
   drawControlPoints();
 });
@@ -1647,7 +3386,23 @@ window.addEventListener("keydown", (event) => {
     void deleteSelectedPoint();
     return;
   }
+  if (event.key === "Escape" && (paintStroke || resizeDrag)) {
+    const hadPaint = paintStroke !== null;
+    paintStroke = null;
+    resizeDrag = null;
+    cameraController?.setEnabled(true);
+    setDecorationStatus(hadPaint ? "paint cancelled" : "resize cancelled");
+    drawControlPoints();
+    return;
+  }
   if (event.key === "Escape") {
+    if (editorMode !== "points") {
+      selectedDecorationId = null;
+      hoverDecorationId = null;
+      renderDecorationInspector();
+      drawControlPoints();
+      return;
+    }
     selection = null;
     renderSelection();
     drawControlPoints();
@@ -1688,6 +3443,10 @@ const endCameraDrag = () => {
 
 window.addEventListener("pointerup", endDrag, { capture: true });
 window.addEventListener("pointercancel", endDrag, { capture: true });
+window.addEventListener("pointerup", endPaint, { capture: true });
+window.addEventListener("pointercancel", endPaint, { capture: true });
+window.addEventListener("pointerup", endResize, { capture: true });
+window.addEventListener("pointercancel", endResize, { capture: true });
 window.addEventListener("pointerup", endCarDrag, { capture: true });
 window.addEventListener("pointercancel", endCarDrag, { capture: true });
 window.addEventListener("pointerup", endCameraDrag, { capture: true });
@@ -1851,5 +3610,3 @@ function fail(error: unknown) {
 }
 
 boot().catch(fail);
-
-export { PROJECT_SCHEMA, PROJECT_STORAGE_KEY, type TrackProjectDocument };

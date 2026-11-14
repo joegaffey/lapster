@@ -15,12 +15,36 @@ interface PointData {
   startFinish: boolean;
 }
 
+interface DecorationData {
+  id: string;
+  kind: "kerb" | "prop";
+  side: number;
+  lane?: string;
+  chain: Array<{
+    sectionId: string;
+    entryFraction: number;
+    exitFraction: number;
+    wrap?: boolean;
+  }>;
+  elements?: number[];
+  phase?: number;
+  propKind?: string;
+  spacing?: number;
+}
+
+interface KerbSpanData {
+  start: number;
+  end: number;
+  side: number;
+}
+
 interface ProjectData {
   schema?: string;
   name?: string;
   points?: Array<{ id: string; position: [number, number]; kind?: string }>;
   sections?: Array<{ id: string; closed?: boolean; points: string[] }>;
   layouts?: Array<{ id: string; route: unknown[]; startFinish: string }>;
+  decorations?: DecorationData[];
 }
 
 async function waitForEditor(page: Page) {
@@ -550,6 +574,356 @@ async function findPropGap(page: Page, offset: number) {
     },
     { offset },
   );
+}
+
+async function readDecorations(page: Page): Promise<DecorationData[]> {
+  const project = await readProject(page);
+  return project.decorations ?? [];
+}
+
+async function readKerbSpans(page: Page): Promise<KerbSpanData[]> {
+  return page.evaluate(
+    () =>
+      JSON.parse(
+        (window as any).__trackEditor.editor_kerb_spans(),
+      ) as KerbSpanData[],
+  );
+}
+
+type EditorMode = "points" | "kerbs" | "props";
+
+interface RailData {
+  kind: "kerb" | "prop";
+  side: number;
+  offset: number;
+  lane: string | null;
+}
+
+interface RailSpec {
+  kind: "kerb" | "prop";
+  side: number;
+  lane?: string;
+  offset?: number;
+}
+
+async function readGuideRails(page: Page): Promise<RailData[]> {
+  return page.evaluate(
+    () =>
+      JSON.parse((window as any).__trackEditor.editor_guide_rails()) as RailData[],
+  );
+}
+
+function railSpecForDecoration(
+  decoration: DecorationData,
+  rails: RailData[],
+): RailSpec | null {
+  const side = decoration.side < 0 ? -1 : 1;
+  if (decoration.kind === "kerb") {
+    const rail = rails.find((item) => item.kind === "kerb" && item.side === side);
+    return rail ? { kind: "kerb", side, offset: rail.offset } : null;
+  }
+  const lane = decoration.lane ?? "";
+  let rail = rails.find(
+    (item) =>
+      item.kind === "prop" &&
+      item.side === side &&
+      (item.lane ?? "") === lane,
+  );
+  const numeric = Number(lane);
+  if (!rail && Number.isFinite(numeric) && lane.trim() !== "") {
+    rail = rails.find(
+      (item) =>
+        item.kind === "prop" &&
+        item.side === side &&
+        Math.abs(item.offset - numeric) < 1e-4,
+    );
+  }
+  if (!rail) {
+    const offset = lane === "far" ? 19 : 14;
+    rail = rails.find(
+      (item) =>
+        item.kind === "prop" &&
+        item.side === side &&
+        Math.abs(item.offset - offset) < 1e-4,
+    );
+  }
+  return rail ? { kind: "prop", side, lane: lane || undefined, offset: rail.offset } : null;
+}
+
+async function railWorldAt(
+  page: Page,
+  spec: RailSpec,
+  fraction: number,
+): Promise<[number, number, number] | null> {
+  return page.evaluate(
+    ({ spec, fraction }) => {
+      const viewer = (window as any).__trackEditor;
+      const rails = JSON.parse(viewer.editor_guide_rails()) as RailData[];
+      const rail = rails.find(
+        (item) =>
+          item.kind === spec.kind &&
+          item.side === spec.side &&
+          ((spec.lane !== undefined && (item.lane ?? "") === spec.lane) ||
+            (spec.offset !== undefined &&
+              Math.abs(item.offset - spec.offset) < 1e-4)),
+      );
+      if (!rail) {
+        return null;
+      }
+      const route = JSON.parse(viewer.editor_route()) as Array<{
+        sectionId: string;
+      }>;
+      const sectionId = route[0]?.sectionId;
+      if (!sectionId) {
+        return null;
+      }
+      const project = JSON.parse(viewer.editor_project()) as ProjectData;
+      const section = (project.sections ?? []).find(
+        (item) => item.id === sectionId,
+      );
+      const closed = section?.closed !== false;
+      const samples = (
+        JSON.parse(viewer.editor_section_centerlines()) as Record<
+          string,
+          number[][]
+        >
+      )[sectionId];
+      if (!samples || samples.length < 2) {
+        return null;
+      }
+      const count = samples.length;
+      const offsetAt = (index: number): number[] => {
+        const wrapped = ((index % count) + count) % count;
+        const previousIndex = closed
+          ? (wrapped + count - 1) % count
+          : Math.max(0, wrapped - 1);
+        const nextIndex = closed
+          ? (wrapped + 1) % count
+          : Math.min(count - 1, wrapped + 1);
+        const previous = samples[previousIndex];
+        const next = samples[nextIndex];
+        const dx = next[0] - previous[0];
+        const dz = next[2] - previous[2];
+        const length = Math.hypot(dx, dz);
+        let tangentX = length > 1e-8 ? dx / length : 0;
+        let tangentZ = length > 1e-8 ? dz / length : -1;
+        if (Math.abs(tangentX) < 1e-8 && Math.abs(tangentZ) < 1e-8) {
+          tangentX = 0;
+          tangentZ = -1;
+        }
+        const binormalX = -tangentZ;
+        const binormalZ = tangentX;
+        const sample = samples[wrapped];
+        const lateral = rail.offset * rail.side;
+        return [
+          sample[0] + binormalX * lateral,
+          sample[1] + 0.05,
+          sample[2] + binormalZ * lateral,
+        ];
+      };
+      const clamped = Math.max(0, Math.min(1, fraction));
+      const position = clamped * (count - 1);
+      const first = Math.floor(position);
+      const second = Math.min(count - 1, first + 1);
+      const t = position - first;
+      const a = offsetAt(first);
+      const b = offsetAt(second);
+      return [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+      ];
+    },
+    { spec, fraction },
+  );
+}
+
+async function railScreenAt(
+  page: Page,
+  spec: RailSpec,
+  fraction: number,
+): Promise<[number, number] | null> {
+  const world = await railWorldAt(page, spec, fraction);
+  return world ? projectWorldPoint(page, world) : null;
+}
+
+async function decorationScreen(
+  page: Page,
+  decoration: DecorationData,
+  rails: RailData[],
+  fraction: number,
+): Promise<[number, number] | null> {
+  const spec = railSpecForDecoration(decoration, rails);
+  return spec ? railScreenAt(page, spec, fraction) : null;
+}
+
+async function readModeState(page: Page) {
+  return page.evaluate(() => {
+    const pressed = (id: string) =>
+      document.querySelector<HTMLButtonElement>(id)?.getAttribute("aria-pressed") ??
+      "";
+    const inspector = document.querySelector<HTMLDialogElement>(
+      "#decoration-inspector",
+    );
+    const pointEditor = document.querySelector<HTMLDialogElement>("#point-editor");
+    return {
+      points: pressed("#mode-points"),
+      kerbs: pressed("#mode-kerbs"),
+      props: pressed("#mode-props"),
+      inspectorOpen: inspector?.open ?? false,
+      inspectorVisible: inspector ? inspector.getClientRects().length > 0 : false,
+      pointEditorOpen: pointEditor?.open ?? false,
+    };
+  });
+}
+
+async function readDecorationInspector(page: Page) {
+  return page.evaluate(() => {
+    const field = (id: string) => {
+      const element = document.querySelector<HTMLInputElement | HTMLSelectElement>(
+        id,
+      );
+      const wrapper = element?.closest(".decoration-field") as HTMLElement | null;
+      return {
+        value: element?.value ?? "",
+        hidden: wrapper?.hidden ?? true,
+      };
+    };
+    const apply = document.querySelector<HTMLButtonElement>("#decoration-apply");
+    const remove = document.querySelector<HTMLButtonElement>("#decoration-delete");
+    return {
+      open:
+        document.querySelector<HTMLDialogElement>("#decoration-inspector")?.open ??
+        false,
+      title:
+        document.querySelector("#decoration-inspector-title")?.textContent ?? "",
+      hint:
+        document.querySelector("#decoration-inspector-hint")?.textContent ?? "",
+      status: document.querySelector("#decoration-status")?.textContent ?? "",
+      side: field("#decoration-side"),
+      lane: field("#decoration-lane"),
+      propKind: field("#decoration-prop-kind"),
+      spacing: field("#decoration-spacing"),
+      phase: field("#decoration-phase"),
+      elements: field("#decoration-elements"),
+      applyDisabled: apply?.disabled ?? true,
+      deleteHidden: remove?.hidden ?? true,
+      deleteVisible: remove ? remove.getClientRects().length > 0 : false,
+    };
+  });
+}
+
+async function setEditorMode(
+  page: Page,
+  mode: EditorMode,
+  options: { imported?: boolean } = {},
+): Promise<void> {
+  await page.locator(`#mode-${mode}`).click();
+  await expect(page.locator(`#mode-${mode}`)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  if (mode === "points") {
+    await expect(
+      page.locator('[data-testid="decoration-inspector"]'),
+    ).toBeHidden();
+    return;
+  }
+  await expect(
+    page.locator('[data-testid="decoration-inspector"]'),
+  ).toBeVisible();
+  if (options.imported) {
+    await expect
+      .poll(
+        async () => page.locator("#decoration-status").textContent(),
+        { timeout: 30_000 },
+      )
+      .toContain("imported");
+  }
+}
+
+async function selectDecoration(
+  page: Page,
+  candidates: DecorationData[],
+  rails: RailData[],
+): Promise<DecorationData | null> {
+  for (const decoration of candidates) {
+    const leg = decoration.chain[0];
+    if (!leg) {
+      continue;
+    }
+    for (const ratio of [0.5, 0.35, 0.65]) {
+      const fraction =
+        leg.entryFraction + (leg.exitFraction - leg.entryFraction) * ratio;
+      const screen = await decorationScreen(page, decoration, rails, fraction);
+      if (!screen) {
+        continue;
+      }
+      await page.mouse.click(screen[0], screen[1]);
+      const inspector = await readDecorationInspector(page);
+      if (inspector.hint.includes("selected")) {
+        return decoration;
+      }
+    }
+  }
+  return null;
+}
+
+async function railScreenPoint(
+  page: Page,
+  offset: number,
+  side: number,
+  index: number,
+): Promise<[number, number] | null> {
+  const world = await page.evaluate(
+    ({ offset, side, index }) => {
+      const viewer = (window as any).__trackEditor;
+      const route = JSON.parse(viewer.editor_route()) as Array<{
+        sectionId: string;
+      }>;
+      const sectionId = route[0]?.sectionId;
+      const centerlines = JSON.parse(
+        viewer.editor_section_centerlines(),
+      ) as Record<string, number[][]>;
+      const samples = centerlines[sectionId];
+      const count = samples.length;
+      const wrapped = ((index % count) + count) % count;
+      const previous = samples[(wrapped + count - 1) % count];
+      const next = samples[(wrapped + 1) % count];
+      const dx = next[0] - previous[0];
+      const dz = next[2] - previous[2];
+      const length = Math.hypot(dx, dz) || 1;
+      const tangentX = dx / length;
+      const tangentZ = dz / length;
+      const binormalX = -tangentZ;
+      const binormalZ = tangentX;
+      const sample = samples[wrapped];
+      return [
+        sample[0] + binormalX * offset * side,
+        sample[1] + 0.05,
+        sample[2] + binormalZ * offset * side,
+      ] as [number, number, number];
+    },
+    { offset, side, index },
+  );
+  return projectWorldPoint(page, world);
+}
+
+async function paintRail(
+  page: Page,
+  offset: number,
+  side: number,
+  fromIndex: number,
+  toIndex: number,
+): Promise<void> {
+  const start = await railScreenPoint(page, offset, side, fromIndex);
+  const end = await railScreenPoint(page, offset, side, toIndex);
+  expect(start, `rail start ${fromIndex} is visible`).not.toBeNull();
+  expect(end, `rail end ${toIndex} is visible`).not.toBeNull();
+  await page.mouse.move(start![0], start![1]);
+  await page.mouse.down();
+  await page.mouse.move(end![0], end![1], { steps: 12 });
+  await page.mouse.up();
 }
 
 function collectPageErrors(page: Page): string[] {
@@ -1302,4 +1676,450 @@ test("tree detail toggle switches between high, low, and card trees", async ({
     await page.evaluate(() => (window as any).__trackEditor.tree_detail()),
   ).toBe("high");
   expect(pageErrors).toEqual([]);
+});
+
+test("decoration guide rails expose the default kerb and prop lanes", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-rails");
+  await waitForEditor(page);
+
+  const rails = await page.evaluate(
+    () =>
+      JSON.parse((window as any).__trackEditor.editor_guide_rails()) as Array<{
+        kind: string;
+        side: number;
+        offset: number;
+        lane: string | null;
+      }>,
+  );
+
+  expect(
+    rails
+      .filter((rail) => rail.kind === "kerb")
+      .map((rail) => [rail.side, rail.offset]),
+  ).toEqual([
+    [-1, 6.4],
+    [1, 6.4],
+  ]);
+  expect(
+    rails
+      .filter((rail) => rail.kind === "prop" && rail.lane === "near")
+      .map((rail) => [rail.side, rail.offset]),
+  ).toEqual([
+    [-1, 14],
+    [1, 14],
+  ]);
+  expect(
+    rails
+      .filter((rail) => rail.kind === "prop" && rail.lane === "far")
+      .map((rail) => [rail.side, rail.offset]),
+  ).toEqual([
+    [-1, 19],
+    [1, 19],
+  ]);
+});
+
+function orderedSpans(
+  decorations: DecorationData[],
+  kind: "kerb" | "prop",
+  side?: number,
+): DecorationData[] {
+  return decorations
+    .filter(
+      (decoration) =>
+        decoration.kind === kind &&
+        (side === undefined || decoration.side === side) &&
+        decoration.chain[0],
+    )
+    .sort(
+      (a, b) =>
+        a.chain[0].entryFraction - b.chain[0].entryFraction,
+    );
+}
+
+function spanWithFollower(
+  spans: DecorationData[],
+): { current: DecorationData; next: DecorationData } | null {
+  for (let index = 0; index < spans.length - 1; index += 1) {
+    const current = spans[index];
+    const next = spans[index + 1];
+    if (next.chain[0].entryFraction >= current.chain[0].exitFraction - 1e-6) {
+      return { current, next };
+    }
+  }
+  return null;
+}
+
+test("editor modes switch and gate point editing", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=mode-switch");
+  await waitForEditor(page);
+  await waitForReady(page);
+
+  const initial = await readModeState(page);
+  expect(initial.points).toBe("true");
+  expect(initial.kerbs).toBe("false");
+  expect(initial.props).toBe("false");
+  expect(initial.inspectorOpen).toBe(false);
+  expect(initial.pointEditorOpen).toBe(false);
+
+  await setEditorMode(page, "kerbs", { imported: true });
+  let state = await readModeState(page);
+  expect(state.points).toBe("false");
+  expect(state.kerbs).toBe("true");
+  expect(state.props).toBe("false");
+  expect(state.inspectorOpen).toBe(true);
+  expect(state.inspectorVisible).toBe(true);
+  expect(state.pointEditorOpen).toBe(false);
+
+  const before = (await readPoints(page)).length;
+  const section = await clearSectionScreen(page);
+  await page.mouse.click(section.screen[0], section.screen[1]);
+  await page.waitForTimeout(150);
+  expect((await readPoints(page)).length).toBe(before);
+  expect((await readModeState(page)).pointEditorOpen).toBe(false);
+
+  await setEditorMode(page, "props", { imported: false });
+  state = await readModeState(page);
+  expect(state.kerbs).toBe("false");
+  expect(state.props).toBe("true");
+  expect(state.inspectorOpen).toBe(true);
+  expect((await readDecorationInspector(page)).title).toBe("Prop");
+
+  await setEditorMode(page, "points");
+  state = await readModeState(page);
+  expect(state.points).toBe("true");
+  expect(state.inspectorOpen).toBe(false);
+  const point = await pointScreen(page, "point-3");
+  expect(point).not.toBeNull();
+  await page.mouse.click(point![0], point![1]);
+  expect((await readPointEditor(page)).open).toBe(true);
+});
+
+test("kerb mode imports the baked defaults on first entry", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-import");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  await expect
+    .poll(async () => (await readDecorations(page)).length, {
+      timeout: 30_000,
+    })
+    .toBe(28);
+  const decorations = await readDecorations(page);
+  expect(
+    decorations.some(
+      (decoration) =>
+        decoration.kind === "prop" &&
+        decoration.lane === "far" &&
+        decoration.propKind === "trees",
+    ),
+  ).toBe(true);
+
+  const inspector = await readDecorationInspector(page);
+  expect(inspector.title).toBe("Kerb");
+  expect(inspector.hint).toContain("Drag a kerb rail");
+  expect(inspector.applyDisabled).toBe(true);
+  expect(inspector.deleteHidden).toBe(true);
+});
+
+test("selecting a default kerb shows the selected inspector", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-select");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const kerbs = orderedSpans(decorations, "kerb");
+  const selected = await selectDecoration(page, kerbs, rails);
+  expect(selected, "a default kerb is selectable").not.toBeNull();
+
+  const inspector = await readDecorationInspector(page);
+  expect(inspector.title).toBe("Kerb");
+  expect(inspector.hint).toContain("selected");
+  expect(inspector.applyDisabled).toBe(false);
+  expect(inspector.deleteHidden).toBe(false);
+  expect(inspector.deleteVisible).toBe(true);
+  expect((await readProject(page)).decorations?.find(
+    (decoration) => decoration.id === selected!.id,
+  )?.kind).toBe("kerb");
+});
+
+test("resizing a kerb handle updates the chain fraction", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-resize");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const pair = spanWithFollower(orderedSpans(decorations, "kerb"));
+  expect(pair, "a kerb span with a following span exists").not.toBeNull();
+  const current = pair!.current;
+  const next = pair!.next;
+  const selected = await selectDecoration(page, [current], rails);
+  expect(selected, "the kerb is selectable").not.toBeNull();
+
+  const spec = railSpecForDecoration(current, rails);
+  expect(spec).not.toBeNull();
+  const original = current.chain[0];
+  const exitScreen = await railScreenAt(page, spec!, original.exitFraction);
+  const targetFraction =
+    original.exitFraction +
+    (next.chain[0].entryFraction - original.exitFraction) * 0.5;
+  const targetScreen = await railScreenAt(page, spec!, targetFraction);
+  expect(exitScreen, "exit handle is visible").not.toBeNull();
+  expect(targetScreen, "resize target is visible").not.toBeNull();
+
+  await page.mouse.move(exitScreen![0], exitScreen![1]);
+  await page.mouse.down();
+  await page.mouse.move(targetScreen![0], targetScreen![1], { steps: 12 });
+  await page.mouse.up();
+
+  await expect(page.locator("#decoration-status")).toContainText("resized", {
+    timeout: 30_000,
+  });
+  await expect(page.locator("#status")).toHaveText("ready");
+  const after = (await readDecorations(page)).find(
+    (decoration) => decoration.id === current.id,
+  );
+  expect(after?.chain[0].exitFraction).toBeGreaterThan(
+    original.exitFraction + 1e-3,
+  );
+  expect(after?.chain[0].entryFraction).toBeCloseTo(
+    original.entryFraction,
+    5,
+  );
+});
+
+test("editing kerb properties applies the change", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-edit");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const selected = await selectDecoration(
+    page,
+    orderedSpans(decorations, "kerb"),
+    rails,
+  );
+  expect(selected).not.toBeNull();
+
+  await page.locator("#decoration-phase").fill("2.5");
+  await page.locator("#decoration-elements").fill("1.2, 2.4");
+  await page.locator("#decoration-apply").click();
+
+  await expect(page.locator("#decoration-status")).toContainText("updated", {
+    timeout: 30_000,
+  });
+  await expect(page.locator("#status")).toHaveText("ready");
+  const updated = (await readDecorations(page)).find(
+    (decoration) => decoration.id === selected!.id,
+  );
+  expect(updated?.phase).toBe(2.5);
+  expect(updated?.elements).toEqual([1.2, 2.4]);
+});
+
+test("deleting a selected kerb removes it", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-delete");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const selected = await selectDecoration(
+    page,
+    orderedSpans(decorations, "kerb"),
+    rails,
+  );
+  expect(selected).not.toBeNull();
+
+  await page.locator("#decoration-delete").click();
+  await expect(page.locator("#decoration-status")).toContainText("deleted", {
+    timeout: 30_000,
+  });
+  await expect(page.locator("#status")).toHaveText("ready");
+  const after = await readDecorations(page);
+  expect(after.length).toBe(decorations.length - 1);
+  expect(
+    after.some((decoration) => decoration.id === selected!.id),
+  ).toBe(false);
+});
+
+test("prop mode selects a tree and paints a replacement prop", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-props");
+  await waitForEditor(page);
+  await setEditorMode(page, "props", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const tree = decorations.find(
+    (decoration) =>
+      decoration.kind === "prop" &&
+      decoration.lane === "far" &&
+      decoration.propKind === "trees",
+  );
+  expect(tree, "a far tree prop exists").toBeDefined();
+  const selected = await selectDecoration(page, [tree!], rails);
+  expect(selected, "the tree prop is selectable").not.toBeNull();
+
+  const inspector = await readDecorationInspector(page);
+  expect(inspector.title).toBe("Prop");
+  expect(inspector.lane.value).toBe("far");
+  expect(inspector.propKind.value).toBe("trees");
+
+  const spec = railSpecForDecoration(tree!, rails);
+  expect(spec).not.toBeNull();
+  const leg = tree!.chain[0];
+  const length = leg.exitFraction - leg.entryFraction;
+  const start = await railScreenAt(
+    page,
+    spec!,
+    leg.entryFraction + length * 0.1,
+  );
+  const end = await railScreenAt(
+    page,
+    spec!,
+    leg.exitFraction - length * 0.1,
+  );
+  expect(start).not.toBeNull();
+  expect(end).not.toBeNull();
+
+  const before = decorations.length;
+  await page.locator("#decoration-delete").click();
+  await expect
+    .poll(async () => (await readDecorations(page)).length, {
+      timeout: 30_000,
+    })
+    .toBe(before - 1);
+
+  await page.mouse.move(start![0], start![1]);
+  await page.mouse.down();
+  await page.mouse.move(end![0], end![1], { steps: 12 });
+  await page.mouse.up();
+
+  await expect(page.locator("#decoration-status")).toContainText("painted", {
+    timeout: 30_000,
+  });
+  const after = await readDecorations(page);
+  expect(after.length).toBe(before);
+  const painted = after.find((decoration) =>
+    decoration.id.startsWith("paint-prop"),
+  );
+  expect(painted).toBeDefined();
+  expect(painted!.kind).toBe("prop");
+  expect(painted!.side).toBe(tree!.side);
+  expect(painted!.lane).toBe("far");
+  expect(painted!.propKind).toBe("trees");
+  expect(painted!.chain).toHaveLength(1);
+  expect(painted!.chain[0].entryFraction).toBeLessThan(
+    painted!.chain[0].exitFraction,
+  );
+});
+
+test("resizing a kerb into another span is rejected", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-overlap");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+
+  const decorations = await readDecorations(page);
+  const rails = await readGuideRails(page);
+  const pair = spanWithFollower(orderedSpans(decorations, "kerb"));
+  expect(pair).not.toBeNull();
+  const current = pair!.current;
+  const next = pair!.next;
+  const selected = await selectDecoration(page, [current], rails);
+  expect(selected).not.toBeNull();
+
+  const spec = railSpecForDecoration(current, rails);
+  expect(spec).not.toBeNull();
+  const original = current.chain[0];
+  const exitScreen = await railScreenAt(page, spec!, original.exitFraction);
+  const overlapFraction =
+    next.chain[0].entryFraction +
+    (next.chain[0].exitFraction - next.chain[0].entryFraction) * 0.4;
+  const overlapScreen = await railScreenAt(page, spec!, overlapFraction);
+  expect(exitScreen).not.toBeNull();
+  expect(overlapScreen).not.toBeNull();
+
+  await page.mouse.move(exitScreen![0], exitScreen![1]);
+  await page.mouse.down();
+  await page.mouse.move(overlapScreen![0], overlapScreen![1], { steps: 12 });
+  await page.mouse.up();
+
+  await expect
+    .poll(
+      async () => page.locator("#decoration-status").textContent(),
+      { timeout: 30_000 },
+    )
+    .toContain("overlap");
+  const after = (await readDecorations(page)).find(
+    (decoration) => decoration.id === current.id,
+  );
+  expect(after?.chain[0].exitFraction).toBeCloseTo(
+    original.exitFraction,
+    5,
+  );
+  expect((await readDecorations(page)).length).toBe(decorations.length);
+});
+
+test("a painted decoration survives save, reload, and load", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto("/web/track-editor/?v=decoration-persist");
+  await waitForEditor(page);
+  await setEditorMode(page, "kerbs", { imported: true });
+  const before = await readDecorations(page);
+
+  const spec: RailSpec = { kind: "kerb", side: -1, offset: 6.4 };
+  const start = await railScreenAt(page, spec, 25 / 119);
+  const end = await railScreenAt(page, spec, 35 / 119);
+  expect(start).not.toBeNull();
+  expect(end).not.toBeNull();
+  await page.mouse.move(start![0], start![1]);
+  await page.mouse.down();
+  await page.mouse.move(end![0], end![1], { steps: 12 });
+  await page.mouse.up();
+  await expect(page.locator("#decoration-status")).toContainText("painted", {
+    timeout: 30_000,
+  });
+  expect((await readDecorations(page)).length).toBe(before.length + 1);
+  const painted = (await readDecorations(page)).find((decoration) =>
+    decoration.id.startsWith("paint-kerb"),
+  );
+  expect(painted).toBeDefined();
+
+  await page.locator("#save-project").click();
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        (key) => localStorage.getItem(key) !== null,
+        PROJECT_STORAGE_KEY,
+      ),
+    )
+    .toBe(true);
+
+  await page.reload();
+  await waitForEditor(page);
+  await page.locator("#load-project").click();
+  await waitForReady(page);
+  await expect
+    .poll(async () =>
+      (await readDecorations(page)).some(
+        (decoration) => decoration.id === painted!.id,
+      ),
+    )
+    .toBe(true);
 });
