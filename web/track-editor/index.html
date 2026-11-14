@@ -156,6 +156,223 @@
       #viewer-controls > *:hover {
         background: #1c2430;
       }
+      #point-editor {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        top: auto;
+        right: auto;
+        z-index: 6;
+        margin: 0;
+        width: min(340px, calc(100vw - 32px));
+        max-height: min(45vh, calc(100vh - 120px));
+        overflow: auto;
+        padding: 12px 14px;
+        border: 1px solid #2a303a;
+        background: rgba(10, 13, 17, 0.94);
+        backdrop-filter: blur(8px);
+        color: #e6e8eb;
+        font-size: 11px;
+        line-height: 1.55;
+      }
+      #point-editor:not([open]) {
+        display: none;
+      }
+      #point-editor-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      #point-editor-header h2 {
+        margin: 0;
+      }
+      #point-editor-id {
+        flex: 1;
+        overflow: hidden;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #point-editor-close {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        font: inherit;
+        line-height: 1;
+        cursor: pointer;
+      }
+      #point-editor-close:hover {
+        background: #1c2430;
+      }
+      #point-editor-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      #point-editor-actions button {
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 4px 8px;
+        font: inherit;
+        font-size: 11px;
+        line-height: 1.35;
+        cursor: pointer;
+      }
+      #point-editor-actions button:hover {
+        background: #1c2430;
+      }
+      #editor-mode {
+        display: flex;
+        padding: 0;
+        overflow: hidden;
+      }
+      #editor-mode button {
+        border: 0;
+        border-radius: 0;
+        border-left: 1px solid #2a303a;
+        background: transparent;
+        color: #cbd5e1;
+        padding: 5px 10px;
+        font: inherit;
+        font-size: 11px;
+        line-height: 1.35;
+        cursor: pointer;
+      }
+      #editor-mode button:first-child {
+        border-left: 0;
+      }
+      #editor-mode button:hover {
+        background: #1c2430;
+      }
+      #editor-mode button[aria-pressed="true"] {
+        background: #1d4ed8;
+        color: #eff6ff;
+      }
+      #decoration-inspector {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        left: auto;
+        top: auto;
+        z-index: 6;
+        margin: 0;
+        width: min(360px, calc(100vw - 32px));
+        max-height: min(58vh, calc(100vh - 120px));
+        overflow: auto;
+        padding: 12px 14px;
+        border: 1px solid #2a303a;
+        background: rgba(10, 13, 17, 0.94);
+        backdrop-filter: blur(8px);
+        color: #e6e8eb;
+        font-size: 11px;
+        line-height: 1.55;
+      }
+      #decoration-inspector:not([open]) {
+        display: none;
+      }
+      #decoration-inspector::backdrop {
+        background: transparent;
+      }
+      #decoration-inspector-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      #decoration-inspector-header h2 {
+        margin: 0;
+        flex: 1;
+      }
+      #decoration-inspector-hint {
+        margin: 0 0 8px;
+      }
+      #decoration-controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 8px;
+        margin-bottom: 8px;
+      }
+      .decoration-field {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .decoration-field[hidden] {
+        display: none;
+      }
+      .decoration-field > span {
+        color: #8f9bab;
+      }
+      .decoration-field select,
+      .decoration-field input {
+        width: 100%;
+        min-width: 0;
+        padding: 3px 4px;
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        font: inherit;
+        font-size: 11px;
+      }
+      #decoration-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      #decoration-actions button {
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 4px 8px;
+        font: inherit;
+        font-size: 11px;
+        line-height: 1.35;
+        cursor: pointer;
+      }
+      #decoration-actions button:hover {
+        background: #1c2430;
+      }
+      #decoration-actions button[hidden] {
+        display: none;
+      }
+      #decoration-actions button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      #decoration-status {
+        margin: 0;
+      }
+      @media (max-width: 720px) {
+        #decoration-inspector {
+          right: 12px;
+          bottom: 12px;
+          width: calc(100vw - 24px);
+        }
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
       #hud.hud-collapsed {
         display: none;
       }
@@ -228,14 +445,59 @@
     <nav id="viewer-controls" aria-label="Editor controls">
       <a href="../">Exit</a>
       <button id="test-drive" type="button" disabled>Test drive</button>
-      <button id="prop-toggle" type="button" title="Cycle the prop type to paint">
-        Prop: Blocks
+      <button id="save-project" type="button" aria-label="Save track project to this browser">
+        Save
       </button>
+      <button id="load-project" type="button" aria-label="Load the saved track project from this browser">
+        Load
+      </button>
+      <button id="export-project" type="button" aria-label="Export track project JSON">
+        Export
+      </button>
+      <button id="import-project" type="button" aria-label="Import a track project JSON file">
+        Import
+      </button>
+      <input
+        id="import-project-file"
+        class="visually-hidden"
+        type="file"
+        accept=".json,application/json"
+        aria-label="Choose a track project JSON file"
+      />
+      <button id="reset-project" type="button" aria-label="Reset to the default track project">
+        Reset
+      </button>
+      <div id="editor-mode" role="group" aria-label="Editor mode">
+        <button
+          id="mode-points"
+          type="button"
+          data-mode="points"
+          aria-pressed="true"
+          title="Show control points and sections"
+        >
+          Points
+        </button>
+        <button
+          id="mode-kerbs"
+          type="button"
+          data-mode="kerbs"
+          aria-pressed="false"
+          title="Paint and edit kerbs along the route"
+        >
+          Kerbs
+        </button>
+        <button
+          id="mode-props"
+          type="button"
+          data-mode="props"
+          aria-pressed="false"
+          title="Paint and edit props and trees along the route"
+        >
+          Props
+        </button>
+      </div>
       <button id="tree-detail" type="button" title="Toggle detailed or simple trees">
         Trees: High
-      </button>
-      <button id="delete-segment" type="button" disabled title="Delete the selected kerb or prop segment">
-        Delete segment
       </button>
       <button id="camera-view" type="button" title="Cycle the editor camera view">
         View: Front
@@ -244,7 +506,7 @@
         id="toggle-overlay"
         type="button"
         aria-pressed="true"
-        title="Show or hide control points and guide splines"
+        title="Show or hide junction markers and the track centerline"
       >
         Hide overlay
       </button>
@@ -252,7 +514,10 @@
     <aside id="hud" class="hud-collapsed">
       <h1>Track Editor</h1>
       <p class="muted">Procedural Drift Loop</p>
-      <p class="status" id="status">booting</p>
+      <p class="status" id="status" role="status" aria-live="polite">booting</p>
+      <section id="selection-details">
+        <dl></dl>
+      </section>
 
       <h2>Frame</h2>
       <dl>
@@ -276,17 +541,100 @@
       <h2>Meshes</h2>
       <ul id="meshes"></ul>
 
-      <h2>Control points</h2>
-      <p class="muted">Drag the numbered markers to reshape the track. Release to rebuild. Hold Shift and click a marker to delete it.</p>
+      <h2>Points and sections</h2>
+      <p class="muted">Handles shape the road; dotted lines show their contact points on the spline. Junctions and start/finish are derived on the road. Drag the numbered markers to reshape the track; click the road to insert a point; Alt/Option-click a section centerline to select it. Selected points can be deleted or set as the layout start/finish; Delete/Backspace removes the selected point. Release a drag to rebuild.</p>
 
-      <h2>Guide lines</h2>
-      <p class="muted">Continuous light dotted lines show both kerb edges plus near and far prop lines on the outside and inside. Paint far lines with trees to place them behind the near barriers. Use the Prop button in the top menu to cycle what you paint. Click an empty guide to create a short segment, then drag its start or end handle along the spline. Click an existing segment to select it.</p>
+      <h2>Project</h2>
+      <p class="muted">Save and load the project in this browser, export normalized <code>lapster/track-project@6</code> JSON, import a local <code>.json</code> file, or reset to the default track. Imports are validated before the scene changes.</p>
 
       <h2>Camera</h2>
       <p class="muted">Use the View button to cycle front, back, left, right, and car cameras. In car view, arrow keys move along the spline. Drag the car marker in other views to reposition it.</p>
       <p class="muted">Drag empty space to orbit · right/shift-drag to pan · wheel or pinch to zoom</p>
       <p class="muted">Preview only: example track geometry is generated by the Rust renderer.</p>
     </aside>
+    <dialog id="point-editor" aria-labelledby="point-editor-title">
+      <div id="point-editor-header">
+        <h2 id="point-editor-title">Point editor</h2>
+        <span id="point-editor-id" class="muted"></span>
+        <button id="point-editor-close" type="button" aria-label="Close point editor">×</button>
+      </div>
+      <dl id="point-editor-rows"></dl>
+      <div id="point-editor-actions">
+        <button id="delete-point" type="button">Delete point</button>
+        <button id="set-start-finish" type="button">Set start/finish</button>
+      </div>
+    </dialog>
+    <dialog
+      id="decoration-inspector"
+      aria-labelledby="decoration-inspector-title"
+      data-testid="decoration-inspector"
+    >
+      <div id="decoration-inspector-header">
+        <h2 id="decoration-inspector-title">Kerbs</h2>
+      </div>
+      <p id="decoration-inspector-hint" class="muted"></p>
+      <div id="decoration-controls">
+        <label class="decoration-field" id="decoration-side-field" hidden>
+          <span>Side</span>
+          <select id="decoration-side" aria-label="Decoration side">
+            <option value="-1">Left</option>
+            <option value="1">Right</option>
+          </select>
+        </label>
+        <label class="decoration-field" id="decoration-lane-field" hidden>
+          <span>Lane</span>
+          <select id="decoration-lane" aria-label="Prop lane">
+            <option value="near">Near</option>
+            <option value="far">Far</option>
+          </select>
+        </label>
+        <label class="decoration-field" id="decoration-prop-kind-field" hidden>
+          <span>Prop kind</span>
+          <select id="decoration-prop-kind" aria-label="Prop kind">
+            <option value="blocks">Blocks</option>
+            <option value="tyres">Tyres</option>
+            <option value="trees">Trees</option>
+          </select>
+        </label>
+        <label class="decoration-field" id="decoration-spacing-field" hidden>
+          <span>Spacing</span>
+          <input
+            id="decoration-spacing"
+            type="number"
+            value=""
+            placeholder="auto"
+            min="0.1"
+            step="0.1"
+            aria-label="Prop spacing (m)"
+          />
+        </label>
+        <label class="decoration-field" id="decoration-phase-field">
+          <span>Phase</span>
+          <input
+            id="decoration-phase"
+            type="number"
+            value="0"
+            step="0.1"
+            aria-label="Decoration phase (m)"
+          />
+        </label>
+        <label class="decoration-field" id="decoration-elements-field" hidden>
+          <span>Elements (m)</span>
+          <input
+            id="decoration-elements"
+            type="text"
+            value=""
+            placeholder="empty = default"
+            aria-label="Kerb element lengths, comma separated"
+          />
+        </label>
+      </div>
+      <div id="decoration-actions">
+        <button id="decoration-apply" type="button">Apply</button>
+        <button id="decoration-delete" type="button" hidden>Delete</button>
+      </div>
+      <p id="decoration-status" class="status" role="status" aria-live="polite"></p>
+    </dialog>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

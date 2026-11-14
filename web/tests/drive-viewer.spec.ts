@@ -186,7 +186,11 @@ test("neutral revs the engine to the limiter", async ({ page }) => {
   await expect(page.locator("#gear")).toHaveText("N");
 
   await page.keyboard.down("w");
-  await page.waitForTimeout(1000);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).rpm > 5000,
+    undefined,
+    { timeout: 12_000 },
+  );
   const telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );

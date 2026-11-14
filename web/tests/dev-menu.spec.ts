@@ -282,8 +282,7 @@ test("track editor dev menu switches the edge blend mode", async ({ page }) => {
 
   await page.evaluate(async () => {
     const viewer = (window as any).__trackEditor;
-    const spans = JSON.parse(viewer.editor_kerb_spans());
-    await viewer.set_editor_kerb_spans(JSON.stringify(spans));
+    await viewer.set_editor_project(viewer.editor_project());
   });
   await expect.poll(mode).toBe("hard");
 

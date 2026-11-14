@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-08
-Current phase: **Relay multiplayer prototype**
+Last updated: 2026-11-14
+Current phase: **Venue graph rebuild — `@6` section-point reset (Phase 3)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -52,12 +52,29 @@ Deployment:
 
 ## Current focus
 
+- Venue graph rebuild is in progress on `feat/venue-graph`. The `@5` phases
+  added a canonical graph, decoration paths, and a project editor API. ADR 0003
+  resets the model to `lapster/track-project@6` (global points, open/closed
+  sections, route legs, loose ends, decoration fraction chains), and ADR 0004
+  replaces Catmull-Rom with a cubic B-spline: all authored control points are
+  off-curve handles; start/finish and junction contact points are derived on the
+  road. The render side is migrated and green (70 tests); the web editor boots
+  on `@6`, selects/drags points and sections, persists the project, draws the
+  control polygon and dotted contact lines, and has the core point-editing
+  tools: click the road to insert, delete, and set start/finish, with point
+  details/actions in a non-modal point-editor dialog. Decoration editing is
+  mode-based: `Points | Kerbs | Props`, with renderer-derived lane rails,
+  baked-default import, click-to-select, endpoint-handle resize, a single-item
+  inspector for properties/delete, paint on empty rails, overlap errors, and
+  persistence. Section overlays sample at route density (TD-0005 resolved).
+  Step 0b junctions and the multi-section decoration follow-up are next.
+  Per-point width is deferred (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
-  integration.
+- Next: venue graph Step 0b/web UX (see the resume checkpoint), Speed Dreams
+  physics, wheel/FFB hardware validation, and CP7 HID/audio integration.
 
 ## Completed checkpoints
 
@@ -106,10 +123,10 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 54 tests
+- `cargo test --workspace` — 142 tests
 - `cargo check ... --target wasm32-unknown-unknown`
-- `npm test` — 22 tests
-- `npm run test:viewer` — 37 Playwright tests plus an opt-in physics benchmark
+- `npm test` — 38 tests
+- `npm run test:viewer` — 95 passed, 1 skipped
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
@@ -138,6 +155,43 @@ Deployment:
 - GitHub Pages has no COOP/COEP; the service worker injects them and the first
   controlled load needs one reload.
 - Full history: `docs/history/progress-archive-2026-11-08.md`.
+
+## Venue graph resume checkpoint
+
+State on `feat/venue-graph`:
+
+- `@6` render model and B-spline evaluator: authored points are off-curve
+  handles; start/finish and junction contacts are derived; section overlays
+  sample at route density. `cargo test -p sim-render` — 70 passing.
+- Web editor on `@6`: point/section selection, point drag, save/load/export/
+  import, Test Drive, dashed control polygon, dotted contact lines, and a
+  non-modal point-editor dialog. Click the road to insert, Delete/Backspace or
+  the dialog to delete, and Set start/finish in the dialog. Alt/Option-click a
+  section centerline to select it.
+- Decoration editor: `Points | Kerbs | Props` modes; `editor_guide_rails()`
+  lane rails; baked-default import on first entry (28 decorations);
+  click-to-select with endpoint handles and resize; a single-item inspector for
+  side/lane/prop kind/spacing/phase/elements and Delete; drag an empty rail to
+  paint a single-section kerb/prop/tree; overlap errors; save/load persistence.
+  Follow-up: cross-section chains, seam wrap, custom lanes, and multi-leg
+  endpoint editing (TD-0006).
+- Full gate green: 38 web unit tests, 95 viewer tests passed / 1 skipped,
+  142 workspace tests, clippy, fmt, wasm. TD-0001 resolved.
+- Docs: ADR 0003, ADR 0004, venue-graph plan, tech debt updated.
+- Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
+- `stash@{0}` holds the superseded `@5` selection UX.
+- Local page: `http://127.0.0.1:8123/web/track-editor/`.
+- Dev preview: `https://joegaffey.com/lapster-dev/web/track-editor/`.
+- Deployed code tip `abcbbce` (decoration mode editor); the preview matches it.
+
+Resume in this order:
+
+1. Step 0b (render): junction contact derivation, branch caps, partial route
+   legs, cross-section/seam decoration wrap.
+2. Web UX: Make junction + capped branch; then decoration chain continuation,
+   seam wrap, custom-lane controls, and multi-leg endpoint editing (TD-0006).
+3. Multi-layout and pit lane (Phases 4–5).
+4. Full gate, dev preview validation, then a PR to `dev`.
 
 ## Next steps
 
