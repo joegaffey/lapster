@@ -91,6 +91,27 @@ Deployment:
   Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
   integration.
 
+## Phase 3d in progress (local branch, not pushed)
+
+Local branch `feat/junction-road-geometry` holds Phase 3d slices 1–3:
+
+- `35b4683` junction mouth geometry.
+- `bf20680` asphalt pad, host shoulder cut, outward 30 m branch default.
+- `cb6be7b` host shoulder cut under the full branch width.
+- `2dad198` full-width pad (asphalt + dirt shoulders) and lifted branch stitch.
+- `e3523f8` cherry-picked PR #29 shading fix (local dependency; PR #29 remains
+  open and unmerged).
+
+Scoped state: 94 sim-render tests pass; fmt, clippy, and wasm check pass. No
+full gate, push, or PR. Local viewer is built from this branch; port 3000.
+
+Visual state: perpendicular and angled tarmac join, but the shoulder/kerb seam
+still looks bad. The incremental pad/cut/lift approach is not accepted. Next
+session should revisit ADR 0005 boundary-loop stitching (or run a spike) before
+more local patches. Kerb/barrier/prop/decor clearance remains deferred.
+
+`dev` is unchanged at `9c3f72b`; PR #29 is still open.
+
 ## Completed checkpoints
 
 | Checkpoint | Status |
