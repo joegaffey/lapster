@@ -1849,6 +1849,26 @@ fn junction_shoulder_footprint(mouth: &JunctionMouth) -> Vec<Vec3> {
     polygon
 }
 
+/// The full-width host-shoulder footprint of a junction branch: the branch's
+/// entire ribbon (asphalt plus both dirt shoulders) from the branch start out
+/// to the host outer edge. This is wider than the asphalt-only footprint and
+/// lets the branch's own ribbon cover the host dirt instead of overlapping it.
+/// The polygon is unlifted; collision cutting uses it in the XZ plane.
+fn junction_full_width_footprint(mouth: &JunctionMouth) -> Vec<Vec3> {
+    let branch_lateral = Vec3::new(-mouth.branch_direction.z, 0.0, mouth.branch_direction.x);
+    let start = mouth.contact_position + mouth.branch_direction * mouth.branch_start_distance;
+    let start_plus = start + branch_lateral * OUTER_EDGE_RADIUS;
+    let start_minus = start - branch_lateral * OUTER_EDGE_RADIUS;
+    let outer_center = mouth.contact_position + mouth.host_normal * OUTER_EDGE_RADIUS;
+    let outer_plus = outer_center + branch_lateral * OUTER_EDGE_RADIUS;
+    let outer_minus = outer_center - branch_lateral * OUTER_EDGE_RADIUS;
+    let polygon = dedupe_polygon(vec![start_plus, outer_plus, outer_minus, start_minus]);
+    if polygon.len() < 3 || signed_polygon_area_xz(&polygon).abs() < JUNCTION_PAD_MIN_AREA {
+        return Vec::new();
+    }
+    polygon
+}
+
 fn append_mesh_buffers(dst: &mut MeshBuffers, src: &MeshBuffers) {
     if src.positions.is_empty() {
         return;
@@ -3851,6 +3871,10 @@ fn bake_extra_sections(
                 let footprint = junction_shoulder_footprint(&mouth);
                 if !footprint.is_empty() {
                     footprints.push(footprint);
+                }
+                let full_width = junction_full_width_footprint(&mouth);
+                if !full_width.is_empty() {
+                    footprints.push(full_width);
                 }
                 if let Some(pad_geometry) = junction_pad(&mouth) {
                     append_mesh_buffers(&mut pad, &pad_geometry.buffers);
@@ -7873,6 +7897,64 @@ mod tests {
         assert_eq!(first, from_clone);
     }
 
+    fn assert_full_width_footprint(angle_degrees: f32) {
+        let (project, mouth) = junction_project_at_angle(angle_degrees);
+        let track = track_from_project_with_default(&project, None).expect("full-width track");
+        let footprint = junction_full_width_footprint(&mouth);
+
+        // The pure 45 degree branch makes the branch-start cross-section and the
+        // host outer edge collinear, so the quad collapses and is skipped. The
+        // other angles keep a usable polygon covering the host shoulder band.
+        if (angle_degrees - 45.0).abs() > 1.0 {
+            assert!(
+                !footprint.is_empty(),
+                "every junction branch needs a full-width footprint at {angle_degrees} degrees"
+            );
+            assert!(
+                polygon_is_simple_xz(&footprint),
+                "the full-width footprint must be simple at {angle_degrees} degrees: {footprint:?}"
+            );
+            for vertex in &footprint {
+                assert!(
+                    vertex.y.abs() < 1e-6,
+                    "full-width footprint vertex {vertex:?} is not on the XZ plane"
+                );
+            }
+        }
+
+        let leftover = host_dirt_triangles_inside_footprints(&track, &project, &[footprint]);
+        assert!(
+            leftover.is_empty(),
+            "host dirt shoulder triangles remain inside the full-width footprint at {angle_degrees} degrees: {leftover:?}"
+        );
+
+        let branch = visual_mesh(&track, "branch_asphalt").expect("branch mesh");
+        assert!(!branch.positions.is_empty(), "branch ribbon visual missing");
+        let branch_start = ribbon_ring_center(branch, 0);
+        let start_distance = distance_xz(branch_start, mouth.contact_position);
+        assert!(
+            (start_distance - mouth.branch_start_distance).abs() < 0.05,
+            "branch start distance {start_distance} should be {} at {angle_degrees} degrees",
+            mouth.branch_start_distance
+        );
+
+        // Pad behaviour is unchanged: perpendicular mouths have no pad, angled
+        // mouths still keep their pad.
+        let pad = visual_mesh(&track, "junction_pad_dither");
+        if angle_degrees.abs() < 1e-3 {
+            assert!(
+                pad.is_none(),
+                "a perpendicular mouth has no angled gap to pad"
+            );
+        } else {
+            assert!(pad.is_some(), "an angled mouth still needs its pad");
+        }
+
+        let again = track_from_project_with_default(&project, None).expect("deterministic track");
+        assert_eq!(track.visual, again.visual);
+        assert_eq!(track.collision, again.collision);
+    }
+
     fn assert_angled_pad(angle_degrees: f32) {
         let (project, mouth) = junction_project_at_angle(angle_degrees);
         let track = track_from_project_with_default(&project, None).expect("angled track");
@@ -8037,5 +8119,20 @@ mod tests {
     #[test]
     fn junction_pad_30_degree_branch_cuts_host_shoulder_and_collides() {
         assert_angled_pad(30.0);
+    }
+
+    #[test]
+    fn junction_full_width_footprint_perpendicular_branch_cuts_host_shoulder() {
+        assert_full_width_footprint(0.0);
+    }
+
+    #[test]
+    fn junction_full_width_footprint_45_degree_branch_cuts_host_shoulder() {
+        assert_full_width_footprint(45.0);
+    }
+
+    #[test]
+    fn junction_full_width_footprint_30_degree_branch_cuts_host_shoulder() {
+        assert_full_width_footprint(30.0);
     }
 }
