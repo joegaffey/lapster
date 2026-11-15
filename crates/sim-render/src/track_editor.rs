@@ -118,6 +118,9 @@ const LOOSE_END_CAP_LENGTH: f32 = 1.5;
 /// Junction pads sit 1 cm above the asphalt so they cover the host shoulder
 /// boundary triangles without z-fighting with the host surface.
 const JUNCTION_PAD_LIFT: f32 = 0.01;
+/// Baked junction branches and their loose-end caps share the pad lift so the
+/// branch start row meets the pad and covers the host shoulder cut boundary.
+const JUNCTION_BRANCH_LIFT: f32 = JUNCTION_PAD_LIFT;
 /// Pad polygons smaller than this area are treated as degenerate (for example a
 /// perpendicular branch, where the mouth has no angled gap).
 const JUNCTION_PAD_MIN_AREA: f32 = 1e-4;
@@ -1619,6 +1622,7 @@ fn trim_polyline_at_distance(points: &[Vec3], distance: f32, from_start: bool) -
     }
 }
 
+#[cfg(test)]
 fn triangle_area_xz(triangle: [Vec3; 3]) -> f32 {
     0.5 * ((triangle[1].x - triangle[0].x) * (triangle[2].z - triangle[0].z)
         - (triangle[1].z - triangle[0].z) * (triangle[2].x - triangle[0].x))
@@ -1630,94 +1634,21 @@ fn triangle_normal_y(triangle: [Vec3; 3]) -> f32 {
         - (triangle[1].x - triangle[0].x) * (triangle[2].z - triangle[0].z)
 }
 
-fn orient_triangle_up(mut triangle: [Vec3; 3]) -> [Vec3; 3] {
-    if triangle_normal_y(triangle) < 0.0 {
-        triangle.swap(1, 2);
-    }
-    triangle
-}
-
 fn cross_xz(origin: Vec3, a: Vec3, b: Vec3) -> f32 {
     (a.x - origin.x) * (b.z - origin.z) - (a.z - origin.z) * (b.x - origin.x)
 }
 
-fn segments_cross_xz(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> bool {
-    cross_xz(a, b, c) * cross_xz(a, b, d) < 0.0 && cross_xz(c, d, a) * cross_xz(c, d, b) < 0.0
-}
-
-fn polygon_is_simple_xz(polygon: &[Vec3]) -> bool {
-    let count = polygon.len();
-    if count < 3 {
-        return false;
-    }
-    for index in 0..count {
-        if distance_xz(polygon[index], polygon[(index + 1) % count]) < JUNCTION_GEOMETRY_EPSILON {
-            return false;
-        }
-    }
-    for first in 0..count {
-        let first_a = polygon[first];
-        let first_b = polygon[(first + 1) % count];
-        for second in (first + 1)..count {
-            if second == first + 1 || (first == 0 && second + 1 == count) {
-                continue;
-            }
-            let second_a = polygon[second];
-            let second_b = polygon[(second + 1) % count];
-            if segments_cross_xz(first_a, first_b, second_a, second_b) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-fn segment_intersection_xz(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Option<Vec3> {
-    let r = b - a;
-    let s = d - c;
-    let denominator = r.x * s.z - r.z * s.x;
+/// Intersects two infinite XZ-plane lines `a + direction_a * t` and
+/// `b + direction_b * s`. Returns `None` for parallel or non-finite lines.
+fn line_intersection_xz(a: Vec3, direction_a: Vec3, b: Vec3, direction_b: Vec3) -> Option<Vec3> {
+    let denominator = direction_a.x * direction_b.z - direction_a.z * direction_b.x;
     if denominator.abs() < 1e-9 {
         return None;
     }
-    let offset = c - a;
-    let t = (offset.x * s.z - offset.z * s.x) / denominator;
-    let u = (offset.x * r.z - offset.z * r.x) / denominator;
-    if !(-1e-6..=1.0 + 1e-6).contains(&t) || !(-1e-6..=1.0 + 1e-6).contains(&u) {
-        return None;
-    }
-    Some(Vec3::new(a.x + r.x * t, 0.0, a.z + r.z * t))
-}
-
-/// Triangulates the junction pad. The angled mouth is a bow-tie when ordered
-/// `[far_plus, cross_plus, cross_minus, far_minus]`, so split it at the host
-/// edge crossing instead of fanning across the self-intersection.
-fn junction_pad_triangles(polygon: &[Vec3]) -> Vec<[Vec3; 3]> {
-    let count = polygon.len();
-    if count < 3 {
-        return Vec::new();
-    }
-    if count == 3 {
-        return vec![[polygon[0], polygon[1], polygon[2]]];
-    }
-    if count == 4 {
-        if polygon_is_simple_xz(polygon) {
-            return vec![
-                [polygon[0], polygon[1], polygon[2]],
-                [polygon[0], polygon[2], polygon[3]],
-            ];
-        }
-        if let Some(crossing) =
-            segment_intersection_xz(polygon[1], polygon[2], polygon[3], polygon[0])
-        {
-            return vec![
-                [polygon[0], polygon[1], crossing],
-                [crossing, polygon[2], polygon[3]],
-            ];
-        }
-    }
-    (1..count - 1)
-        .map(|index| [polygon[0], polygon[index], polygon[index + 1]])
-        .collect()
+    let offset = b - a;
+    let t = (offset.x * direction_b.z - offset.z * direction_b.x) / denominator;
+    let point = Vec3::new(a.x + direction_a.x * t, 0.0, a.z + direction_a.z * t);
+    vec3_is_finite(point).then_some(point)
 }
 
 fn point_in_triangle_xz(point: Vec3, triangle: &[Vec3; 3]) -> bool {
@@ -1772,59 +1703,83 @@ fn dedupe_polygon(mut polygon: Vec<Vec3>) -> Vec<Vec3> {
     polygon
 }
 
-struct JunctionPad {
-    buffers: MeshBuffers,
-    triangles: Vec<[Vec3; 3]>,
-}
-
-/// Builds the lifted asphalt pad for the angled gap between the host asphalt
-/// edge and the trimmed branch cross-section. Returns `None` for a degenerate
-/// (for example perpendicular) mouth.
-fn junction_pad(mouth: &JunctionMouth) -> Option<JunctionPad> {
+/// Builds the lifted full-width pad that spans the angled gap between the
+/// host asphalt edge and the trimmed branch start cross-section. Both dirt
+/// shoulders are included so the pad stitches to the host ribbon and the
+/// branch ribbon. Returns `None` for a degenerate (for example perpendicular)
+/// mouth where the two rows coincide.
+fn junction_pad(mouth: &JunctionMouth) -> Option<TrackRibbon> {
+    let radii = [
+        -OUTER_EDGE_RADIUS,
+        -ASPHALT_HALF_WIDTH,
+        ASPHALT_HALF_WIDTH,
+        OUTER_EDGE_RADIUS,
+    ];
     let branch_lateral = Vec3::new(-mouth.branch_direction.z, 0.0, mouth.branch_direction.x);
-    let cross_center =
+    let branch_start =
         mouth.contact_position + mouth.branch_direction * mouth.branch_start_distance;
-    let cross_plus = cross_center + branch_lateral * ASPHALT_HALF_WIDTH;
-    let cross_minus = cross_center - branch_lateral * ASPHALT_HALF_WIDTH;
-    let polygon = dedupe_polygon(vec![
-        mouth.mouth_edge_endpoints[0],
-        cross_plus,
-        cross_minus,
-        mouth.mouth_edge_endpoints[1],
-    ]);
-    if polygon.len() < 3 {
+    let host_edge = mouth.contact_position + mouth.host_normal * ASPHALT_HALF_WIDTH;
+
+    let mut host_edge_row = Vec::with_capacity(radii.len());
+    let mut branch_start_row = Vec::with_capacity(radii.len());
+    for radius in radii {
+        let origin = mouth.contact_position + branch_lateral * radius;
+        let intersection = line_intersection_xz(
+            origin,
+            mouth.branch_direction,
+            host_edge,
+            mouth.host_tangent,
+        )?;
+        host_edge_row.push(intersection);
+        branch_start_row.push(branch_start + branch_lateral * radius);
+    }
+
+    // A perpendicular mouth makes the branch-start cross-section sit exactly on
+    // the host asphalt edge, so there is no angled gap to fill.
+    if host_edge_row
+        .iter()
+        .zip(&branch_start_row)
+        .all(|(edge, start)| distance_xz(*edge, *start) < JUNCTION_GEOMETRY_EPSILON)
+    {
         return None;
     }
 
-    // The angled mouth is a bow-tie, so its signed area cancels. Sum the
-    // triangulated lobe areas instead of testing the shoelace value.
+    let rows = [host_edge_row, branch_start_row];
     let mut buffers = empty_buffers();
-    let mut triangles = Vec::new();
-    let mut area = 0.0;
-    for triangle in junction_pad_triangles(&polygon) {
-        let triangle = orient_triangle_up(triangle);
-        let triangle_area = triangle_area_xz(triangle);
-        if !triangle_area.is_finite() || triangle_area < JUNCTION_PAD_MIN_AREA * 0.25 {
-            continue;
-        }
-        area += triangle_area;
-        let base = buffers.positions.len() as u32;
-        for vertex in triangle {
+    let mut surface_ids = Vec::new();
+    for (row, row_vertices) in rows.iter().enumerate() {
+        for (radius, vertex) in radii.iter().zip(row_vertices) {
             let y = terrain_height(vertex.x, vertex.z) + SURFACE_HEIGHT_OFFSET + JUNCTION_PAD_LIFT;
             buffers.positions.push([vertex.x, y, vertex.z]);
             buffers.normals.push(terrain_normal(vertex.x, vertex.z));
-            let u = (vertex - mouth.contact_position).dot(mouth.host_tangent) / TARMAC_TILE_METERS;
-            buffers.uvs.push([u, TARMAC_UV_ACROSS * 0.5]);
+            let v = ((radius + OUTER_EDGE_RADIUS) / (2.0 * OUTER_EDGE_RADIUS)) * TARMAC_UV_ACROSS;
+            buffers.uvs.push([row as f32, v]);
         }
-        buffers
-            .indices
-            .extend_from_slice(&[base, base + 1, base + 2]);
-        triangles.push(triangle);
     }
-    if triangles.is_empty() || !area.is_finite() || area < JUNCTION_PAD_MIN_AREA {
-        return None;
+
+    let surfaces = [DIRT_SURFACE, TRACK_SURFACE, DIRT_SURFACE];
+    for (band, surface) in surfaces.iter().enumerate() {
+        let base = band as u32;
+        let next_base = base + radii.len() as u32;
+        for triangle in [
+            [base, base + 1, next_base],
+            [base + 1, next_base + 1, next_base],
+        ] {
+            let points = triangle.map(|index| Vec3::from_array(buffers.positions[index as usize]));
+            let triangle = if triangle_normal_y(points) < 0.0 {
+                [triangle[0], triangle[2], triangle[1]]
+            } else {
+                triangle
+            };
+            buffers.indices.extend_from_slice(&triangle);
+            surface_ids.push(*surface);
+        }
     }
-    Some(JunctionPad { buffers, triangles })
+
+    Some(TrackRibbon {
+        buffers,
+        surface_ids,
+    })
 }
 
 /// The host-shoulder footprint of a junction branch: the branch asphalt strip
@@ -1867,19 +1822,6 @@ fn junction_full_width_footprint(mouth: &JunctionMouth) -> Vec<Vec3> {
         return Vec::new();
     }
     polygon
-}
-
-fn append_mesh_buffers(dst: &mut MeshBuffers, src: &MeshBuffers) {
-    if src.positions.is_empty() {
-        return;
-    }
-    let offset = dst.positions.len() as u32;
-    dst.positions.extend_from_slice(&src.positions);
-    dst.normals.extend_from_slice(&src.normals);
-    dst.uvs.extend_from_slice(&src.uvs);
-    dst.colors.extend_from_slice(&src.colors);
-    dst.indices
-        .extend(src.indices.iter().map(|index| index + offset));
 }
 
 /// Removes host dirt-shoulder triangles whose centroid lies under a junction
@@ -3377,9 +3319,21 @@ fn build_editor_track(
         append_collision(&mut collision, &extra_caps, TRACK_SURFACE);
         push_mesh(&mut visual, "loose_end_caps", 1, extra_caps, false);
     }
-    if !extra_pad.positions.is_empty() {
-        append_collision(&mut collision, &extra_pad, TRACK_SURFACE);
-        push_mesh(&mut visual, "junction_pad_dither", 1, extra_pad, false);
+    if !extra_pad.buffers.positions.is_empty() {
+        append_collision_surfaces(&mut collision, &extra_pad.buffers, |index| {
+            extra_pad
+                .surface_ids
+                .get(index)
+                .copied()
+                .unwrap_or(TRACK_SURFACE)
+        });
+        push_mesh(
+            &mut visual,
+            "junction_pad_dither",
+            1,
+            extra_pad.buffers,
+            false,
+        );
     }
 
     for (index, mesh) in visual.meshes.iter().enumerate() {
@@ -3649,10 +3603,10 @@ struct TrackRibbon {
 }
 
 fn track_ribbon(points: &[Vec3]) -> TrackRibbon {
-    ribbon_from_points(points, true)
+    ribbon_from_points(points, true, 0.0)
 }
 
-fn ribbon_from_points(points: &[Vec3], closed: bool) -> TrackRibbon {
+fn ribbon_from_points(points: &[Vec3], closed: bool, surface_lift: f32) -> TrackRibbon {
     let mut buffers = empty_buffers();
     let mut surface_ids = Vec::new();
     let count = points.len();
@@ -3693,7 +3647,7 @@ fn ribbon_from_points(points: &[Vec3], closed: bool) -> TrackRibbon {
         };
         for radius in radii {
             let lateral = point + binormal * radius;
-            let y = terrain_height(lateral.x, lateral.z) + SURFACE_HEIGHT_OFFSET;
+            let y = terrain_height(lateral.x, lateral.z) + SURFACE_HEIGHT_OFFSET + surface_lift;
             buffers.positions.push([lateral.x, y, lateral.z]);
             buffers.normals.push(terrain_normal(lateral.x, lateral.z));
             let v = ((radius - radii[0]) / (radii[radii.len() - 1] - radii[0])) * TARMAC_UV_ACROSS;
@@ -3739,10 +3693,23 @@ fn append_track_ribbon(dst: &mut TrackRibbon, src: TrackRibbon) {
     dst.surface_ids.extend(src.surface_ids);
 }
 
+fn ribbon_triangles(ribbon: &TrackRibbon) -> Vec<[Vec3; 3]> {
+    ribbon
+        .buffers
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|triangle| {
+            triangle.map(|index| Vec3::from_array(ribbon.buffers.positions[index as usize]))
+        })
+        .collect()
+}
+
 struct BakedExtraSections {
     ribbon: TrackRibbon,
     caps: MeshBuffers,
-    pad: MeshBuffers,
+    pad: TrackRibbon,
     pad_triangles: Vec<[Vec3; 3]>,
     footprints: Vec<Vec<Vec3>>,
 }
@@ -3768,7 +3735,12 @@ fn loose_end_treatment(point: &Point) -> PointEnd {
     point.end.unwrap_or(PointEnd::Cap)
 }
 
-fn append_loose_end_cap(buffers: &mut MeshBuffers, points: &[Vec3], at_start: bool) {
+fn append_loose_end_cap(
+    buffers: &mut MeshBuffers,
+    points: &[Vec3],
+    at_start: bool,
+    surface_lift: f32,
+) {
     let count = points.len();
     if count < 2 {
         return;
@@ -3794,7 +3766,7 @@ fn append_loose_end_cap(buffers: &mut MeshBuffers, points: &[Vec3], at_start: bo
     let far_left = point + tangent * LOOSE_END_CAP_LENGTH - binormal * OUTER_EDGE_RADIUS;
     let far_right = point + tangent * LOOSE_END_CAP_LENGTH + binormal * OUTER_EDGE_RADIUS;
     let lift = |position: Vec3| {
-        let y = terrain_height(position.x, position.z) + SURFACE_HEIGHT_OFFSET + 0.01;
+        let y = terrain_height(position.x, position.z) + SURFACE_HEIGHT_OFFSET + surface_lift;
         [position.x, y, position.z]
     };
     push_cap_quad(
@@ -3850,7 +3822,10 @@ fn bake_extra_sections(
         surface_ids: Vec::new(),
     };
     let mut caps = empty_buffers();
-    let mut pad = empty_buffers();
+    let mut pad = TrackRibbon {
+        buffers: empty_buffers(),
+        surface_ids: Vec::new(),
+    };
     let mut pad_triangles = Vec::new();
     let mut footprints = Vec::new();
     for section in &project.sections {
@@ -3859,8 +3834,10 @@ fn bake_extra_sections(
         }
         let points = sample_extra_section(project, section)?;
         let mut baked_points = points.clone();
+        let mut surface_lift = 0.0;
         if let Some((junction_id, junction_at_start)) = section_junction_endpoint(project, section)
         {
+            surface_lift = JUNCTION_BRANCH_LIFT;
             if let Some((host, _)) = junction_host_section(project, junction_id) {
                 let mouth = derive_junction_mouth(project, &host.id, &section.id)?;
                 baked_points = trim_polyline_at_distance(
@@ -3877,14 +3854,14 @@ fn bake_extra_sections(
                     footprints.push(full_width);
                 }
                 if let Some(pad_geometry) = junction_pad(&mouth) {
-                    append_mesh_buffers(&mut pad, &pad_geometry.buffers);
-                    pad_triangles.extend(pad_geometry.triangles);
+                    pad_triangles.extend(ribbon_triangles(&pad_geometry));
+                    append_track_ribbon(&mut pad, pad_geometry);
                 }
             }
         }
         append_track_ribbon(
             &mut ribbon,
-            ribbon_from_points(&baked_points, section.closed),
+            ribbon_from_points(&baked_points, section.closed, surface_lift),
         );
         if section.closed {
             continue;
@@ -3903,7 +3880,7 @@ fn bake_extra_sections(
                 continue;
             }
             if loose_end_treatment(point) == PointEnd::Cap {
-                append_loose_end_cap(&mut caps, &points, at_start);
+                append_loose_end_cap(&mut caps, &points, at_start, surface_lift);
             }
         }
     }
@@ -7545,6 +7522,16 @@ mod tests {
                 .any(|vertex| Vec3::from_array(*vertex).distance(cap_vertex) < 1e-5),
             "cap geometry must be present in collision"
         );
+        for position in &caps.positions {
+            let position = Vec3::from_array(*position);
+            let expected_y = terrain_height(position.x, position.z)
+                + SURFACE_HEIGHT_OFFSET
+                + JUNCTION_BRANCH_LIFT;
+            assert!(
+                (position.y - expected_y).abs() < 1e-5,
+                "junction branch cap vertex {position:?} is not lifted above the terrain"
+            );
+        }
 
         let again = track_from_project_with_default(&project, None).expect("deterministic track");
         assert_eq!(track.visual, again.visual);
@@ -7955,15 +7942,73 @@ mod tests {
         assert_eq!(track.collision, again.collision);
     }
 
+    #[test]
+    fn non_junction_extra_section_ribbon_and_cap_stay_unlifted() {
+        let mut project = TrackProject::default_project();
+        project
+            .points
+            .push(test_point("point-extra-start", [70.0, 70.0]));
+        project
+            .points
+            .push(test_point("point-extra-end", [90.0, 70.0]));
+        project.sections.push(Section {
+            id: "section-extra".to_string(),
+            closed: false,
+            points: vec![
+                "point-extra-start".to_string(),
+                "point-extra-end".to_string(),
+            ],
+        });
+
+        let track = track_from_project_with_default(&project, None).expect("extra track");
+        let ribbon = visual_mesh(&track, "branch_asphalt").expect("extra ribbon mesh");
+        assert!(!ribbon.positions.is_empty());
+        for position in &ribbon.positions {
+            let position = Vec3::from_array(*position);
+            let expected_y = terrain_height(position.x, position.z) + SURFACE_HEIGHT_OFFSET;
+            assert!(
+                (position.y - expected_y).abs() < 1e-5,
+                "non-junction extra ribbon vertex {position:?} must stay unlifted"
+            );
+        }
+
+        let caps = visual_mesh(&track, "loose_end_caps").expect("extra cap mesh");
+        assert!(!caps.positions.is_empty());
+        for position in &caps.positions {
+            let position = Vec3::from_array(*position);
+            let expected_y = terrain_height(position.x, position.z) + SURFACE_HEIGHT_OFFSET;
+            assert!(
+                (position.y - expected_y).abs() < 1e-5,
+                "non-junction extra cap vertex {position:?} must stay unlifted"
+            );
+        }
+    }
+
     fn assert_angled_pad(angle_degrees: f32) {
         let (project, mouth) = junction_project_at_angle(angle_degrees);
         let track = track_from_project_with_default(&project, None).expect("angled track");
         let pad = visual_mesh(&track, "junction_pad_dither").expect("angled pad mesh");
-        let pad_triangles = mesh_triangles(pad);
-        assert!(
-            !pad_triangles.is_empty(),
-            "angled mouths need a pad at {angle_degrees} degrees"
+        let radii = [
+            -OUTER_EDGE_RADIUS,
+            -ASPHALT_HALF_WIDTH,
+            ASPHALT_HALF_WIDTH,
+            OUTER_EDGE_RADIUS,
+        ];
+
+        // A full-width pad is two rows of four vertices and three bands of two
+        // triangles: dirt, asphalt, dirt.
+        assert_eq!(
+            pad.positions.len(),
+            8,
+            "the pad must be full-width at {angle_degrees} degrees"
         );
+        assert_eq!(
+            pad.indices.len(),
+            18,
+            "the pad must have six triangles at {angle_degrees} degrees"
+        );
+        let pad_triangles = mesh_triangles(pad);
+        assert_eq!(pad_triangles.len(), 6);
         let area = pad_triangles
             .iter()
             .map(|triangle| triangle_area_xz(*triangle))
@@ -7975,13 +8020,44 @@ mod tests {
         assert!(
             pad_triangles
                 .iter()
-                .all(|triangle| triangle_area_xz(*triangle) > 0.0),
-            "pad triangles must have positive area at {angle_degrees} degrees"
+                .all(|triangle| triangle_area_xz(*triangle) > 0.0
+                    && triangle_normal_y(*triangle) >= 0.0),
+            "pad triangles must face up at {angle_degrees} degrees"
         );
 
+        // The first row sits on the host asphalt edge.
+        for vertex in &pad.positions[..4] {
+            let vertex = Vec3::from_array(*vertex);
+            let signed = (Vec3::new(vertex.x, 0.0, vertex.z) - mouth.contact_position)
+                .dot(mouth.host_normal);
+            assert!(
+                (signed - ASPHALT_HALF_WIDTH).abs() < 1e-3,
+                "pad host-edge vertex {vertex:?} is not on the asphalt edge at {angle_degrees} degrees"
+            );
+        }
+
+        // The second row matches the trimmed branch start cross-section.
+        let branch_lateral = Vec3::new(-mouth.branch_direction.z, 0.0, mouth.branch_direction.x);
+        let branch_start =
+            mouth.contact_position + mouth.branch_direction * mouth.branch_start_distance;
+        for (radius, vertex) in radii.iter().zip(&pad.positions[4..]) {
+            let vertex = Vec3::from_array(*vertex);
+            let expected = branch_start + branch_lateral * *radius;
+            assert!(
+                distance_xz(vertex, expected) < 1e-3,
+                "pad branch-start vertex {vertex:?} does not match {expected:?} at {angle_degrees} degrees"
+            );
+            let expected_y =
+                terrain_height(vertex.x, vertex.z) + SURFACE_HEIGHT_OFFSET + JUNCTION_PAD_LIFT;
+            assert!(
+                (vertex.y - expected_y).abs() < 1e-5,
+                "pad vertex {vertex:?} is not lifted above the terrain at {angle_degrees} degrees"
+            );
+        }
+
         let branch = visual_mesh(&track, "branch_asphalt").expect("branch mesh");
-        let branch_start = ribbon_ring_center(branch, 0);
-        let start_distance = distance_xz(branch_start, mouth.contact_position);
+        let branch_start_center = ribbon_ring_center(branch, 0);
+        let start_distance = distance_xz(branch_start_center, mouth.contact_position);
         assert!(
             (start_distance - mouth.branch_start_distance).abs() < 0.05,
             "branch start distance {start_distance} should be {} at {angle_degrees} degrees",
@@ -7997,6 +8073,12 @@ mod tests {
                     .any(|candidate| Vec3::from_array(*candidate).distance(vertex) < 1e-5),
                 "the trimmed branch cross-section must be present in collision"
             );
+            let expected_y =
+                terrain_height(vertex.x, vertex.z) + SURFACE_HEIGHT_OFFSET + JUNCTION_BRANCH_LIFT;
+            assert!(
+                (vertex.y - expected_y).abs() < 1e-5,
+                "branch start vertex {vertex:?} is not lifted above the terrain at {angle_degrees} degrees"
+            );
         }
 
         let leftover = host_dirt_triangles_inside_pad(&track, &project, pad);
@@ -8005,16 +8087,18 @@ mod tests {
             "host dirt shoulder triangles remain under the pad: {leftover:?}"
         );
 
-        let footprint = junction_shoulder_footprint(&mouth);
-        assert!(
-            !footprint.is_empty(),
-            "every junction branch needs a host-shoulder footprint at {angle_degrees} degrees"
-        );
+        let footprint = junction_full_width_footprint(&mouth);
+        if !footprint.is_empty() {
+            assert!(
+                polygon_is_simple_xz(&footprint),
+                "the full-width footprint must be simple at {angle_degrees} degrees: {footprint:?}"
+            );
+        }
         let footprint_leftover =
             host_dirt_triangles_inside_footprints(&track, &project, &[footprint]);
         assert!(
             footprint_leftover.is_empty(),
-            "host dirt shoulder triangles remain inside the footprint at {angle_degrees} degrees: {footprint_leftover:?}"
+            "host dirt shoulder triangles remain inside the full-width footprint at {angle_degrees} degrees: {footprint_leftover:?}"
         );
 
         let pad_positions = pad.positions.clone();
@@ -8033,15 +8117,16 @@ mod tests {
             .map(|(index, _)| track.collision.surface_ids[index])
             .collect::<Vec<_>>();
         assert_eq!(
-            pad_collision.len(),
-            pad_triangles.len(),
-            "pad collision triangles missing at {angle_degrees} degrees"
-        );
-        assert!(
-            pad_collision
-                .iter()
-                .all(|surface| *surface == TRACK_SURFACE),
-            "pad collision must be TRACK_SURFACE: {pad_collision:?}"
+            pad_collision,
+            vec![
+                DIRT_SURFACE,
+                DIRT_SURFACE,
+                TRACK_SURFACE,
+                TRACK_SURFACE,
+                DIRT_SURFACE,
+                DIRT_SURFACE,
+            ],
+            "pad collision must use the band surface IDs at {angle_degrees} degrees"
         );
 
         let again = track_from_project_with_default(&project, None).expect("deterministic track");
@@ -8089,10 +8174,16 @@ mod tests {
             !footprint.is_empty(),
             "a perpendicular junction still needs a host-shoulder footprint"
         );
-        let dirt_leftover = host_dirt_triangles_inside_footprints(&track, &project, &[footprint]);
+        let full_width = junction_full_width_footprint(&mouth);
+        assert!(
+            !full_width.is_empty(),
+            "a perpendicular junction still needs its full-width branch footprint"
+        );
+        let dirt_leftover =
+            host_dirt_triangles_inside_footprints(&track, &project, &[footprint, full_width]);
         assert!(
             dirt_leftover.is_empty(),
-            "host dirt shoulder triangles remain inside the footprint: {dirt_leftover:?}"
+            "host dirt shoulder triangles remain inside the footprints: {dirt_leftover:?}"
         );
 
         let caps = visual_mesh(&track, "loose_end_caps").expect("cap mesh");
