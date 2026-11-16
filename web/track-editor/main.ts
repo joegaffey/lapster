@@ -6,6 +6,7 @@ import { setupTrackDevMenu } from "../src/ui/dev-menu.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
+import { versionedWasmUrl } from "../src/wasm-init.ts";
 
 declare global {
   interface Window {
@@ -4165,7 +4166,7 @@ function renderStats(debug: {
 
 async function boot() {
   setStatus("loading wasm");
-  await init();
+  await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
   resizeCanvas();
   setStatus("generating track");

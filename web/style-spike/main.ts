@@ -10,6 +10,7 @@ import {
 } from "../src/ui/track-camera.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
+import { versionedWasmUrl } from "../src/wasm-init.ts";
 
 declare global {
   interface Window {
@@ -749,7 +750,7 @@ async function boot(): Promise<void> {
     return;
   }
   status.textContent = "loading wasm";
-  await init();
+  await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
   const trackKey = currentTrackKey();
   trackSelect.value = trackKey;

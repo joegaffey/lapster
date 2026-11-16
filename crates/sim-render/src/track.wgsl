@@ -436,7 +436,7 @@ fn vs_outline(input: OutlineIn) -> OutlineOut {
     let world = model.transform * vec4<f32>(input.position, 1.0);
     let world_normal = normalize((model.transform * vec4<f32>(input.normal, 0.0)).xyz);
     let distance = length(camera.camera_pos.xyz - world.xyz);
-    let width = 0.022 * clamp(distance / 12.0, 0.65, 2.5);
+    let width = 0.04 * clamp(distance / 12.0, 0.65, 2.5);
     var output: OutlineOut;
     output.clip_position =
         camera.view_proj * vec4<f32>(world.xyz + world_normal * width, 1.0);

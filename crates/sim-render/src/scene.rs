@@ -5,7 +5,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
 use sim_types::{
-    AssetManifest, CarVisual, MeshBuffers, TextureRef, TrackCollision, TrackMetadata, TrackVisual,
+    AssetManifest, CarVisual, MeshBuffers, MeshRef, TextureRef, TrackCollision, TrackMetadata,
+    TrackVisual,
 };
 
 use crate::camera::Camera;
@@ -357,6 +358,53 @@ impl Scene {
             });
         }
 
+        if !visual
+            .meshes
+            .iter()
+            .any(|mesh| mesh.name.eq_ignore_ascii_case("mountains"))
+        {
+            if let Some(mountains) = background_mountains(manifest) {
+                stats.vertices += mountains.vertices.len() as u32;
+                stats.triangles += (mountains.indices.len() / 3) as u32;
+                stats.draw_calls += 1;
+                meshes.push(mountains);
+            }
+        }
+
+        if !visual
+            .materials
+            .iter()
+            .any(|material| material.name.to_ascii_lowercase().contains("dither"))
+        {
+            let fringes = edge_dither_fringes(visual);
+            for (name, vertices, indices, color) in fringes {
+                let texture_index = textures.len();
+                textures.push(dither_texture(color));
+                stats.vertices += vertices.len() as u32;
+                stats.triangles += (indices.len() / 3) as u32;
+                stats.draw_calls += 1;
+                meshes.push(MeshData {
+                    name,
+                    vertices,
+                    indices,
+                    model: Mat4::IDENTITY,
+                    texture: Some(texture_index),
+                    grass_texture: None,
+                    outline: None,
+                    alpha: 0.99,
+                    emissive: [0.0; 3],
+                    casts_static_shadow: false,
+                    casts_dynamic_shadow: false,
+                    is_decal: false,
+                    foliage: false,
+                    billboard: false,
+                    track_blend: None,
+                });
+            }
+        }
+
+        stats.textures = textures.len() as u32;
+
         let mut vegetation = None;
         let mut mass_foliage = None;
         if style_spike {
@@ -527,6 +575,338 @@ fn style_camera(metadata: &TrackMetadata) -> Option<Camera> {
         target: (position + forward * 20.0 + Vec3::Y * 2.0).to_array(),
         fov_y: 0.9,
     })
+}
+
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn mountain_noise(x: f32, z: f32) -> f32 {
+    let ridge = (x * 0.0031 + z * 0.0017).sin() * 0.45
+        + (x * 0.0073 - z * 0.0051).sin() * 0.28
+        + (x * 0.0157 + z * 0.0113).sin() * 0.17
+        + (x * 0.0290 + z * 0.0230).sin() * 0.10;
+    (ridge * 0.5 + 0.5).clamp(0.0, 1.0)
+}
+
+fn mountain_height_at(
+    x: f32,
+    z: f32,
+    center_x: f32,
+    center_z: f32,
+    rise_start: f32,
+    outer_radius: f32,
+) -> f32 {
+    let radius = ((x - center_x).powi(2) + (z - center_z).powi(2)).sqrt();
+    let t = ((radius - rise_start) / (outer_radius - rise_start)).clamp(0.0, 1.0);
+    let envelope = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.88, 1.0, t));
+    envelope * (25.0 + 110.0 * mountain_noise(x, z).powf(1.35))
+}
+
+fn background_mountains(manifest: &AssetManifest) -> Option<MeshData> {
+    let bounds = manifest.bounds;
+    if !bounds.min[0].is_finite()
+        || !bounds.min[2].is_finite()
+        || !bounds.max[0].is_finite()
+        || !bounds.max[2].is_finite()
+    {
+        return None;
+    }
+    let center_x = (bounds.min[0] + bounds.max[0]) * 0.5;
+    let center_z = (bounds.min[2] + bounds.max[2]) * 0.5;
+    let half_x = (bounds.max[0] - bounds.min[0]) * 0.5;
+    let half_z = (bounds.max[2] - bounds.min[2]) * 0.5;
+    let inner_radius = (half_x.min(half_z) * 0.75).max(50.0);
+    let rise_start = half_x.max(half_z) + 70.0;
+    let outer_radius = rise_start + 3400.0;
+    let base_y = bounds.min[1] - 0.5;
+    let segments = 128usize;
+    let rings = 24usize;
+    let row = segments + 1;
+    let mut vertices = Vec::with_capacity(row * (rings + 1));
+    let mut indices = Vec::with_capacity(segments * rings * 6);
+    for ring in 0..=rings {
+        let radial = ring as f32 / rings as f32;
+        let radius = inner_radius + (outer_radius - inner_radius) * radial.powf(1.6);
+        for segment in 0..=segments {
+            let angle = segment as f32 / segments as f32 * std::f32::consts::TAU;
+            let x = center_x + radius * angle.cos();
+            let z = center_z + radius * angle.sin();
+            let rise = mountain_height_at(x, z, center_x, center_z, rise_start, outer_radius);
+            let epsilon = 20.0;
+            let dx =
+                (mountain_height_at(x + epsilon, z, center_x, center_z, rise_start, outer_radius)
+                    - mountain_height_at(
+                        x - epsilon,
+                        z,
+                        center_x,
+                        center_z,
+                        rise_start,
+                        outer_radius,
+                    ))
+                    / (epsilon * 2.0);
+            let dz =
+                (mountain_height_at(x, z + epsilon, center_x, center_z, rise_start, outer_radius)
+                    - mountain_height_at(
+                        x,
+                        z - epsilon,
+                        center_x,
+                        center_z,
+                        rise_start,
+                        outer_radius,
+                    ))
+                    / (epsilon * 2.0);
+            let normal = Vec3::new(-dx, 1.0, -dz).normalize_or_zero();
+            let rock = smoothstep(8.0, 50.0, rise);
+            let color = Vec3::from_array([0.12, 0.20, 0.09])
+                .lerp(Vec3::from_array([0.07, 0.10, 0.14]), rock);
+            vertices.push(MeshVertex {
+                position: [x, base_y + rise, z],
+                normal: normal.to_array(),
+                color: color.to_array(),
+                uv: [segment as f32 / segments as f32, radial],
+                wind: [0.0, 0.0],
+            });
+        }
+    }
+    for ring in 0..rings {
+        for segment in 0..segments {
+            let base = (ring * row + segment) as u32;
+            let next = ((ring + 1) * row + segment) as u32;
+            indices.extend_from_slice(&[base, next, next + 1, base, next + 1, base + 1]);
+        }
+    }
+    Some(MeshData {
+        name: String::from("mountains"),
+        vertices,
+        indices,
+        model: Mat4::IDENTITY,
+        texture: None,
+        grass_texture: None,
+        outline: None,
+        alpha: 1.0,
+        emissive: [0.0; 3],
+        casts_static_shadow: false,
+        casts_dynamic_shadow: false,
+        is_decal: false,
+        foliage: false,
+        billboard: false,
+        track_blend: None,
+    })
+}
+
+fn surface_priority(name: &str) -> Option<u8> {
+    match name.strip_prefix("surface_").unwrap_or(name) {
+        "asphalt" => Some(3),
+        "dirt" => Some(2),
+        "grass" => Some(1),
+        _ => None,
+    }
+}
+
+fn position_key(position: [f32; 3]) -> [i64; 3] {
+    [
+        (position[0] * 1000.0).round() as i64,
+        (position[1] * 1000.0).round() as i64,
+        (position[2] * 1000.0).round() as i64,
+    ]
+}
+
+type EdgeKey = (i64, i64, i64, i64, i64, i64);
+
+fn edge_key(a: [f32; 3], b: [f32; 3]) -> EdgeKey {
+    let first = position_key(a);
+    let second = position_key(b);
+    if first <= second {
+        (
+            first[0], first[1], first[2], second[0], second[1], second[2],
+        )
+    } else {
+        (
+            second[0], second[1], second[2], first[0], first[1], first[2],
+        )
+    }
+}
+
+struct EdgeSides {
+    a: [f32; 3],
+    b: [f32; 3],
+    thirds: HashMap<usize, [f32; 3]>,
+}
+
+fn linear_to_srgb(value: f32) -> f32 {
+    let clamped = value.clamp(0.0, 1.0);
+    if clamped <= 0.003_130_8 {
+        clamped * 12.92
+    } else {
+        1.055 * clamped.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn material_average_color(visual: &TrackVisual, material_index: usize) -> [u8; 3] {
+    let Some(material) = visual.materials.get(material_index) else {
+        return [255, 255, 255];
+    };
+    if let Some(texture) = material
+        .base_color_texture
+        .and_then(|index| visual.textures.get(index as usize))
+    {
+        if !texture.rgba8.is_empty() {
+            let mut sum = [0u64; 3];
+            let pixels = texture.rgba8.len() / 4;
+            for pixel in texture.rgba8.chunks_exact(4) {
+                sum[0] += pixel[0] as u64;
+                sum[1] += pixel[1] as u64;
+                sum[2] += pixel[2] as u64;
+            }
+            let pixels = pixels.max(1) as u64;
+            return [
+                (sum[0] / pixels) as u8,
+                (sum[1] / pixels) as u8,
+                (sum[2] / pixels) as u8,
+            ];
+        }
+    }
+    let color = material_color(visual, material_index);
+    [
+        (linear_to_srgb(color[0]) * 255.0).round() as u8,
+        (linear_to_srgb(color[1]) * 255.0).round() as u8,
+        (linear_to_srgb(color[2]) * 255.0).round() as u8,
+    ]
+}
+
+fn edge_dither_fringes(visual: &TrackVisual) -> Vec<(String, Vec<MeshVertex>, Vec<u32>, [u8; 3])> {
+    let mut surfaces = Vec::new();
+    for (mesh_ref, buffers) in visual.meshes.iter().zip(visual.mesh_buffers.iter()) {
+        let Some(priority) = surface_priority(&mesh_ref.name) else {
+            continue;
+        };
+        if buffers.positions.is_empty() || buffers.indices.is_empty() {
+            continue;
+        }
+        surfaces.push((
+            mesh_ref.name.clone(),
+            buffers,
+            priority,
+            material_average_color(visual, mesh_ref.material as usize),
+        ));
+    }
+    if surfaces.len() < 2 {
+        return Vec::new();
+    }
+    let mut edges: HashMap<EdgeKey, EdgeSides> = HashMap::new();
+    for (surface_index, (_, buffers, _, _)) in surfaces.iter().enumerate() {
+        for triangle in buffers.indices.chunks_exact(3) {
+            let indices = [
+                triangle[0] as usize,
+                triangle[1] as usize,
+                triangle[2] as usize,
+            ];
+            for edge in 0..3 {
+                let a = indices[edge];
+                let b = indices[(edge + 1) % 3];
+                let c = indices[(edge + 2) % 3];
+                let a_position = buffers.positions[a];
+                let b_position = buffers.positions[b];
+                let key = edge_key(a_position, b_position);
+                let entry = edges.entry(key).or_insert_with(|| EdgeSides {
+                    a: a_position,
+                    b: b_position,
+                    thirds: HashMap::new(),
+                });
+                entry
+                    .thirds
+                    .entry(surface_index)
+                    .or_insert(buffers.positions[c]);
+            }
+        }
+    }
+
+    let mut groups: HashMap<(usize, usize), (String, Vec<MeshVertex>, Vec<u32>, [u8; 3])> =
+        HashMap::new();
+    for sides in edges.values() {
+        let candidates = sides.thirds.iter().collect::<Vec<_>>();
+        for first in 0..candidates.len() {
+            for second in (first + 1)..candidates.len() {
+                let (first_index, first_third) = candidates[first];
+                let (second_index, second_third) = candidates[second];
+                let first_priority = surfaces[*first_index].2;
+                let second_priority = surfaces[*second_index].2;
+                let (source, target, target_third) = if first_priority > second_priority {
+                    (*first_index, *second_index, *second_third)
+                } else if second_priority > first_priority {
+                    (*second_index, *first_index, *first_third)
+                } else {
+                    continue;
+                };
+                let a = Vec3::from_array(sides.a);
+                let b = Vec3::from_array(sides.b);
+                let midpoint = (a + b) * 0.5;
+                let direction = Vec3::from_array(target_third) - midpoint;
+                let direction = Vec3::new(direction.x, 0.0, direction.z);
+                if direction.length_squared() < 1e-8 {
+                    continue;
+                }
+                let direction = direction.normalize();
+                let lift = Vec3::Y * 0.02;
+                let width = 0.45;
+                let points = [
+                    a + lift,
+                    b + lift,
+                    b + direction * width + lift,
+                    a + direction * width + lift,
+                ];
+                let face_normal = (points[1] - points[0]).cross(points[2] - points[0]);
+                let order = if face_normal.y >= 0.0 {
+                    [0u32, 1, 2, 0, 2, 3]
+                } else {
+                    [0u32, 2, 1, 0, 3, 2]
+                };
+                let key = (source, target);
+                let (_, vertices, indices, _) = groups.entry(key).or_insert_with(|| {
+                    (
+                        format!("dither_{}_to_{}", surfaces[source].0, surfaces[target].0),
+                        Vec::new(),
+                        Vec::new(),
+                        surfaces[source].3,
+                    )
+                });
+                let base = vertices.len() as u32;
+                for point in points {
+                    vertices.push(MeshVertex {
+                        position: point.to_array(),
+                        normal: [0.0, 1.0, 0.0],
+                        color: [1.0, 1.0, 1.0],
+                        uv: [point.x / 1.5, point.z / 1.5],
+                        wind: [0.0, 0.0],
+                    });
+                }
+                indices.extend(order.into_iter().map(|index| base + index));
+            }
+        }
+    }
+    groups.into_values().collect()
+}
+
+fn dither_texture(color: [u8; 3]) -> SceneTexture {
+    let size = 64u32;
+    let mut rgba8 = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let hash = (x / 2)
+                .wrapping_mul(0x9e37_79b1)
+                .wrapping_add((y / 2).wrapping_mul(0x85eb_ca77))
+                ^ 0x27d4_eb2f;
+            let alpha = if hash % 5 < 2 { 0 } else { 255 };
+            rgba8.extend_from_slice(&[color[0], color[1], color[2], alpha]);
+        }
+    }
+    SceneTexture {
+        width: size,
+        height: size,
+        rgba8,
+    }
 }
 
 pub(crate) fn build_vertices(buffers: &MeshBuffers, color: [f32; 3]) -> Vec<MeshVertex> {
@@ -838,6 +1218,91 @@ mod tests {
         assert_eq!(outline.vertices.len(), 3);
         assert_eq!(outline.indices, vec![0, 1, 2, 0, 1, 2]);
         assert_eq!(outline.vertices[0].normal, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn edge_dither_fringes_follow_surface_priority() {
+        let asphalt = MeshBuffers {
+            positions: vec![
+                [-1.0, 0.0, -1.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 0.0, 1.0],
+                [-1.0, 0.0, 1.0],
+            ],
+            normals: vec![[0.0, 1.0, 0.0]; 4],
+            uvs: vec![[0.0, 0.0]; 4],
+            colors: Vec::new(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+        };
+        let dirt = MeshBuffers {
+            positions: vec![
+                [0.0, 0.0, -1.0],
+                [1.0, 0.0, -1.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+            ],
+            normals: vec![[0.0, 1.0, 0.0]; 4],
+            uvs: vec![[0.0, 0.0]; 4],
+            colors: Vec::new(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+        };
+        let visual = TrackVisual {
+            meshes: vec![
+                MeshRef {
+                    name: String::from("surface_asphalt"),
+                    vertex_offset: 0,
+                    vertex_count: 4,
+                    index_offset: 0,
+                    index_count: 6,
+                    material: 0,
+                    bounds: sim_types::Aabb {
+                        min: [-1.0, 0.0, -1.0],
+                        max: [0.0, 0.0, 1.0],
+                    },
+                    lod: 0,
+                },
+                MeshRef {
+                    name: String::from("surface_dirt"),
+                    vertex_offset: 0,
+                    vertex_count: 4,
+                    index_offset: 0,
+                    index_count: 6,
+                    material: 1,
+                    bounds: sim_types::Aabb {
+                        min: [0.0, 0.0, -1.0],
+                        max: [1.0, 0.0, 1.0],
+                    },
+                    lod: 0,
+                },
+            ],
+            materials: vec![
+                sim_types::MaterialRef {
+                    name: String::from("asphalt"),
+                    base_color: [0.045, 0.045, 0.05, 1.0],
+                    metallic: 0.0,
+                    roughness: 0.9,
+                    base_color_texture: None,
+                    outline: false,
+                },
+                sim_types::MaterialRef {
+                    name: String::from("dirt"),
+                    base_color: [0.48, 0.345, 0.208, 1.0],
+                    metallic: 0.0,
+                    roughness: 0.9,
+                    base_color_texture: None,
+                    outline: false,
+                },
+            ],
+            textures: Vec::new(),
+            mesh_buffers: vec![asphalt, dirt],
+            instances: Vec::new(),
+        };
+        let fringes = edge_dither_fringes(&visual);
+        assert_eq!(fringes.len(), 1);
+        let (name, vertices, indices, _) = &fringes[0];
+        assert_eq!(name, "dither_surface_asphalt_to_surface_dirt");
+        assert_eq!(vertices.len(), 4);
+        assert_eq!(indices.len(), 6);
     }
 
     #[test]
