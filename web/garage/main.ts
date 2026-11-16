@@ -18,6 +18,7 @@ import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
+import { versionedWasmUrl } from "../src/wasm-init.ts";
 
 declare global {
   interface Window {
@@ -185,7 +186,7 @@ async function boot() {
     return;
   }
   status.textContent = "loading wasm";
-  await init();
+  await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
   status.textContent = "loading packs";
   const [trackPack, carPacks] = await Promise.all([

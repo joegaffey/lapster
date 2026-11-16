@@ -9,6 +9,7 @@ import {
   writeFfb,
   type InputState,
 } from "../src/sim/sab.ts";
+import { versionedWasmUrl } from "../src/wasm-init.ts";
 
 const FIXED_STEP_MS = 1000 / 500;
 const MAX_CATCHUP_STEPS = 32;
@@ -199,7 +200,7 @@ self.onmessage = async (event: MessageEvent) => {
       sab = message.sab as SharedArrayBuffer;
       validateSab(sab);
       waitWord = new Int32Array(sab, HEADER_FIELDS.flags, 1);
-      await init();
+      await init(versionedWasmUrl("../pkg/worker/sim_worker_bg.wasm"));
       simulation = new Simulation(message.trackBytes, message.carBytes);
       post("ready", { setup: simulation.setup() });
       startLoop();
