@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-14
-Current phase: **Venue graph — junction road geometry (Phase 3d)**
+Last updated: 2026-11-18
+Current phase: **Venue graph — junction road geometry (Phase 3d implemented)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -73,15 +73,16 @@ Deployment:
   Seam-wrapped decoration authoring is complete and merged to `dev` in PR #27
   (`ff67366`): paint across the closed-section seam and endpoint drag across
   the seam both produce a wrapped leg, with Playwright coverage.
-  Junction road geometry is the current gap: `make_junction` is a graph
-  primitive and the renderer still bakes independent full-width host/branch
-  ribbons, so angled joins overlap dirt/grass/tarmac, z-fight, and leave holes.
-  ADR 0005 proposes a clipped, stitched junction pad (venue Phase 3d); the
-  experimental trim/lift/cut geometry was reverted. The independent non-route
-  section/cap shading fix remains in PR #29 (`fix/track-section-shading`).
-  Custom-lane authoring remains dropped for now, and junction chain
-  continuation is blocked on multi-leg routes (Phase 4). Per-point width is
-  deferred (TD-0002, TD-0003).
+  Junction road geometry is implemented on `feat/junction-road-geometry`
+  (ADR 0005 / venue Phase 3d): the bake now clips the branch at the junction
+  mouth, removes the host shoulder window, and emits one ear-clipped stitched
+  junction surface with shared boundary vertices and matching collision. The
+  old trim/lift/cut pad path is removed. Full gate is green; dev-preview
+  validation at 30/45/90° is the remaining acceptance step. The independent
+  non-route section/cap shading fix remains in PR #29
+  (`fix/track-section-shading`). Custom-lane authoring remains dropped for now,
+  and junction chain continuation is blocked on multi-leg routes (Phase 4).
+  Per-point width is deferred (TD-0002, TD-0003).
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
@@ -91,9 +92,9 @@ Deployment:
   Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
   integration.
 
-## Phase 3d in progress (local branch, not pushed)
+## Phase 3d implemented and pushed (PR pending)
 
-Local branch `feat/junction-road-geometry` holds Phase 3d slices 1–3:
+Branch `feat/junction-road-geometry` holds the Phase 3d implementation:
 
 - `35b4683` junction mouth geometry.
 - `bf20680` asphalt pad, host shoulder cut, outward 30 m branch default.
@@ -101,14 +102,22 @@ Local branch `feat/junction-road-geometry` holds Phase 3d slices 1–3:
 - `2dad198` full-width pad (asphalt + dirt shoulders) and lifted branch stitch.
 - `e3523f8` cherry-picked PR #29 shading fix (local dependency; PR #29 remains
   open and unmerged).
+- ADR-0005 clipped/stitched junction bake, replacing the
+  lift/cut pad. Host and branch ribbons are clipped, host shoulder dirt is
+  removed by ring window, and one ear-clipped junction surface is stitched with
+  shared boundary vertices. Collision is baked from the same surfaces with
+  asphalt/dirt surface IDs. Supports perpendicular, 30°, 45°, open hosts, and
+  multiple branches per host. Curved branches fail with a typed error (TD-0009).
 
-Scoped state: 94 sim-render tests pass; fmt, clippy, and wasm check pass. No
-full gate, push, or PR. Local viewer is built from this branch; port 3000.
+Scoped state: 97 sim-render tests pass. Full gate green:
+`cargo fmt --check`, workspace clippy with `-D warnings`, `cargo test --workspace`
+(171 Rust tests), wasm check, 38 web unit tests, 98 viewer tests passed / 1
+skipped, and 2/2 WebGL2 fallback tests. Branch pushed; PR pending. Local viewer
+is built from this branch.
 
-Visual state: perpendicular and angled tarmac join, but the shoulder/kerb seam
-still looks bad. The incremental pad/cut/lift approach is not accepted. Next
-session should revisit ADR 0005 boundary-loop stitching (or run a spike) before
-more local patches. Kerb/barrier/prop/decor clearance remains deferred.
+Visual state: the junction tarmac, shoulders, and collision are stitched.
+Kerb/barrier/prop/decor mouth clearance remains deferred. Dev-preview
+validation at 30/45/90° is the remaining acceptance step.
 
 `dev` is unchanged at `9c3f72b`; PR #29 is still open.
 
@@ -170,9 +179,11 @@ more local patches. Kerb/barrier/prop/decor clearance remains deferred.
 
 ## Known issues / carry-forward
 
-- Junction road geometry is a stub: overlapping full-width ribbons cause
-  dirt/grass over tarmac, z-fighting, and holes at angles. ADR 0005 / Phase 3d
-  replaces it with a clipped and stitched junction pad (TD-0008).
+- Junction road geometry is implemented per ADR 0005 / Phase 3d (TD-0008);
+  dev-preview validation at 30/45/90° is pending. Curved junction branches are
+  rejected by the bake; only straight two-point branches are supported in this
+  pass (TD-0009). Kerb/barrier/prop/decor clearance at junction mouths remains
+  deferred.
 - Wheel/FFB hardware acceptance is pending; CAMMUS C5 first.
 - Audio is a spike: external-state compensations, no per-car sample layer,
   Doppler, reverb zones, or mobile listening test.
@@ -251,11 +262,11 @@ junction branch, cap, host preservation, and track-pack export:
 - PR #29 (`fix/track-section-shading`) keeps the material-driven `track_blend`
   and cap-centre fixes: non-route sections and loose-end caps render as tarmac.
   It is independent of junction geometry and remains open.
-- Junction road geometry was re-assessed after angled-junction testing. The
-  incremental branch outward/length/trim/cut experiments were reverted. ADR 0005
-  (proposed) and venue Phase 3d define the replacement: clip ribbons to a
-  junction mouth, stitch one watertight junction pad, and bake collision from
-  the same surfaces. TD-0008 tracks it.
+- Junction road geometry is implemented on `feat/junction-road-geometry`:
+  clip the branch and host shoulder to the junction mouth, stitch one
+  watertight junction surface with shared boundary vertices, and bake collision
+  from the same surfaces. TD-0008 is implemented; dev-preview validation at
+  30/45/90° remains before landing.
 - Docs: ADR 0003, ADR 0004, ADR 0005, venue-graph plan, tech debt updated.
 - Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
@@ -264,8 +275,9 @@ junction branch, cap, host preservation, and track-pack export:
 
 Resume in this order:
 
-1. Phase 3d junction road geometry (ADR 0005, TD-0008): clip and stitch
-   junction surfaces, then validate 30/45/90° joins.
+1. Phase 3d junction road geometry (ADR 0005, TD-0008): implementation, full
+   gate, and push are complete on `feat/junction-road-geometry`; validate
+   30/45/90° joins on the dev preview, then open a PR to `dev`.
 2. TD-0006 remainder: junction chain continuation after Phase 3d/Phase 4;
    custom-lane authoring is still dropped. Seam paint and seam endpoint resize
    are complete and tested.
@@ -274,10 +286,11 @@ Resume in this order:
 
 ## Next steps
 
-1. **Phase 3d — junction road geometry (next)**: implement ADR 0005 — derive
-   junction mouths, clip host/branch ribbons, stitch one watertight junction pad
-   with asphalt/shoulder/grass transitions, bake collision from the same
-   surfaces, and validate 30/45/90° joins. Do not cut kerbs/props yet.
+1. **Phase 3d — junction road geometry (implemented)**: ADR 0005 is implemented
+   and pushed on `feat/junction-road-geometry` with a clipped/stitched junction
+   surface, host shoulder window removal, and matching collision. Validate
+   30/45/90° joins on the dev preview, then open a PR to `dev`. Do not cut
+   kerbs/props yet.
 2. **Speed Dreams physics**: parse `sc-deckard-conejo.xml` into
    `CarPhysics`, including mass, CG, torque curve, gears, final drive, brakes,
    aero, springs/dampers, and tire mu. Confirm the reverse-light split visually.

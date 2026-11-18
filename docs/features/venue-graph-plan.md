@@ -271,6 +271,10 @@ TD-0002/0003.
 
 #### 3d — Junction road geometry (ADR-0005)
 
+Status: implemented on `feat/junction-road-geometry` (full gate green);
+dev-preview validation at 30/45/90° remains before merge. Curved branches are
+rejected with a typed error until TD-0009.
+
 Junctions are currently a graph primitive: the renderer bakes independent
 full-width host and branch ribbons, so angled joins overlap dirt/grass/tarmac,
 z-fight, and leave holes. Replace that with a clipped, stitched junction
