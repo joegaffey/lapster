@@ -2208,11 +2208,7 @@ fn create_mesh(
     } else {
         0.0
     };
-    let track_blend = mesh
-        .name
-        .to_ascii_lowercase()
-        .contains("dither")
-        .then_some(1.0);
+    let track_blend = mesh.track_blend;
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
         alpha: [
