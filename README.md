@@ -30,8 +30,8 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
   garage `Drive` button opens it with the launcher's selected track (Skidpad by default),
   and the menu's Drive demo uses the same car selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
-  and orbit/pan/zoom camera navigation. Camera height is capped at 60 m to avoid high-angle
-  model artifacts.
+  and orbit/pan/zoom camera navigation with cursor-anchored wheel zoom and double-click focus.
+  Camera height is capped at 60 m to avoid high-angle model artifacts.
 - **Style spike** — a dedicated painterly-toon validation page that loads the Skidpad or
   Drift Tracks fixture, keeps the existing grass and grass/dirt texture reuse, and adds
   procedurally placed leaf-card trees and bushes with spherical normals, wind sway, and

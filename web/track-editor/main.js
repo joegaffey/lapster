@@ -144,6 +144,59 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
     const radius = clamp(length(offset) * factor, 0.5, 5e3);
     eye = add(target, scale(normalize(offset), radius));
   };
+  const cursorAnchor = (clientX, clientY) => {
+    const offset = sub(eye, target);
+    const radius = length(offset);
+    if (radius < 1e-4) {
+      return null;
+    }
+    const rect = canvas2.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    const nx = (clientX - rect.left) / rect.width * 2 - 1;
+    const ny = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const forward = normalize(sub(target, eye));
+    let right = normalize(cross(forward, [0, 1, 0]));
+    if (length(right) < 1e-4) {
+      right = [1, 0, 0];
+    }
+    const up = normalize(cross(right, forward));
+    const halfHeight = radius * Math.tan(info.fovY * 0.5);
+    const halfWidth = halfHeight * (rect.width / rect.height);
+    return add(
+      target,
+      add(scale(right, nx * halfWidth), scale(up, ny * halfHeight))
+    );
+  };
+  const zoomAt = (factor, clientX, clientY) => {
+    if (!Number.isFinite(factor) || factor <= 0) {
+      return;
+    }
+    if (!allowPan) {
+      zoomBy(factor);
+      return;
+    }
+    const anchor = cursorAnchor(clientX, clientY);
+    if (!anchor) {
+      zoomBy(factor);
+      return;
+    }
+    const clampedFactor = clamp(factor, 0.2, 5);
+    const offset = sub(eye, target);
+    const radius = clamp(length(offset) * clampedFactor, 0.5, 5e3);
+    target = lerp(target, anchor, 1 - clampedFactor);
+    eye = add(target, scale(normalize(offset), radius));
+  };
+  const focusAt = (clientX, clientY) => {
+    const anchor = cursorAnchor(clientX, clientY);
+    if (!anchor) {
+      return;
+    }
+    const delta = sub(anchor, target);
+    eye = add(eye, delta);
+    target = add(target, delta);
+  };
   const pinchState = () => {
     const points = [...pointers.values()];
     if (points.length < 2) {
@@ -190,7 +243,11 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
           pan(state.centroid[0] - pinch.centroid[0], state.centroid[1] - pinch.centroid[1]);
         }
         if (state.distance > 0 && pinch.distance > 0) {
-          zoomBy(pinch.distance / state.distance);
+          zoomAt(
+            pinch.distance / state.distance,
+            state.centroid[0],
+            state.centroid[1]
+          );
         }
       }
       pinch = state;
@@ -225,11 +282,24 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
       }
       event.preventDefault();
       cancelFlight();
-      zoomBy(Math.exp(event.deltaY * 1e-3));
+      zoomAt(
+        Math.exp(event.deltaY * 1e-3),
+        event.clientX,
+        event.clientY
+      );
       apply();
     },
     { passive: false }
   );
+  canvas2.addEventListener("dblclick", (event) => {
+    if (!enabled2 || !allowPan) {
+      return;
+    }
+    event.preventDefault();
+    cancelFlight();
+    focusAt(event.clientX, event.clientY);
+    apply();
+  });
   if (options.attachResetButton !== false) {
     document.querySelector("#reset-camera")?.addEventListener("click", () => {
       if (!enabled2) {
@@ -339,7 +409,7 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
 }
 
 // web/src/version.generated.ts
-var APP_VERSION = "20547ab-1794873204";
+var APP_VERSION = "44dfb3b-1795045209";
 
 // web/src/ui/car-setup.ts
 var number = (path, label, min, max, step, unit) => ({ path, label, min, max, step, unit });
