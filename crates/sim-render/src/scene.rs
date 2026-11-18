@@ -5,8 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
 use sim_types::{
-    AssetManifest, CarVisual, MeshBuffers, MeshRef, TextureRef, TrackCollision, TrackMetadata,
-    TrackVisual,
+    AssetManifest, CarVisual, MeshBuffers, TextureRef, TrackCollision, TrackMetadata, TrackVisual,
 };
 
 use crate::camera::Camera;
@@ -377,28 +376,36 @@ impl Scene {
             .any(|material| material.name.to_ascii_lowercase().contains("dither"))
         {
             let fringes = edge_dither_fringes(visual);
-            for (name, vertices, indices, color) in fringes {
+            for fringe in fringes {
                 let texture_index = textures.len();
-                textures.push(dither_texture(color));
-                stats.vertices += vertices.len() as u32;
-                stats.triangles += (indices.len() / 3) as u32;
+                if let Some(color) = fringe.texture_color {
+                    textures.push(SceneTexture {
+                        width: 1,
+                        height: 1,
+                        rgba8: vec![color[0], color[1], color[2], 255],
+                    });
+                } else {
+                    textures.push(dither_texture(fringe.color));
+                }
+                stats.vertices += fringe.vertices.len() as u32;
+                stats.triangles += (fringe.indices.len() / 3) as u32;
                 stats.draw_calls += 1;
                 meshes.push(MeshData {
-                    name,
-                    vertices,
-                    indices,
+                    name: fringe.name,
+                    vertices: fringe.vertices,
+                    indices: fringe.indices,
                     model: Mat4::IDENTITY,
                     texture: Some(texture_index),
                     grass_texture: None,
                     outline: None,
-                    alpha: 0.99,
+                    alpha: 1.0,
                     emissive: [0.0; 3],
                     casts_static_shadow: false,
                     casts_dynamic_shadow: false,
                     is_decal: false,
                     foliage: false,
                     billboard: false,
-                    track_blend: None,
+                    track_blend: fringe.track_blend,
                 });
             }
         }
@@ -776,7 +783,31 @@ fn material_average_color(visual: &TrackVisual, material_index: usize) -> [u8; 3
     ]
 }
 
-fn edge_dither_fringes(visual: &TrackVisual) -> Vec<(String, Vec<MeshVertex>, Vec<u32>, [u8; 3])> {
+struct DitherFringe {
+    name: String,
+    vertices: Vec<MeshVertex>,
+    indices: Vec<u32>,
+    color: [u8; 3],
+    texture_color: Option<[u8; 3]>,
+    track_blend: Option<f32>,
+}
+
+const DITHER_STRIP_HALF_WIDTH: f32 = 0.3;
+const DITHER_FALLBACK_WIDTH: f32 = 0.45;
+const DITHER_LIFT: f32 = 0.02;
+const DITHER_ASPHALT_DIRT_UV: [f32; 2] = [2.96, 3.04];
+const DITHER_DIRT_GRASS_UV: [f32; 2] = [3.81, 3.91];
+
+fn srgb_byte_to_linear(value: u8) -> f32 {
+    let value = f32::from(value) / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn edge_dither_fringes(visual: &TrackVisual) -> Vec<DitherFringe> {
     let mut surfaces = Vec::new();
     for (mesh_ref, buffers) in visual.meshes.iter().zip(visual.mesh_buffers.iter()) {
         let Some(priority) = surface_priority(&mesh_ref.name) else {
@@ -823,8 +854,7 @@ fn edge_dither_fringes(visual: &TrackVisual) -> Vec<(String, Vec<MeshVertex>, Ve
         }
     }
 
-    let mut groups: HashMap<(usize, usize), (String, Vec<MeshVertex>, Vec<u32>, [u8; 3])> =
-        HashMap::new();
+    let mut groups: HashMap<(usize, usize), DitherFringe> = HashMap::new();
     for sides in edges.values() {
         let candidates = sides.thirds.iter().collect::<Vec<_>>();
         for first in 0..candidates.len() {
@@ -843,20 +873,68 @@ fn edge_dither_fringes(visual: &TrackVisual) -> Vec<(String, Vec<MeshVertex>, Ve
                 let a = Vec3::from_array(sides.a);
                 let b = Vec3::from_array(sides.b);
                 let midpoint = (a + b) * 0.5;
-                let direction = Vec3::from_array(target_third) - midpoint;
-                let direction = Vec3::new(direction.x, 0.0, direction.z);
-                if direction.length_squared() < 1e-8 {
+                let edge = Vec3::new(b.x - a.x, 0.0, b.z - a.z);
+                let toward = Vec3::from_array(target_third) - midpoint;
+                let toward = Vec3::new(toward.x, 0.0, toward.z);
+                if edge.length_squared() < 1e-8 || toward.length_squared() < 1e-8 {
                     continue;
                 }
+                let mut direction = Vec3::new(-edge.z, 0.0, edge.x);
+                if direction.dot(toward) < 0.0 {
+                    direction = -direction;
+                }
                 let direction = direction.normalize();
-                let lift = Vec3::Y * 0.02;
-                let width = 0.45;
-                let points = [
-                    a + lift,
-                    b + lift,
-                    b + direction * width + lift,
-                    a + direction * width + lift,
-                ];
+                let lift = Vec3::Y * DITHER_LIFT;
+                let supported_band = match (surfaces[source].2, surfaces[target].2) {
+                    (3, 2) => Some((DITHER_ASPHALT_DIRT_UV, target)),
+                    (2, 1) => Some((DITHER_DIRT_GRASS_UV, source)),
+                    _ => None,
+                };
+                let (
+                    dirt_surface,
+                    uv_inner,
+                    uv_outer,
+                    texture_color,
+                    vertex_color,
+                    track_blend,
+                    centered,
+                ) = if let Some((uv, dirt_surface)) = supported_band {
+                    let dirt = surfaces[dirt_surface].3.map(srgb_byte_to_linear);
+                    let texel = surfaces[source].3.map(srgb_byte_to_linear);
+                    let vertex_color = [
+                        (dirt[0] / (0.75 + 0.25 * texel[0])).clamp(0.0, 1.0),
+                        (dirt[1] / (0.75 + 0.25 * texel[1])).clamp(0.0, 1.0),
+                        (dirt[2] / (0.75 + 0.25 * texel[2])).clamp(0.0, 1.0),
+                    ];
+                    (
+                        dirt_surface,
+                        uv[0],
+                        uv[1],
+                        Some(surfaces[source].3),
+                        vertex_color,
+                        Some(1.0),
+                        true,
+                    )
+                } else {
+                    (source, 0.0, 0.0, None, [1.0, 1.0, 1.0], None, false)
+                };
+                let points = if centered {
+                    let inner_side = -direction * DITHER_STRIP_HALF_WIDTH;
+                    let outer_side = direction * DITHER_STRIP_HALF_WIDTH;
+                    [
+                        a + inner_side + lift,
+                        b + inner_side + lift,
+                        b + outer_side + lift,
+                        a + outer_side + lift,
+                    ]
+                } else {
+                    [
+                        a + lift,
+                        b + lift,
+                        b + direction * DITHER_FALLBACK_WIDTH + lift,
+                        a + direction * DITHER_FALLBACK_WIDTH + lift,
+                    ]
+                };
                 let face_normal = (points[1] - points[0]).cross(points[2] - points[0]);
                 let order = if face_normal.y >= 0.0 {
                     [0u32, 1, 2, 0, 2, 3]
@@ -864,25 +942,38 @@ fn edge_dither_fringes(visual: &TrackVisual) -> Vec<(String, Vec<MeshVertex>, Ve
                     [0u32, 2, 1, 0, 3, 2]
                 };
                 let key = (source, target);
-                let (_, vertices, indices, _) = groups.entry(key).or_insert_with(|| {
-                    (
-                        format!("dither_{}_to_{}", surfaces[source].0, surfaces[target].0),
-                        Vec::new(),
-                        Vec::new(),
-                        surfaces[source].3,
-                    )
+                let group_color = if centered {
+                    surfaces[dirt_surface].3
+                } else {
+                    surfaces[source].3
+                };
+                let fringe = groups.entry(key).or_insert_with(|| DitherFringe {
+                    name: format!("dither_{}_to_{}", surfaces[source].0, surfaces[target].0),
+                    vertices: Vec::new(),
+                    indices: Vec::new(),
+                    color: group_color,
+                    texture_color,
+                    track_blend,
                 });
-                let base = vertices.len() as u32;
-                for point in points {
-                    vertices.push(MeshVertex {
+                let base = fringe.vertices.len() as u32;
+                for (index, point) in points.into_iter().enumerate() {
+                    let uv = if centered {
+                        let uv_y = if index < 2 { uv_inner } else { uv_outer };
+                        [point.x / 7.0, uv_y]
+                    } else {
+                        [point.x / 1.5, point.z / 1.5]
+                    };
+                    fringe.vertices.push(MeshVertex {
                         position: point.to_array(),
                         normal: [0.0, 1.0, 0.0],
-                        color: [1.0, 1.0, 1.0],
-                        uv: [point.x / 1.5, point.z / 1.5],
+                        color: vertex_color,
+                        uv,
                         wind: [0.0, 0.0],
                     });
                 }
-                indices.extend(order.into_iter().map(|index| base + index));
+                fringe
+                    .indices
+                    .extend(order.into_iter().map(|index| base + index));
             }
         }
     }
@@ -1197,6 +1288,7 @@ pub(crate) fn push_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sim_types::MeshRef;
 
     #[test]
     fn outline_welds_duplicate_positions() {
@@ -1220,89 +1312,182 @@ mod tests {
         assert_eq!(outline.vertices[0].normal, [0.0, 0.0, 1.0]);
     }
 
-    #[test]
-    fn edge_dither_fringes_follow_surface_priority() {
-        let asphalt = MeshBuffers {
-            positions: vec![
-                [-1.0, 0.0, -1.0],
-                [0.0, 0.0, -1.0],
-                [0.0, 0.0, 1.0],
-                [-1.0, 0.0, 1.0],
-            ],
-            normals: vec![[0.0, 1.0, 0.0]; 4],
-            uvs: vec![[0.0, 0.0]; 4],
-            colors: Vec::new(),
-            indices: vec![0, 1, 2, 0, 2, 3],
-        };
-        let dirt = MeshBuffers {
-            positions: vec![
-                [0.0, 0.0, -1.0],
-                [1.0, 0.0, -1.0],
-                [1.0, 0.0, 1.0],
-                [0.0, 0.0, 1.0],
-            ],
-            normals: vec![[0.0, 1.0, 0.0]; 4],
-            uvs: vec![[0.0, 0.0]; 4],
-            colors: Vec::new(),
-            indices: vec![0, 1, 2, 0, 2, 3],
-        };
-        let visual = TrackVisual {
-            meshes: vec![
-                MeshRef {
-                    name: String::from("surface_asphalt"),
-                    vertex_offset: 0,
-                    vertex_count: 4,
-                    index_offset: 0,
-                    index_count: 6,
-                    material: 0,
-                    bounds: sim_types::Aabb {
-                        min: [-1.0, 0.0, -1.0],
-                        max: [0.0, 0.0, 1.0],
-                    },
-                    lod: 0,
-                },
-                MeshRef {
-                    name: String::from("surface_dirt"),
-                    vertex_offset: 0,
-                    vertex_count: 4,
-                    index_offset: 0,
-                    index_count: 6,
-                    material: 1,
-                    bounds: sim_types::Aabb {
-                        min: [0.0, 0.0, -1.0],
-                        max: [1.0, 0.0, 1.0],
-                    },
-                    lod: 0,
-                },
-            ],
-            materials: vec![
-                sim_types::MaterialRef {
-                    name: String::from("asphalt"),
-                    base_color: [0.045, 0.045, 0.05, 1.0],
-                    metallic: 0.0,
-                    roughness: 0.9,
-                    base_color_texture: None,
-                    outline: false,
-                },
-                sim_types::MaterialRef {
-                    name: String::from("dirt"),
-                    base_color: [0.48, 0.345, 0.208, 1.0],
-                    metallic: 0.0,
-                    roughness: 0.9,
-                    base_color_texture: None,
-                    outline: false,
-                },
-            ],
+    fn test_material(name: &str, base_color: [f32; 4]) -> sim_types::MaterialRef {
+        sim_types::MaterialRef {
+            name: String::from(name),
+            base_color,
+            metallic: 0.0,
+            roughness: 0.9,
+            base_color_texture: None,
+            outline: false,
+        }
+    }
+
+    fn test_visual(surfaces: Vec<(&str, MeshBuffers, sim_types::MaterialRef)>) -> TrackVisual {
+        let mut meshes = Vec::new();
+        let mut materials = Vec::new();
+        let mut mesh_buffers = Vec::new();
+        for (name, buffers, material) in surfaces {
+            let mut min = [f32::INFINITY; 3];
+            let mut max = [f32::NEG_INFINITY; 3];
+            for position in &buffers.positions {
+                for axis in 0..3 {
+                    min[axis] = min[axis].min(position[axis]);
+                    max[axis] = max[axis].max(position[axis]);
+                }
+            }
+            meshes.push(MeshRef {
+                name: String::from(name),
+                vertex_offset: 0,
+                vertex_count: buffers.positions.len() as u32,
+                index_offset: 0,
+                index_count: buffers.indices.len() as u32,
+                material: materials.len() as u16,
+                bounds: sim_types::Aabb { min, max },
+                lod: 0,
+            });
+            mesh_buffers.push(buffers);
+            materials.push(material);
+        }
+        TrackVisual {
+            meshes,
+            materials,
             textures: Vec::new(),
-            mesh_buffers: vec![asphalt, dirt],
+            mesh_buffers,
             instances: Vec::new(),
-        };
+        }
+    }
+
+    fn test_quad(x0: f32, x1: f32) -> MeshBuffers {
+        MeshBuffers {
+            positions: vec![
+                [x0, 0.0, -1.0],
+                [x1, 0.0, -1.0],
+                [x1, 0.0, 1.0],
+                [x0, 0.0, 1.0],
+            ],
+            normals: vec![[0.0, 1.0, 0.0]; 4],
+            uvs: vec![[0.0, 0.0]; 4],
+            colors: Vec::new(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+        }
+    }
+
+    fn x_span(vertices: &[MeshVertex]) -> f32 {
+        let min = vertices
+            .iter()
+            .map(|vertex| vertex.position[0])
+            .fold(f32::INFINITY, f32::min);
+        let max = vertices
+            .iter()
+            .map(|vertex| vertex.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        max - min
+    }
+
+    #[test]
+    fn edge_dither_fringes_use_centered_shader_band() {
+        let visual = test_visual(vec![
+            (
+                "surface_asphalt",
+                test_quad(-1.0, 0.0),
+                test_material("asphalt", [0.045, 0.045, 0.05, 1.0]),
+            ),
+            (
+                "surface_dirt",
+                test_quad(0.0, 1.0),
+                test_material("dirt", [0.48, 0.345, 0.208, 1.0]),
+            ),
+        ]);
         let fringes = edge_dither_fringes(&visual);
         assert_eq!(fringes.len(), 1);
-        let (name, vertices, indices, _) = &fringes[0];
-        assert_eq!(name, "dither_surface_asphalt_to_surface_dirt");
-        assert_eq!(vertices.len(), 4);
-        assert_eq!(indices.len(), 6);
+        let fringe = &fringes[0];
+        assert_eq!(fringe.name, "dither_surface_asphalt_to_surface_dirt");
+        assert_eq!(fringe.track_blend, Some(1.0));
+        assert!(fringe.texture_color.is_some());
+        assert_eq!(fringe.vertices.len(), 4);
+        assert_eq!(fringe.indices.len(), 6);
+        assert!((x_span(&fringe.vertices) - DITHER_STRIP_HALF_WIDTH * 2.0).abs() < 1e-5);
+        assert!((fringe.vertices[0].uv[1] - DITHER_ASPHALT_DIRT_UV[0]).abs() < 1e-5);
+        assert!((fringe.vertices[2].uv[1] - DITHER_ASPHALT_DIRT_UV[1]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn edge_dither_fringes_ignore_parallel_target_vertex() {
+        let dirt = MeshBuffers {
+            positions: vec![[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.05, 0.0, 1.9]],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            uvs: vec![[0.0, 0.0]; 3],
+            colors: Vec::new(),
+            indices: vec![0, 1, 2],
+        };
+        let visual = test_visual(vec![
+            (
+                "surface_asphalt",
+                test_quad(-1.0, 0.0),
+                test_material("asphalt", [0.045, 0.045, 0.05, 1.0]),
+            ),
+            (
+                "surface_dirt",
+                dirt,
+                test_material("dirt", [0.48, 0.345, 0.208, 1.0]),
+            ),
+        ]);
+        let fringes = edge_dither_fringes(&visual);
+        assert_eq!(fringes.len(), 1);
+        let width = x_span(&fringes[0].vertices);
+        assert!(
+            (width - DITHER_STRIP_HALF_WIDTH * 2.0).abs() < 1e-4,
+            "dither strip must stay perpendicular to the seam, got {width} m"
+        );
+    }
+
+    #[test]
+    fn edge_dither_fringes_use_dirt_to_grass_band() {
+        let visual = test_visual(vec![
+            (
+                "surface_dirt",
+                test_quad(-1.0, 0.0),
+                test_material("dirt", [0.48, 0.345, 0.208, 1.0]),
+            ),
+            (
+                "surface_grass",
+                test_quad(0.0, 1.0),
+                test_material("grass", [0.302, 0.431, 0.208, 1.0]),
+            ),
+        ]);
+        let fringes = edge_dither_fringes(&visual);
+        assert_eq!(fringes.len(), 1);
+        let fringe = &fringes[0];
+        assert_eq!(fringe.name, "dither_surface_dirt_to_surface_grass");
+        assert_eq!(fringe.track_blend, Some(1.0));
+        assert!((fringe.vertices[0].uv[1] - DITHER_DIRT_GRASS_UV[0]).abs() < 1e-5);
+        assert!((fringe.vertices[2].uv[1] - DITHER_DIRT_GRASS_UV[1]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn edge_dither_fringes_fall_back_for_unhandled_pairs() {
+        let visual = test_visual(vec![
+            (
+                "surface_asphalt",
+                test_quad(-1.0, 0.0),
+                test_material("asphalt", [0.045, 0.045, 0.05, 1.0]),
+            ),
+            (
+                "surface_grass",
+                test_quad(0.0, 1.0),
+                test_material("grass", [0.302, 0.431, 0.208, 1.0]),
+            ),
+        ]);
+        let fringes = edge_dither_fringes(&visual);
+        assert_eq!(fringes.len(), 1);
+        let fringe = &fringes[0];
+        assert_eq!(fringe.name, "dither_surface_asphalt_to_surface_grass");
+        assert_eq!(fringe.track_blend, None);
+        assert_eq!(fringe.texture_color, None);
+        assert_eq!(fringe.vertices.len(), 4);
+        assert_eq!(fringe.indices.len(), 6);
+        assert!((fringe.vertices[0].uv[1] - (-1.0 / 1.5)).abs() < 1e-5);
     }
 
     #[test]
