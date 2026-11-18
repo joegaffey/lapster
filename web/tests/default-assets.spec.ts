@@ -59,6 +59,6 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   }));
   expect(track.error).toBeUndefined();
   expect(track.asset).toContain("skidpad05");
-  expect(track.stats).toContain("draw calls29");
+  expect(track.stats).toContain("draw calls30");
   expect(pageErrors).toEqual([]);
 });

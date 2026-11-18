@@ -338,6 +338,9 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
   };
 }
 
+// web/src/version.generated.ts
+var APP_VERSION = "20547ab-1794873204";
+
 // web/src/ui/car-setup.ts
 var number = (path, label, min, max, step, unit) => ({ path, label, min, max, step, unit });
 var json = (path, label) => ({ path, label, kind: "json" });
@@ -929,6 +932,13 @@ function showLoadingFailure(error) {
   if (label) {
     label.textContent = message ? `Failed to load: ${message}` : "Failed to load";
   }
+}
+
+// web/src/wasm-init.ts
+function versionedWasmUrl(path) {
+  const url = new URL(path, import.meta.url);
+  url.searchParams.set("v", APP_VERSION);
+  return url;
 }
 
 // web/track-editor/main.ts
@@ -4303,7 +4313,7 @@ function renderStats(debug) {
 }
 async function boot() {
   setStatus("loading wasm");
-  await init();
+  await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
   resizeCanvas();
   setStatus("generating track");
   const viewer = await TrackViewer.create_editor(canvas);

@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 glam = "0.27"
-gltf = "1.4.1"
+gltf = { version = "1.4.1", features = ["extras"] }
 image = { version = "0.25", default-features = false, features = ["dds", "png"] }
 rkyv = { version = "0.7", features = ["validation"] }
 serde = { version = "1", features = ["derive"] }
