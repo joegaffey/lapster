@@ -477,6 +477,7 @@ fn add_car_decal(
         is_decal: true,
         foliage: false,
         billboard: false,
+        track_blend: None,
     });
     Ok(scene.meshes.len() - 1)
 }
@@ -1599,6 +1600,7 @@ fn push_car_mesh(
         is_decal: false,
         foliage: false,
         billboard: false,
+        track_blend: None,
     });
     Ok(scene.meshes.len() - 1)
 }

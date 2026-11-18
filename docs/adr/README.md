@@ -36,3 +36,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0002](0002-contract-bound-multi-agent-workflow.md) | Contract-bound multi-agent workflow | Accepted |
 | [0003](0003-section-point-venue-graph.md) | Section-point venue graph with mid-section junctions | Accepted; spline clause superseded by ADR-0004 |
 | [0004](0004-b-spline-control-points.md) | B-spline control-point venue curves | Accepted |
+| [0005](0005-junction-road-geometry.md) | Junction road geometry | Accepted |
