@@ -37,6 +37,7 @@ import {
 } from "../src/net/room.ts";
 import type { PlayerInfo, StateMessage } from "../src/net/protocol.ts";
 import { SNAPSHOT_STATE } from "../src/types/asset-layout.ts";
+import { versionedWasmUrl } from "../src/wasm-init.ts";
 
 declare global {
   interface Window {
@@ -923,7 +924,7 @@ async function boot() {
     return;
   }
   status.textContent = "loading wasm";
-  await init();
+  await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
   status.textContent = "loading packs";
   const trackPackPromise =

@@ -35,7 +35,7 @@ test("garage viewer renders the car on the track", async ({ page }) => {
   for (const wheel of ["FL front", "FR front", "RL rear drive", "RR rear drive"]) {
     expect(state.wheels).toContain(wheel);
   }
-  expect(state.stats).toContain("track tris86");
+  expect(state.stats).toContain("track tris6230");
   expect(state.debug.cars.map((car: any) => car.id)).toEqual([
     "mazda-rx7",
     "sc-deckard-conejo",

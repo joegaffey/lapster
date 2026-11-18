@@ -501,14 +501,29 @@ fn import_material(material: &gltf::Material<'_>) -> MaterialRef {
     let base_color_texture = pbr
         .base_color_texture()
         .map(|info| info.texture().source().index() as u32);
+    let name = material.name().unwrap_or("glb_material").to_string();
+    let outline = material_outline(&name, material.extras().as_deref());
     MaterialRef {
-        name: material.name().unwrap_or("glb_material").to_string(),
+        name,
         base_color: factor,
         metallic: pbr.metallic_factor(),
         roughness: pbr.roughness_factor(),
         base_color_texture,
-        outline: false,
+        outline,
     }
+}
+
+fn material_outline(name: &str, extras: Option<&serde_json::value::RawValue>) -> bool {
+    if let Some(outline) = extras
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw.get()).ok())
+        .and_then(|extras| extras.get("outline").and_then(serde_json::Value::as_bool))
+    {
+        return outline;
+    }
+    matches!(
+        name,
+        "wall" | "concrete" | "tire_blue" | "tire_white" | "tree_trunk" | "tree_foliage"
+    )
 }
 
 fn import_textures(images: &[gltf::image::Data]) -> Result<Vec<TextureRef>> {
@@ -670,4 +685,26 @@ fn prune_visual(visual: &mut TrackVisual) {
     }
     visual.materials = materials;
     visual.textures = textures;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::material_outline;
+    use serde_json::value::RawValue;
+
+    #[test]
+    fn material_outline_honours_glb_extras() {
+        let extras = RawValue::from_string(r#"{"outline":true}"#.to_string()).unwrap();
+        assert!(material_outline("asphalt", Some(&extras)));
+        let extras = RawValue::from_string(r#"{"outline":false}"#.to_string()).unwrap();
+        assert!(!material_outline("wall", Some(&extras)));
+    }
+
+    #[test]
+    fn material_outline_defaults_by_name() {
+        assert!(material_outline("wall", None));
+        assert!(material_outline("tree_foliage", None));
+        assert!(!material_outline("asphalt", None));
+        assert!(!material_outline("kerb_red", None));
+    }
 }

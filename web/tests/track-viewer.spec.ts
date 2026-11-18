@@ -27,10 +27,10 @@ test("track viewer renders the baked minimal track", async ({ page }) => {
   expect(state.error).toBeUndefined();
   expect(state.ready).toBe(true);
   expect(state.status).toBe("ready");
-  expect(state.draws).toBe("8");
-  expect(state.stats).toContain("vertices172");
-  expect(state.stats).toContain("triangles86");
-  expect(state.stats).toContain("draw calls8");
+  expect(state.draws).toBe("9");
+  expect(state.stats).toContain("vertices3397");
+  expect(state.stats).toContain("triangles6230");
+  expect(state.stats).toContain("draw calls9");
   expect(state.stats).toContain("textures1");
   expect(state.stats).toContain("collision tris26");
   expect(state.debug.stats.texturedMeshes).toBe(1);
