@@ -751,6 +751,7 @@ fn linear_to_srgb(value: f32) -> f32 {
     }
 }
 
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn material_average_color(visual: &TrackVisual, material_index: usize) -> [u8; 3] {
     let Some(material) = visual.materials.get(material_index) else {
         return [255, 255, 255];
@@ -807,6 +808,7 @@ fn srgb_byte_to_linear(value: u8) -> f32 {
     }
 }
 
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn edge_dither_fringes(visual: &TrackVisual) -> Vec<DitherFringe> {
     let mut surfaces = Vec::new();
     for (mesh_ref, buffers) in visual.meshes.iter().zip(visual.mesh_buffers.iter()) {
