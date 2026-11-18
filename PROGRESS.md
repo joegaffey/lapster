@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-14
+Last updated: 2026-11-18
 Current phase: **Venue graph — junction road geometry (Phase 3d)**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
@@ -78,10 +78,15 @@ Deployment:
   ribbons, so angled joins overlap dirt/grass/tarmac, z-fight, and leave holes.
   ADR 0005 proposes a clipped, stitched junction pad (venue Phase 3d); the
   experimental trim/lift/cut geometry was reverted. The independent non-route
-  section/cap shading fix remains in PR #29 (`fix/track-section-shading`).
+  section/cap shading fix merged in PR #29 (`fix/track-section-shading`).
   Custom-lane authoring remains dropped for now, and junction chain
   continuation is blocked on multi-leg routes (Phase 4). Per-point width is
   deferred (TD-0002, TD-0003).
+- Imported track rendering is on `feat/imported-track-rendering` (renderer-only,
+  editor-independent): GLB imports carry procedural tarmac/grass textures, UVs,
+  outline extras, and a distant mountain backdrop, and get screen-space Bayer
+  dither fringes at asphalt/dirt/grass boundaries. This is the path track-ed
+  exports render through in Lapster.
 - Relay multiplayer prototype is working: rooms up to four players, optional
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
@@ -138,11 +143,11 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 153 tests
+- `cargo test --workspace` — 160 tests
 - `cargo check ... --target wasm32-unknown-unknown`
 - `npm test` — 38 tests
-- `CI=1 npm run test:viewer` — 95 passed, 1 skipped, 1 pre-existing
-  garage-camera timing flake
+- `CI=1 npm run test:viewer` — 98 passed, 1 skipped
+- WebGL2 fallback — 2/2 passed
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
