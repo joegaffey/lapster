@@ -55,7 +55,7 @@ var TRACK_ED_TRACK_ID = "track-ed";
 var TRACK_ED_TRACK_CACHE_KEY = "lapster.track-ed.v1";
 
 // web/src/version.generated.ts
-var APP_VERSION = "e9f4f4b-1795050037";
+var APP_VERSION = "34c0349-1795077270";
 
 // web/src/wasm-init.ts
 function versionedWasmUrl(path) {
