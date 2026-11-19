@@ -3,17 +3,15 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use sim_asset::{archive, write_pack, ChunkSpec};
 use sim_types::{
-    Aabb, CameraSpec, MaterialRef, SpawnPoint, SurfaceSpec, TextureRef, TrackCollision,
-    TrackMetadata, TrackVisual,
+    Aabb, AssetKind, AssetManifest, AssetStats, CameraSpec, ChunkKind, EntryPoints, MaterialRef,
+    MeshBuffers, MeshRef, SpawnPoint, SurfaceSpec, TextureRef, TrackCollision, TrackMetadata,
+    TrackVisual, ENGINE_FRAME, ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
 };
-
-use crate::ac_track::{start_camera, surface_height_at};
-use crate::glb::{append_primitive, empty_mesh, mesh_ref};
-use crate::mesh::{bounds, merge_bounds};
 
 pub struct ImportedTrack {
     pub visual: TrackVisual,
@@ -86,17 +84,23 @@ fn default_scale() -> f32 {
     1.0
 }
 
-pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
-    let source_path = dir.join("track.json");
-    let source_bytes = fs::read(&source_path)
-        .with_context(|| format!("failed to read {}", source_path.display()))?;
-    let source: GlbTrackSource = serde_json::from_slice(&source_bytes)
-        .with_context(|| format!("failed to parse {}", source_path.display()))?;
+pub fn import_track_dir(dir: &Path) -> Result<ImportedTrack> {
+    let source_bytes = fs::read(dir.join("track.json"))
+        .with_context(|| format!("failed to read {}", dir.join("track.json").display()))?;
+    let glb_name = track_glb_name(&source_bytes)?;
+    let glb_path = dir.join(glb_name);
+    let glb_bytes =
+        fs::read(&glb_path).with_context(|| format!("failed to read {}", glb_path.display()))?;
+    import_track_bytes(&source_bytes, &glb_bytes)
+}
+
+pub fn import_track_bytes(source_bytes: &[u8], glb_bytes: &[u8]) -> Result<ImportedTrack> {
+    let source: GlbTrackSource =
+        serde_json::from_slice(source_bytes).context("failed to parse track.json")?;
     validate_source(&source)?;
 
-    let glb_path = dir.join(&source.visual.glb);
-    let (document, buffers, images) = gltf::import(&glb_path)
-        .with_context(|| format!("failed to import {}", glb_path.display()))?;
+    let (document, buffers, images) =
+        gltf::import_slice(glb_bytes).context("failed to import GLB track")?;
     let scene = document
         .default_scene()
         .or_else(|| document.scenes().next())
@@ -305,6 +309,107 @@ pub fn import_track(dir: &Path) -> Result<ImportedTrack> {
         bounds,
         warnings,
     })
+}
+
+pub fn bake_glb_track_bytes(track_json: &[u8], glb: &[u8], id: &str) -> Result<Vec<u8>> {
+    let imported = import_track_bytes(track_json, glb)?;
+    let statistics = stats(
+        &imported.visual.meshes,
+        &imported.visual.materials,
+        &imported.visual.textures,
+        &imported.visual.mesh_buffers,
+    );
+    let chunks = vec![
+        ChunkSpec {
+            kind: ChunkKind::Visual,
+            bytes: archive(&imported.visual)?,
+        },
+        ChunkSpec {
+            kind: ChunkKind::Collision,
+            bytes: archive(&imported.collision)?,
+        },
+        ChunkSpec {
+            kind: ChunkKind::Metadata,
+            bytes: archive(&imported.metadata)?,
+        },
+    ];
+    let manifest = AssetManifest {
+        magic: MAGIC,
+        schema_version: SCHEMA_VERSION,
+        kind: AssetKind::Track,
+        id: if id.is_empty() {
+            String::from("track-ed")
+        } else {
+            id.to_string()
+        },
+        source_hash: source_hash(track_json, glb),
+        units: ENGINE_UNITS,
+        frame: ENGINE_FRAME,
+        bounds: imported.bounds,
+        chunks: Vec::new(),
+        entrypoints: EntryPoints {
+            physics: None,
+            visual: Some(0),
+            collision: Some(1),
+            metadata: Some(2),
+            audio: None,
+            texture: None,
+        },
+        stats: statistics,
+        warnings: imported.warnings,
+    };
+    Ok(write_pack(manifest, chunks)?)
+}
+
+pub fn bake_glb_track_dir(dir: &Path) -> Result<Vec<u8>> {
+    let track_json = fs::read(dir.join("track.json"))
+        .with_context(|| format!("failed to read {}", dir.join("track.json").display()))?;
+    let glb_name = track_glb_name(&track_json)?;
+    let glb = fs::read(dir.join(&glb_name))
+        .with_context(|| format!("failed to read {}", dir.join(glb_name).display()))?;
+    let id = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("glb-track");
+    bake_glb_track_bytes(&track_json, &glb, id)
+}
+
+fn track_glb_name(source_bytes: &[u8]) -> Result<String> {
+    let source: GlbTrackSource =
+        serde_json::from_slice(source_bytes).context("failed to parse track.json")?;
+    if source.visual.glb.trim().is_empty() {
+        bail!("track.json visual.glb must name a GLB file");
+    }
+    Ok(source.visual.glb)
+}
+
+fn source_hash(track_json: &[u8], glb: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(track_json);
+    hasher.update([0]);
+    hasher.update(glb);
+    let digest = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&digest);
+    hash
+}
+
+fn stats(
+    meshes: &[MeshRef],
+    materials: &[MaterialRef],
+    textures: &[TextureRef],
+    buffers: &[MeshBuffers],
+) -> AssetStats {
+    AssetStats {
+        vertices: buffers.iter().map(|mesh| mesh.positions.len() as u32).sum(),
+        triangles: buffers
+            .iter()
+            .map(|mesh| mesh.indices.len() as u32 / 3)
+            .sum(),
+        materials: materials.len() as u16,
+        textures: textures.len() as u16,
+        draw_calls: meshes.len() as u16,
+    }
 }
 
 fn validate_source(source: &GlbTrackSource) -> Result<()> {
@@ -685,6 +790,184 @@ fn prune_visual(visual: &mut TrackVisual) {
     }
     visual.materials = materials;
     visual.textures = textures;
+}
+
+fn empty_mesh() -> MeshBuffers {
+    MeshBuffers {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        uvs: Vec::new(),
+        colors: Vec::new(),
+        indices: Vec::new(),
+    }
+}
+
+fn mesh_ref(name: &str, mesh: &MeshBuffers, material: u16) -> MeshRef {
+    MeshRef {
+        name: name.to_string(),
+        vertex_offset: 0,
+        vertex_count: mesh.positions.len() as u32,
+        index_offset: 0,
+        index_count: mesh.indices.len() as u32,
+        material,
+        bounds: bounds(mesh),
+        lod: 0,
+    }
+}
+
+fn append_primitive(
+    output: &mut MeshBuffers,
+    primitive: &gltf::Primitive<'_>,
+    buffers: &[gltf::buffer::Data],
+    _images: &[gltf::image::Data],
+    matrix: Mat4,
+    center: Option<Vec3>,
+    vertex_color: Option<[f32; 3]>,
+) -> Result<()> {
+    if primitive.mode() != gltf::mesh::Mode::Triangles {
+        bail!("only triangle primitives are supported");
+    }
+    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()].0));
+    let positions = reader
+        .read_positions()
+        .context("primitive has no POSITION attribute")?
+        .collect::<Vec<_>>();
+    if positions.is_empty() {
+        return Ok(());
+    }
+    let mut indices = reader
+        .read_indices()
+        .map(|indices| indices.into_u32().collect::<Vec<_>>())
+        .unwrap_or_else(|| (0..positions.len() as u32).collect());
+    indices.truncate(indices.len() / 3 * 3);
+    if indices.is_empty() {
+        return Ok(());
+    }
+
+    let mut normals = reader
+        .read_normals()
+        .map(|normals| normals.collect::<Vec<_>>())
+        .unwrap_or_default();
+    if normals.len() != positions.len() {
+        normals = compute_normals(&positions, &indices);
+    }
+    let uvs = reader
+        .read_tex_coords(0)
+        .map(|uvs| uvs.into_f32().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let normal_matrix = Mat3::from_mat4(matrix).inverse().transpose();
+    let base = output.positions.len() as u32;
+    let offset = center.unwrap_or(Vec3::ZERO);
+    let color = vertex_color.unwrap_or([1.0, 1.0, 1.0]);
+
+    for (index, position) in positions.iter().enumerate() {
+        let world = matrix.transform_point3(Vec3::from_array(*position)) - offset;
+        let normal = normal_matrix * Vec3::from_array(normals[index]);
+        let uv = uvs.get(index).copied().unwrap_or([0.0, 0.0]);
+        output.positions.push(world.to_array());
+        output.normals.push(normal.normalize_or_zero().to_array());
+        output.uvs.push(uv);
+        output.colors.push(color);
+    }
+    output
+        .indices
+        .extend(indices.into_iter().map(|index| base + index));
+    Ok(())
+}
+
+fn compute_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
+    let mut normals = vec![Vec3::ZERO; positions.len()];
+    for triangle in indices.chunks(3) {
+        let a = Vec3::from_array(positions[triangle[0] as usize]);
+        let b = Vec3::from_array(positions[triangle[1] as usize]);
+        let c = Vec3::from_array(positions[triangle[2] as usize]);
+        let normal = (b - a).cross(c - a);
+        for index in triangle {
+            normals[*index as usize] += normal;
+        }
+    }
+    normals
+        .into_iter()
+        .map(|normal| normal.normalize_or_zero().to_array())
+        .collect()
+}
+
+fn bounds(mesh: &MeshBuffers) -> Aabb {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for position in &mesh.positions {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(position[axis]);
+            max[axis] = max[axis].max(position[axis]);
+        }
+    }
+    if !min[0].is_finite() {
+        return Aabb {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        };
+    }
+    Aabb { min, max }
+}
+
+fn merge_bounds(current: Option<Aabb>, next: &Aabb) -> Aabb {
+    match current {
+        None => *next,
+        Some(current) => Aabb {
+            min: [
+                current.min[0].min(next.min[0]),
+                current.min[1].min(next.min[1]),
+                current.min[2].min(next.min[2]),
+            ],
+            max: [
+                current.max[0].max(next.max[0]),
+                current.max[1].max(next.max[1]),
+                current.max[2].max(next.max[2]),
+            ],
+        },
+    }
+}
+
+fn surface_height_at(collision: &TrackCollision, x: f32, z: f32) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for triangle in collision.indices.chunks(3) {
+        let a = collision.vertices[triangle[0] as usize];
+        let b = collision.vertices[triangle[1] as usize];
+        let c = collision.vertices[triangle[2] as usize];
+        let denominator = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
+        if denominator.abs() < 1e-6 {
+            continue;
+        }
+        let u = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / denominator;
+        let v = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / denominator;
+        let w = 1.0 - u - v;
+        if u < 0.0 || v < 0.0 || w < 0.0 {
+            continue;
+        }
+        let height = a[1] * w + b[1] * u + c[1] * v;
+        best = Some(best.map_or(height, |current| current.max(height)));
+    }
+    best
+}
+
+fn start_camera(spawn: &SpawnPoint, scale: f32) -> CameraSpec {
+    let rotation = Quat::from_xyzw(
+        spawn.rotation_xyzw[0],
+        spawn.rotation_xyzw[1],
+        spawn.rotation_xyzw[2],
+        spawn.rotation_xyzw[3],
+    )
+    .normalize();
+    let position = Vec3::from_array(spawn.position);
+    let forward = rotation * Vec3::new(0.0, 0.0, -1.0);
+    let right = rotation * Vec3::new(1.0, 0.0, 0.0);
+    let eye = position - forward * (14.0 * scale) + right * (5.0 * scale) + Vec3::Y * (7.0 * scale);
+    CameraSpec {
+        name: String::from("start"),
+        position: eye.to_array(),
+        target: (position + forward * (20.0 * scale) + Vec3::Y * (0.5 * scale)).to_array(),
+        fov_y: 0.9,
+    }
 }
 
 #[cfg(test)]

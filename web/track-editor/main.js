@@ -409,7 +409,7 @@ function setupTrackCamera(canvas2, viewer, options = {}) {
 }
 
 // web/src/version.generated.ts
-var APP_VERSION = "44dfb3b-1795045209";
+var APP_VERSION = "e9f4f4b-1795050037";
 
 // web/src/ui/car-setup.ts
 var number = (path, label, min, max, step, unit) => ({ path, label, min, max, step, unit });
