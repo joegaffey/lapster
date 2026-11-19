@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/sim-types",
     "crates/sim-asset",
+    "crates/track-pack",
+    "crates/track-pack-wasm",
     "crates/asset-compiler",
     "crates/sim-core",
     "crates/sim-render",

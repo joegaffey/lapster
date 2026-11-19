@@ -43,6 +43,8 @@ jobs:
               - 'crates/sim-render/**'
               - 'crates/sim-worker/**'
               - 'crates/asset-compiler/**'
+              - 'crates/track-pack/**'
+              - 'crates/track-pack-wasm/**'
               - 'crates/relay-server/src/protocol.rs'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -69,7 +71,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      - run: cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker --target wasm32-unknown-unknown
+      - run: cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker -p track-pack-wasm --target wasm32-unknown-unknown
 
   web:
     needs: changes

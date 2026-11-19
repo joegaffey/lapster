@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <link rel="manifest" href="../manifest.webmanifest" />
+    <meta name="theme-color" content="#080a0d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Lapster" />
+    <link rel="icon" href="../icons/icon-192.png" />
+    <title>Import track-ed Track</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: #080a0d;
+        color: #e6e8eb;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at 20% 0%, rgba(56, 189, 248, 0.13), transparent 35%),
+          #080a0d;
+      }
+      main {
+        width: min(560px, 100%);
+        padding: 24px;
+        border: 1px solid #2a303a;
+        background: rgba(15, 19, 25, 0.92);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+      }
+      p {
+        margin: 0 0 18px;
+        color: #8f9bab;
+        line-height: 1.55;
+      }
+      label {
+        display: block;
+        margin: 14px 0 6px;
+        color: #cbd5e1;
+        font-size: 12px;
+      }
+      input {
+        width: 100%;
+        padding: 9px;
+        border: 1px solid #3a4350;
+        background: #111821;
+        color: #e6e8eb;
+      }
+      button {
+        margin-top: 20px;
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #38bdf8;
+        background: #38bdf8;
+        color: #081018;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      #status {
+        min-height: 20px;
+        margin-top: 14px;
+        color: #fbbf24;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      #status.error {
+        color: #f87171;
+      }
+      a {
+        display: inline-block;
+        margin-top: 18px;
+        color: #9aa4b2;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Import track-ed Track</h1>
+      <p>
+        Choose the two files exported by track-ed. Lapster compiles them into a
+        local track pack and opens Test drive.
+      </p>
+      <form id="import-form">
+        <label for="track-json">track.json</label>
+        <input id="track-json" type="file" accept=".json,application/json" required />
+        <label for="track-glb">track.glb</label>
+        <input id="track-glb" type="file" accept=".glb,model/gltf-binary" required />
+        <button id="import-button" type="submit">Compile and test drive</button>
+      </form>
+      <div id="status" role="status"></div>
+      <a href="../">Back to menu</a>
+    </main>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

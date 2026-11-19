@@ -37,6 +37,49 @@ test("track viewer camera orbit, zoom, and reset", async ({ page }) => {
   expect(reset.target).toEqual(initial.target);
 });
 
+test("track viewer zooms toward the cursor", async ({ page }) => {
+  await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
+  await page.waitForFunction(
+    () => (window as any).__trackViewerReady === true || (window as any).__trackViewerError,
+    undefined,
+    { timeout: 30_000 },
+  );
+
+  const initial = await page.evaluate(() =>
+    JSON.parse((window as any).__trackViewer.camera_info()),
+  );
+
+  await page.mouse.move(260, 210);
+  await page.mouse.wheel(0, -500);
+
+  const zoomed = await page.evaluate(() =>
+    JSON.parse((window as any).__trackViewer.camera_info()),
+  );
+  expect(zoomed.eye).not.toEqual(initial.eye);
+  expect(zoomed.target).not.toEqual(initial.target);
+});
+
+test("track viewer double-click focuses the orbit target", async ({ page }) => {
+  await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
+  await page.waitForFunction(
+    () => (window as any).__trackViewerReady === true || (window as any).__trackViewerError,
+    undefined,
+    { timeout: 30_000 },
+  );
+
+  const initial = await page.evaluate(() =>
+    JSON.parse((window as any).__trackViewer.camera_info()),
+  );
+
+  await page.mouse.dblclick(320, 260);
+
+  const focused = await page.evaluate(() =>
+    JSON.parse((window as any).__trackViewer.camera_info()),
+  );
+  expect(focused.target).not.toEqual(initial.target);
+  expect(focused.eye).not.toEqual(initial.eye);
+});
+
 test("track viewer camera height is capped", async ({ page }) => {
   await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
   await page.waitForFunction(

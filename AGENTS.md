@@ -46,7 +46,7 @@ Full detail: `agents/contracts.md`.
 |---|---|---|
 | `physics` | `crates/sim-core/**`, `crates/sim-worker/**` | `cargo test -p sim-core -p sim-worker`, clippy, wasm check |
 | `render` | `crates/sim-render/**` | `cargo test -p sim-render`, clippy, wasm check |
-| `assets` | `crates/sim-asset/**`, `crates/asset-compiler/**`, `tools/speed-dreams/**`, `fixtures/**` | `cargo test -p sim-asset -p asset-compiler`, clippy |
+| `assets` | `crates/sim-asset/**`, `crates/asset-compiler/**`, `crates/track-pack/**`, `crates/track-pack-wasm/**`, `tools/speed-dreams/**`, `fixtures/**` | `cargo test -p sim-asset -p asset-compiler -p track-pack`, clippy |
 | `multiplayer` | `crates/relay-server/**` except `protocol.rs` | `cargo test -p relay-server`, clippy |
 | `web` | `web/**` except the three contract files and generated outputs | `npm --prefix web test`, `npm --prefix web run test:viewer` |
 
@@ -151,11 +151,12 @@ Path classification (CI mirrors this):
 |---|---|
 | `docs/**`, `agents/**`, `.opencode/**`, `**/*.md`, `opencode.json` | `git diff --check` + agent sync |
 | `crates/relay-server/**` only (excluding `protocol.rs`) | rust gate; no web |
-| `web/**`, `fixtures/**`, `crates/sim-types/**`, `crates/sim-asset/**`, `crates/sim-core/**`, `crates/sim-render/**`, `crates/sim-worker/**`, `crates/asset-compiler/**`, `Cargo.*` | full gate |
+| `web/**`, `fixtures/**`, `crates/sim-types/**`, `crates/sim-asset/**`, `crates/sim-core/**`, `crates/sim-render/**`, `crates/sim-worker/**`, `crates/asset-compiler/**`, `crates/track-pack/**`, `crates/track-pack-wasm/**`, `Cargo.*` | full gate |
 | `.github/workflows/**` | full gate |
 
 Do not skip web tests for wasm crates (`sim-types`, `sim-asset`, `sim-core`,
-`sim-render`, `sim-worker`) or `fixtures/**`; the viewer tests exercise them.
+`sim-render`, `sim-worker`, `track-pack-wasm`) or `fixtures/**`; the viewer
+tests exercise them.
 
 PR CI runs a three-test `track-editor` smoke subset. Run the full editor suite
 on demand with `npm --prefix web run test:viewer -- --project=track-editor`.
