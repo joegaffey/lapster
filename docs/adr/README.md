@@ -37,3 +37,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0003](0003-section-point-venue-graph.md) | Section-point venue graph with mid-section junctions | Accepted; spline clause superseded by ADR-0004 |
 | [0004](0004-b-spline-control-points.md) | B-spline control-point venue curves | Accepted |
 | [0005](0005-junction-road-geometry.md) | Junction road geometry | Accepted |
+| [0006](0006-track-ed-hosting-and-track-pack.md) | Host track-ed as a submodule and share the track-pack compiler | Accepted |

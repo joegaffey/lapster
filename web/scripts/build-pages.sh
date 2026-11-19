@@ -35,7 +35,7 @@ cp "$ROOT/web/worker/physics-worker.js" "$DIST/web/worker/physics-worker.js"
 mkdir -p "$DIST/web/audio"
 cp "$ROOT/web/audio/combustion-worklet.js" "$DIST/web/audio/combustion-worklet.js"
 
-for viewer in drive garage track-viewer track-editor style-spike debug-viewer multiplayer; do
+for viewer in drive garage track-viewer track-editor track-import style-spike debug-viewer multiplayer; do
   mkdir -p "$DIST/web/$viewer"
   sed \
     -e "s#\./main\.js#./main.js?v=${VERSION}#g" \
@@ -68,6 +68,17 @@ source = source.replace('"../pkg/', f'"../pkg/{version}/')
 path.write_text(source)
 PY
 fi
+
+if [[ ! -d "$ROOT/web/track-ed-src/dist" ]]; then
+  echo "web/track-ed-src/dist is missing; run npm run build in the track-ed submodule first" >&2
+  exit 1
+fi
+mkdir -p "$DIST/web/track-ed"
+cp -R "$ROOT/web/track-ed-src/dist/." "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/THIRD_PARTY_NOTICES.md" "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/LICENSE" "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/LICENSE-MIT" "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/LICENSE-APACHE" "$DIST/web/track-ed/"
 
 cp -R "$ROOT/fixtures/cars" "$DIST/fixtures/cars"
 cp -R "$ROOT/fixtures/tracks" "$DIST/fixtures/tracks"

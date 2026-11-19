@@ -1,6 +1,11 @@
 import init, { DriveViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
-import { EDITOR_TRACK_ID, EDITOR_TRACK_CACHE_KEY } from "../src/assets/editor-track.ts";
+import {
+  EDITOR_TRACK_ID,
+  EDITOR_TRACK_CACHE_KEY,
+  TRACK_ED_TRACK_ID,
+  TRACK_ED_TRACK_CACHE_KEY,
+} from "../src/assets/editor-track.ts";
 import { loadPackFromBytes, loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
 import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
@@ -185,19 +190,37 @@ async function loadPack(url: string) {
   }
 }
 
-async function loadEditorTrackPack() {
-  const bytes = await new IndexedDbPackCache().get(EDITOR_TRACK_CACHE_KEY);
+async function loadLocalTrackPack(
+  key: string,
+  label: string,
+  help: string,
+) {
+  const bytes = await new IndexedDbPackCache().get(key);
   if (!bytes) {
-    throw new Error(
-      "No editor track found. Open the track editor and choose Test drive first.",
-    );
+    throw new Error(`No ${label} track found. ${help}`);
   }
   try {
     return await loadPackFromBytes(bytes);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Editor track is invalid: ${message}`);
+    throw new Error(`${label} track is invalid: ${message}`);
   }
+}
+
+async function loadEditorTrackPack() {
+  return loadLocalTrackPack(
+    EDITOR_TRACK_CACHE_KEY,
+    "editor",
+    "Open the track editor and choose Test drive first.",
+  );
+}
+
+async function loadTrackEdPack() {
+  return loadLocalTrackPack(
+    TRACK_ED_TRACK_CACHE_KEY,
+    "track-ed",
+    "Open track-ed and choose Test drive first.",
+  );
 }
 
 function resizeCanvas() {
@@ -928,7 +951,11 @@ async function boot() {
 
   status.textContent = "loading packs";
   const trackPackPromise =
-    trackParam === EDITOR_TRACK_ID ? loadEditorTrackPack() : loadPack(TRACK_URL);
+    trackParam === EDITOR_TRACK_ID
+      ? loadEditorTrackPack()
+      : trackParam === TRACK_ED_TRACK_ID
+        ? loadTrackEdPack()
+        : loadPack(TRACK_URL);
   const [trackPack, carPack] = await Promise.all([
     trackPackPromise,
     loadPack(CAR_URL),

@@ -1,0 +1,4 @@
+[submodule "web/track-ed-src"]
+	path = web/track-ed-src
+	url = https://github.com/joegaffey/track-ed.git
+	branch = main

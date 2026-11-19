@@ -44,12 +44,27 @@ wasm-bindgen --target web --out-dir web/pkg/worker target/wasm32-unknown-unknown
   web/pkg/worker/sim_worker_bg.wasm -o web/pkg/worker/sim_worker_bg.wasm.opt
 mv web/pkg/worker/sim_worker_bg.wasm.opt web/pkg/worker/sim_worker_bg.wasm
 
+cargo build -p track-pack-wasm --release --target wasm32-unknown-unknown
+rm -rf web/pkg/track-pack
+wasm-bindgen --target web --out-dir web/pkg/track-pack target/wasm32-unknown-unknown/release/track_pack_wasm.wasm
+"$WASM_OPT" -O3 \
+  --enable-bulk-memory \
+  --enable-bulk-memory-opt \
+  --enable-nontrapping-float-to-int \
+  --enable-mutable-globals \
+  --enable-sign-ext \
+  --enable-reference-types \
+  --enable-multivalue \
+  web/pkg/track-pack/track_pack_wasm_bg.wasm -o web/pkg/track-pack/track_pack_wasm_bg.wasm.opt
+mv web/pkg/track-pack/track_pack_wasm_bg.wasm.opt web/pkg/track-pack/track_pack_wasm_bg.wasm
+
 npx esbuild web/track-viewer/main.ts --bundle --format=esm --outfile=web/track-viewer/main.js --external:../pkg/*
 npx esbuild web/track-editor/main.ts --bundle --format=esm --outfile=web/track-editor/main.js --external:../pkg/*
 npx esbuild web/style-spike/main.ts --bundle --format=esm --outfile=web/style-spike/main.js --external:../pkg/*
 npx esbuild web/garage/main.ts --bundle --format=esm --outfile=web/garage/main.js --external:../pkg/*
 npx esbuild web/drive/main.ts --bundle --format=esm --outfile=web/drive/main.js --external:../pkg/*
 npx esbuild web/multiplayer/main.ts --bundle --format=esm --outfile=web/multiplayer/main.js
+npx esbuild web/track-import/main.ts --bundle --format=esm --outfile=web/track-import/main.js --external:../pkg/*
 npx esbuild web/worker/physics-worker.ts --bundle --format=esm --outfile=web/worker/physics-worker.js --external:../pkg/worker/*
 mkdir -p web/audio
 cp web/src/audio/engine-sim/combustion-worklet.js web/audio/combustion-worklet.js
