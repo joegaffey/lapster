@@ -1,8 +1,8 @@
 # track-ed integration
 
-Status: implemented on `feat/track-ed-integration` (PR #34); release preparation
-is pinning the submodule to track-ed `main` and shipping the track-ed notices.
-See ADR 0006.
+Status: integrated on `dev` in PR #34 (`52a2dc6`). The submodule is pinned to
+track-ed `main`, and the Pages build ships the track-ed notices and licenses.
+Release to `main` is the remaining step. See ADR 0006.
 
 ## What is included
 
@@ -76,6 +76,5 @@ deterministic for the same inputs.
 ## Remaining migration work
 
 The legacy editor is retained. Removing it is a separate product decision after track-ed has
-been exercised in production. The submodule branch in `.gitmodules` moves to `main` after
-the track-ed feature branch is merged, and the pin is updated to the merged `main` commit.
-ADR 0006 records the hosting and `track-pack` decision.
+been exercised in production. `.gitmodules` now tracks track-ed `main`, and the pin is the
+merged `main` commit `382b311`. ADR 0006 records the hosting and `track-pack` decision.

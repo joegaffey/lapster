@@ -1,7 +1,8 @@
 # Project Progress
 
-Last updated: 2026-11-18
-Current phase: **Venue graph — junction road geometry (Phase 3d)**
+Last updated: 2026-11-19
+Current phase: **Track-ed integration on `dev`; next: venue Phase 3d junction
+road geometry**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -15,7 +16,7 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker \
-  --target wasm32-unknown-unknown
+  -p track-pack-wasm --target wasm32-unknown-unknown
 
 npm --prefix web ci
 npm --prefix web test
@@ -52,6 +53,14 @@ Deployment:
 
 ## Current focus
 
+- track-ed integration is merged to `dev` in PR #34 (`52a2dc6`). The shared
+  `crates/track-pack` compiler and `track-pack-wasm` power the hosted track-ed
+  **Test drive** and `web/track-import/`; Drive resolves `?track=track-ed` from
+  the local pack key `lapster.track-ed.v1`. The submodule is pinned to track-ed
+  `main` (`382b311`), and the Pages build ships its notices and licenses.
+  ADR 0006 records the hosting and compiler decision. The legacy procedural
+  editor remains as **Legacy Track Editor**; removal is deferred. Release to
+  `main` is the remaining step before returning to venue work.
 - Venue graph rebuild is integrated on `dev` (PR #26). The `@5` phases
   added a canonical graph, decoration paths, and a project editor API. ADR 0003
   resets the model to `lapster/track-project@6` (global points, open/closed
@@ -91,10 +100,10 @@ Deployment:
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: Phase 3d junction road geometry (ADR 0005), then multi-layout and pit
-  lane (venue Phases 4–5), the remaining TD-0006 junction-continuation work,
-  Speed Dreams physics, wheel/FFB hardware validation, and CP7 HID/audio
-  integration.
+- Next: release track-ed integration to `main`, then Phase 3d junction road
+  geometry (ADR 0005), followed by multi-layout and pit lane (venue Phases
+  4–5), the remaining TD-0006 junction-continuation work, Speed Dreams physics,
+  wheel/FFB hardware validation, and CP7 HID/audio integration.
 
 ## Completed checkpoints
 
@@ -117,6 +126,7 @@ Deployment:
 | Speed Dreams car import | Working |
 | Relay multiplayer prototype | Working prototype |
 | Style spike | Working |
+| track-ed hosted editor + local Test drive | On `dev`; release pending |
 
 ## Current capabilities
 
@@ -129,8 +139,11 @@ Deployment:
   modes, grass, particles, cockpit dials, and time-of-day.
 - Versioned asset packs: deterministic bake/validate, GLB/AC car and track
   import, IndexedDB cache, and build-version invalidation.
-- Viewers: drive, garage, track viewer, style spike, debug viewer, and
-  multiplayer.
+- Track authoring: hosted track-ed with browser-side `track-pack` compilation,
+  local Test drive, and `track.glb` + `track.json` file import. The procedural
+  editor remains available as Legacy Track Editor.
+- Viewers: drive, garage, track viewer, track-ed, track import, legacy track
+  editor, style spike, debug viewer, and multiplayer.
 - Audio spike: Engine_Sim-based engine audio, tire screech, and surface noise;
   no sample assets or track reverb.
 - WebHID wheel/FFB: vendored `webhid-wheel` 0.5.0, multi-device profiles, 200 Hz
@@ -143,11 +156,13 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 160 tests
-- `cargo check ... --target wasm32-unknown-unknown`
+- `cargo test --workspace` — 161 tests
+- `cargo check ... --target wasm32-unknown-unknown` including `track-pack-wasm`
 - `npm test` — 38 tests
-- `CI=1 npm run test:viewer` — 98 passed, 1 skipped
+- `CI=1 npm run test:viewer` — 101 passed, 1 skipped
 - WebGL2 fallback — 2/2 passed
+- track-ed host build and `build-pages.sh`; notices and licenses present under
+  `dist/web/track-ed/`
 - `npm run bench:physics`
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
@@ -157,6 +172,11 @@ Deployment:
 - Junction road geometry is a stub: overlapping full-width ribbons cause
   dirt/grass over tarmac, z-fighting, and holes at angles. ADR 0005 / Phase 3d
   replaces it with a clipped and stitched junction pad (TD-0008).
+- The legacy procedural track editor remains; removal is deferred until
+  track-ed has production use. Hosted track-ed Test drive and the file-import
+  path have manual coverage rather than a PR-gate smoke test.
+- Production Pages builds depend on the pinned track-ed `main` submodule commit
+  and build the host at deploy time.
 - Wheel/FFB hardware acceptance is pending; CAMMUS C5 first.
 - Audio is a spike: external-state compensations, no per-car sample layer,
   Doppler, reverb zones, or mobile listening test.
@@ -232,6 +252,12 @@ junction branch, cap, host preservation, and track-pack export:
 - Released to `main` as `506abaf` (PR #28); `dev` was synced with `main`
   afterwards. Production now includes the venue graph `@6`, seam decoration
   authoring, and the CI fast path.
+- track-ed integration merged to `dev` as `52a2dc6` (PR #34). `track-pack` and
+  `track-pack-wasm` compile GLB tracks in the browser; hosted track-ed and
+  `web/track-import/` store `lapster.track-ed.v1` and open
+  `/web/drive/?track=track-ed`. The submodule `382b311` tracks track-ed `main`,
+  and the Pages build copies the track-ed notices and licenses. ADR 0006 is
+  accepted; release to `main` is pending.
 - Road shading fix (PR #29): non-route sections and loose-end caps now use a
   runtime, material-driven `track_blend` instead of mesh-name sniffing, so
   junction branches and extra sections render as tarmac with dirt shoulders.
@@ -239,62 +265,71 @@ junction branch, cap, host preservation, and track-pack export:
   and dev-preview validation; no asset-schema change.
 - Junction road geometry was re-assessed after angled-junction testing. The
   incremental branch outward/length/trim/cut experiments were reverted. ADR 0005
-  (proposed) and venue Phase 3d define the replacement: clip ribbons to a
+  (accepted) and venue Phase 3d define the replacement: clip ribbons to a
   junction mouth, stitch one watertight junction pad, and bake collision from
   the same surfaces. TD-0008 tracks it.
-- Docs: ADR 0003, ADR 0004, ADR 0005, venue-graph plan, tech debt updated.
+- Docs: ADR 0003, ADR 0004, ADR 0005, ADR 0006, venue-graph plan, tech debt
+  updated.
 - Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
-- Local page: `http://127.0.0.1:8123/web/track-editor/`.
-- Dev preview: `https://joegaffey.com/lapster-dev/web/track-editor/`.
+- Local pages: `http://127.0.0.1:8123/web/track-editor/` (legacy),
+  `.../web/track-ed/` (hosted), and `.../web/track-import/`.
+- Dev preview: `https://joegaffey.com/lapster-dev/web/track-ed/` and
+  `.../web/track-import/`.
 
 Resume in this order:
 
-1. Phase 3d junction road geometry (ADR 0005, TD-0008): clip and stitch
+1. Release track-ed integration to `main`: sync `dev`, open the `dev` → `main`
+   PR, post the gate comment, hand off to @joegaffey, and verify the Pages
+   deploy and production Test drive.
+2. Phase 3d junction road geometry (ADR 0005, TD-0008): clip and stitch
    junction surfaces, then validate 30/45/90° joins.
-2. TD-0006 remainder: junction chain continuation after Phase 3d/Phase 4;
+3. TD-0006 remainder: junction chain continuation after Phase 3d/Phase 4;
    custom-lane authoring is still dropped. Seam paint and seam endpoint resize
    are complete and tested.
-3. Multi-layout and pit lane (Phases 4–5).
-4. Full gate, dev preview validation, then a PR to `dev` for the next batch.
+4. Multi-layout and pit lane (Phases 4–5).
+5. Full gate, dev preview validation, then a PR to `dev` for the next batch.
 
 ## Next steps
 
-1. **Phase 3d — junction road geometry (next)**: implement ADR 0005 — derive
+1. **Release track-ed integration (next)**: open the `dev` → `main` PR with the
+   full-gate evidence, post the architect comment, hand off to @joegaffey, and
+   verify the Pages deploy plus hosted Test drive and file import in production.
+2. **Phase 3d — junction road geometry**: implement ADR 0005 — derive
    junction mouths, clip host/branch ribbons, stitch one watertight junction pad
    with asphalt/shoulder/grass transitions, bake collision from the same
    surfaces, and validate 30/45/90° joins. Do not cut kerbs/props yet.
-2. **Speed Dreams physics**: parse `sc-deckard-conejo.xml` into
+3. **Speed Dreams physics**: parse `sc-deckard-conejo.xml` into
    `CarPhysics`, including mass, CG, torque curve, gears, final drive, brakes,
    aero, springs/dampers, and tire mu. Confirm the reverse-light split visually.
    Move per-car audio and cockpit metadata into the pack before adding more
    Speed Dreams cars.
-3. **CP6.5 — wheel/FFB validation**: run the CAMMUS C5 checklist, tune the feel
+4. **CP6.5 — wheel/FFB validation**: run the CAMMUS C5 checklist, tune the feel
    mixer, and decide whether the main-thread adapter stays or moves into the
    HID worker.
-4. **Vendored `webhid-wheel` validation**: run multi-device profile,
+5. **Vendored `webhid-wheel` validation**: run multi-device profile,
    pedal/button mapping, and worker-compatibility checks; then complete the
    CAMMUS C5 hardware checklist.
-5. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID
+6. **CP7 — HID/audio integration**: move the tested FFB adapter into the HID
    worker, add per-car audio profiles or an optional sample layer, expand the
    hardware matrix, and run performance traces. The physics worker, input
    mailbox, snapshot ring, FFB mailbox, and audio worklet spike are in place.
-6. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour
+7. **CP5 — real car**: finish the GLB path with decimation, palette/vertex-colour
    tuning, wheel geometry cleanup, and licensed AC `.ini` physics when a
    suitable pack is available. Add a simple steering-wheel/interior placeholder.
    Add real image decoding/KTX2 only where textures are the right choice. WebXR
    remains a later phase.
-7. **CP6 — real track**: finish the AC path with full texture decoding
+8. **CP6 — real track**: finish the AC path with full texture decoding
    (PNG/JPEG/DDS/KTX2 where useful), fence/tent collision policy, outer-ring
    collision or streaming, and performance measurement.
-8. **Texture pipeline**: add full texture decoding to the GLB and AC importers,
+9. **Texture pipeline**: add full texture decoding to the GLB and AC importers,
    bake-time texture compression (KTX2/Basis with fallbacks), and texture atlases
    for compatible materials.
-9. Replace per-frame JSON telemetry with typed arrays/SAB.
-10. Add content-hash cache invalidation.
-11. Add Rapier or Jolt only as a collision/query backend if the custom BVH
+10. Replace per-frame JSON telemetry with typed arrays/SAB.
+11. Add content-hash cache invalidation.
+12. Add Rapier or Jolt only as a collision/query backend if the custom BVH
     becomes limiting.
-12. Benchmark a real converted track: draw calls, triangles, texture memory,
+13. Benchmark a real converted track: draw calls, triangles, texture memory,
     load time, and p99 physics.
 
 ## Key files
