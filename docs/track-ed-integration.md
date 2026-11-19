@@ -1,6 +1,8 @@
 # track-ed integration
 
-Status: implemented on `feat/track-ed-integration`; awaiting review.
+Status: implemented on `feat/track-ed-integration` (PR #34); release preparation
+is pinning the submodule to track-ed `main` and shipping the track-ed notices.
+See ADR 0006.
 
 ## What is included
 
@@ -9,7 +11,8 @@ Status: implemented on `feat/track-ed-integration`; awaiting review.
 - `crates/track-pack-wasm`: lazy wasm wrapper exposing:
   `compile_glb_track(track_json, glb, id) -> Uint8Array`.
 - `web/track-ed-src`: pinned track-ed submodule. The Pages build compiles it with
-  `VITE_LAPSTER_HOST=1` and copies it to `dist/web/track-ed/`.
+  `VITE_LAPSTER_HOST=1` and copies it to `dist/web/track-ed/`, together with the
+  track-ed license and third-party notices.
 - `web/track-ed/`: hosted track-ed. Its **Test drive in Lapster** action compiles the
   current export, stores it under `lapster.track-ed.v1`, and opens
   `/web/drive/?track=track-ed`.
@@ -73,5 +76,6 @@ deterministic for the same inputs.
 ## Remaining migration work
 
 The legacy editor is retained. Removing it is a separate product decision after track-ed has
-been exercised in production. The submodule branch in `.gitmodules` should move to `main`
-once the track-ed feature branch is merged.
+been exercised in production. The submodule branch in `.gitmodules` moves to `main` after
+the track-ed feature branch is merged, and the pin is updated to the merged `main` commit.
+ADR 0006 records the hosting and `track-pack` decision.

@@ -75,6 +75,10 @@ if [[ ! -d "$ROOT/web/track-ed-src/dist" ]]; then
 fi
 mkdir -p "$DIST/web/track-ed"
 cp -R "$ROOT/web/track-ed-src/dist/." "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/THIRD_PARTY_NOTICES.md" "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/LICENSE" "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/LICENSE-MIT" "$DIST/web/track-ed/"
+cp "$ROOT/web/track-ed-src/LICENSE-APACHE" "$DIST/web/track-ed/"
 
 cp -R "$ROOT/fixtures/cars" "$DIST/fixtures/cars"
 cp -R "$ROOT/fixtures/tracks" "$DIST/fixtures/tracks"

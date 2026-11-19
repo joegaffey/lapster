@@ -8,14 +8,18 @@ permission:
     "*": deny
     "crates/sim-asset/**": allow
     "crates/asset-compiler/**": allow
+    "crates/track-pack/**": allow
+    "crates/track-pack-wasm/**": allow
     "tools/speed-dreams/**": allow
     "fixtures/**": allow
   bash:
     "*": deny
     "cargo test -p sim-asset*": allow
     "cargo test -p asset-compiler*": allow
+    "cargo test -p track-pack*": allow
     "cargo clippy -p sim-asset*": allow
     "cargo clippy -p asset-compiler*": allow
+    "cargo clippy -p track-pack*": allow
     "cargo fmt --check*": allow
     "node tools/speed-dreams/*": allow
     "bash tools/speed-dreams/*": allow

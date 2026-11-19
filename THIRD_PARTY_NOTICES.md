@@ -1,5 +1,29 @@
 # Third-Party Notices
 
+## track-ed
+
+- Source: https://github.com/joegaffey/track-ed
+- Used in: `web/track-ed-src/` (pinned submodule) and the built site under
+  `web/track-ed/`
+- License: MIT OR Apache-2.0
+- Purpose: Browser-first venue editor hosted by Lapster; its Test drive action
+  compiles the current export through the browser-side `track-pack` wasm and
+  opens the drive page with a locally stored pack.
+
+track-ed bundles these runtime dependencies with compatible licenses:
+
+| Package | Version | License | Source |
+| --- | --- | --- | --- |
+| `clipper2-ts` | 2.0.1-19 | BSL-1.0 | https://github.com/countertype/clipper2-ts |
+| `earcut` | 3.2.4 | ISC | https://github.com/mapbox/earcut |
+| `poly2tri` | 1.5.0 | BSD-3-Clause | https://github.com/r3mi/poly2tri.js |
+| `polygon-clipping` | 0.15.7 | MIT | https://github.com/mfogel/polygon-clipping |
+| `three` | 0.187.0 | MIT | https://github.com/mrdoob/three.js |
+
+The track-ed notices and license files are copied into `dist/web/track-ed/` by
+`web/scripts/build-pages.sh`. Full license texts for the bundled packages are
+available with their upstream distributions.
+
 ## Engine_Sim
 
 - Source: https://github.com/YigitSalihEmecen/Engine_Sim

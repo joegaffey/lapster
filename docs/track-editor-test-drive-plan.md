@@ -1,9 +1,16 @@
 # Track Editor → Test Drive Plan
 
-Status: proposed  
-Branch at time of writing: `feature/multiplayer-relay`  
-Base commit: `5e23d8e Add continuous kerb and prop guide editing`  
+Status: implemented for the legacy procedural editor; kept for reference.
+
+Branch at time of writing: `feature/multiplayer-relay`
+
+Base commit: `5e23d8e Add continuous kerb and prop guide editing`
+
 Target effort: 5–8 focused hours for the browser-generated-pack path.
+
+The editor Test drive path is implemented and covered by
+`web/tests/editor-drive.spec.ts`. Legacy editor removal is deferred until
+track-ed has production use; see `docs/track-ed-integration.md` and ADR 0006.
 
 ## 1. Goal
 
