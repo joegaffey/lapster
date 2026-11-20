@@ -25,6 +25,22 @@ files unless that assistant is the declared primary (currently opencode).
 Portable pattern and setup prompt:
 https://gist.github.com/joegaffey/27366c537daf1b9e5799e2c71bdac4f7
 
+## Human role
+
+The human is the technical product manager / product owner, not another worker
+and not a passive approver.
+
+- The human owns product intent, success criteria, scope, priorities, tradeoffs,
+  risk acceptance and release approval.
+- The architect translates product intent into technical options, contracts,
+  plans and verification. It does not invent product scope.
+- Workers implement approved scope and do not negotiate requirements directly
+  with the human.
+- Escalate ambiguous requirements, product-priority tradeoffs, breaking contract
+  changes and cross-domain conflicts to the human.
+- Protected-branch approval is product acceptance as well as technical approval
+  unless a separate acceptance step is documented.
+
 ## Read matrix
 
 | Role | Read |
@@ -43,20 +59,25 @@ core under ~8k.
 
 `reviewer` is read-only. The architect may dispatch it after workers and before
 commit for high-risk batches. It returns findings by severity; the architect
-decides. It does not replace the architect gate, CI, or human approval.
+decides. It does not replace the architect gate, CI, or human product-owner
+approval.
 
 ## Runtime policy
 
 - The project default agent is `architect` for the Lapster folder.
 - The architect has no step cap.
+- The built-in plan agent is overridden to 200 steps so long analysis is not
+  truncated; architect remains the default workflow agent.
 - Workers, the editor, reviewer and spike use an 80-step cap per user input.
 - `spike` is subagent-only and is dispatched by the architect.
 - Read permissions are broad and centralised in `opencode.json`; generated,
   vendor, lockfile and secret paths remain denied.
 - External directories are allowed by default; SSH, auth and server-secret
   paths remain denied.
-- Shell commands use a shared read/inspection allowlist plus role-specific
-  verification commands. Unknown commands fall back to `ask`.
+- Shell commands use role-scoped allowlists. The architect and editor include a
+  common read/inspection set; workers rely on their scoped verification
+  commands and the read/grep tools. Unknown commands fall back to `ask` and
+  destructive commands remain denied.
 
 ## Optional spike agent
 

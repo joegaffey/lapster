@@ -3,6 +3,11 @@
   "model": "opencode-go/deepseek-v4.1-flash",
   "small_model": "opencode-go/deepseek-v4.1-flash",
   "default_agent": "architect",
+  "agent": {
+    "plan": {
+      "steps": 200
+    }
+  },
   "instructions": ["AGENTS.md"],
   "compaction": {
     "auto": true,

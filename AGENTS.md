@@ -16,13 +16,17 @@ Per-role read matrix: `agents/README.md`.
 ## Topology
 
 ```text
-architect (primary)
-  -> contracts (architect-owned)
-    -> physics | render | assets | multiplayer | web | editor (short-lived workers)
-  -> reviewer (optional, read-only subagent)
-  -> spike (optional, architect-dispatched subagent, no push)
+human (technical product manager / product owner)
+  -> architect (primary)
+    -> contracts (architect-owned)
+      -> physics | render | assets | multiplayer | web | editor (short-lived workers)
+    -> reviewer (optional, read-only subagent)
+    -> spike (optional, architect-dispatched subagent, no push)
 ```
 
+- **Human** is the technical product manager / product owner. They own product
+  intent, priorities, acceptance, scope, risk and release approval. The
+  architect proposes technical options; the human decides product questions.
 - **Architect** owns contracts, mirrors, docs, workspace/build/CI config, and
   delegation. It does not edit domain implementation.
 - **Workers** are short-lived: one task, one session, then terminated. They
@@ -131,8 +135,8 @@ spike promotions that change architecture. See `docs/adr/README.md`.
 
 ## Branching and gate
 
-- `main` is protected: PR + `gate` CI + architect review comment + @joegaffey
-  approval.
+- `main` is protected: PR + `gate` CI + architect review comment + human
+  product-owner approval (@joegaffey).
 - `dev` is the integration branch: the architect may push directly and merge
   PRs.
 - `feat/<name>` branches: the architect pushes and opens a PR to `dev` (or

@@ -1,7 +1,9 @@
 # Spike protocol
 
-The spike is an optional `mode: all` agent for isolated prototype and
-architecture-spike work. The user or the architect may propose a spike.
+The spike is an optional, architect-dispatched subagent for isolated prototype
+and architecture-spike work. The human product owner or the architect may
+request a spike, but the architect dispatches it and signs off. It is not a
+primary session.
 
 ## Report
 

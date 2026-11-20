@@ -61,7 +61,8 @@ Contract change request:
 Rules:
 
 - No logs, diffs, or full file contents in the manifest.
-- `status` is `BLOCKED` when a contract change or human decision is required.
+- `status` is `BLOCKED` when a contract change or human product/technical
+  decision is required.
 - `tests.passed` must reflect the actual scoped verification.
 
 ## Lifecycle
@@ -111,7 +112,9 @@ Rules:
 
 ## Escalation
 
-- Ambiguous requirement: `BLOCKED`, list options.
+- Treat the human as the technical product manager / product owner.
+- Ambiguous requirement or product-priority tradeoff: `BLOCKED`, list options
+  and consequences for the human product owner.
 - Breaking contract change: `BLOCKED` with `contract_change`.
 - Cross-domain conflict: architect resolves; workers do not negotiate
   directly.

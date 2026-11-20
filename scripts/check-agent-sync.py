@@ -115,6 +115,11 @@ def check_runtime_policy():
     else:
         if config.get("default_agent") != "architect":
             errors.append("opencode.json: expected default_agent architect")
+        plan = (config.get("agent") or {}).get("plan") or (
+            config.get("agents") or {}
+        ).get("plan") or {}
+        if plan.get("steps", 0) < 100:
+            errors.append("opencode.json: plan needs an explicit step override >= 100")
 
     return errors
 
