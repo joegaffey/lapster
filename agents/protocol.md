@@ -61,7 +61,8 @@ Contract change request:
 Rules:
 
 - No logs, diffs, or full file contents in the manifest.
-- `status` is `BLOCKED` when a contract change or human decision is required.
+- `status` is `BLOCKED` when a contract change or human product/technical
+  decision is required.
 - `tests.passed` must reflect the actual scoped verification.
 
 ## Lifecycle
@@ -91,6 +92,15 @@ Rules:
 - The architect may merge to `dev`; never to `main`.
 - If the gate fails, send a focused packet to the owning worker.
 
+## Step budget
+
+- The architect has no step cap.
+- Workers, the editor, reviewer and spike have an 80-step cap per user input.
+- Batch related work into one coherent packet. Do not create one worker session
+  per micro-slice.
+- If the work cannot finish within the budget, return `BLOCKED` with the
+  completed scope and the next concrete step instead of silently stopping.
+
 ## Context rules
 
 - Load only what the current decision needs.
@@ -102,7 +112,9 @@ Rules:
 
 ## Escalation
 
-- Ambiguous requirement: `BLOCKED`, list options.
+- Treat the human as the technical product manager / product owner.
+- Ambiguous requirement or product-priority tradeoff: `BLOCKED`, list options
+  and consequences for the human product owner.
 - Breaking contract change: `BLOCKED` with `contract_change`.
 - Cross-domain conflict: architect resolves; workers do not negotiate
   directly.

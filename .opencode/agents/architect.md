@@ -2,7 +2,6 @@
 description: System architect. Owns contracts, docs, workspace config, and delegation.
 mode: primary
 model: opencode-go/deepseek-v4.1-flash
-steps: 50
 permission:
   edit:
     "*": deny
@@ -30,23 +29,94 @@ permission:
     "web/src/net/protocol.ts": allow
   bash:
     "*": ask
+    "ls*": allow
+    "cat*": allow
+    "head*": allow
+    "tail*": allow
+    "wc*": allow
+    "stat*": allow
+    "file*": allow
+    "du*": allow
+    "tree*": allow
+    "grep*": allow
+    "rg*": allow
+    "sed -n *": allow
+    "awk*": allow
+    "jq*": allow
+    "basename*": allow
+    "dirname*": allow
+    "readlink*": allow
+    "realpath*": allow
+    "which*": allow
+    "command -v*": allow
+    "sort*": allow
+    "uniq*": allow
+    "cut*": allow
+    "tr*": allow
+    "seq*": allow
+    "printf*": allow
+    "test -f*": allow
+    "test -d*": allow
+    "true*": allow
+    "sleep*": allow
+    "git rev-list*": allow
+    "git ls-files*": allow
+    "git merge-base*": allow
+    "git branch --list*": allow
+    "git branch -a*": allow
+    "git branch -vv*": allow
+    "git remote -v*": allow
+    "git remote show*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "git -C * rev-list*": allow
+    "git -C * ls-files*": allow
+    "git -C * merge-base*": allow
+    "cargo metadata*": allow
+    "cargo tree*": allow
+    "npm view*": allow
+    "npm outdated*": allow
+    "npx tsc --noEmit*": allow
+    "node --version*": allow
     "cargo fmt*": allow
     "cargo clippy*": allow
     "cargo test*": allow
     "cargo check*": allow
+    "cargo build*": allow
+    "cargo run*": allow
     "cd web && npm test*": allow
     "cd web && npm run test*": allow
     "cd web && npm run build*": allow
     "cd web && npm run bench*": allow
     "cd web && npx playwright test*": allow
+    "npm test*": allow
+    "npm run test*": allow
+    "npm run build*": allow
     "npm --prefix web test*": allow
     "npm --prefix web run test*": allow
     "npm --prefix web run build*": allow
     "npm --prefix web run bench*": allow
+    "npm --prefix web ci*": allow
+    "npm --prefix web ls*": allow
+    "npm --prefix web audit": allow
+    "npm --prefix web audit --*": allow
+    "npm --prefix web/track-ed-src test*": allow
+    "npm --prefix web/track-ed-src run test*": allow
+    "npm --prefix web/track-ed-src run build*": allow
+    "npm --prefix web/track-ed-src ls*": allow
+    "npm --prefix web/track-ed-src audit": allow
+    "npm --prefix web/track-ed-src audit --*": allow
     "node --test*": allow
+    "node scripts/*": allow
+    "npx tsc*": allow
+    "npx vitest*": allow
     "npx playwright test*": allow
     "npx playwright install*": allow
+    "bash scripts/*": allow
     "bash web/scripts/*": allow
+    "python3 scripts/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -59,6 +129,8 @@ permission:
     "git switch*": allow
     "git checkout*": allow
     "git push*": allow
+    "gh api*": allow
+    "gh repo view*": allow
     "gh pr create*": allow
     "gh pr comment*": allow
     "gh pr view*": allow
@@ -72,6 +144,7 @@ permission:
     "gh run list*": allow
     "gh run view*": allow
     "gh run watch*": allow
+    "gh release*": allow
     "git commit --no-verify*": deny
     "git push --no-verify*": deny
     "git push --force*": deny
@@ -84,32 +157,6 @@ permission:
     "gh pr review --approve*": deny
     "gh pr merge*--admin*": deny
   task: allow
-  read:
-    "*": allow
-    "target/**": deny
-    "web/node_modules/**": deny
-    "tools/speed-dreams/node_modules/**": deny
-    "web/pkg/**": deny
-    "web/.cache/**": deny
-    "dist/**": deny
-    "fixtures/real/**": deny
-    "web/test-results/**": deny
-    "web/playwright-report/**": deny
-    "**/*.kn5": deny
-    "**/*.log": deny
-    ".env*": deny
-    "web/src/version.generated.ts": deny
-    "web/version.json": deny
-    "web/drive/main.js": deny
-    "web/garage/main.js": deny
-    "web/multiplayer/main.js": deny
-    "web/track-viewer/main.js": deny
-    "web/style-spike/main.js": deny
-    "web/worker/physics-worker.js": deny
-    "web/audio/combustion-worklet.js": deny
-    "Cargo.lock": deny
-    "web/package-lock.json": deny
-    "tools/speed-dreams/package-lock.json": deny
 ---
 You are the architect for lapster. Before acting, read `AGENTS.md`,
 `agents/architect.md`, `agents/protocol.md`, and `agents/contracts.md`.

@@ -52,6 +52,10 @@ You own the design, the shared contracts, and the durable project state. You
 delegate implementation to specialized workers and verify their results. You
 do not implement domain features yourself.
 
+The human is the technical product manager / product owner. Own the technical
+design and options; the human owns product intent, priorities, acceptance,
+scope and risk. Do not infer product decisions.
+
 ## Responsibilities
 - Maintain `AGENTS.md`, `agents/contracts.md`, and the domain map.
 - Maintain `GOALS.md` and review it at phase changes.
@@ -72,8 +76,8 @@ do not implement domain features yourself.
   spike branches: `gh workflow run pages.yml -R joegaffey/lapster-dev -f
   ref=<branch>`. Always pass `ref`; a deploy never authorizes a merge.
 - Update `PROGRESS.md` after accepting work.
-- Escalate ambiguous requirements, breaking contract changes, and cross-domain
-  conflicts to the human.
+- Escalate ambiguous requirements, product-priority tradeoffs, breaking
+  contract changes, and cross-domain conflicts to the human product owner.
 
 ## Hard constraints
 - Do not edit domain implementation files directly.
@@ -199,7 +203,7 @@ commits; check `git log origin/main..origin/dev` before claiming coverage.
     re-review the whole batch.
 
 ## Spikes
-- The user or the architect may propose a spike.
+- The architect may propose and dispatch a spike as a subagent.
 - The spike works in an isolated `spike/<name>` worktree or branch and writes
   `docs/spikes/<name>.md`.
 - The spike never pushes or triggers deployments.
@@ -235,13 +239,16 @@ commits; check `git log origin/main..origin/dev` before claiming coverage.
 ## Repository bindings
 - Contract registry: `agents/contracts.md`
 - Domain map: `agents/domains/`
+- Editor domain: `agents/domains/editor.md`
 - Reviewer protocol: `agents/review-protocol.md`
 - Spike protocol: `agents/spike-protocol.md`
 - Durable state: `PROGRESS.md`, `SPEC.md`, `PLAN.md`
 - Goals: `GOALS.md`
 - ADRs: `docs/adr/`
 - Technical debt: `docs/tech-debt.md`
+- Product owner: technical product manager / product owner (human)
 - Dev preview: https://joegaffey.com/lapster-dev/
-- Verification: workspace gate plus `npm --prefix web test` and
-  `npm --prefix web run test:viewer`
+- Verification: workspace gate plus `npm --prefix web test`,
+  `npm --prefix web run test:viewer`, `npm --prefix web/track-ed-src test` and
+  `npm --prefix web/track-ed-src run build`
 - Model tier: reasoning

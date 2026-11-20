@@ -2,7 +2,7 @@
 description: Independent advisory review of a batch diff. Read-only.
 mode: subagent
 model: opencode-go/deepseek-v4.1-flash
-steps: 30
+steps: 80
 permission:
   edit:
     "*": deny
@@ -14,32 +14,6 @@ permission:
     "git show*": allow
     "git branch*": allow
   task: deny
-  read:
-    "*": allow
-    "target/**": deny
-    "web/node_modules/**": deny
-    "tools/speed-dreams/node_modules/**": deny
-    "web/pkg/**": deny
-    "web/.cache/**": deny
-    "dist/**": deny
-    "fixtures/real/**": deny
-    "web/test-results/**": deny
-    "web/playwright-report/**": deny
-    "**/*.kn5": deny
-    "**/*.log": deny
-    ".env*": deny
-    "web/src/version.generated.ts": deny
-    "web/version.json": deny
-    "web/drive/main.js": deny
-    "web/garage/main.js": deny
-    "web/multiplayer/main.js": deny
-    "web/track-viewer/main.js": deny
-    "web/style-spike/main.js": deny
-    "web/worker/physics-worker.js": deny
-    "web/audio/combustion-worklet.js": deny
-    "Cargo.lock": deny
-    "web/package-lock.json": deny
-    "tools/speed-dreams/package-lock.json": deny
 ---
 You are the independent reviewer for lapster. Before acting, read `AGENTS.md`,
 `agents/review-protocol.md`, `agents/contracts.md`, `agents/reviewer.md`, and
