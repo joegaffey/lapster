@@ -6,6 +6,8 @@ const hostedIndex = fileURLToPath(
   new URL("../track-ed/index.html", import.meta.url),
 );
 
+const AUTOSAVE_KEY = "track-ed.autosave.v1";
+
 interface HostedProjectSnapshot {
   schema: string;
   name: string;
@@ -37,6 +39,55 @@ async function readProject(page: Page): Promise<HostedProjectSnapshot> {
   return project!;
 }
 
+async function clearAutosaveBeforeFirstNavigation(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    try {
+      if (sessionStorage.getItem("track-ed-e2e-autosave-cleared") !== "1") {
+        localStorage.clear();
+        sessionStorage.setItem("track-ed-e2e-autosave-cleared", "1");
+      }
+    } catch {
+      // Storage may be unavailable in restricted contexts.
+    }
+  });
+}
+
+async function waitForStoredAutosave(
+  page: Page,
+  expected?: { index: number; position: [number, number] },
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const raw = await page.evaluate(
+        (key) => localStorage.getItem(key),
+        AUTOSAVE_KEY,
+      );
+      if (raw === null) {
+        return false;
+      }
+      if (!expected) {
+        return true;
+      }
+      const envelope = JSON.parse(raw) as {
+        project?: {
+          sections?: Array<{
+            points?: Array<{ position?: [number, number] }>;
+          }>;
+          centerlines?: Array<{
+            points?: Array<{ position?: [number, number] }>;
+          }>;
+        };
+      };
+      const section =
+        envelope.project?.sections?.[0] ?? envelope.project?.centerlines?.[0];
+      return (
+        JSON.stringify(section?.points?.[expected.index]?.position) ===
+        JSON.stringify(expected.position)
+      );
+    })
+    .toBe(true);
+}
+
 test("hosted track-ed boots, edits, creates a junction, exports and test drives", async ({
   page,
 }) => {
@@ -48,6 +99,8 @@ test("hosted track-ed boots, edits, creates a junction, exports and test drives"
 
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await clearAutosaveBeforeFirstNavigation(page);
 
   // Force the unversioned track-pack fallback built by `build:viewer`.
   await page.route(/\/version\.json(?:\?|$)/, (route) =>
@@ -110,8 +163,32 @@ test("hosted track-ed boots, edits, creates a junction, exports and test drives"
   ).toBeGreaterThan(1);
   expect(afterEdit.errors).toEqual([]);
 
+  // The debounced autosave lands, then a reload restores the edited project.
+  await waitForStoredAutosave(page, {
+    index: pointIndex,
+    position: pointAfter,
+  });
+  await page.reload();
+  await waitForAppReady(page);
+  const restored = await readProject(page);
+  expect(restored.centerlines[0]!.points[pointIndex]!.position).toEqual(
+    pointAfter,
+  );
+  expect(restored.errors).toEqual([]);
+  await expect(page.locator("#edit-status")).toHaveText(
+    "Restored autosaved project.",
+  );
+
+  // Re-select after restore so the junction action has a target.
+  const reselected = await page.evaluate(
+    (index) => (window as any).__trackEd.selectPoint(index),
+    pointIndex,
+  );
+  expect(reselected).toEqual({ centerlineIndex: 0, pointIndex });
+  await expect(page.locator("#add-junction-button")).toBeEnabled();
+
   // Create a junction and confirm the project gained one.
-  const junctionCountBefore = afterEdit.junctions.length;
+  const junctionCountBefore = restored.junctions.length;
   await page.locator("#add-junction-button").click();
   await expect
     .poll(async () => (await readProject(page)).junctions.length)
@@ -154,5 +231,92 @@ test("hosted track-ed boots, edits, creates a junction, exports and test drives"
   expect(drive.error).toBeUndefined();
   expect(drive.debug.asset.id).toBe("track-ed");
   expect(drive.telemetry.track).toBe("track-ed");
+  expect(pageErrors).toEqual([]);
+});
+
+test("new loop clears autosave and reloads the default project", async ({
+  page,
+}) => {
+  test.skip(
+    !existsSync(hostedIndex),
+    "hosted track-ed is not built; run `bash web/scripts/build-track-ed.sh`",
+  );
+  test.setTimeout(180_000);
+
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await clearAutosaveBeforeFirstNavigation(page);
+
+  await page.goto("/web/track-ed/?e2e=1");
+  await waitForAppReady(page);
+
+  const pointIndex = 1;
+  const defaultProject = await readProject(page);
+  const defaultPoint = defaultProject.centerlines[0]!.points[pointIndex]!.position;
+
+  const moved = await page.evaluate(
+    ([index, position]) =>
+      (window as any).__trackEd.movePoint(index, position) as boolean,
+    [pointIndex, [defaultPoint[0] + 9, defaultPoint[1] + 5]] as const,
+  );
+  expect(moved).toBe(true);
+  await waitForStoredAutosave(page);
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.locator("#new-button").click();
+  await expect
+    .poll(() =>
+      page.evaluate((key) => localStorage.getItem(key), AUTOSAVE_KEY),
+    )
+    .toBeNull();
+
+  const reset = await readProject(page);
+  expect(reset.name).toBe(defaultProject.name);
+  expect(reset.centerlines[0]!.points[pointIndex]!.position).toEqual(
+    defaultPoint,
+  );
+
+  // Reloading must not re-save the default project.
+  await page.reload();
+  await waitForAppReady(page);
+  const reloaded = await readProject(page);
+  expect(reloaded.name).toBe(defaultProject.name);
+  expect(reloaded.centerlines[0]!.points[pointIndex]!.position).toEqual(
+    defaultPoint,
+  );
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), AUTOSAVE_KEY),
+  ).toBeNull();
+  expect(pageErrors).toEqual([]);
+});
+
+test("invalid autosave data is ignored with a warning and the default loads", async ({
+  page,
+}) => {
+  test.skip(
+    !existsSync(hostedIndex),
+    "hosted track-ed is not built; run `bash web/scripts/build-track-ed.sh`",
+  );
+  test.setTimeout(120_000);
+
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.addInitScript(() => {
+    localStorage.setItem("track-ed.autosave.v1", "{ this is not valid json");
+  });
+
+  await page.goto("/web/track-ed/?e2e=1");
+  await waitForAppReady(page);
+
+  await expect(page.locator("#edit-status")).toHaveText(
+    "Ignored invalid autosaved project; loaded the default.",
+  );
+  const project = await readProject(page);
+  expect(project.name).toBe("Loop Spline Point Terrain");
+  expect(project.errors).toEqual([]);
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), AUTOSAVE_KEY),
+  ).toBeNull();
   expect(pageErrors).toEqual([]);
 });

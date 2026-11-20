@@ -156,6 +156,42 @@
       #viewer-controls > *:hover {
         background: #1c2430;
       }
+      #viewer-controls > .deprecation-banner {
+        flex: 1 0 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 6px;
+        align-items: baseline;
+        padding: 8px 10px;
+        border: 1px solid #7c5a12;
+        border-left: 3px solid #fbbf24;
+        background: rgba(120, 84, 12, 0.28);
+        color: #fde68a;
+        font-size: 11px;
+        line-height: 1.45;
+        text-decoration: none;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        text-align: left;
+        cursor: default;
+      }
+      #viewer-controls > .deprecation-banner:hover {
+        background: rgba(120, 84, 12, 0.28);
+      }
+      #viewer-controls > .deprecation-banner strong {
+        color: #fbbf24;
+      }
+      #viewer-controls > .deprecation-banner code {
+        color: #fef3c7;
+        font: inherit;
+      }
+      #viewer-controls > .deprecation-banner a {
+        color: #93c5fd;
+        text-decoration: underline;
+      }
+      #viewer-controls > .deprecation-banner a:hover {
+        color: #bfdbfe;
+      }
       #point-editor {
         position: fixed;
         left: 16px;
@@ -443,6 +479,19 @@
     <canvas id="view"></canvas>
     <canvas id="control-points" aria-hidden="true"></canvas>
     <nav id="viewer-controls" aria-label="Editor controls">
+      <div
+        class="deprecation-banner"
+        role="note"
+        aria-label="Legacy Track Editor deprecation notice"
+      >
+        <strong>Legacy Track Editor — deprecated.</strong>
+        <span>
+          Use <b>Export</b> to save your
+          <code>lapster/track-project@6</code> JSON, then re-author the project
+          in the new <a href="../track-ed/">Track Editor</a>. This page will be
+          removed after the deprecation window.
+        </span>
+      </div>
       <a href="../">Exit</a>
       <button id="test-drive" type="button" disabled>Test drive</button>
       <button id="save-project" type="button" aria-label="Save track project to this browser">

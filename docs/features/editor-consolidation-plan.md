@@ -14,7 +14,23 @@ Progress (2026-11-20):
   `web/tests/track-ed-hosted.spec.ts`), `track-ed` and `track-ed-hosted` CI
   jobs, `npm audit --omit=dev`, and exact-pin/lockfile/notice checks
   (`web/scripts/build-track-ed.sh`, `web/scripts/check-track-ed-deps.py`).
-- A2/A3, B1, B3, D1 and E remain.
+- A2/A3 done in track-ed `93c50ad` and `8396ea8`: `attachEditing` is a thin
+  composition over `editing/`, and `createTrackView` is a thin facade over
+  `scene/` core/surfaces/overlays/picking/lifecycle. Public APIs and behaviour
+  are unchanged; pure helpers have tests and the hosted smoke still passes.
+- B1 done in track-ed `739472d`: autosave/restore with a versioned
+  `localStorage` envelope, invalid-data warning, storage-failure fallback and
+  New-loop clearing; hosted reload tests cover restore and clear.
+- B3 decided in ADR-0010: one-release read-only legacy window. The legacy nav
+  card is removed and the page carries an export/re-author notice; a converter
+  is not being built. E is deferred until the window closes (review
+  2026-12-20).
+- D1 done in track-ed `a4ee32f`: a deterministic 10-section venue (2
+  junctions, terrain holes, kerbs, tree/tyre runs) bakes in ~8.4 s and
+  re-bakes in ~8.4 s; validate ~1.5 s, export ~1.7 s. This confirms the
+  older 9-section baseline order and warrants D2 (kernel/Worker) before any
+  Rust/wasm port. Results: `web/track-ed-src/docs/performance-large-venue.md`.
+- The final E removal remains deferred until the ADR-0010 window closes.
 Related: `docs/editor-consolidation-report.md`, ADR-0007, ADR-0008,
 `docs/track-ed-integration.md`, `docs/features/venue-graph-plan.md`
 
@@ -72,7 +88,7 @@ report:
 - Net reduction is roughly 1,000 lines or the remaining equivalent is
   documented.
 
-### A2. Split `attachEditing`
+### A2. Split `attachEditing` — done
 
 **Target:** the ~1,500-line `attachEditing` function.
 
@@ -95,7 +111,7 @@ types. Do not change behaviour in the same batch.
   painting.
 - No increase in bundle size beyond the module overhead.
 
-### A3. Split `createTrackView`
+### A3. Split `createTrackView` — done
 
 **Target:** the ~1,360-line `createTrackView` function.
 
@@ -148,7 +164,13 @@ Record whether track-ed needs:
 Test drive remains the authoritative in-engine check. Port only features that
 are explicitly required.
 
-### B3. Migration decision
+### B3. Migration decision — done
+
+Decision: ADR-0010 chooses a one-release read-only legacy window. Legacy
+projects are local-only and already exportable as `lapster/track-project@6`
+JSON; the legacy card is removed from navigation, the page carries a
+deprecation/export notice, and a converter is deferred until evidence of a
+project corpus justifies it.
 
 Choose one:
 
@@ -192,7 +214,15 @@ check before compiling the hosted editor.
 
 ## 7. Workstream D — performance
 
-### D1. Benchmark representative large venues
+### D1. Benchmark representative large venues — done
+
+Measured with the opt-in benchmark in
+`web/track-ed-src/src/kernel/large-venue-bench.test.ts` and recorded in
+`web/track-ed-src/docs/performance-large-venue.md`: 10 sections, 2 junctions,
+70 control points, 21 terrain points, kerbs plus tree/tyre runs. Median of
+three runs: bake 8.38 s, incremental re-bake 8.37 s, validate 1.51 s, export
+1.71 s. This warrants D2 (optimise the TS kernel, then use a Web Worker if
+needed); do not port to Rust/wasm on this evidence.
 
 Measure:
 
@@ -216,7 +246,11 @@ runs. Record results against the existing performance baseline.
 
 Do not keep or refactor the legacy editor as the performance answer.
 
-## 8. Workstream E — legacy removal
+## 8. Workstream E — legacy removal (deferred by ADR-0010)
+
+ADR-0010 keeps `/web/track-editor/` for one read-only window; steps 1–2 are
+done (decision, navigation removal and deprecation notice). Steps 3–6 run after
+the window closes (review 2026-12-20) and a final parity check.
 
 1. Decide migration (B3).
 2. Update navigation: keep track-ed as **Track Editor**; remove the legacy card.
