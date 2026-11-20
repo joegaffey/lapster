@@ -1,5 +1,11 @@
 # Plan: section-point venue graph rebuild
 
+> Historical/superseded for the supported product path. ADR-0007 promotes
+> track-ed as the sole track editor; the legacy `@6` venue-graph Phase 3d
+> junction work is not the supported route. This plan is retained for history.
+> Editor consolidation and track-ed refactoring are tracked in
+> `docs/features/editor-consolidation-plan.md`.
+
 Status: `@5` Phases 1–2 are complete and committed. The model is reset to
 `lapster/track-project@6` by `docs/adr/0003-section-point-venue-graph.md`.
 Phase 3 (`@6` migration and loop-first editor) is next; the `@5` editor is

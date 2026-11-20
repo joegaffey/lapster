@@ -76,7 +76,11 @@ deterministic for the same inputs.
 
 ## Remaining migration work
 
-The legacy editor is retained. Removing it is a separate product decision after track-ed has
-been exercised in production. `.gitmodules` now tracks track-ed `main`, and the pin is the
-merged `main` commit `e4325a5`. Legacy `project@1` files are import-only; authoring must use
-a current `project@2`/`@3` project. ADR 0006 records the hosting and `track-pack` decision.
+The legacy editor is deprecated by ADR-0007; removal is gated on the legacy
+project migration decision, autosave, CI/browser coverage and a final parity
+check. ADR-0008 defers layouts as a future route layer over track-ed sections.
+Execution is tracked in `docs/features/editor-consolidation-plan.md`.
+`.gitmodules` tracks track-ed `main`, and the pin is the merged `main` commit
+`e4325a5`. Legacy `project@1` files are import-only; authoring must use a
+current `project@2`/`@3` project. ADR 0006 records the hosting and `track-pack`
+decision.

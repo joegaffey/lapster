@@ -1,5 +1,9 @@
 # Track and Car Model Loading Plan
 
+> Related workstream: the editor consolidation and track-ed refactoring plan is
+> `docs/features/editor-consolidation-plan.md` (ADR-0007, ADR-0008). This plan
+> remains the asset pipeline plan; the editor workstream is tracked separately.
+
 > Live implementation status: see `PROGRESS.md`.
 
 ## 1. Objective

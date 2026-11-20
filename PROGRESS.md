@@ -1,8 +1,8 @@
 # Project Progress
 
-Last updated: 2026-11-19
-Current phase: **Track-ed hosted editor released to production; next: venue
-Phase 3d junction road geometry**
+Last updated: 2026-11-20
+Current phase: **Editor consolidation — track-ed is the sole editor; legacy
+removal is gated on migration, parity and CI coverage**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +53,13 @@ Deployment:
 
 ## Current focus
 
+- Editor consolidation is active. `docs/editor-consolidation-report.md` records
+  the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
+  defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
+  is the execution plan. Next: remove hidden legacy authoring UI from track-ed,
+  split `attachEditing`/`createTrackView`, add hosted browser smoke and
+  dependency/CI gates, add autosave, decide legacy project migration, then
+  remove the legacy editor.
 - track-ed is released to production from `main` (`16da199`, PR #36). The
   shared `crates/track-pack` compiler and `track-pack-wasm` power the hosted
   track-ed **Test drive** and `web/track-import/`; Drive resolves
@@ -60,9 +67,10 @@ Deployment:
   submodule is pinned to track-ed `main` (`e4325a5`), and the Pages build ships
   its notices and licenses. The racing line samples the baked asphalt surface
   (track-ed PR #3). ADR 0006 records the hosting and compiler decision. The
-  legacy procedural editor remains as **Legacy Track Editor**; removal is
-  deferred. Production Test drive and the hosted page were verified after the
-  hotfix deploy.
+  legacy procedural editor remains as **Legacy Track Editor**; removal is gated
+  per ADR-0007 on migration, autosave, CI coverage and a final parity check.
+  Production Test drive and the hosted page were verified after the hotfix
+  deploy.
 - Venue graph rebuild is integrated on `dev` (PR #26). The `@5` phases
   added a canonical graph, decoration paths, and a project editor API. ADR 0003
   resets the model to `lapster/track-project@6` (global points, open/closed
@@ -84,15 +92,13 @@ Deployment:
   Seam-wrapped decoration authoring is complete and merged to `dev` in PR #27
   (`ff67366`): paint across the closed-section seam and endpoint drag across
   the seam both produce a wrapped leg, with Playwright coverage.
-  Junction road geometry is the current gap: `make_junction` is a graph
-  primitive and the renderer still bakes independent full-width host/branch
-  ribbons, so angled joins overlap dirt/grass/tarmac, z-fight, and leave holes.
-  ADR 0005 proposes a clipped, stitched junction pad (venue Phase 3d); the
-  experimental trim/lift/cut geometry was reverted. The independent non-route
-  section/cap shading fix merged in PR #29 (`fix/track-section-shading`).
-  Custom-lane authoring remains dropped for now, and junction chain
-  continuation is blocked on multi-leg routes (Phase 4). Per-point width is
-  deferred (TD-0002, TD-0003).
+  Junction road geometry is still a gap in the legacy editor on `dev`, but it
+  is superseded by track-ed's working planar-arrangement junction bake
+  (ADR-0007). Do not continue legacy Phase 3d junction work; hosted track-ed is
+  the supported path. The independent non-route section/cap shading fix merged
+  in PR #29 (`fix/track-section-shading`). Legacy TD-0006 custom-lane and
+  junction-chain work is deferred and becomes moot when the legacy editor is
+  removed. Per-point width is deferred (TD-0002, TD-0003).
 - Imported track rendering is on `feat/imported-track-rendering` (renderer-only,
   editor-independent): GLB imports carry procedural tarmac/grass textures, UVs,
   outline extras, and a distant mountain backdrop, and get screen-space Bayer
@@ -102,10 +108,13 @@ Deployment:
   password, 30 Hz snapshots, interpolation, garage-bay spawns, remote smoke and
   audio. No server physics, car-to-car collision, or automated two-browser test
   yet.
-- Next: release track-ed integration to `main`, then Phase 3d junction road
-  geometry (ADR 0005), followed by multi-layout and pit lane (venue Phases
-  4–5), the remaining TD-0006 junction-continuation work, Speed Dreams physics,
-  wheel/FFB hardware validation, and CP7 HID/audio integration.
+- Next: execute `docs/features/editor-consolidation-plan.md` — remove hidden
+  legacy authoring UI from track-ed, split `attachEditing`/`createTrackView`,
+  add hosted browser smoke and CI/dependency gates, add autosave, decide legacy
+  project migration, then remove the legacy editor. Legacy Phase 3d junction
+  work is superseded by track-ed (ADR-0007) and must not be continued. After
+  consolidation: Speed Dreams physics, wheel/FFB hardware validation, and CP7
+  HID/audio integration.
 
 ## Completed checkpoints
 
@@ -173,12 +182,13 @@ Deployment:
 
 ## Known issues / carry-forward
 
-- Junction road geometry is a stub: overlapping full-width ribbons cause
-  dirt/grass over tarmac, z-fighting, and holes at angles. ADR 0005 / Phase 3d
-  replaces it with a clipped and stitched junction pad (TD-0008).
-- The legacy procedural track editor remains; removal is deferred until
-  track-ed has production use. Hosted track-ed Test drive and the file-import
-  path have manual coverage rather than a PR-gate smoke test.
+- Legacy junction road geometry is still a stub: overlapping full-width ribbons
+  cause dirt/grass over tarmac, z-fighting, and holes at angles. It is
+  superseded by track-ed (ADR-0007); do not continue ADR-0005/Phase 3d in the
+  legacy editor. TD-0008 is superseded.
+- The legacy procedural track editor remains; removal is gated per ADR-0007 on
+  migration, autosave and CI coverage. Hosted track-ed Test drive and the
+  file-import path have manual coverage rather than a PR-gate smoke test.
 - Production Pages builds depend on the pinned track-ed `main` submodule commit
   and build the host at deploy time.
 - track-ed `project@1` JSON files are import-only. Editing them is unsupported
@@ -271,13 +281,12 @@ junction branch, cap, host preservation, and track-pack export:
   junction branches and extra sections render as tarmac with dirt shoulders.
   Loose-end caps sample the centre asphalt band. Covered by a sim-render test
   and dev-preview validation; no asset-schema change.
-- Junction road geometry was re-assessed after angled-junction testing. The
-  incremental branch outward/length/trim/cut experiments were reverted. ADR 0005
-  (accepted) and venue Phase 3d define the replacement: clip ribbons to a
-  junction mouth, stitch one watertight junction pad, and bake collision from
-  the same surfaces. TD-0008 tracks it.
-- Docs: ADR 0003, ADR 0004, ADR 0005, ADR 0006, venue-graph plan, tech debt
-  updated.
+- Legacy junction road geometry was re-assessed after angled-junction testing.
+  The incremental branch outward/length/trim/cut experiments were reverted.
+  It is superseded by track-ed's working junction bake and ADR-0007; do not
+  continue ADR-0005/venue Phase 3d in the legacy editor. TD-0008 is superseded.
+- Docs: ADR 0003, ADR 0004, ADR 0005, ADR 0006, ADR 0007, ADR 0008,
+  editor consolidation report/plan, venue-graph plan, tech debt updated.
 - Tag `venue-graph-5` marks the last `@5` checkpoint (`d6e0496`).
 - `stash@{0}` holds the superseded `@5` selection UX.
 - Local pages: `http://127.0.0.1:8123/web/track-editor/` (legacy),
@@ -287,20 +296,26 @@ junction branch, cap, host preservation, and track-pack export:
 
 Resume in this order:
 
-1. Phase 3d junction road geometry (ADR 0005, TD-0008): clip and stitch
-   junction surfaces, then validate 30/45/90° joins.
-2. TD-0006 remainder: junction chain continuation after Phase 3d/Phase 4;
-   custom-lane authoring is still dropped. Seam paint and seam endpoint resize
-   are complete and tested.
-3. Multi-layout and pit lane (Phases 4–5).
-4. Full gate, dev preview validation, then a PR to `dev` for the next batch.
+1. Editor consolidation (`docs/features/editor-consolidation-plan.md`):
+   remove hidden track-ed authoring UI, split app hotspots, add CI/browser and
+   dependency gates, add autosave, decide migration, then remove the legacy
+   editor.
+2. Legacy Phase 3d junction work and TD-0006 are superseded for the supported
+   product path by track-ed/ADR-0007; do not continue them in the legacy
+   editor.
+3. Multi-layout and pit lane remain deferred; layouts are ADR-0008.
+4. Continue the non-editor workstreams: Speed Dreams physics, wheel/FFB
+   validation, CP7 HID/audio, CP5/CP6 asset work.
+5. Full gate, dev preview validation, then a PR to `dev` for the next batch.
 
 ## Next steps
 
-1. **Phase 3d — junction road geometry (next)**: implement ADR 0005 — derive
-   junction mouths, clip host/branch ribbons, stitch one watertight junction pad
-   with asphalt/shoulder/grass transitions, bake collision from the same
-   surfaces, and validate 30/45/90° joins. Do not cut kerbs/props yet.
+1. **Editor consolidation (next)**: execute
+   `docs/features/editor-consolidation-plan.md`. Start with the hidden UI
+   removal and hosted browser/CI coverage; then split `attachEditing` and
+   `createTrackView`, add autosave, and settle legacy migration. Do not write
+   more legacy junction geometry. Remove the legacy editor only after the
+   ADR-0007 gates pass.
 2. **Speed Dreams physics**: parse `sc-deckard-conejo.xml` into
    `CarPhysics`, including mass, CG, torque curve, gears, final drive, brakes,
    aero, springs/dampers, and tire mu. Confirm the reverse-light split visually.
@@ -339,6 +354,11 @@ Resume in this order:
 - `GOALS.md` — vision, goals, success criteria, and non-goals.
 - `SPEC.md` — architecture, contracts, and engine policy.
 - `PLAN.md` — checkpoint plan.
+- `docs/features/editor-consolidation-plan.md` — active editor consolidation
+  and track-ed refactoring plan.
+- `docs/editor-consolidation-report.md` — editor analysis and recommendations.
+- `docs/adr/0007-promote-track-ed-as-sole-editor.md` — sole-editor decision.
+- `docs/adr/0008-defer-layouts-as-route-layer.md` — layout deferral decision.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.
