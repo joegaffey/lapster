@@ -5,6 +5,8 @@
   "scripts": {
     "test": "node --test src/types/asset-layout.test.ts tests/fixtures.test.ts tests/pack-loader.test.ts tests/sab.test.ts tests/wheel-feel.test.ts tests/net-room.test.ts tests/remote-state.test.ts",
     "build:viewer": "bash scripts/build-viewer.sh",
+    "build:track-ed": "bash scripts/build-track-ed.sh",
+    "check:track-ed": "python3 scripts/check-track-ed-deps.py",
     "serve:multiplayer": "bash scripts/serve-multiplayer.sh",
     "serve:relay": "bash scripts/serve-relay.sh",
     "test:viewer": "npm run build:viewer && bash scripts/test-viewer.sh",

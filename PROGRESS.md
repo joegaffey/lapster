@@ -56,10 +56,12 @@ Deployment:
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
-  is the execution plan. Next: remove hidden legacy authoring UI from track-ed,
-  split `attachEditing`/`createTrackView`, add hosted browser smoke and
-  dependency/CI gates, add autosave, decide legacy project migration, then
-  remove the legacy editor.
+  is the execution plan. A1 and C1–C3 are done: the hidden Kerbs/Walls/Props
+  authoring UI is removed from track-ed (`d466d94`), Roadside is the only
+  decoration path, and Lapster now has a hosted track-ed Playwright smoke plus
+  `track-ed`/`track-ed-hosted` CI jobs, `npm audit` and pin/notice gates. Next:
+  split `attachEditing`/`createTrackView`, add autosave, decide legacy project
+  migration, benchmark a large venue, then remove the legacy editor.
 - track-ed is released to production from `main` (`16da199`, PR #36). The
   shared `crates/track-pack` compiler and `track-pack-wasm` power the hosted
   track-ed **Test drive** and `web/track-import/`; Drive resolves
@@ -171,6 +173,13 @@ Deployment:
 - `cargo check ... --target wasm32-unknown-unknown` including `track-pack-wasm`
 - `npm test` — 38 tests
 - `CI=1 npm run test:viewer` — 101 passed, 1 skipped
+- `npm --prefix web/track-ed-src test` — 180 tests
+- `npm --prefix web/track-ed-src run build` — tsc + Vite clean
+- `bash web/scripts/build-track-ed.sh` — hosted build with notices/licenses
+- `python3 web/scripts/check-track-ed-deps.py` — exact pins, lockfile,
+  5 runtime notices and licenses ok
+- Hosted track-ed smoke — boot, Roadside modes, point edit, junction, export,
+  Test drive with `track-ed` asset — 1 passed
 - WebGL2 fallback — 2/2 passed
 - track-ed host build and `build-pages.sh`; notices and licenses present under
   `dist/web/track-ed/`
@@ -310,12 +319,12 @@ Resume in this order:
 
 ## Next steps
 
-1. **Editor consolidation (next)**: execute
-   `docs/features/editor-consolidation-plan.md`. Start with the hidden UI
-   removal and hosted browser/CI coverage; then split `attachEditing` and
-   `createTrackView`, add autosave, and settle legacy migration. Do not write
-   more legacy junction geometry. Remove the legacy editor only after the
-   ADR-0007 gates pass.
+1. **Editor consolidation (next)**: continue
+   `docs/features/editor-consolidation-plan.md`. A1 and C1–C3 are done. Next
+   split `attachEditing` and `createTrackView`, add autosave, decide and
+   implement legacy migration, benchmark a large venue, then remove the legacy
+   editor. Do not write more legacy junction geometry. Remove the legacy editor
+   only after the ADR-0007 gates pass.
 2. **Speed Dreams physics**: parse `sc-deckard-conejo.xml` into
    `CarPhysics`, including mass, CG, torque curve, gears, final drive, brakes,
    aero, springs/dampers, and tire mu. Confirm the reverse-light split visually.

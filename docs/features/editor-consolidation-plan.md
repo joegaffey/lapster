@@ -3,6 +3,18 @@
 Status: active
 Date: 2026-11-20
 Owner: architect
+
+Progress (2026-11-20):
+
+- A1 done in track-ed `d466d94`: hidden Kerbs/Walls/Props modes, panels, drag
+  states and update functions removed; Roadside remains the only
+  decoration-authoring path. Net reduction is ~1,900 lines including the new
+  span helper/tests, with `@1`–`@4` still import-only.
+- C1/C2/C3 done: hosted Playwright smoke (track-ed `2ffdb7a` plus
+  `web/tests/track-ed-hosted.spec.ts`), `track-ed` and `track-ed-hosted` CI
+  jobs, `npm audit --omit=dev`, and exact-pin/lockfile/notice checks
+  (`web/scripts/build-track-ed.sh`, `web/scripts/check-track-ed-deps.py`).
+- A2/A3, B1, B3, D1 and E remain.
 Related: `docs/editor-consolidation-report.md`, ADR-0007, ADR-0008,
 `docs/track-ed-integration.md`, `docs/features/venue-graph-plan.md`
 
@@ -42,7 +54,7 @@ report:
 
 ## 4. Workstream A — track-ed app refactors
 
-### A1. Remove hidden legacy authoring UI
+### A1. Remove hidden legacy authoring UI — done
 
 **Target:** `web/track-ed-src/src/app/main.ts` and its inline template.
 
@@ -148,7 +160,7 @@ Do not remove the legacy page before this is decided.
 
 ## 6. Workstream C — CI and dependency gates
 
-### C1. Hosted track-ed browser coverage
+### C1. Hosted track-ed browser coverage — done
 
 Add a Lapster Playwright smoke test that:
 
@@ -159,19 +171,24 @@ Add a Lapster Playwright smoke test that:
 5. runs Test drive;
 6. asserts no page errors and a loaded Drive asset.
 
-### C2. Run track-ed tests on pin changes
+### C2. Run track-ed tests on pin changes — done
 
 - Add a CI job for `web/track-ed-src` `npm ci`, `npm test`, `npx tsc --noEmit`
   and `npm run build` when the submodule pointer changes.
 - Or vendor track-ed into the monorepo gate if repository topology changes.
 
-### C3. Dependency/licence gate
+### C3. Dependency/licence gate — done
 
 - Add `npm audit` for track-ed.
 - Verify the shipped third-party notices remain complete.
 - Keep exact pins in `package.json` and commit the lockfile.
 - Treat geometry-library replacements as contract-sensitive work requiring the
   fixture/conformance gate.
+
+Implemented as `npm audit --omit=dev` in the `track-ed` CI job plus
+`web/scripts/check-track-ed-deps.py`, which checks exact pins, lockfile sync,
+runtime notices and the three license files. The Pages build also runs the
+check before compiling the hosted editor.
 
 ## 7. Workstream D — performance
 
@@ -236,6 +253,11 @@ npm test
 npx tsc --noEmit
 npm run build
 ```
+
+`npx tsc` must run with `web/track-ed-src` as the working directory;
+`npx --prefix web/track-ed-src tsc` does not change cwd. Use
+`npm --prefix web/track-ed-src run build` when in doubt; it runs the same
+type-check.
 
 For Lapster-side integration changes:
 

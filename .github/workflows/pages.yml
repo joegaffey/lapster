@@ -56,6 +56,8 @@ jobs:
       - name: Install track-ed dependencies
         working-directory: web/track-ed-src
         run: npm ci
+      - name: Check track-ed dependency pins and notices
+        run: python3 web/scripts/check-track-ed-deps.py
       - name: Build track-ed host
         working-directory: web/track-ed-src
         env:
