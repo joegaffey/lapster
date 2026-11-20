@@ -68,11 +68,18 @@ Deployment:
   ~1.5 s validate, ~1.7 s export, so D2 (kernel optimisation, then a Worker)
   is warranted before any Rust/wasm port. Remove the legacy editor only after
   the deprecation window closes (review 2026-12-20).
-- track-ed is released to production from `main` (`16da199`, PR #36). The
+- Production release **`9a02580`** (PRs #40/#41) ships the consolidation:
+  track-ed `main` `cc410dc`, A1/A2/A3/B1/B3/C1–C3/D1, hosted track-ed autosave
+  and the legacy-page deprecation notice. The landing's legacy card was
+  removed in the #41 hotfix (the `/lapster/` landing is built from the root
+  `index.html`).
+- track-ed is released to production from `main` (`16da199`, PR #36; latest
+  release `9a02580`). The
   shared `crates/track-pack` compiler and `track-pack-wasm` power the hosted
   track-ed **Test drive** and `web/track-import/`; Drive resolves
   `?track=track-ed` from the local pack key `lapster.track-ed.v1`. The
-  submodule is pinned to track-ed `main` (`e4325a5`), and the Pages build ships
+  submodule is pinned to track-ed `main` (`cc410dc` as of production
+  `9a02580`), and the Pages build ships
   its notices and licenses. The racing line samples the baked asphalt surface
   (track-ed PR #3). ADR 0006 records the hosting and compiler decision. The
   legacy procedural editor remains as **Legacy Track Editor**; removal is gated
@@ -188,6 +195,8 @@ Deployment:
   Test drive, autosave restore, New-loop clear, invalid-data warning —
   3 passed
 - WebGL2 fallback — 2/2 passed
+- Production `9a02580` — landing legacy link count 0, legacy deprecation notice
+  present, hosted track-ed and Drive return 200
 - track-ed host build and `build-pages.sh`; notices and licenses present under
   `dist/web/track-ed/`
 - Production smoke: hosted track-ed Test drive on a current `project@2`

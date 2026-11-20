@@ -25,6 +25,9 @@ Progress (2026-11-20):
   card is removed and the page carries an export/re-author notice; a converter
   is not being built. E is deferred until the window closes (review
   2026-12-20).
+- Released to production as `9a02580` (PRs #40/#41) with track-ed `main`
+  `cc410dc`. The #41 hotfix removed the legacy card from the root landing
+  (`index.html`), which the earlier `web/index.html` removal did not cover.
 - D1 done in track-ed `a4ee32f`: a deterministic 10-section venue (2
   junctions, terrain holes, kerbs, tree/tyre runs) bakes in ~8.4 s and
   re-bakes in ~8.4 s; validate ~1.5 s, export ~1.7 s. This confirms the
