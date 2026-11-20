@@ -20,6 +20,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       web: ${{ steps.filter.outputs.web }}
+      track_ed: ${{ steps.filter.outputs.track_ed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +49,13 @@ jobs:
               - 'crates/relay-server/src/protocol.rs'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - '.github/workflows/**'
+            track_ed:
+              - 'web/track-ed-src'
+              - 'web/track-ed-src/**'
+              - 'web/scripts/build-track-ed.sh'
+              - 'web/scripts/check-track-ed-deps.py'
+              - 'web/tests/track-ed-hosted.spec.ts'
               - '.github/workflows/**'
 
   policy:
@@ -193,15 +201,101 @@ jobs:
           npm run test:viewer -- --project=track-editor
           --grep "renders the procedural example track|kerb spans can be trimmed and rebuilt|editing a kerb segment preserves the camera view|track editor boots the @6 single-section B-spline loop|clicking the road inserts and selects a new point|editor modes switch and gate point editing"
 
+  track-ed:
+    needs: changes
+    if: needs.changes.outputs.track_ed == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: track-ed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/track-ed-src/package-lock.json
+      - name: Install track-ed dependencies
+        working-directory: web/track-ed-src
+        run: npm ci
+      - name: Type-check
+        working-directory: web/track-ed-src
+        run: npx tsc --noEmit
+      - name: Unit tests
+        working-directory: web/track-ed-src
+        run: npm test
+      - name: Build
+        working-directory: web/track-ed-src
+        run: npm run build
+      - name: Audit runtime dependencies
+        working-directory: web/track-ed-src
+        run: npm audit --omit=dev
+      - name: Check dependency pins and notices
+        run: python3 web/scripts/check-track-ed-deps.py
+
+  track-ed-hosted:
+    needs: changes
+    if: >-
+      needs.changes.outputs.track_ed == 'true' ||
+      needs.changes.outputs.web == 'true' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: track-ed hosted smoke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            web/track-ed-src/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Install track-ed dependencies
+        working-directory: web/track-ed-src
+        run: npm ci
+      - name: Build viewer
+        working-directory: web
+        run: npm run build:viewer
+      - name: Build hosted track-ed
+        working-directory: web
+        run: bash scripts/build-track-ed.sh
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Hosted track-ed browser smoke
+        working-directory: web
+        env:
+          CI: "true"
+        run: bash scripts/test-viewer.sh --project=default tests/track-ed-hosted.spec.ts
+
   gate:
     name: gate
     if: always()
-    needs: [changes, policy, rust, web, web-smoke, web-editor]
+    needs:
+      - changes
+      - policy
+      - rust
+      - web
+      - web-smoke
+      - web-editor
+      - track-ed
+      - track-ed-hosted
     runs-on: ubuntu-latest
     steps:
       - name: Require successful or intentionally skipped jobs
         run: |
-          echo "changes=${{ needs.changes.result }} policy=${{ needs.policy.result }} rust=${{ needs.rust.result }} web=${{ needs.web.result }} web-smoke=${{ needs['web-smoke'].result }} web-editor=${{ needs['web-editor'].result }}"
+          echo "changes=${{ needs.changes.result }} policy=${{ needs.policy.result }} rust=${{ needs.rust.result }} web=${{ needs.web.result }} web-smoke=${{ needs['web-smoke'].result }} web-editor=${{ needs['web-editor'].result }} track-ed=${{ needs['track-ed'].result }} track-ed-hosted=${{ needs['track-ed-hosted'].result }}"
           case "${{ needs.changes.result }}" in
             success|skipped) ;;
             *) echo "changes=${{ needs.changes.result }}"; exit 1 ;;
@@ -222,4 +316,12 @@ jobs:
           case "${{ needs['web-editor'].result }}" in
             success|skipped) ;;
             *) echo "web-editor=${{ needs['web-editor'].result }}"; exit 1 ;;
+          esac
+          case "${{ needs['track-ed'].result }}" in
+            success|skipped) ;;
+            *) echo "track-ed=${{ needs['track-ed'].result }}"; exit 1 ;;
+          esac
+          case "${{ needs['track-ed-hosted'].result }}" in
+            success|skipped) ;;
+            *) echo "track-ed-hosted=${{ needs['track-ed-hosted'].result }}"; exit 1 ;;
           esac
