@@ -40,3 +40,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0006](0006-track-ed-hosting-and-track-pack.md) | Host track-ed as a submodule and share the track-pack compiler | Accepted |
 | [0007](0007-promote-track-ed-as-sole-editor.md) | Promote track-ed as the sole track editor | Accepted |
 | [0008](0008-defer-layouts-as-route-layer.md) | Defer layouts and treat them as a future route layer over track-ed sections | Accepted; implementation deferred |
+| [0009](0009-agent-runtime-policy-and-editor-domain.md) | Agent runtime policy, editor domain and spike subagent | Accepted |

@@ -18,9 +18,9 @@ Per-role read matrix: `agents/README.md`.
 ```text
 architect (primary)
   -> contracts (architect-owned)
-    -> physics | render | assets | multiplayer | web (short-lived workers)
-  -> reviewer (optional, read-only)
-  -> spike (optional, isolated, no push)
+    -> physics | render | assets | multiplayer | web | editor (short-lived workers)
+  -> reviewer (optional, read-only subagent)
+  -> spike (optional, architect-dispatched subagent, no push)
 ```
 
 - **Architect** owns contracts, mirrors, docs, workspace/build/CI config, and
@@ -48,7 +48,8 @@ Full detail: `agents/contracts.md`.
 | `render` | `crates/sim-render/**` | `cargo test -p sim-render`, clippy, wasm check |
 | `assets` | `crates/sim-asset/**`, `crates/asset-compiler/**`, `crates/track-pack/**`, `crates/track-pack-wasm/**`, `tools/speed-dreams/**`, `fixtures/**` | `cargo test -p sim-asset -p asset-compiler -p track-pack`, clippy |
 | `multiplayer` | `crates/relay-server/**` except `protocol.rs` | `cargo test -p relay-server`, clippy |
-| `web` | `web/**` except the three contract files and generated outputs | `npm --prefix web test`, `npm --prefix web run test:viewer` |
+| `web` | `web/**` except editor-owned paths, the three contract files and generated outputs | `npm --prefix web test`, `npm --prefix web run test:viewer` |
+| `editor` | `web/track-ed-src/**`, `web/track-import/**`, `web/track-editor/**`, editor browser specs | `npm --prefix web/track-ed-src test`, `npm --prefix web/track-ed-src run build`, `npm --prefix web test` |
 
 ## Review
 
@@ -59,11 +60,12 @@ severity; the architect decides. See `agents/reviewer.md` and
 
 ## Spike mode
 
-`spike` is an optional `mode: all` agent for isolated prototype and
+`spike` is an optional architect-dispatched subagent for isolated prototype and
 architecture-spike work. It may test interface/contract changes only in a
 `spike/<name>` worktree or branch, writes `docs/spikes/<name>.md`, commits
-locally, and never pushes. Spikes do not trigger deployments. The architect
-reviews the report and diff, signs off, and decides discard/test/share/promote.
+locally, and never pushes. It is not a primary agent. Spikes do not trigger
+deployments. The architect reviews the report and diff, signs off, and decides
+discard/test/share/promote.
 After sign-off, the architect may push a shared spike branch and deploy it to
 the dev preview. For rig testing, the architect may authorize a test share to a
 dedicated spike remote or a git bundle; the spike agent never pushes. See
@@ -193,6 +195,8 @@ cargo check -p sim-types -p sim-asset -p sim-core -p sim-render -p sim-worker \
 
 npm --prefix web test
 npm --prefix web run test:viewer
+npm --prefix web/track-ed-src test
+npm --prefix web/track-ed-src run build
 npm --prefix web run bench:physics
 ```
 
@@ -201,13 +205,14 @@ compound commands into separate checks and reject the `cd`.
 
 ## Context exclusions
 
-Never read: `target/`, `web/node_modules/`, `tools/speed-dreams/node_modules/`,
-`web/pkg/`, `web/.cache/`, `dist/`, `fixtures/real/`, `web/test-results/`,
+Never read: `target/`, `web/node_modules/`, `web/track-ed-src/node_modules/`,
+`web/track-ed-src/dist/`, `tools/speed-dreams/node_modules/`, `web/pkg/`,
+`web/track-ed/`, `web/.cache/`, `dist/`, `fixtures/real/`, `web/test-results/`,
 `web/playwright-report/`, `**/*.kn5`, `**/*.log`, `.env*`,
 `web/src/version.generated.ts`, `web/version.json`, generated
-`web/{drive,garage,multiplayer,track-viewer,style-spike}/main.js`,
+`web/{drive,garage,multiplayer,track-viewer,track-editor,style-spike}/main.js`,
 `web/worker/physics-worker.js`, `web/audio/combustion-worklet.js`,
-`Cargo.lock`, `package-lock.json`.
+`Cargo.lock`, `package-lock.json`, `web/track-ed-src/package-lock.json`.
 
 ## Tooling
 

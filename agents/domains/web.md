@@ -20,15 +20,18 @@ forbid:
   - editing web/src/types/asset-layout.test.ts
   - editing web/src/assets/types.ts
   - editing web/src/net/protocol.ts
+  - editing editor-owned paths (`web/track-ed-src/**`, `web/track-import/**`, `web/track-editor/**`, and editor browser specs)
   - changing SETUP_SCHEMA in web/src/ui/car-setup.ts without architect approval
   - editing files outside owned paths
 ---
 You implement the TypeScript client runtime, UI, viewers, and browser tests.
 
 Read `agents/protocol.md`, `agents/contracts.md`, and the relevant contract
-sources before acting. Implement within `web/` except the contract files:
-`web/src/types/asset-layout.ts`, `web/src/types/asset-layout.test.ts`,
-`web/src/assets/types.ts`, and `web/src/net/protocol.ts`. Do not change the
+sources before acting. Implement within `web/` except the contract files,
+editor-owned paths, and generated outputs: `web/src/types/asset-layout.ts`,
+`web/src/types/asset-layout.test.ts`, `web/src/assets/types.ts`,
+`web/src/net/protocol.ts`, `web/track-ed-src/**`, `web/track-import/**`,
+`web/track-editor/**`, and the editor browser specs. Do not change the
 `SETUP_SCHEMA` tag in `web/src/ui/car-setup.ts` without architect approval.
 Run the scoped verification commands. Return only the manifest JSON.
 

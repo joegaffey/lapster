@@ -199,7 +199,7 @@ commits; check `git log origin/main..origin/dev` before claiming coverage.
     re-review the whole batch.
 
 ## Spikes
-- The user or the architect may propose a spike.
+- The architect may propose and dispatch a spike as a subagent.
 - The spike works in an isolated `spike/<name>` worktree or branch and writes
   `docs/spikes/<name>.md`.
 - The spike never pushes or triggers deployments.
@@ -235,6 +235,7 @@ commits; check `git log origin/main..origin/dev` before claiming coverage.
 ## Repository bindings
 - Contract registry: `agents/contracts.md`
 - Domain map: `agents/domains/`
+- Editor domain: `agents/domains/editor.md`
 - Reviewer protocol: `agents/review-protocol.md`
 - Spike protocol: `agents/spike-protocol.md`
 - Durable state: `PROGRESS.md`, `SPEC.md`, `PLAN.md`
@@ -242,6 +243,7 @@ commits; check `git log origin/main..origin/dev` before claiming coverage.
 - ADRs: `docs/adr/`
 - Technical debt: `docs/tech-debt.md`
 - Dev preview: https://joegaffey.com/lapster-dev/
-- Verification: workspace gate plus `npm --prefix web test` and
-  `npm --prefix web run test:viewer`
+- Verification: workspace gate plus `npm --prefix web test`,
+  `npm --prefix web run test:viewer`, `npm --prefix web/track-ed-src test` and
+  `npm --prefix web/track-ed-src run build`
 - Model tier: reasoning

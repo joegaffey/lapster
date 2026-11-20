@@ -359,6 +359,8 @@ Resume in this order:
 - `docs/editor-consolidation-report.md` — editor analysis and recommendations.
 - `docs/adr/0007-promote-track-ed-as-sole-editor.md` — sole-editor decision.
 - `docs/adr/0008-defer-layouts-as-route-layer.md` — layout deferral decision.
+- `docs/adr/0009-agent-runtime-policy-and-editor-domain.md` — agent limits,
+  default agent, permissions and editor domain.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.

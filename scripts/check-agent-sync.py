@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check canonical role cards against committed opencode adapters."""
 
+import json
 import re
 from pathlib import Path
 
@@ -36,6 +37,14 @@ def list_field(lines, key):
         if line.strip() and not line.startswith(" "):
             in_field = False
     return values
+
+
+def scalar_field(lines, key):
+    for line in lines:
+        match = re.match(rf"^{re.escape(key)}:\s*(.+?)\s*$", line)
+        if match:
+            return match.group(1).strip().strip('"')
+    return None
 
 
 def edit_allow_patterns(lines):
@@ -78,6 +87,38 @@ def check_role(card_path, adapter_path, expect_edit_deny=False):
     return errors
 
 
+def check_runtime_policy():
+    errors = []
+
+    architect = frontmatter(OPENCODE_DIR / "architect.md")
+    if scalar_field(architect, "steps") is not None:
+        errors.append("architect: steps must be omitted for build parity")
+
+    for card in sorted((AGENTS_DIR / "domains").glob("*.md")):
+        adapter = frontmatter(OPENCODE_DIR / f"{card.stem}.md")
+        if scalar_field(adapter, "steps") != "80":
+            errors.append(f"{card.stem}: expected steps: 80")
+
+    for name in ("reviewer", "spike"):
+        adapter = frontmatter(OPENCODE_DIR / f"{name}.md")
+        if scalar_field(adapter, "steps") != "80":
+            errors.append(f"{name}: expected steps: 80")
+
+    spike = frontmatter(OPENCODE_DIR / "spike.md")
+    if scalar_field(spike, "mode") != "subagent":
+        errors.append("spike: expected mode: subagent")
+
+    try:
+        config = json.loads((ROOT / "opencode.json").read_text())
+    except Exception as error:
+        errors.append(f"opencode.json: invalid JSON: {error}")
+    else:
+        if config.get("default_agent") != "architect":
+            errors.append("opencode.json: expected default_agent architect")
+
+    return errors
+
+
 def main():
     errors = []
     errors += check_role(AGENTS_DIR / "architect.md", OPENCODE_DIR / "architect.md")
@@ -91,6 +132,7 @@ def main():
         expect_edit_deny=True,
     )
     errors += check_role(AGENTS_DIR / "spike.md", OPENCODE_DIR / "spike.md")
+    errors += check_runtime_policy()
 
     if errors:
         print("\n".join(errors))

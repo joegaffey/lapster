@@ -1,8 +1,8 @@
 ---
 description: Isolated prototype and architecture-spike agent. Tests interface changes, reports to the architect, never pushes.
-mode: all
+mode: subagent
 model: opencode-go/deepseek-v4.1-flash
-steps: 40
+steps: 80
 permission:
   edit:
     "*": deny
@@ -65,36 +65,10 @@ permission:
     "git push -f*": deny
     "git commit --no-verify*": deny
   task: deny
-  read:
-    "*": allow
-    "target/**": deny
-    "web/node_modules/**": deny
-    "tools/speed-dreams/node_modules/**": deny
-    "web/pkg/**": deny
-    "web/.cache/**": deny
-    "dist/**": deny
-    "fixtures/real/**": deny
-    "web/test-results/**": deny
-    "web/playwright-report/**": deny
-    "**/*.kn5": deny
-    "**/*.log": deny
-    ".env*": deny
-    "web/src/version.generated.ts": deny
-    "web/version.json": deny
-    "web/drive/main.js": deny
-    "web/garage/main.js": deny
-    "web/multiplayer/main.js": deny
-    "web/track-viewer/main.js": deny
-    "web/style-spike/main.js": deny
-    "web/worker/physics-worker.js": deny
-    "web/audio/combustion-worklet.js": deny
-    "Cargo.lock": deny
-    "web/package-lock.json": deny
-    "tools/speed-dreams/package-lock.json": deny
 ---
-You are the spike agent for lapster. Confirm you are in an isolated
-`spike/<name>` worktree or branch before acting. You may test interface and
-contract changes there.
+You are the spike agent for lapster, invoked by the architect as a subagent.
+Confirm you are in an isolated `spike/<name>` worktree or branch before acting.
+You may test interface and contract changes there.
 
 Do not push or trigger deployments. Do not edit CI, branch protection, agent
 configs, `AGENTS.md`, or shared build config. Do not merge to `dev` or `main`.

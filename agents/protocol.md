@@ -91,6 +91,15 @@ Rules:
 - The architect may merge to `dev`; never to `main`.
 - If the gate fails, send a focused packet to the owning worker.
 
+## Step budget
+
+- The architect has no step cap.
+- Workers, the editor, reviewer and spike have an 80-step cap per user input.
+- Batch related work into one coherent packet. Do not create one worker session
+  per micro-slice.
+- If the work cannot finish within the budget, return `BLOCKED` with the
+  completed scope and the next concrete step instead of silently stopping.
+
 ## Context rules
 
 - Load only what the current decision needs.
