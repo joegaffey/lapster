@@ -320,9 +320,14 @@ Docs-only changes require `git diff --check` and the agent sync check.
 
 ## 12. Open decisions
 
-- Legacy project migration option.
+- ~~Legacy project migration option.~~ Decided in ADR-0010: one-release
+  read-only legacy window with JSON export/re-author guidance; no converter
+  now.
+- ~~Removal timing.~~ After the ADR-0010 window (review 2026-12-20) and a final
+  parity check.
 - Repository topology: standalone submodule versus vendoring.
 - Second-consumer strategy.
 - Car camera/exact preview requirement.
 - Tree detail/LOD requirement.
-- Removal timing.
+- D2 implementation choice: optimise terrain-hole triangulation/polygon
+  clipping first, then Web Worker if the large-venue bake remains over budget.
