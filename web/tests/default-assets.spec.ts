@@ -19,11 +19,14 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   const drive = await page.evaluate(() => ({
     error: (window as any).__driveViewerError,
     telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
+    race: JSON.parse((window as any).__driveViewer.race()),
   }));
   expect(drive.error).toBeUndefined();
   expect(drive.telemetry.car).toBe("mazda-rx7");
   expect(drive.telemetry.track).toBe("skidpad05");
   expect(drive.telemetry.contacts).toBe(4);
+  expect(drive.telemetry.raceAvailable).toBe(false);
+  expect(drive.race).toEqual({ available: false });
 
   await page.goto("/web/garage/");
   await page.waitForFunction(

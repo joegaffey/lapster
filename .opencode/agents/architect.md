@@ -22,11 +22,11 @@ permission:
     "serve.json": allow
     "index.html": allow
     "crates/sim-types/**": allow
-    "crates/relay-server/src/protocol.rs": allow
-    "web/src/types/asset-layout.ts": allow
-    "web/src/types/asset-layout.test.ts": allow
+    "crates/relay-server/src/protocol*": allow
+    "web/src/types/asset-layout*": allow
     "web/src/assets/types.ts": allow
-    "web/src/net/protocol.ts": allow
+    "web/src/contracts/**": allow
+    "web/src/net/protocol*": allow
   bash:
     "*": ask
     "ls*": allow

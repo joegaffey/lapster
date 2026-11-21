@@ -22,7 +22,7 @@ use sim_core::{
     Controls, PhysicsTuning, TrackCollider, Vehicle, VehicleState, WheelState, FIXED_DT,
 };
 use sim_types::snapshot_state as snapshot;
-use sim_types::{CarTuning, SNAPSHOT_STATE_FLOATS};
+use sim_types::{CarTuning, RaceData, SNAPSHOT_STATE_FLOATS};
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -1812,6 +1812,8 @@ pub struct DriveViewer {
     step_times: Vec<f32>,
     track_id: String,
     car_id: String,
+    race: Option<RaceData>,
+    track_source_hash: [u8; 32],
     car_bay: usize,
     color_offset: usize,
     camera_mode: CameraMode,
@@ -1859,8 +1861,10 @@ impl DriveViewer {
         let track_visual = track_pack.track_visual_owned().map_err(js_error)?;
         let track_metadata = track_pack.track_metadata_owned().map_err(js_error)?;
         let track_collision = track_pack.track_collision_owned().map_err(js_error)?;
+        let race = track_pack.track_race_owned().map_err(js_error)?;
         let track_manifest = track_pack.manifest().clone();
         drop(track_pack);
+        let track_source_hash = track_manifest.source_hash;
         let surface_names = track_metadata
             .surfaces
             .iter()
@@ -2000,6 +2004,8 @@ impl DriveViewer {
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
             car_id: car_manifest.id,
+            race,
+            track_source_hash,
             car_bay,
             color_offset,
             camera_mode: CameraMode::Chase,
@@ -2298,6 +2304,10 @@ impl DriveViewer {
         self.info.clone()
     }
 
+    pub fn race(&self) -> String {
+        race_view_json(self.race.as_ref())
+    }
+
     pub fn telemetry(&self) -> String {
         let state = &self.vehicle.state;
         let speed = state.velocity.length();
@@ -2330,6 +2340,12 @@ impl DriveViewer {
         serde_json::json!({
             "track": self.track_id,
             "car": self.car_id,
+            "raceAvailable": self.race.is_some(),
+            "layoutId": self
+                .race
+                .as_ref()
+                .map(|race| race.layout.layout_id.as_str()),
+            "trackSourceHash": hex_source_hash(&self.track_source_hash),
             "carBay": self.car_bay,
             "localSlot": self.local_slot,
             "remoteSlots": self.rigs.len().saturating_sub(1),
@@ -3041,6 +3057,31 @@ fn percentile(values: &[f32], fraction: f32) -> f32 {
     values[index.min(values.len() - 1)]
 }
 
+fn race_view_json(race: Option<&RaceData>) -> String {
+    match race {
+        None => String::from("{\"available\":false}"),
+        Some(race) => serde_json::json!({
+            "available": true,
+            "version": race.version,
+            "layout": race.layout,
+            "start_finish": race.start_finish,
+            "grid": race.grid,
+            "sectors": race.sectors,
+        })
+        .to_string(),
+    }
+}
+
+fn hex_source_hash(hash: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+
+    let mut hex = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
 fn performance_now() -> f64 {
     web_sys::window()
         .and_then(|window| window.performance())
@@ -3051,7 +3092,102 @@ fn performance_now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sim_types::{
+        Layout, LayoutDirection, SectorSpec, SpawnPoint, StartFinish, RACE_DATA_VERSION,
+    };
     use std::f32::consts::FRAC_PI_2;
+
+    fn sample_race() -> RaceData {
+        RaceData {
+            version: RACE_DATA_VERSION,
+            layout: Layout {
+                layout_id: String::from("main"),
+                closed: true,
+                direction: LayoutDirection::Forward,
+                points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+                half_width: 5.0,
+            },
+            start_finish: StartFinish {
+                section_id: String::from("start"),
+                fraction: 0.0,
+                position: [0.0, 0.0, 0.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+            grid: vec![SpawnPoint {
+                name: String::from("grid_0"),
+                position: [0.0, 0.0, 2.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            }],
+            sectors: vec![SectorSpec {
+                name: String::from("sector_1"),
+                start_fraction: 0.0,
+                end_fraction: 1.0,
+            }],
+        }
+    }
+
+    #[test]
+    fn race_view_unavailable_serializes_contract_shape() {
+        let json = race_view_json(None);
+        assert_eq!(json, "{\"available\":false}");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race view");
+        assert_eq!(value.as_object().map(|object| object.len()), Some(1));
+        assert_eq!(value["available"], serde_json::Value::Bool(false));
+    }
+
+    #[test]
+    fn race_view_available_serializes_contract_shape() {
+        let race = sample_race();
+        let json = race_view_json(Some(&race));
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race view");
+        assert_eq!(value["available"], serde_json::Value::Bool(true));
+        assert_eq!(value["version"], serde_json::json!(RACE_DATA_VERSION));
+        assert_eq!(value["layout"]["layout_id"], serde_json::json!("main"));
+        assert_eq!(value["layout"]["closed"], serde_json::Value::Bool(true));
+        assert_eq!(value["layout"]["direction"], serde_json::json!("forward"));
+        assert_eq!(value["layout"]["points"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            value["start_finish"]["section_id"],
+            serde_json::json!("start")
+        );
+        assert_eq!(value["grid"][0]["name"], serde_json::json!("grid_0"));
+        assert_eq!(value["sectors"][0]["name"], serde_json::json!("sector_1"));
+
+        let mut keys = value
+            .as_object()
+            .expect("race view object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "available",
+                "grid",
+                "layout",
+                "sectors",
+                "start_finish",
+                "version"
+            ]
+        );
+    }
+
+    #[test]
+    fn source_hash_hex_is_lowercase_two_digits_per_byte() {
+        let mut hash = [0u8; 32];
+        hash[0] = 0x00;
+        hash[1] = 0x0a;
+        hash[31] = 0xff;
+
+        let hex = hex_source_hash(&hash);
+        assert_eq!(hex.len(), 64);
+        assert!(hex.starts_with("000a"));
+        assert!(hex.ends_with("ff"));
+        assert_eq!(&hex[2..4], "0a");
+        assert!(hex[4..62].chars().all(|ch| ch == '0'));
+        assert_eq!(hex_source_hash(&[0xab; 32]), "ab".repeat(32));
+    }
 
     #[test]
     fn shadow_decal_yaw_matches_car_heading() {

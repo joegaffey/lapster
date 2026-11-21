@@ -14,10 +14,10 @@ permission:
     "web/tests/editor-drive.spec.ts": deny
     "web/tests/track-import.spec.ts": deny
     "web/tests/track-ed*.spec.ts": deny
-    "web/src/types/asset-layout.ts": deny
-    "web/src/types/asset-layout.test.ts": deny
+    "web/src/types/asset-layout*": deny
     "web/src/assets/types.ts": deny
-    "web/src/net/protocol.ts": deny
+    "web/src/contracts/**": deny
+    "web/src/net/protocol*": deny
   bash:
     "*": ask
     "cd web && npm test*": allow

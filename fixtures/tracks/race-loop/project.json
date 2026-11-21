@@ -1,0 +1,32 @@
+{
+  "schema": "track-ed/project@1",
+  "name": "Loop Fixture",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5.0,
+    "shoulderHalfWidth": 8.0
+  },
+  "terrain": {
+    "margin": 30.0
+  },
+  "centerlines": [
+    {
+      "id": "main",
+      "closed": true,
+      "points": [
+        [0, 0],
+        [80, 0],
+        [110, 40],
+        [80, 80],
+        [0, 80],
+        [-30, 40]
+      ]
+    }
+  ],
+  "spawn": {
+    "centerline": "main",
+    "fraction": 0.0,
+    "lateral": 0.0
+  },
+  "cameras": []
+}

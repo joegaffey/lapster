@@ -6,7 +6,8 @@ export type ChunkKind =
   | "Collision"
   | "Metadata"
   | "Audio"
-  | "Texture";
+  | "Texture"
+  | "Race";
 
 export type Compression = "None";
 
@@ -45,6 +46,7 @@ export interface EntryPoints {
   metadata: number | null;
   audio: number | null;
   texture: number | null;
+  race?: number | null;
 }
 
 export interface AssetStats {

@@ -71,16 +71,18 @@ pub enum ChunkKind {
     Metadata,
     Audio,
     Texture,
+    Race,
 }
 
 impl ChunkKind {
-    pub const ALL: [ChunkKind; 6] = [
+    pub const ALL: [ChunkKind; 7] = [
         ChunkKind::Physics,
         ChunkKind::Visual,
         ChunkKind::Collision,
         ChunkKind::Metadata,
         ChunkKind::Audio,
         ChunkKind::Texture,
+        ChunkKind::Race,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -91,6 +93,7 @@ impl ChunkKind {
             ChunkKind::Metadata => "metadata",
             ChunkKind::Audio => "audio",
             ChunkKind::Texture => "texture",
+            ChunkKind::Race => "race",
         }
     }
 }
@@ -344,6 +347,8 @@ pub struct EntryPoints {
     pub metadata: Option<u32>,
     pub audio: Option<u32>,
     pub texture: Option<u32>,
+    #[serde(default)]
+    pub race: Option<u32>,
 }
 
 impl EntryPoints {
@@ -355,10 +360,11 @@ impl EntryPoints {
             ChunkKind::Metadata => self.metadata,
             ChunkKind::Audio => self.audio,
             ChunkKind::Texture => self.texture,
+            ChunkKind::Race => self.race,
         }
     }
 
-    pub fn entries(&self) -> [(ChunkKind, Option<u32>); 6] {
+    pub fn entries(&self) -> [(ChunkKind, Option<u32>); 7] {
         [
             (ChunkKind::Physics, self.physics),
             (ChunkKind::Visual, self.visual),
@@ -366,6 +372,7 @@ impl EntryPoints {
             (ChunkKind::Metadata, self.metadata),
             (ChunkKind::Audio, self.audio),
             (ChunkKind::Texture, self.texture),
+            (ChunkKind::Race, self.race),
         ]
     }
 }
@@ -1174,6 +1181,7 @@ mod tests {
                 metadata: None,
                 audio: None,
                 texture: None,
+                race: None,
             },
         );
         assert_eq!(manifest.validate(), Ok(()));
@@ -1192,6 +1200,7 @@ mod tests {
                 metadata: None,
                 audio: None,
                 texture: None,
+                race: None,
             },
         );
         assert_eq!(
@@ -1211,6 +1220,7 @@ mod tests {
                 metadata: None,
                 audio: None,
                 texture: None,
+                race: None,
             },
         );
         assert_eq!(
@@ -1234,6 +1244,7 @@ mod tests {
                 metadata: None,
                 audio: None,
                 texture: None,
+                race: None,
             },
         );
         car.chunks[0].offset = 3;
