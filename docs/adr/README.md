@@ -42,3 +42,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0008](0008-defer-layouts-as-route-layer.md) | Defer layouts and treat them as a future route layer over track-ed sections | Accepted; implementation deferred |
 | [0009](0009-agent-runtime-policy-and-editor-domain.md) | Agent runtime policy, editor domain and spike subagent | Accepted |
 | [0010](0010-legacy-project-migration-window.md) | Migrate legacy projects with a one-release read-only window | Accepted |
+| [0011](0011-race-layout-race-chunk.md) | Race layout chunk: layout as race route | Accepted |

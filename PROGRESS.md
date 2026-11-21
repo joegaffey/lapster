@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-20
+Last updated: 2026-11-21
 Current phase: **Editor consolidation — track-ed is the sole editor; legacy
 removal is gated on migration, parity and CI coverage**
 
@@ -335,6 +335,11 @@ Resume in this order:
 
 ## Next steps
 
+**Planned next feature — track race MVP:** `docs/features/track-race-mvp.md`
+and ADR-0011 define the optional Race chunk, layout-as-race-route contract,
+section-owned start/finish/grid, and the implicit-layout MVP. Implementation
+has not started; AI and online contact are later batches.
+
 1. **Editor consolidation (next)**: continue
    `docs/features/editor-consolidation-plan.md`. A1, A2/A3, B1, B3, C1–C3 and
    D1 are done. Next: D2 kernel/Worker work (bake is ~8.4 s on a 10-section
@@ -381,11 +386,13 @@ Resume in this order:
 - `PLAN.md` — checkpoint plan.
 - `docs/features/editor-consolidation-plan.md` — active editor consolidation
   and track-ed refactoring plan.
+- `docs/features/track-race-mvp.md` — track-side race layout/race chunk plan.
 - `docs/editor-consolidation-report.md` — editor analysis and recommendations.
 - `docs/adr/0007-promote-track-ed-as-sole-editor.md` — sole-editor decision.
 - `docs/adr/0008-defer-layouts-as-route-layer.md` — layout deferral decision.
 - `docs/adr/0009-agent-runtime-policy-and-editor-domain.md` — agent limits,
   default agent, permissions and editor domain.
+- `docs/adr/0011-race-layout-race-chunk.md` — race layout/race chunk decision.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.
