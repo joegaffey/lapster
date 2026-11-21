@@ -43,3 +43,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0009](0009-agent-runtime-policy-and-editor-domain.md) | Agent runtime policy, editor domain and spike subagent | Accepted |
 | [0010](0010-legacy-project-migration-window.md) | Migrate legacy projects with a one-release read-only window | Accepted |
 | [0011](0011-race-layout-race-chunk.md) | Race layout chunk: layout as race route | Accepted |
+| [0012](0012-contract-roots-and-agent-permissions.md) | Make contract ownership directory-based | Accepted |

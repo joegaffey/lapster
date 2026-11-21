@@ -4,7 +4,7 @@
 - **Date:** 2026-11-21
 - **Owner:** architect
 - **Domains:** architect, assets, editor, render, web
-- **Related:** ADR-0011, ADR-0008, ADR-0006, `docs/track-ed-integration.md`,
+- **Related:** ADR-0012, ADR-0011, ADR-0008, ADR-0006, `docs/track-ed-integration.md`,
   `docs/multiplayer.md`, `agents/contracts.md`
 
 ## 1. Context
@@ -93,17 +93,19 @@ No track-ed project schema change is required for this MVP.
     `crates/sim-render/src/track_editor.rs` set `race: None`.
   - Web loader: `web/src/assets/loader.ts` accepts the optional Race
     entrypoint.
-  - Architect role card/adapter: `web/src/assets/race.ts` is declared
-    architect-owned.
+  - Architect role card/adapter: `web/src/contracts/**` is architect-owned;
+    the Race mirror target is `web/src/contracts/race.ts`.
 - Before the dev merge, the current diff passed: `cargo fmt --check`,
   `cargo test --workspace`, workspace clippy, wasm check,
   `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`, and
   `python3 scripts/check-agent-sync.py`. Re-run the full gate after the merge
   before committing the foundation.
 - Blockers:
-  - `web/src/assets/race.ts` has not been created. The running opencode
+  - `web/src/contracts/race.ts` has not been created. The running opencode
     server still has the old architect permission list; restart
     `opencode.service` when no other task is active, then add the mirror.
+    ADR-0012 makes the contract roots directory-based, so later contract files
+    under `web/src/contracts/**` do not require another adapter edit or restart.
   - `track-pack` still needs grid-inside-road and start/finish-fraction
     validation.
 - Next: restart the server, add the TS mirror, close those validation gaps,
@@ -187,7 +189,7 @@ it.
   and committed car packs cannot all be rebuilt from repository sources. Use
   `RaceData.version` for evolution.
 - Mirror `ChunkKind`, `EntryPoints.race`, and `RaceData` in
-  `web/src/assets/types.ts` and `web/src/assets/race.ts`.
+  `web/src/assets/types.ts` and `web/src/contracts/race.ts`.
 - Add `"race"` to `chunkKindForEntrypoint` in `web/src/assets/loader.ts`; it is
   not a required entrypoint for tracks.
 - Update every `EntryPoints` constructor with `race: None`; source and AC
@@ -270,7 +272,7 @@ The asset schema row in `AGENTS.md` and `agents/contracts.md` becomes:
 
 | Contract | Canonical | Mirror | Consumers | Owner |
 |---|---|---|---|---|
-| Asset schema v3 / pack format (optional Race chunk) | `crates/sim-types/src/asset.rs`, `crates/sim-types/src/race.rs` | `web/src/assets/types.ts`, `web/src/assets/race.ts` | `sim-asset`, `asset-compiler`, `track-pack`, `track-pack-wasm`, `sim-render`, `web/src/assets` | architect |
+| Asset schema v3 / pack format (optional Race chunk) | `crates/sim-types/src/asset.rs`, `crates/sim-types/src/race.rs` | `web/src/assets/types.ts`, `web/src/contracts/**` | `sim-asset`, `asset-compiler`, `track-pack`, `track-pack-wasm`, `sim-render`, `web/src/assets` | architect |
 
 `SCHEMA_VERSION` remains 3. The additive chunk carries `RaceData.version`; the
 exception is recorded in ADR-0011. Existing packs remain readable, but old
@@ -286,7 +288,7 @@ files as read-only. If a worker needs a further contract change, it returns
     "canonical": "crates/sim-types/src/asset.rs",
     "mirrors": [
       "web/src/assets/types.ts",
-      "web/src/assets/race.ts"
+      "web/src/contracts/race.ts"
     ],
     "reason": "Add optional Race chunk/entrypoint and RaceData",
     "breaking": false
@@ -297,6 +299,10 @@ files as read-only. If a worker needs a further contract change, it returns
 `breaking: false` covers existing packs; the one-way reader impact is recorded
 in ADR-0011. A full two-way compatibility change would require a global
 `SCHEMA_VERSION` bump and a complete pack rebuild.
+
+Contract ownership is directory-based under ADR-0012. Adding a mirror under
+`web/src/contracts/**` does not require an agent-config change or a server
+restart; the architect adapter already allows the root.
 
 ## 5. Data flow
 
@@ -414,7 +420,7 @@ Tests:
 
 ### 8.2 Web
 
-- Add `web/src/assets/race.ts` with the `RaceData` mirror and a JSON validator.
+- Add `web/src/contracts/race.ts` with the `RaceData` mirror and a JSON validator.
 - Extend `web/src/assets/types.ts` for `ChunkKind` and `EntryPoints.race`.
 - Add `trackIdentity()` for the future room handshake.
 - Optionally add a small nearest-point/progress helper for the later race
@@ -436,7 +442,7 @@ Tests:
 
 | Phase | Domain | Deliverable | Verify |
 |---|---|---|---|
-| 0 | architect | ADR-0011, contract docs, scope record | doc review, `git diff --check` |
+| 0 | architect | ADR-0011, ADR-0012, contract docs, scope record | doc review, `git diff --check` |
 | 1 | architect | `RaceData`, `ChunkKind::Race`, entrypoint, accessor, mirrors | `cargo test -p sim-types -p sim-asset`, web type tests |
 | 2 | assets | track-pack parse/validate/write, races in packs | `cargo test -p track-pack`, `cargo test -p asset-compiler` |
 | 3 | editor | track-ed implicit layout, centerline path, grid, sectors, export v2 | `npm --prefix web/track-ed-src test` and build |
@@ -557,6 +563,7 @@ Specific new tests:
 - `GOALS.md`
 - `SPEC.md`
 - `PLAN.md`
+- `docs/adr/0012-contract-roots-and-agent-permissions.md`
 - `docs/adr/0011-race-layout-race-chunk.md`
 - `docs/adr/0008-defer-layouts-as-route-layer.md`
 - `docs/adr/0006-track-ed-hosting-and-track-pack.md`
@@ -570,4 +577,5 @@ Specific new tests:
 - `web/track-ed-src/src/kernel/bake.ts`
 - `web/track-ed-src/src/export/lapster/manifest.ts`
 - `web/src/assets/types.ts`
+- `web/src/contracts/race.ts`
 - `web/src/assets/loader.ts`

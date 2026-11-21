@@ -148,22 +148,27 @@ Branch: `feat/track-race-mvp`, created from `dev`.
     Race chunk and entrypoint.
   - `asset-compiler` and `sim-render`: `race: None` constructor fixes.
   - web loader: optional Race entrypoint support and tests.
-  - architect role card/adapter: `web/src/assets/race.ts` permission.
+  - architect role card/adapter: `web/src/contracts/**` directory permission
+    (ADR-0012).
 - Before the dev merge, the current diff passed: `cargo fmt --check`,
   `cargo test --workspace`, workspace clippy, wasm check,
   `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`, and
   `python3 scripts/check-agent-sync.py`. Re-run the full gate after the merge
   before committing the foundation.
 - Blockers:
-  - `web/src/assets/race.ts` is not created yet because the running opencode
-    server has the old architect permission list. Restart `opencode.service`
-    when the other task is finished, then add the mirror.
+  - `web/src/contracts/race.ts` is not created yet because the running
+    opencode server has the old architect permission list. Restart
+    `opencode.service` when the other task is finished, then add the mirror.
+    ADR-0012 makes the contract roots directory-based, so later contract files
+    under `web/src/contracts/**` do not require another adapter edit or
+    restart.
   - `track-pack` still needs grid-inside-road and start/finish-fraction
     validation.
 - Next: restart the server, add the TS mirror, close the validation gaps,
   re-run the full gate, and commit the foundation. Then proceed to the
   track-ed implicit-layout export and `DriveViewer.race()`.
-- Full details: `docs/features/track-race-mvp.md` §3.1 and ADR-0011.
+- Full details: `docs/features/track-race-mvp.md` §3.1, ADR-0011, and
+  ADR-0012.
 
 ## Completed checkpoints
 
@@ -429,6 +434,8 @@ contact are later batches.
 - `docs/adr/0009-agent-runtime-policy-and-editor-domain.md` — agent limits,
   default agent, permissions and editor domain.
 - `docs/adr/0011-race-layout-race-chunk.md` — race layout/race chunk decision.
+- `docs/adr/0012-contract-roots-and-agent-permissions.md` — directory-based
+  contract ownership and mirror roots.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.

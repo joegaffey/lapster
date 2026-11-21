@@ -21,11 +21,11 @@ owned_paths:
   - serve.json
   - index.html
   - crates/sim-types/**
-  - crates/relay-server/src/protocol.rs
-  - web/src/types/asset-layout.ts
-  - web/src/types/asset-layout.test.ts
+  - crates/relay-server/src/protocol*
+  - web/src/types/asset-layout*
   - web/src/assets/types.ts
-  - web/src/net/protocol.ts
+  - web/src/contracts/**
+  - web/src/net/protocol*
 read_paths:
   - "**"
 verify:
