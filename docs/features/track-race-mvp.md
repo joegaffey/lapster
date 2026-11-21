@@ -1,6 +1,6 @@
 # Track Race MVP — Layout as Race Route and the Race Chunk
 
-- **Status:** in progress; foundation complete
+- **Status:** in progress; runtime exposure complete, track-ed export pending
 - **Date:** 2026-11-21
 - **Owner:** architect
 - **Domains:** architect, assets, editor, render, web
@@ -93,16 +93,24 @@ No track-ed project schema change is required for this MVP.
   - Web loader: `web/src/assets/loader.ts` accepts the optional Race
     entrypoint.
   - TS mirror: `web/src/contracts/race.ts`.
+  - Runtime exposure: `DriveViewer.race()` plus `raceAvailable`, `layoutId`,
+    and `trackSourceHash` in telemetry.
+  - Web identity: `trackIdentity()` in the pack loader, `RaceView` /
+    `parseRaceView`, and contract tests.
   - Architect role card/adapter: `web/src/contracts/**` is architect-owned;
     the generic permission was confirmed after the server restart.
-- After the dev merge, the full gate passed: `cargo fmt --check`,
-  `cargo test --workspace`, workspace clippy, wasm check,
+- After the dev merge and the runtime exposure batch, the full gate passed:
+  `cargo fmt --check`, `cargo test --workspace`, workspace clippy, wasm check,
   `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`
-  (105 passed, 1 skipped), and `python3 scripts/check-agent-sync.py`.
+  (105 passed, 1 skipped), the WebGL2 fallback tests, and
+  `python3 scripts/check-agent-sync.py`.
 - Resolved: the TS mirror exists, the generic contract-root permission works,
   and the grid-inside-road and start/finish-fraction validations are in place.
-- Next: proceed to the track-ed implicit-layout export and
-  `DriveViewer.race()`, then the race-ready demo fixture.
+- Next: the track-ed implicit-layout export and the race-ready demo fixture.
+  Track-ed's own `AGENTS.md` currently lists routes/laps as out of scope, so
+  that batch must record the scope extension in the track-ed repository first.
+- The race route is available to the runtime, but no shipped track produces
+  one yet, so `race()` reports unavailable on existing tracks.
 
 ## 4. Contract
 

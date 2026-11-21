@@ -39,6 +39,10 @@ export interface RaceData {
   sectors: Sector[];
 }
 
+export type RaceView =
+  | { available: false }
+  | ({ available: true } & RaceData);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -123,4 +127,22 @@ export function isRaceData(value: unknown): value is RaceData {
   }
 
   return true;
+}
+
+export function isRaceView(value: unknown): value is RaceView {
+  if (!isRecord(value) || typeof value.available !== "boolean") {
+    return false;
+  }
+  if (!value.available) {
+    return true;
+  }
+  return isRaceData(value);
+}
+
+export function parseRaceView(json: string): RaceView {
+  const value: unknown = JSON.parse(json);
+  if (!isRaceView(value)) {
+    throw new Error("invalid race view");
+  }
+  return value;
 }

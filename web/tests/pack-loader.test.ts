@@ -12,6 +12,7 @@ import {
   loadPackFromBytes,
   loadPackFromUrl,
   parsePack,
+  trackIdentity,
   withPackVersion,
   type PackCache,
 } from "../src/assets/loader.ts";
@@ -268,4 +269,29 @@ test("rejects a Race entrypoint pointing at a chunk of another kind", async () =
     loadPackFromBytes(buildPack(manifest, trackChunks)),
     /entrypoint Race references chunk 2 of kind Metadata/,
   );
+});
+
+test("track identity exposes the id, hex source hash, and layout", async () => {
+  const sourceHash = Array.from({ length: 32 }, (_, index) => (index * 7 + 3) & 0xff);
+  const manifest = trackManifest(trackEntrypoints());
+  manifest.id = "fixtures/track/identity";
+  manifest.source_hash = sourceHash;
+
+  const pack = await loadPackFromBytes(buildPack(manifest, trackChunks));
+  const identity = trackIdentity(pack, "main");
+
+  assert.deepEqual(identity, {
+    id: "fixtures/track/identity",
+    sourceHash: sourceHash.map((byte) => byte.toString(16).padStart(2, "0")).join(""),
+    layoutId: "main",
+  });
+  assert.match(identity.sourceHash, /^[0-9a-f]{64}$/);
+});
+
+test("track identity defaults the layout to null", async () => {
+  const pack = await loadPackFromBytes(
+    buildPack(trackManifest(trackEntrypoints()), trackChunks),
+  );
+
+  assert.equal(trackIdentity(pack).layoutId, null);
 });
