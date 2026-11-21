@@ -38,6 +38,7 @@ human (technical product manager / product owner)
 |---|---|---|---|
 | SAB ABI v2 | `crates/sim-types/src/abi.rs` | `web/src/types/asset-layout.ts` | architect |
 | Asset schema v3 / pack format (optional Race chunk) | `crates/sim-types/src/asset.rs`, `crates/sim-types/src/race.rs` | `web/src/assets/types.ts`, `web/src/contracts/**` | architect |
+| Race state view | `crates/sim-types/src/race.rs` (`RaceState`) | `web/src/contracts/race-state.ts` | architect |
 | Car tuning | `crates/sim-types/src/setup.rs` | `lapster/setup@1` schema tag in `web/src/ui/car-setup.ts` | architect |
 | Net protocol | `crates/relay-server/src/protocol.rs` | `web/src/net/protocol.ts` | architect |
 | Core public API | `crates/sim-core/src/lib.rs` re-exports | — | physics |

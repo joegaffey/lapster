@@ -8,6 +8,7 @@ import {
 } from "../src/assets/editor-track.ts";
 import { loadPackFromBytes, loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { isRaceStateView } from "../src/contracts/race-state.ts";
 import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
@@ -120,6 +121,13 @@ const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
 const netBadge = document.querySelector<HTMLElement>("#net-badge")!;
+const racePanel = document.querySelector<HTMLElement>("#race-panel")!;
+const raceLapLabel = document.querySelector<HTMLElement>("#race-lap")!;
+const raceSectorLabel = document.querySelector<HTMLElement>("#race-sector")!;
+const raceCurrentLabel = document.querySelector<HTMLElement>("#race-current")!;
+const raceLastLabel = document.querySelector<HTMLElement>("#race-last")!;
+const raceBestLabel = document.querySelector<HTMLElement>("#race-best")!;
+const raceWrongWayLabel = document.querySelector<HTMLElement>("#race-wrong-way")!;
 
 const CAMERA_STORAGE_KEY = BUILD_CHANNEL === "dev" ? "lapster.camera.dev.v1" : "lapster.camera.v1";
 const keys = new Set<string>();
@@ -162,6 +170,7 @@ let audioMuted = storedAudioPreference.muted;
 let audioGestureCleanup: (() => void) | null = null;
 let lastRpm = 900;
 let redlineRpm = 8_000;
+let raceSectorCount = 0;
 let gearRatios: number[] = [3.48, 2.02, 1.39, 1.0, 0.72, 0.6];
 let maxGear = gearRatios.length;
 let autoShiftCooldown = 0;
@@ -235,6 +244,36 @@ function resizeCanvas() {
   return false;
 }
 
+function formatRaceTime(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) {
+    return "—";
+  }
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "—";
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds - minutes * 60;
+  return `${minutes}:${remainder.toFixed(2).padStart(5, "0")}`;
+}
+
+function updateRaceHud(telemetry: any) {
+  const race = telemetry?.raceState;
+  if (!isRaceStateView(race) || !race.available) {
+    racePanel.hidden = true;
+    return;
+  }
+  racePanel.hidden = false;
+  raceLapLabel.textContent = String(race.lap);
+  raceSectorLabel.textContent =
+    raceSectorCount > 0
+      ? `S${race.sector}/${raceSectorCount}`
+      : `S${race.sector}`;
+  raceCurrentLabel.textContent = formatRaceTime(race.current_lap_time);
+  raceLastLabel.textContent = formatRaceTime(race.last_lap_time);
+  raceBestLabel.textContent = formatRaceTime(race.best_lap_time);
+  raceWrongWayLabel.hidden = !race.wrong_way;
+}
+
 function updateHud(telemetry: any) {
   speedLabel.textContent = telemetry.speedKph.toFixed(1);
   rpmLabel.textContent = String(Math.round(telemetry.rpm));
@@ -277,6 +316,7 @@ function updateHud(telemetry: any) {
     item.append(name, detail);
     wheelsLabel.append(item);
   }
+  updateRaceHud(telemetry);
 }
 
 function setBodyVisible(visible: boolean) {
@@ -979,6 +1019,11 @@ async function boot() {
 
   const info = JSON.parse(viewer.info());
   const initial = JSON.parse(viewer.telemetry());
+  const raceView = JSON.parse(viewer.race());
+  raceSectorCount =
+    raceView.available && Array.isArray(raceView.sectors)
+      ? raceView.sectors.length
+      : 0;
   const setup = JSON.parse(viewer.car_setup());
   syncCarSetup(setup);
   lastRpm = initial.rpm;
