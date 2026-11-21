@@ -137,6 +137,8 @@ Branch: `feat/track-race-mvp`, created from `dev`.
 
 - Documentation commit: `6fea5dd` (plan, ADR-0011, registry and progress
   updates).
+- `origin/dev` is merged in as `6e94c69` (PR #43, 67GP Guthrie Eagle car).
+  There were no conflicts with this branch or the uncommitted foundation.
 - The contract/compiler foundation is **uncommitted** in the working tree. Do
   not reset or discard it:
   - `sim-types`: `RaceData`, `Layout`, `StartFinish`, `ChunkKind::Race`,
@@ -147,10 +149,11 @@ Branch: `feat/track-race-mvp`, created from `dev`.
   - `asset-compiler` and `sim-render`: `race: None` constructor fixes.
   - web loader: optional Race entrypoint support and tests.
   - architect role card/adapter: `web/src/assets/race.ts` permission.
-- The current diff passed: `cargo fmt --check`,
+- Before the dev merge, the current diff passed: `cargo fmt --check`,
   `cargo test --workspace`, workspace clippy, wasm check,
   `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`, and
-  `python3 scripts/check-agent-sync.py`.
+  `python3 scripts/check-agent-sync.py`. Re-run the full gate after the merge
+  before committing the foundation.
 - Blockers:
   - `web/src/assets/race.ts` is not created yet because the running opencode
     server has the old architect permission list. Restart `opencode.service`
