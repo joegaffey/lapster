@@ -1,6 +1,6 @@
 # Track Race MVP — Layout as Race Route and the Race Chunk
 
-- **Status:** approved; implementation not started
+- **Status:** in progress; foundation implemented but not committed
 - **Date:** 2026-11-21
 - **Owner:** architect
 - **Domains:** architect, assets, editor, render, web
@@ -73,6 +73,38 @@ For the MVP, the layout is implicit:
 - Generate four equal sectors.
 
 No track-ed project schema change is required for this MVP.
+
+### 3.1 Current implementation state
+
+- Branch: `feat/track-race-mvp`, created from `dev`.
+- Documentation commit: `6fea5dd` (`docs: add track race MVP plan and ADR`).
+- The contract/compiler foundation is **uncommitted** in the working tree. Do
+  not reset or discard it.
+  - Canonical contract: `crates/sim-types/src/race.rs`,
+    `crates/sim-types/src/asset.rs`, `crates/sim-types/src/lib.rs`.
+  - Runtime accessor: `crates/sim-asset/src/lib.rs`
+    (`Pack::track_race_owned`).
+  - Compiler: `crates/track-pack/src/lib.rs` accepts
+    `sim-track-glb-v1`/`v2`, validates optional race data, and writes the
+    Race chunk and entrypoint.
+  - Mechanical fixes: `crates/asset-compiler` and
+    `crates/sim-render/src/track_editor.rs` set `race: None`.
+  - Web loader: `web/src/assets/loader.ts` accepts the optional Race
+    entrypoint.
+  - Architect role card/adapter: `web/src/assets/race.ts` is declared
+    architect-owned.
+- Gate passed for the current diff: `cargo fmt --check`,
+  `cargo test --workspace`, workspace clippy, wasm check,
+  `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`, and
+  `python3 scripts/check-agent-sync.py`.
+- Blockers:
+  - `web/src/assets/race.ts` has not been created. The running opencode
+    server still has the old architect permission list; restart
+    `opencode.service` when no other task is active, then add the mirror.
+  - `track-pack` still needs grid-inside-road and start/finish-fraction
+    validation.
+- Next: restart the server, add the TS mirror, close those validation gaps,
+  re-run the full gate, and commit the foundation.
 
 ## 4. Contract
 

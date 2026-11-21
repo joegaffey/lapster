@@ -131,6 +131,37 @@ Deployment:
   consolidation: Speed Dreams physics, wheel/FFB hardware validation, and CP7
   HID/audio integration.
 
+## Track race MVP resume checkpoint
+
+Branch: `feat/track-race-mvp`, created from `dev`.
+
+- Documentation commit: `6fea5dd` (plan, ADR-0011, registry and progress
+  updates).
+- The contract/compiler foundation is **uncommitted** in the working tree. Do
+  not reset or discard it:
+  - `sim-types`: `RaceData`, `Layout`, `StartFinish`, `ChunkKind::Race`,
+    optional `EntryPoints.race`.
+  - `sim-asset`: `Pack::track_race_owned()`.
+  - `track-pack`: `sim-track-glb-v1`/`v2` optional race parsing, validation,
+    Race chunk and entrypoint.
+  - `asset-compiler` and `sim-render`: `race: None` constructor fixes.
+  - web loader: optional Race entrypoint support and tests.
+  - architect role card/adapter: `web/src/assets/race.ts` permission.
+- The current diff passed: `cargo fmt --check`,
+  `cargo test --workspace`, workspace clippy, wasm check,
+  `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`, and
+  `python3 scripts/check-agent-sync.py`.
+- Blockers:
+  - `web/src/assets/race.ts` is not created yet because the running opencode
+    server has the old architect permission list. Restart `opencode.service`
+    when the other task is finished, then add the mirror.
+  - `track-pack` still needs grid-inside-road and start/finish-fraction
+    validation.
+- Next: restart the server, add the TS mirror, close the validation gaps,
+  re-run the full gate, and commit the foundation. Then proceed to the
+  track-ed implicit-layout export and `DriveViewer.race()`.
+- Full details: `docs/features/track-race-mvp.md` §3.1 and ADR-0011.
+
 ## Completed checkpoints
 
 | Checkpoint | Status |
@@ -335,10 +366,12 @@ Resume in this order:
 
 ## Next steps
 
-**Planned next feature — track race MVP:** `docs/features/track-race-mvp.md`
-and ADR-0011 define the optional Race chunk, layout-as-race-route contract,
-section-owned start/finish/grid, and the implicit-layout MVP. Implementation
-has not started; AI and online contact are later batches.
+**Track race MVP (in progress):** implementation is underway on
+`feat/track-race-mvp`; see the resume checkpoint above and
+`docs/features/track-race-mvp.md` §3.1. The optional Race chunk,
+layout-as-race-route contract, section-owned start/finish/grid, and
+implicit-layout MVP are defined in the plan and ADR-0011. AI and online
+contact are later batches.
 
 1. **Editor consolidation (next)**: continue
    `docs/features/editor-consolidation-plan.md`. A1, A2/A3, B1, B3, C1–C3 and
