@@ -112,6 +112,9 @@ test("garage camera flies between bays", async ({ page }) => {
 });
 
 test("garage bay navigation reverses order in the second row", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("lapster.car.v1", "sc-deckard-conejo");
+  });
   await page.goto(
     "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6&bay=5",
   );

@@ -107,7 +107,7 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
   });
   expect(initial.error).toBeUndefined();
   expect(new Set(initial.bays.map((bay: any) => bay.carId))).toEqual(
-    new Set(["mazda-rx7", "sc-deckard-conejo"]),
+    new Set(["mazda-rx7", "sc-deckard-conejo", "67gp-guthrie-eagle"]),
   );
   expect(initial.menuButtons).toBe(0);
   expect(initial.selected.carId).toBe("mazda-rx7");
@@ -122,9 +122,9 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
       stored: localStorage.getItem("lapster.car.v1"),
     };
   });
-  expect(state.info.carId).toBe("sc-deckard-conejo");
-  expect(state.info.car.id).toBe("sc-deckard-conejo");
-  expect(state.asset).toContain("sc-deckard-conejo");
-  expect(state.drive).toContain("sc-deckard-conejo");
-  expect(state.stored).toBe("sc-deckard-conejo");
+  expect(state.info.carId).toBe("67gp-guthrie-eagle");
+  expect(state.info.car.id).toBe("67gp-guthrie-eagle");
+  expect(state.asset).toContain("67gp-guthrie-eagle");
+  expect(state.drive).toContain("67gp-guthrie-eagle");
+  expect(state.stored).toBe("67gp-guthrie-eagle");
 });

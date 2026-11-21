@@ -401,4 +401,30 @@ mod tests {
         assert!((physics.wheels[2].suspension.anti_roll - 42_000.0).abs() < 1.0);
         assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
     }
+
+    #[test]
+    fn maps_guthrie_eagle_xml_physics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/sources/cars/67gp-guthrie-eagle/body/67gp-guthrie-eagle.xml");
+        let mut physics = source_physics();
+        apply_physics(&mut physics, &path).unwrap();
+
+        assert_eq!(physics.mass, 620.0);
+        assert!((physics.center_of_gravity[1] - 0.19).abs() < 1e-6);
+        assert_eq!(physics.engine.idle_rpm, 1_000.0);
+        assert_eq!(physics.engine.redline_rpm, 9_500.0);
+        assert_eq!(physics.engine.torque_curve.len(), 14);
+        assert_eq!(
+            physics.drivetrain.gear_ratios,
+            vec![3.26, 2.28, 1.50, 1.01, 0.87]
+        );
+        assert_eq!(physics.drivetrain.final_drive, 3.73);
+        assert!((physics.steering.max_angle - 30.0f32.to_radians()).abs() < 1e-6);
+        assert_eq!(physics.wheels[0].tire.friction_scale, 1.2);
+        assert!((physics.wheels[0].suspension.spring_rate - 32_500.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.spring_rate - 20_000.0).abs() < 1.0);
+        assert!((physics.wheels[0].suspension.anti_roll - 30_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.anti_roll - 5_000.0).abs() < 1.0);
+        assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
+    }
 }

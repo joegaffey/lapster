@@ -73,7 +73,7 @@ Lapster modifications.
 
 Prerequisites:
 
-- Assimp 5.3.x command-line tools.
+- Assimp 5.3.x or 6.0.x command-line tools.
 - Node 24+.
 - Rust/Cargo with the repository's normal toolchain.
 
@@ -104,7 +104,56 @@ cargo run -p asset-compiler -- inspect fixtures/cars/sc-deckard-conejo/sc-deckar
 cargo run -p asset-compiler -- validate fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima
 ```
 
+## Guthrie Eagle 67GP
+
+`67gp-guthrie-eagle` is the second car through the pipeline and the first built
+from a per-car `import.json`. The config supplies the body, XML, and a single
+wheel model plus the initial body lift, glass-name patterns, and the front/rear
+axle, half-track, radius, and width values. `build-car.sh` and `assemble.mjs`
+read the config, so the import no longer hardcodes the Deckard Conejo geometry.
+
+- Source: `fixtures/sources/cars/67gp-guthrie-eagle/`.
+- Config: `fixtures/sources/cars/67gp-guthrie-eagle/import.json`.
+- Initial body lift: 0.104 m.
+- Glass nodes: `WIGLASS*`.
+- Baked pack: `fixtures/cars/67gp-guthrie-eagle/67gp-guthrie-eagle.sima`.
+
+Rebuild:
+
+```bash
+tools/speed-dreams/build-car.sh \
+  fixtures/sources/cars/67gp-guthrie-eagle \
+  fixtures/cars/67gp-guthrie-eagle/67gp-guthrie-eagle.sima
+```
+
+The pack uses Assimp 6.0.4. That version triangulates the assembled Guthrie pack
+to 19,328 triangles; the same version builds the Deckard Conejo as 16,322 triangles instead
+of the 13,058 in the committed 5.3.x pack. Mesh bounds, vertex counts, materials,
+and XML physics match on the Deckard, so the triangulation difference does not
+change the runtime asset. The Guthrie source is staged from commit
+`01c82922ba16697e1a7d4766013ebadea26bd72c`.
+
+Integration findings:
+
+- The XML parser path covers all six 67GP source files. The remaining five need
+  fixtures and tests, not new parser sections.
+- The accepted import reuses one wheel model at all four corners. Per-corner
+  `wheel1..3.acc` models and right/left flips were tried and reverted.
+- Wheel meshes use flat shading with no rim light and no outline; body and track
+  keep the toon/rim treatment.
+- Open-wheel cockpit cameras use a centered, lower shot and a single centered
+  synthetic RPM dial. The source interior/dashboard is kept.
+- Adding a car updates hardcoded catalog tests and project-qualified Playwright
+  snapshots. The garage loads all catalog packs, so the remaining five need a
+  loading strategy before they are added.
+- Full detail: `docs/features/67gp-guthrie-eagle-mvp.md`.
+
 ## Conversion stages
+
+The commands below show the original Deckard-specific invocation. The current
+scripts read `import.json` for the body, XML, wheel model, lift, glass, and
+axle geometry; see the Guthrie section above and
+`tools/speed-dreams/README.md`.
 
 ### 1. Assimp export
 
@@ -122,14 +171,15 @@ self-contained.
 
 `tools/speed-dreams/assemble.mjs`:
 
-- deduplicates, flattens, joins, and prunes the four wheel primitives into one
-  reusable wheel mesh;
+- deduplicates, flattens, joins, and prunes the wheel model;
 - assigns a transparent `Glass` material to `GLASHOUSE` and `FLGT*` nodes;
+- disposes body root child nodes matching the optional `exclude_nodes` patterns
+  before glass assignment and body rotation;
 - pre-rotates the body `-90°` around Y;
 - lifts the body by `0.21 m`;
 - adds `WHEEL_FL`, `WHEEL_FR`, `WHEEL_RL`, and `WHEEL_RR` nodes;
 - scales wheels to the source radii and widths;
-- rotates right-side wheels `180°` around Y so their rims face outward;
+- rotates right-side wheels `180°` around Y;
 - leaves the assembly under the normal GLB importer's `180°` yaw.
 
 Speed Dreams uses `+X` forward, `+Y` up, `+Z` right. Lapster uses `-Z` forward,

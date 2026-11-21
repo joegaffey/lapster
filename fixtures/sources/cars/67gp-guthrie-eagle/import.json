@@ -1,0 +1,22 @@
+{
+  "id": "67gp-guthrie-eagle",
+  "body": "body/67gp-guthrie-eagle.acc",
+  "xml": "body/67gp-guthrie-eagle.xml",
+  "wheel": "wheel/wheel0.acc",
+  "body_lift": 0.104,
+  "glass_names": [
+    "^WIGLASS"
+  ],
+  "front": {
+    "axle_x": 0.96,
+    "half_track": 0.77,
+    "radius": 0.3101,
+    "width": 0.26
+  },
+  "rear": {
+    "axle_x": -1.5,
+    "half_track": 0.79,
+    "radius": 0.3399,
+    "width": 0.332
+  }
+}

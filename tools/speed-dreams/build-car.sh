@@ -9,10 +9,32 @@ if [[ -z "$SRC" || -z "$OUT" ]]; then
   echo "usage: tools/speed-dreams/build-car.sh <source-dir> <output.sima>" >&2
   exit 2
 fi
+if [[ ! -d "$SRC" ]]; then
+  echo "missing source directory: $SRC" >&2
+  exit 1
+fi
+SRC="$(cd "$SRC" && pwd)"
 
-BODY="$SRC/body/sc-deckard-conejo.acc"
-XML="$SRC/body/sc-deckard-conejo.xml"
-WHEEL="$SRC/wheel/wheel0.acc"
+CONFIG="$SRC/import.json"
+if [[ ! -f "$CONFIG" ]]; then
+  echo "missing import config: $CONFIG" >&2
+  exit 1
+fi
+
+read_config() {
+  node -e '
+    const fs = require("fs");
+    const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const value = process.argv[2].split(".").reduce((obj, key) => obj?.[key], config);
+    if (value === undefined) process.exit(1);
+    process.stdout.write(String(value));
+  ' "$CONFIG" "$1"
+}
+
+BODY="$SRC/$(read_config body)"
+XML="$SRC/$(read_config xml)"
+WHEEL="$SRC/$(read_config wheel)"
+
 for file in "$BODY" "$XML" "$WHEEL"; do
   if [[ ! -f "$file" ]]; then
     echo "missing source file: $file" >&2
@@ -36,6 +58,6 @@ assimp export "$BODY" "$TMP/body.glb" -f glb2 -embtex >/dev/null
 assimp export "$WHEEL" "$TMP/wheel.glb" -f glb2 -embtex >/dev/null
 NAME="$(basename "$OUT")"
 NAME="${NAME%.sima}"
-node "$ROOT/tools/speed-dreams/assemble.mjs" "$TMP/body.glb" "$TMP/wheel.glb" "$TMP/$NAME.glb"
+node "$ROOT/tools/speed-dreams/assemble.mjs" "$CONFIG" "$TMP/body.glb" "$TMP/wheel.glb" "$TMP/$NAME.glb"
 mkdir -p "$(dirname "$OUT")"
 cargo run -q -p asset-compiler -- bake-glb "$TMP/$NAME.glb" "$OUT" --textures --physics-xml "$XML"

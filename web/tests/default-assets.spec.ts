@@ -42,6 +42,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   expect(garage.debug.cars.map((car: any) => car.id)).toEqual([
     "mazda-rx7",
     "sc-deckard-conejo",
+    "67gp-guthrie-eagle",
   ]);
   expect(garage.debug.stats.carDrawCalls).toBeGreaterThan(100);
 

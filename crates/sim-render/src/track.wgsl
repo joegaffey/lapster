@@ -16,6 +16,7 @@ struct Model {
     transform: mat4x4<f32>,
     alpha: vec4<f32>,
     emissive: vec4<f32>,
+    flags: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -328,10 +329,11 @@ fn shadow_visibility(world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
 @fragment
 fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
     let foliage = model.alpha.z > 0.5;
+    let flat = model.flags.x > 0.5;
     let normal = normalize(input.normal);
     let light = normalize(-camera.light_dir.xyz);
     let ndl = max(dot(normal, light), 0.0);
-    let ramp = toon_ramp(ndl);
+    let ramp = select(toon_ramp(ndl), 0.45 + 0.55 * ndl, flat);
     let texel = textureSample(base_texture, base_sampler, input.uv);
     let alpha = input.alpha * texel.a;
     let cutoff = select(0.01, 0.45, foliage);
@@ -397,9 +399,10 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         vec3<f32>(0.42, 0.62, 0.18),
         foliage,
     );
+    let rim_term = select(rim_tint * rim * select(0.16, 0.30, foliage), vec3<f32>(0.0), flat);
     var color =
         base * (0.30 + 0.70 * ramp * shadow)
-        + rim_tint * rim * select(0.16, 0.30, foliage)
+        + rim_term
         + model.emissive.xyz;
     if model.alpha.y > 0.5 {
         color = color * GRASS_TEXTURE_LIFT + vec3<f32>(0.008, 0.008, 0.015);

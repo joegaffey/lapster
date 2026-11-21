@@ -39,6 +39,7 @@ test("garage viewer renders the car on the track", async ({ page }) => {
   expect(state.debug.cars.map((car: any) => car.id)).toEqual([
     "mazda-rx7",
     "sc-deckard-conejo",
+    "67gp-guthrie-eagle",
   ]);
   expect(state.debug.stats.carDrawCalls).toBeGreaterThan(100);
   expect(pageErrors).toEqual([]);
