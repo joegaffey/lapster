@@ -9,8 +9,9 @@ use sha2::{Digest, Sha256};
 use sim_asset::{archive, write_pack, ChunkSpec};
 use sim_types::{
     Aabb, AssetKind, AssetManifest, AssetStats, CameraSpec, ChunkKind, EntryPoints, MaterialRef,
-    MeshBuffers, MeshRef, SpawnPoint, SurfaceSpec, TextureRef, TrackCollision, TrackMetadata,
-    TrackVisual, ENGINE_FRAME, ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
+    MeshBuffers, MeshRef, RaceData, SpawnPoint, SurfaceSpec, TextureRef, TrackCollision,
+    TrackMetadata, TrackVisual, ENGINE_FRAME, ENGINE_UNITS, MAGIC, RACE_DATA_VERSION,
+    SCHEMA_VERSION,
 };
 
 pub struct ImportedTrack {
@@ -18,6 +19,7 @@ pub struct ImportedTrack {
     pub metadata: TrackMetadata,
     pub collision: TrackCollision,
     pub bounds: Aabb,
+    pub race: Option<RaceData>,
     pub warnings: Vec<String>,
 }
 
@@ -36,6 +38,8 @@ struct GlbTrackSource {
     surfaces: Vec<GlbSurfaceRule>,
     #[serde(default)]
     default_surface: u16,
+    #[serde(default)]
+    race: Option<RaceData>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +311,7 @@ pub fn import_track_bytes(source_bytes: &[u8], glb_bytes: &[u8]) -> Result<Impor
         metadata,
         collision,
         bounds,
+        race: source.race,
         warnings,
     })
 }
@@ -319,7 +324,7 @@ pub fn bake_glb_track_bytes(track_json: &[u8], glb: &[u8], id: &str) -> Result<V
         &imported.visual.textures,
         &imported.visual.mesh_buffers,
     );
-    let chunks = vec![
+    let mut chunks = vec![
         ChunkSpec {
             kind: ChunkKind::Visual,
             bytes: archive(&imported.visual)?,
@@ -333,6 +338,22 @@ pub fn bake_glb_track_bytes(track_json: &[u8], glb: &[u8], id: &str) -> Result<V
             bytes: archive(&imported.metadata)?,
         },
     ];
+    let mut entrypoints = EntryPoints {
+        physics: None,
+        visual: Some(0),
+        collision: Some(1),
+        metadata: Some(2),
+        audio: None,
+        texture: None,
+        race: None,
+    };
+    if let Some(race) = &imported.race {
+        entrypoints.race = Some(chunks.len() as u32);
+        chunks.push(ChunkSpec {
+            kind: ChunkKind::Race,
+            bytes: archive(race)?,
+        });
+    }
     let manifest = AssetManifest {
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
@@ -347,14 +368,7 @@ pub fn bake_glb_track_bytes(track_json: &[u8], glb: &[u8], id: &str) -> Result<V
         frame: ENGINE_FRAME,
         bounds: imported.bounds,
         chunks: Vec::new(),
-        entrypoints: EntryPoints {
-            physics: None,
-            visual: Some(0),
-            collision: Some(1),
-            metadata: Some(2),
-            audio: None,
-            texture: None,
-        },
+        entrypoints,
         stats: statistics,
         warnings: imported.warnings,
     };
@@ -413,9 +427,9 @@ fn stats(
 }
 
 fn validate_source(source: &GlbTrackSource) -> Result<()> {
-    if source.schema != "sim-track-glb-v1" {
+    if source.schema != "sim-track-glb-v1" && source.schema != "sim-track-glb-v2" {
         bail!(
-            "unsupported source schema {}; expected sim-track-glb-v1",
+            "unsupported source schema {}; expected sim-track-glb-v1 or sim-track-glb-v2",
             source.schema
         );
     }
@@ -455,6 +469,145 @@ fn validate_source(source: &GlbTrackSource) -> Result<()> {
     }
     if !ids.contains(&source.default_surface) {
         bail!("default_surface must reference a declared surface");
+    }
+    if let Some(race) = &source.race {
+        validate_race(race)?;
+    }
+    Ok(())
+}
+
+const RACE_POSITION_TOLERANCE: f32 = 1e-3;
+const RACE_ROTATION_TOLERANCE: f32 = 1e-3;
+const RACE_FRACTION_TOLERANCE: f32 = 1e-4;
+const RACE_ROAD_TOLERANCE: f32 = 1e-3;
+
+fn horizontal_distance_to_segment(point: [f32; 3], start: [f32; 3], end: [f32; 3]) -> f32 {
+    let px = point[0];
+    let pz = point[2];
+    let ax = start[0];
+    let az = start[2];
+    let dx = end[0] - ax;
+    let dz = end[2] - az;
+    let length_sq = dx * dx + dz * dz;
+    let t = if length_sq <= f32::EPSILON {
+        0.0
+    } else {
+        (((px - ax) * dx + (pz - az) * dz) / length_sq).clamp(0.0, 1.0)
+    };
+    let nearest_x = ax + dx * t;
+    let nearest_z = az + dz * t;
+    ((px - nearest_x).powi(2) + (pz - nearest_z).powi(2)).sqrt()
+}
+
+fn validate_race(race: &RaceData) -> Result<()> {
+    if !race.has_supported_version() {
+        bail!(
+            "unsupported race version {}; expected {}",
+            race.version,
+            RACE_DATA_VERSION
+        );
+    }
+    let layout = &race.layout;
+    if layout.layout_id.trim().is_empty() {
+        bail!("race layout_id must not be empty");
+    }
+    if !layout.closed {
+        bail!("race layout must be closed");
+    }
+    if layout.points.len() < 3 {
+        bail!(
+            "race layout must have at least 3 points, got {}",
+            layout.points.len()
+        );
+    }
+    for (index, point) in layout.points.iter().enumerate() {
+        if point.iter().any(|value| !value.is_finite()) {
+            bail!("race layout point {index} must be finite");
+        }
+    }
+    if !layout.half_width.is_finite() || layout.half_width <= 0.0 {
+        bail!("race layout half_width must be positive and finite");
+    }
+
+    let start_finish = &race.start_finish;
+    if !start_finish.fraction.is_finite() || !(0.0..1.0).contains(&start_finish.fraction) {
+        bail!("race start_finish fraction must be finite and in [0, 1)");
+    }
+    if start_finish.position.iter().any(|value| !value.is_finite()) {
+        bail!("race start_finish position must be finite");
+    }
+    if start_finish
+        .rotation_xyzw
+        .iter()
+        .any(|value| !value.is_finite())
+    {
+        bail!("race start_finish rotation must be finite");
+    }
+    let rotation_len_sq = start_finish
+        .rotation_xyzw
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>();
+    if (rotation_len_sq - 1.0).abs() > RACE_ROTATION_TOLERANCE {
+        bail!("race start_finish rotation must be normalized");
+    }
+    let first = layout.points[0];
+    if start_finish
+        .position
+        .iter()
+        .zip(first.iter())
+        .any(|(position, point)| (position - point).abs() > RACE_POSITION_TOLERANCE)
+    {
+        bail!("race start_finish position must match layout point 0");
+    }
+
+    if race.grid.is_empty() || race.grid.len() > 8 {
+        bail!(
+            "race grid must contain 1..=8 slots, got {}",
+            race.grid.len()
+        );
+    }
+    for (index, slot) in race.grid.iter().enumerate() {
+        if slot.position.iter().any(|value| !value.is_finite()) {
+            bail!("race grid slot {index} position must be finite");
+        }
+        if slot.rotation_xyzw.iter().any(|value| !value.is_finite()) {
+            bail!("race grid slot {index} rotation must be finite");
+        }
+        let mut nearest = f32::INFINITY;
+        for (point_index, start) in layout.points.iter().enumerate() {
+            let end = layout.points[(point_index + 1) % layout.points.len()];
+            nearest = nearest.min(horizontal_distance_to_segment(slot.position, *start, end));
+        }
+        let max_distance = layout.half_width + RACE_ROAD_TOLERANCE;
+        if nearest > max_distance {
+            bail!("race grid slot {index} is {nearest} m from the route; max is {max_distance} m");
+        }
+    }
+
+    if race.sectors.is_empty() {
+        bail!("race sectors must cover [0, 1]");
+    }
+    let mut expected_start = 0.0f32;
+    for (index, sector) in race.sectors.iter().enumerate() {
+        if !sector.start_fraction.is_finite() || !sector.end_fraction.is_finite() {
+            bail!("race sector {index} fractions must be finite");
+        }
+        if sector.start_fraction < -RACE_FRACTION_TOLERANCE
+            || sector.end_fraction > 1.0 + RACE_FRACTION_TOLERANCE
+        {
+            bail!("race sector {index} must lie within [0, 1]");
+        }
+        if sector.end_fraction <= sector.start_fraction {
+            bail!("race sector {index} must end after it starts");
+        }
+        if (sector.start_fraction - expected_start).abs() > RACE_FRACTION_TOLERANCE {
+            bail!("race sector {index} must start at {expected_start}");
+        }
+        expected_start = sector.end_fraction;
+    }
+    if (expected_start - 1.0).abs() > RACE_FRACTION_TOLERANCE {
+        bail!("race sectors must end at 1.0, got {expected_start}");
     }
     Ok(())
 }

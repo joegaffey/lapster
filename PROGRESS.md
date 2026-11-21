@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-20
+Last updated: 2026-11-21
 Current phase: **Editor consolidation — track-ed is the sole editor; legacy
 removal is gated on migration, parity and CI coverage**
 
@@ -131,6 +131,67 @@ Deployment:
   consolidation: Speed Dreams physics, wheel/FFB hardware validation, and CP7
   HID/audio integration.
 
+## Track race MVP resume checkpoint
+
+Branch: `feat/track-race-mvp`, created from `dev`.
+
+- Documentation commit: `6fea5dd` (plan, ADR-0011, registry and progress
+  updates).
+- `origin/dev` is merged in as `6e94c69` (PR #43, 67GP Guthrie Eagle car).
+  There were no conflicts with this branch or the foundation work.
+- The contract/compiler foundation is committed on this branch:
+  - `sim-types`: `RaceData`, `Layout`, `StartFinish`, `ChunkKind::Race`,
+    optional `EntryPoints.race`.
+  - `sim-asset`: `Pack::track_race_owned()`.
+  - `track-pack`: `sim-track-glb-v1`/`v2` optional race parsing, validation,
+    Race chunk and entrypoint.
+  - `asset-compiler` and `sim-render`: `race: None` constructor fixes.
+  - web loader: optional Race entrypoint support and tests.
+  - TS mirror: `web/src/contracts/race.ts`.
+  - runtime exposure: `DriveViewer.race()`, plus `raceAvailable`, `layoutId`,
+    and `trackSourceHash` in telemetry.
+  - web identity: `trackIdentity()` in the pack loader, `RaceView` /
+    `parseRaceView`, and contract tests.
+  - architect role card/adapter: `web/src/contracts/**` directory permission
+    (ADR-0012); confirmed after the server restart.
+- After the dev merge and the runtime exposure batch, the full gate passed:
+  `cargo fmt --check`, `cargo test --workspace`, workspace clippy, wasm check,
+  `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`
+  (105 passed, 1 skipped), the WebGL2 fallback tests, and
+  `python3 scripts/check-agent-sync.py`.
+- Resolved: the TS mirror exists, the generic contract-root permission works,
+  and the grid-inside-road and start/finish-fraction validations are in place.
+- Track-ed implicit-layout export is merged into track-ed `main` as
+  `e087ee1` (PR #6):
+  - closed spawn sections emit the optional `race` block in
+    `sim-track-glb-v2` with a centreline layout, start/finish, 8 grid slots,
+    and 4 sectors;
+  - open spawn sections omit `race` with a warning;
+  - track-ed scope docs and the GLB manifest schema were updated.
+- The parent `web/track-ed-src` pin is updated to `e087ee1`; the hosted-track-ed
+  Test drive now asserts `race()` availability, 8 grid slots, and 4 sectors.
+- The race-ready demo fixture is committed at `fixtures/tracks/race-loop/`:
+  `project.json` from track-ed's loop project, generated `track.json`/`track.glb`,
+  baked `pack.sima`, and a README. The pack carries layout `main`, 180 points,
+  8 grid slots, and 4 sectors.
+- The launcher exposes **Race Loop** through
+  `web/src/ui/track-selection.ts` and `web/index.html`; Drive resolves
+  `?track=race-loop`. The default remains Skidpad.
+- Coverage: `crates/track-pack/tests/race_loop_fixture.rs` proves the checked-in
+  pack matches a fresh compile and carries race data; web pack-loader tests
+  cover the Race entrypoint and `chunkBytes("Race")`; `web/tests/race-loop.spec.ts`
+  covers launcher selection and the runtime race view; the default Skidpad test
+  asserts race-unavailable.
+- Final full gate passed: cargo fmt/clippy/workspace tests/wasm; parent
+  `npm test` (50); `CI=1 npm --prefix web run test:viewer` (106 passed,
+  1 skipped); WebGL2 fallback (2/2); track-ed tests (219 passed, 1 skipped) and
+  build; agent sync.
+- Next: AI driver, race manager, and online-contact follow-ups. The demo fixture
+  is the only shipped track with race data; Skidpad, Drift Tracks, and
+  `fixtures/tracks/minimal` remain race-unavailable.
+- Full details: `docs/features/track-race-mvp.md` §3.1, ADR-0011, and
+  ADR-0012.
+
 ## Completed checkpoints
 
 | Checkpoint | Status |
@@ -153,6 +214,7 @@ Deployment:
 | Relay multiplayer prototype | Working prototype |
 | Style spike | Working |
 | track-ed hosted editor + local Test drive | Released to production |
+| Track race foundation | Done; Race chunk, race-loop fixture, launcher entry |
 
 ## Current capabilities
 
@@ -168,6 +230,9 @@ Deployment:
 - Track authoring: hosted track-ed with browser-side `track-pack` compilation,
   local Test drive, and `track.glb` + `track.json` file import. The procedural
   editor remains available as Legacy Track Editor.
+- Track race foundation: optional Race chunk, layout as the race route,
+  start/finish, 8 grid slots, 4 sectors, track identity, and the Race Loop demo
+  fixture/launcher entry.
 - Viewers: drive, garage, track viewer, track-ed, track import, legacy track
   editor, style spike, debug viewer, and multiplayer.
 - Audio spike: Engine_Sim-based engine audio, tire screech, and surface noise;
@@ -182,11 +247,11 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 161 tests
+- `cargo test --workspace` — 180 tests
 - `cargo check ... --target wasm32-unknown-unknown` including `track-pack-wasm`
-- `npm test` — 38 tests
-- `CI=1 npm run test:viewer` — 101 passed, 1 skipped
-- `npm --prefix web/track-ed-src test` — 211 tests (after B1 autosave)
+- `npm test` — 50 tests
+- `CI=1 npm run test:viewer` — 106 passed, 1 skipped
+- `npm --prefix web/track-ed-src test` — 219 passed, 1 skipped
 - `npm --prefix web/track-ed-src run build` — tsc + Vite clean
 - `bash web/scripts/build-track-ed.sh` — hosted build with notices/licenses
 - `python3 web/scripts/check-track-ed-deps.py` — exact pins, lockfile,
@@ -202,6 +267,9 @@ Deployment:
 - Production smoke: hosted track-ed Test drive on a current `project@2`
   terrain-follow project opens drive with no page or console errors
 - `npm run bench:physics`
+- Track race MVP final gate — cargo fmt/clippy/workspace tests/wasm; parent
+  `npm test` 50; `CI=1 npm --prefix web run test:viewer` 106 passed, 1 skipped;
+  WebGL2 fallback 2/2; track-ed 219 passed, 1 skipped and build; agent sync.
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
 
@@ -335,6 +403,13 @@ Resume in this order:
 
 ## Next steps
 
+**Track race MVP (foundation complete):** the optional Race chunk,
+layout-as-race-route contract, section-owned start/finish/grid, implicit-layout
+export, race-loop demo fixture, and launcher entry are landed on
+`feat/track-race-mvp`; see the resume checkpoint above and
+`docs/features/track-race-mvp.md` §3.1. AI and online contact are later
+batches.
+
 1. **Editor consolidation (next)**: continue
    `docs/features/editor-consolidation-plan.md`. A1, A2/A3, B1, B3, C1–C3 and
    D1 are done. Next: D2 kernel/Worker work (bake is ~8.4 s on a 10-section
@@ -381,11 +456,15 @@ Resume in this order:
 - `PLAN.md` — checkpoint plan.
 - `docs/features/editor-consolidation-plan.md` — active editor consolidation
   and track-ed refactoring plan.
+- `docs/features/track-race-mvp.md` — track-side race layout/race chunk plan.
 - `docs/editor-consolidation-report.md` — editor analysis and recommendations.
 - `docs/adr/0007-promote-track-ed-as-sole-editor.md` — sole-editor decision.
 - `docs/adr/0008-defer-layouts-as-route-layer.md` — layout deferral decision.
 - `docs/adr/0009-agent-runtime-policy-and-editor-domain.md` — agent limits,
   default agent, permissions and editor domain.
+- `docs/adr/0011-race-layout-race-chunk.md` — race layout/race chunk decision.
+- `docs/adr/0012-contract-roots-and-agent-permissions.md` — directory-based
+  contract ownership and mirror roots.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.
