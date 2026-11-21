@@ -571,6 +571,18 @@ const CAMARO_COCKPIT_DIALS: [CockpitDial; 3] = [
 const OPEN_WHEEL_COCKPIT_DIALS: [CockpitDial; 1] =
     [(CockpitNeedleSource::Rpm, [0.0, 0.64, -0.32], 0.050, 0.045)];
 
+/// Select the cockpit dial layout. Open-wheel cars always use the single-RPM
+/// open-wheel layout, even when they retain a source interior mesh.
+fn select_cockpit_dials(open_wheel: bool, has_interior: bool) -> &'static [CockpitDial] {
+    if open_wheel {
+        &OPEN_WHEEL_COCKPIT_DIALS
+    } else if has_interior {
+        &CAMARO_COCKPIT_DIALS
+    } else {
+        &COCKPIT_DIALS
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_car(
     scene: &mut Scene,
@@ -602,14 +614,7 @@ pub(crate) fn build_car(
         .iter()
         .any(|mesh| mesh.name == "body_interior");
     let synthetic_cockpit = cockpit_gauges && brake_lights && !has_interior;
-    let open_wheel_cockpit = open_wheel && synthetic_cockpit;
-    let cockpit_dials: &[CockpitDial] = if has_interior {
-        &CAMARO_COCKPIT_DIALS
-    } else if open_wheel_cockpit {
-        &OPEN_WHEEL_COCKPIT_DIALS
-    } else {
-        &COCKPIT_DIALS
-    };
+    let cockpit_dials = select_cockpit_dials(open_wheel, has_interior);
     let has_cockpit_gauges = synthetic_cockpit || has_interior;
     let (brake_light_buffers, reverse_light_buffers) = if brake_lights {
         split_rear_lights(&mut body_buffers, &body_mesh.bounds, textured_body)
@@ -716,7 +721,7 @@ pub(crate) fn build_car(
         None
     };
 
-    let dashboard_mesh_index = if synthetic_cockpit && !open_wheel_cockpit {
+    let dashboard_mesh_index = if synthetic_cockpit && !open_wheel {
         let dashboard = mesh_index_by_name(car_visual, "body_glass")
             .and_then(|index| car_visual.mesh_buffers.get(index))
             .and_then(cockpit_cowl_buffers);
@@ -1936,4 +1941,26 @@ fn add_wheel_marker(lines: &mut Vec<LineVertex>, model: Mat4, color: [f32; 3]) {
         [center.x, center.y, center.z + size],
         color,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cockpit_dials_prefer_open_wheel_over_source_interior() {
+        assert_eq!(
+            select_cockpit_dials(true, true),
+            OPEN_WHEEL_COCKPIT_DIALS.as_slice()
+        );
+        assert_eq!(
+            select_cockpit_dials(true, false),
+            OPEN_WHEEL_COCKPIT_DIALS.as_slice()
+        );
+        assert_eq!(
+            select_cockpit_dials(false, true),
+            CAMARO_COCKPIT_DIALS.as_slice()
+        );
+        assert_eq!(select_cockpit_dials(false, false), COCKPIT_DIALS.as_slice());
+    }
 }
