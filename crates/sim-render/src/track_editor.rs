@@ -2847,6 +2847,7 @@ fn build_editor_track(
             metadata: None,
             audio: None,
             texture: None,
+            race: None,
         },
         stats: AssetStats {
             vertices,
@@ -2891,6 +2892,7 @@ pub fn pack_from_track(track: &EditorTrack) -> Result<Vec<u8>, String> {
         metadata: Some(2),
         audio: None,
         texture: None,
+        race: None,
     };
     sim_asset::write_pack(manifest, chunks).map_err(|error| error.to_string())
 }

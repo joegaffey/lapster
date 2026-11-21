@@ -1,6 +1,6 @@
 # Track Race MVP — Layout as Race Route and the Race Chunk
 
-- **Status:** in progress; foundation implemented but not committed
+- **Status:** in progress; foundation complete
 - **Date:** 2026-11-21
 - **Owner:** architect
 - **Domains:** architect, assets, editor, render, web
@@ -79,9 +79,8 @@ No track-ed project schema change is required for this MVP.
 - Branch: `feat/track-race-mvp`, created from `dev`.
 - Documentation commit: `6fea5dd` (`docs: add track race MVP plan and ADR`).
 - `origin/dev` is merged in as `6e94c69` (PR #43, 67GP Guthrie Eagle car);
-  there were no conflicts with this branch or the uncommitted foundation.
-- The contract/compiler foundation is **uncommitted** in the working tree. Do
-  not reset or discard it.
+  there were no conflicts with this branch or the foundation work.
+- The contract/compiler foundation is committed on this branch.
   - Canonical contract: `crates/sim-types/src/race.rs`,
     `crates/sim-types/src/asset.rs`, `crates/sim-types/src/lib.rs`.
   - Runtime accessor: `crates/sim-asset/src/lib.rs`
@@ -93,23 +92,17 @@ No track-ed project schema change is required for this MVP.
     `crates/sim-render/src/track_editor.rs` set `race: None`.
   - Web loader: `web/src/assets/loader.ts` accepts the optional Race
     entrypoint.
+  - TS mirror: `web/src/contracts/race.ts`.
   - Architect role card/adapter: `web/src/contracts/**` is architect-owned;
-    the Race mirror target is `web/src/contracts/race.ts`.
-- Before the dev merge, the current diff passed: `cargo fmt --check`,
+    the generic permission was confirmed after the server restart.
+- After the dev merge, the full gate passed: `cargo fmt --check`,
   `cargo test --workspace`, workspace clippy, wasm check,
-  `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`, and
-  `python3 scripts/check-agent-sync.py`. Re-run the full gate after the merge
-  before committing the foundation.
-- Blockers:
-  - `web/src/contracts/race.ts` has not been created. The running opencode
-    server still has the old architect permission list; restart
-    `opencode.service` when no other task is active, then add the mirror.
-    ADR-0012 makes the contract roots directory-based, so later contract files
-    under `web/src/contracts/**` do not require another adapter edit or restart.
-  - `track-pack` still needs grid-inside-road and start/finish-fraction
-    validation.
-- Next: restart the server, add the TS mirror, close those validation gaps,
-  re-run the full gate, and commit the foundation.
+  `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`
+  (105 passed, 1 skipped), and `python3 scripts/check-agent-sync.py`.
+- Resolved: the TS mirror exists, the generic contract-root permission works,
+  and the grid-inside-road and start/finish-fraction validations are in place.
+- Next: proceed to the track-ed implicit-layout export and
+  `DriveViewer.race()`, then the race-ready demo fixture.
 
 ## 4. Contract
 

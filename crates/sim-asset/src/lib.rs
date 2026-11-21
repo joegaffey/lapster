@@ -6,8 +6,8 @@ use rkyv::validation::validators::DefaultValidator;
 use sha2::{Digest, Sha256};
 use sim_types::{
     AssetKind, AssetManifest, CarPhysics, CarVisual, ChunkKind, ChunkRef, Compression, PackHeader,
-    TrackCollision, TrackMetadata, TrackVisual, MAGIC, PACK_FORMAT_VERSION, PACK_HEADER_SIZE,
-    SCHEMA_VERSION,
+    RaceData, TrackCollision, TrackMetadata, TrackVisual, MAGIC, PACK_FORMAT_VERSION,
+    PACK_HEADER_SIZE, SCHEMA_VERSION,
 };
 
 const CHUNK_ALIGN: usize = 64;
@@ -307,6 +307,13 @@ impl<'a> Pack<'a> {
         self.deserialize::<TrackVisual>(ChunkKind::Visual)
     }
 
+    pub fn track_race_owned(&self) -> Result<Option<RaceData>, PackError> {
+        if self.manifest.entrypoints.race.is_none() {
+            return Ok(None);
+        }
+        self.deserialize::<RaceData>(ChunkKind::Race).map(Some)
+    }
+
     fn chunk_slice(&self, chunk: &ChunkRef) -> Result<&'a [u8], PackError> {
         let start = chunk.offset as usize;
         let end = start
@@ -381,8 +388,118 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
 mod tests {
     use super::*;
     use sim_types::{
-        Aabb, AssetStats, EntryPoints, MeshBuffers, TrackVisual, ENGINE_FRAME, ENGINE_UNITS,
+        Aabb, AssetStats, EntryPoints, Layout, LayoutDirection, MeshBuffers, RaceData, SectorSpec,
+        SpawnPoint, StartFinish, TrackVisual, ENGINE_FRAME, ENGINE_UNITS,
     };
+
+    fn sample_race() -> RaceData {
+        RaceData {
+            version: sim_types::RACE_DATA_VERSION,
+            layout: Layout {
+                layout_id: String::from("main"),
+                closed: true,
+                direction: LayoutDirection::Forward,
+                points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 0.0, 10.0]],
+                half_width: 5.0,
+            },
+            start_finish: StartFinish {
+                section_id: String::from("main"),
+                fraction: 0.0,
+                position: [0.0, 0.0, 0.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+            grid: vec![SpawnPoint {
+                name: String::from("grid_0"),
+                position: [0.0, 0.0, 2.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            }],
+            sectors: vec![SectorSpec {
+                name: String::from("sector_1"),
+                start_fraction: 0.0,
+                end_fraction: 1.0,
+            }],
+        }
+    }
+
+    fn write_tiny_track(race: Option<Vec<u8>>) -> Vec<u8> {
+        let (visual, collision, metadata) = empty_track();
+        let mut chunks = vec![
+            ChunkSpec {
+                kind: ChunkKind::Visual,
+                bytes: archive(&visual).expect("visual archive"),
+            },
+            ChunkSpec {
+                kind: ChunkKind::Collision,
+                bytes: archive(&collision).expect("collision archive"),
+            },
+            ChunkSpec {
+                kind: ChunkKind::Metadata,
+                bytes: archive(&metadata).expect("metadata archive"),
+            },
+        ];
+        let mut entrypoints = EntryPoints {
+            physics: None,
+            visual: Some(0),
+            collision: Some(1),
+            metadata: Some(2),
+            audio: None,
+            texture: None,
+            race: None,
+        };
+        if let Some(bytes) = race {
+            entrypoints.race = Some(chunks.len() as u32);
+            chunks.push(ChunkSpec {
+                kind: ChunkKind::Race,
+                bytes,
+            });
+        }
+        let manifest = AssetManifest {
+            magic: MAGIC,
+            schema_version: SCHEMA_VERSION,
+            kind: AssetKind::Track,
+            id: "tiny".to_string(),
+            source_hash: [0; 32],
+            units: ENGINE_UNITS,
+            frame: ENGINE_FRAME,
+            bounds: Aabb {
+                min: [-1.0; 3],
+                max: [1.0; 3],
+            },
+            chunks: Vec::new(),
+            entrypoints,
+            stats: AssetStats {
+                vertices: 0,
+                triangles: 0,
+                materials: 0,
+                textures: 0,
+                draw_calls: 0,
+            },
+            warnings: Vec::new(),
+        };
+        write_pack(manifest, chunks).expect("pack writes")
+    }
+
+    #[test]
+    fn track_race_absent_returns_none() {
+        let bytes = write_tiny_track(None);
+        let pack = Pack::from_bytes(&bytes).expect("pack parses");
+        assert_eq!(pack.track_race_owned().expect("race accessor"), None);
+    }
+
+    #[test]
+    fn track_race_present_returns_data() {
+        let race = sample_race();
+        let bytes = write_tiny_track(Some(archive(&race).expect("race archive")));
+        let pack = Pack::from_bytes(&bytes).expect("pack parses");
+        assert_eq!(pack.track_race_owned().expect("race accessor"), Some(race));
+    }
+
+    #[test]
+    fn track_race_malformed_archive_is_rejected() {
+        let bytes = write_tiny_track(Some(vec![0xff; 16]));
+        let pack = Pack::from_bytes(&bytes).expect("pack parses");
+        assert!(pack.track_race_owned().is_err());
+    }
 
     fn empty_track() -> (TrackVisual, TrackCollision, TrackMetadata) {
         (
@@ -457,6 +574,7 @@ mod tests {
                 metadata: Some(2),
                 audio: None,
                 texture: None,
+                race: None,
             },
             stats: AssetStats {
                 vertices: 0,

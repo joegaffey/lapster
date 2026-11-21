@@ -260,6 +260,8 @@ function chunkKindForEntrypoint(key: string): ChunkKind | undefined {
       return "Audio";
     case "texture":
       return "Texture";
+    case "race":
+      return "Race";
     default:
       return undefined;
   }

@@ -1,15 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Worker } from "node:worker_threads";
 
 import {
+  ASSET_SCHEMA_VERSION,
+  PACK_FORMAT_VERSION,
+  PACK_HEADER_SIZE,
+  PACK_MAGIC,
   loadPackFromBytes,
   loadPackFromUrl,
   parsePack,
   withPackVersion,
   type PackCache,
 } from "../src/assets/loader.ts";
+import type {
+  AssetManifest,
+  ChunkKind,
+  EntryPoints,
+} from "../src/assets/types.ts";
 
 const carUrl = new URL("../../fixtures/cars/minimal/pack.sima", import.meta.url);
 const trackUrl = new URL("../../fixtures/tracks/minimal/pack.sima", import.meta.url);
@@ -141,4 +151,121 @@ test("rejects bad magic and truncated packs", async () => {
 
   const truncated = bytes.slice(0, bytes.length - 1);
   await assert.rejects(loadPackFromBytes(truncated), /length mismatch/);
+});
+
+function alignTo(value: number, align: number): number {
+  return Math.ceil(value / align) * align;
+}
+
+function chunkData(seed: number, length: number): Uint8Array {
+  return new Uint8Array(length).fill(seed);
+}
+
+interface ChunkData {
+  kind: ChunkKind;
+  data: Uint8Array;
+}
+
+function buildPack(manifest: AssetManifest, chunks: ChunkData[]): Uint8Array {
+  let cursor = PACK_HEADER_SIZE;
+  const layout = chunks.map((chunk) => {
+    cursor = alignTo(cursor, 16);
+    const offset = cursor;
+    cursor += chunk.data.length;
+    return { kind: chunk.kind, offset, len: chunk.data.length };
+  });
+
+  const manifestOffset = alignTo(cursor, 16);
+  const withChunks: AssetManifest = {
+    ...manifest,
+    chunks: layout.map((chunk, index) => ({
+      kind: chunk.kind,
+      offset: chunk.offset,
+      len: chunk.len,
+      align: 16,
+      hash: [...createHash("sha256").update(chunks[index].data).digest()],
+      compression: "None",
+      schema_version: ASSET_SCHEMA_VERSION,
+    })),
+  };
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(withChunks));
+  const packLen = manifestOffset + manifestBytes.length;
+
+  const bytes = new Uint8Array(packLen);
+  const view = new DataView(bytes.buffer);
+  bytes.set([...PACK_MAGIC].map((char) => char.charCodeAt(0)), 0);
+  view.setUint16(4, PACK_FORMAT_VERSION, true);
+  view.setUint16(6, PACK_HEADER_SIZE, true);
+  view.setBigUint64(8, BigInt(manifestOffset), true);
+  view.setBigUint64(16, BigInt(manifestBytes.length), true);
+  view.setBigUint64(24, BigInt(packLen), true);
+
+  for (const [index, chunk] of chunks.entries()) {
+    bytes.set(chunk.data, layout[index].offset);
+  }
+  bytes.set(manifestBytes, manifestOffset);
+  return bytes;
+}
+
+function trackEntrypoints(): EntryPoints {
+  return {
+    physics: null,
+    visual: 0,
+    collision: 1,
+    metadata: 2,
+    audio: null,
+    texture: null,
+  };
+}
+
+function trackManifest(entrypoints: EntryPoints): AssetManifest {
+  return {
+    magic: [76, 83, 73, 77],
+    schema_version: ASSET_SCHEMA_VERSION,
+    kind: "Track",
+    id: "fixtures/track/race-entrypoint",
+    source_hash: new Array(32).fill(0),
+    units: { length: "Meter", mass: "Kilogram", time: "Second", angle: "Radian" },
+    frame: { handedness: "Right", up: "Y", forward: "NegZ" },
+    bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+    chunks: [],
+    entrypoints,
+    stats: { vertices: 0, triangles: 0, materials: 0, textures: 0, draw_calls: 0 },
+    warnings: [],
+  };
+}
+
+const trackChunks: ChunkData[] = [
+  { kind: "Visual", data: chunkData(1, 16) },
+  { kind: "Collision", data: chunkData(2, 16) },
+  { kind: "Metadata", data: chunkData(3, 16) },
+];
+
+test("accepts a track manifest with a Race entrypoint", async () => {
+  const chunks: ChunkData[] = [...trackChunks, { kind: "Race", data: chunkData(4, 32) }];
+  const manifest = trackManifest({ ...trackEntrypoints(), race: 3 });
+
+  const pack = await loadPackFromBytes(buildPack(manifest, chunks));
+
+  assert.equal(pack.manifest.kind, "Track");
+  assert.equal(pack.manifest.entrypoints.race, 3);
+  assert.equal(pack.manifest.chunks[3].kind, "Race");
+});
+
+test("accepts a track manifest without a race entrypoint", async () => {
+  const manifest = trackManifest(trackEntrypoints());
+
+  const pack = await loadPackFromBytes(buildPack(manifest, trackChunks));
+
+  assert.equal(pack.manifest.kind, "Track");
+  assert.equal(pack.manifest.entrypoints.race, undefined);
+});
+
+test("rejects a Race entrypoint pointing at a chunk of another kind", async () => {
+  const manifest = trackManifest({ ...trackEntrypoints(), race: 2 });
+
+  await assert.rejects(
+    loadPackFromBytes(buildPack(manifest, trackChunks)),
+    /entrypoint Race references chunk 2 of kind Metadata/,
+  );
 });
