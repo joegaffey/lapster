@@ -1,6 +1,6 @@
 # Track Race MVP — Layout as Race Route and the Race Chunk
 
-- **Status:** in progress; runtime exposure complete, track-ed export implemented locally pending cross-repo push/PR
+- **Status:** in progress; runtime exposure complete, track-ed export PR #6 open and green
 - **Date:** 2026-11-21
 - **Owner:** architect
 - **Domains:** architect, assets, editor, render, web
@@ -106,8 +106,8 @@ No track-ed project schema change is required for this MVP.
   `python3 scripts/check-agent-sync.py`.
 - Resolved: the TS mirror exists, the generic contract-root permission works,
   and the grid-inside-road and start/finish-fraction validations are in place.
-- Track-ed implicit-layout export is implemented locally on the track-ed
-  branch `feat/race-layout-export` at `9470707`:
+- Track-ed implicit-layout export is implemented on the track-ed branch
+  `feat/race-layout-export` at `9470707` and pushed:
   - closed spawn sections emit the optional `race` block in
     `sim-track-glb-v2` with a centreline layout, start/finish, 8 grid slots,
     and 4 sectors;
@@ -115,12 +115,13 @@ No track-ed project schema change is required for this MVP.
   - track-ed scope docs and the GLB manifest schema were updated;
   - track-ed 219 tests/build, parent `npm test` (49), track-import, and the
     hosted track-ed Test drive (now asserting `race()` availability) pass.
-  - The track-ed branch is **not pushed**; the parent submodule pin and the
-    hosted-test assertion in `web/tests/track-ed-hosted.spec.ts` are
-    uncommitted.
-- Next: push the track-ed branch and open its PR. After it merges, update the
-  parent pin, commit the hosted-test assertion, run the full parent gate, and
-  push. Then add the race-ready demo fixture.
+  - PR #6 is open against track-ed `main`; CI is green and it is mergeable:
+    https://github.com/joegaffey/track-ed/pull/6
+  - The parent submodule pin and the hosted-test assertion in
+    `web/tests/track-ed-hosted.spec.ts` remain uncommitted until PR #6 merges.
+- Next: after PR #6 merges, update the parent pin, commit the hosted-test
+  assertion, run the full parent gate, and push. Then add the race-ready demo
+  fixture.
 - The race route is available to the runtime and to local track-ed exports,
   but no shipped track produces one yet.
 
