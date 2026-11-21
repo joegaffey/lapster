@@ -300,6 +300,8 @@ function entrypointKey(kind: ChunkKind): keyof AssetManifest["entrypoints"] {
       return "audio";
     case "Texture":
       return "texture";
+    case "Race":
+      return "race";
   }
 }
 

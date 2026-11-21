@@ -24,6 +24,7 @@ import type {
 
 const carUrl = new URL("../../fixtures/cars/minimal/pack.sima", import.meta.url);
 const trackUrl = new URL("../../fixtures/tracks/minimal/pack.sima", import.meta.url);
+const raceLoopUrl = new URL("../../fixtures/tracks/race-loop/pack.sima", import.meta.url);
 
 async function readBytes(url: URL): Promise<Uint8Array> {
   return new Uint8Array(await readFile(url));
@@ -66,6 +67,21 @@ test("loads and verifies the track pack", async () => {
   assert.equal(pack.manifest.entrypoints.metadata, 2);
   assert.ok(pack.chunkBytes("Collision").length > 0);
   assert.ok(pack.chunkBytes("Metadata").length > 0);
+});
+
+test("loads the race-loop track with a Race entrypoint", async () => {
+  const pack = await loadPackFromBytes(await readBytes(raceLoopUrl));
+  assert.equal(pack.manifest.kind, "Track");
+  assert.equal(pack.manifest.id, "race-loop");
+  const raceIndex = pack.manifest.entrypoints.race;
+  assert.equal(typeof raceIndex, "number");
+  assert.equal(pack.manifest.chunks[raceIndex!].kind, "Race");
+  assert.ok(pack.manifest.chunks[raceIndex!].len > 0);
+  assert.ok(pack.chunkBytes("Race").length > 0);
+
+  const identity = trackIdentity(pack, "main");
+  assert.equal(identity.layoutId, "main");
+  assert.match(identity.sourceHash, /^[0-9a-f]{64}$/);
 });
 
 test("loads packs when SubtleCrypto is unavailable", async () => {
