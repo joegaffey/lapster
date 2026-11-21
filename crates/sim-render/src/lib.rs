@@ -1889,6 +1889,12 @@ impl DriveViewer {
             tuning.camera.cockpit.fov_y = 1.0;
         }
 
+        if car_physics.mass < 900.0 {
+            tuning.camera.cockpit.eye = [0.0, 0.84, 0.16];
+            tuning.camera.cockpit.target = [0.0, 0.78, -20.0];
+            tuning.camera.cockpit.fov_y = 1.0;
+        }
+
         let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
         let remote_slots = remote_slots.unwrap_or(0).min(7);
         let cars = [garage::GarageCar {

@@ -152,6 +152,14 @@ SOFTWARE.
     `fixtures/cars/sc-deckard-conejo/`.
   - License: Free Art License 1.3
     (https://artlibre.org/licence/lal/en/).
+- **Guthrie Eagle 67GP**
+  - Source: https://forge.a-lec.org/speed-dreams/67gp-guthrie-eagle
+  - Source commit: `01c82922ba16697e1a7d4766013ebadea26bd72c`
+  - Author: Copyright 2018 CHAD (Chad Phillips).
+  - Used in: `fixtures/sources/cars/67gp-guthrie-eagle/` and
+    `fixtures/cars/67gp-guthrie-eagle/`.
+  - License: Free Art License 1.3
+    (https://artlibre.org/licence/lal/en/).
 - **Boxer 96 Carson Tuners Edition wheel**
   - Source: https://forge.a-lec.org/speed-dreams/sc-carson-96
   - Source commit: `df202bcb9df324384a4ef209420c104e689b2246`
@@ -163,7 +171,9 @@ SOFTWARE.
     (https://artlibre.org/licence/lal/en/).
 
 The complete Free Art License text is in
-`fixtures/sources/cars/sc-deckard-conejo/LICENSE-FAL-1.3.txt`. Lapster's
+`fixtures/sources/cars/sc-deckard-conejo/LICENSE-FAL-1.3.txt`; the Guthrie Eagle
+source keeps its own copy at
+`fixtures/sources/cars/67gp-guthrie-eagle/LICENSE-FAL-1.3.txt`. Lapster's
 modifications are listed in the source README and in
 `docs/speed-dreams-pipeline.md`.
 

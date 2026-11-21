@@ -116,6 +116,7 @@ impl Scene {
                 &format!("bay_{index}"),
                 brake_lights,
                 true,
+                car.physics.mass < 900.0,
             )?;
             if static_car_shadows {
                 for mesh in &mut scene.meshes[car_mesh_start..] {
@@ -567,6 +568,9 @@ const CAMARO_COCKPIT_DIALS: [CockpitDial; 3] = [
     ),
 ];
 
+const OPEN_WHEEL_COCKPIT_DIALS: [CockpitDial; 1] =
+    [(CockpitNeedleSource::Rpm, [0.0, 0.64, -0.32], 0.050, 0.045)];
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_car(
     scene: &mut Scene,
@@ -577,6 +581,7 @@ pub(crate) fn build_car(
     prefix: &str,
     brake_lights: bool,
     cockpit_gauges: bool,
+    open_wheel: bool,
 ) -> Result<CarBuild, String> {
     let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
     let body_mesh = car_visual
@@ -597,8 +602,11 @@ pub(crate) fn build_car(
         .iter()
         .any(|mesh| mesh.name == "body_interior");
     let synthetic_cockpit = cockpit_gauges && brake_lights && !has_interior;
+    let open_wheel_cockpit = open_wheel && synthetic_cockpit;
     let cockpit_dials: &[CockpitDial] = if has_interior {
         &CAMARO_COCKPIT_DIALS
+    } else if open_wheel_cockpit {
+        &OPEN_WHEEL_COCKPIT_DIALS
     } else {
         &COCKPIT_DIALS
     };
@@ -708,7 +716,7 @@ pub(crate) fn build_car(
         None
     };
 
-    let dashboard_mesh_index = if synthetic_cockpit {
+    let dashboard_mesh_index = if synthetic_cockpit && !open_wheel_cockpit {
         let dashboard = mesh_index_by_name(car_visual, "body_glass")
             .and_then(|index| car_visual.mesh_buffers.get(index))
             .and_then(cockpit_cowl_buffers);

@@ -1,0 +1,10 @@
+{
+  "id": "sc-deckard-conejo",
+  "body": "body/sc-deckard-conejo.acc",
+  "xml": "body/sc-deckard-conejo.xml",
+  "wheel": "wheel/wheel0.acc",
+  "body_lift": 0.21,
+  "glass_names": ["GLASHOUSE", "^FLGT"],
+  "front": { "axle_x": 1.23, "half_track": 0.81, "radius": 0.3471, "width": 0.245 },
+  "rear": { "axle_x": -1.5, "half_track": 0.81, "radius": 0.35025, "width": 0.275 }
+}

@@ -126,6 +126,7 @@ struct ModelUniform {
     model: [[f32; 4]; 4],
     alpha: [f32; 4],
     emissive: [f32; 4],
+    flags: [f32; 4],
 }
 
 struct GpuOutline {
@@ -179,6 +180,7 @@ struct GpuMesh {
     texture_bind_group: wgpu::BindGroup,
     grass_texture_bind_group: Option<wgpu::BindGroup>,
     outline: Option<GpuOutline>,
+    flat_shade: bool,
     visible: bool,
     alpha: f32,
     emissive: [f32; 3],
@@ -1322,6 +1324,7 @@ impl Renderer {
                     mesh.emissive[2],
                     wind_time,
                 ],
+                flags: [if mesh.flat_shade { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             };
             self.queue
                 .write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -2013,6 +2016,7 @@ impl Renderer {
                 model: model.to_cols_array_2d(),
                 alpha: model_alpha(mesh, grass_texture_enabled),
                 emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
+                flags: [if mesh.flat_shade { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             };
             self.queue
                 .write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -2209,6 +2213,7 @@ fn create_mesh(
         0.0
     };
     let track_blend = mesh.track_blend;
+    let flat_shade = mesh.name.to_ascii_lowercase().contains("wheel");
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
         alpha: [
@@ -2224,6 +2229,7 @@ fn create_mesh(
             track_blend.unwrap_or(0.0),
         ],
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
+        flags: [if flat_shade { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
     };
     let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{} model", mesh.name)),
@@ -2256,23 +2262,27 @@ fn create_mesh(
         )
     });
 
-    let outline = mesh.outline.as_ref().map(|outline| {
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("{} outline vertices", mesh.name)),
-            contents: bytemuck::cast_slice(&outline.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("{} outline indices", mesh.name)),
-            contents: bytemuck::cast_slice(&outline.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        GpuOutline {
-            vertex_buffer,
-            index_buffer,
-            index_count: outline.indices.len() as u32,
-        }
-    });
+    let outline = if flat_shade {
+        None
+    } else {
+        mesh.outline.as_ref().map(|outline| {
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{} outline vertices", mesh.name)),
+                contents: bytemuck::cast_slice(&outline.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{} outline indices", mesh.name)),
+                contents: bytemuck::cast_slice(&outline.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            GpuOutline {
+                vertex_buffer,
+                index_buffer,
+                index_count: outline.indices.len() as u32,
+            }
+        })
+    };
 
     GpuMesh {
         vertex_buffer,
@@ -2283,6 +2293,7 @@ fn create_mesh(
         texture_bind_group,
         grass_texture_bind_group,
         outline,
+        flat_shade,
         visible: true,
         alpha: mesh.alpha,
         emissive: mesh.emissive,

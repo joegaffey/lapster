@@ -241,6 +241,7 @@ impl Scene {
             "style_car",
             true,
             false,
+            false,
         )?;
         scene.style_car_transform = Some(transform);
         scene.style_car_bounds = Some(built.bounds);

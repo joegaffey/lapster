@@ -12,6 +12,10 @@ safe to commit except where noted.
   `docs/speed-dreams-pipeline.md` and its README for attribution and rebuild steps.
 - `sources/cars/sc-deckard-conejo/`: tracked Speed Dreams source, donor wheel, license text,
   and original readme. Committed so the FAL source remains available with the baked pack.
+- `cars/67gp-guthrie-eagle/`: textured Speed Dreams 67GP car. Free Art License 1.3; see its
+  README for attribution and rebuild steps.
+- `sources/cars/67gp-guthrie-eagle/`: tracked Speed Dreams 67GP source, wheel, license text,
+  original readme, and per-car `import.json`.
 - `tracks/minimal/track.json`: ground plane, two walls, start line, a generated gauge-texture
   sign, spawn point, cameras, surfaces, and labeled X/Y/Z axes.
 - `tracks/skidpad05/pack.sima`: temporary default demo track. The source archive had no
