@@ -1,0 +1,23 @@
+{
+  "id": "67gp-murasama-37a",
+  "body": "body/67gp-murasama-37a.acc",
+  "xml": "body/67gp-murasama-37a.xml",
+  "wheel": "wheel/wheel0.acc",
+  "body_lift": 0.117,
+  "glass_names": [
+    "^WI[12]MAT0",
+    "^SCREEN2MAT0"
+  ],
+  "front": {
+    "axle_x": 1.18,
+    "half_track": 0.75,
+    "radius": 0.2974,
+    "width": 0.26
+  },
+  "rear": {
+    "axle_x": -1.54,
+    "half_track": 0.73,
+    "radius": 0.3399,
+    "width": 0.332
+  }
+}

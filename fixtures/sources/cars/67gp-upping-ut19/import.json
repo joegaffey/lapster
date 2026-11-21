@@ -1,0 +1,22 @@
+{
+  "id": "67gp-upping-ut19",
+  "body": "body/67gp-upping-ut19.acc",
+  "xml": "body/67gp-upping-ut19.xml",
+  "wheel": "wheel/wheel0.acc",
+  "body_lift": 0.043,
+  "glass_names": [
+    "^WIGLASS"
+  ],
+  "front": {
+    "axle_x": 1.08,
+    "half_track": 0.75,
+    "radius": 0.3101,
+    "width": 0.26
+  },
+  "rear": {
+    "axle_x": -1.52,
+    "half_track": 0.73,
+    "radius": 0.3399,
+    "width": 0.332
+  }
+}
