@@ -21,6 +21,13 @@ export const CAR_OPTIONS: CarOption[] = [
     engine: "v8cross",
     vehicle: "sports",
   },
+  {
+    id: "67gp-guthrie-eagle",
+    name: "Guthrie Eagle",
+    url: "../../fixtures/cars/67gp-guthrie-eagle/67gp-guthrie-eagle.sima",
+    engine: "v12",
+    vehicle: "sports",
+  },
 ];
 
 export const DEFAULT_CAR = CAR_OPTIONS[0];
