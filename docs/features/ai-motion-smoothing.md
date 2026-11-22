@@ -1,6 +1,6 @@
 # AI Motion Smoothing and Player Steering Rate
 
-- **Status:** complete; full gate passed; PR pending
+- **Status:** implementation complete; full gate passed; PR #54 pending merge
 - **Date:** 2026-11-22
 - **Owner:** architect
 - **Domains:** architect, physics, web
@@ -117,3 +117,18 @@ Web:
 - Steering rate setting persists and defaults to 6 units/s.
 - AI cars look smoother on Race Loop.
 - Full gate passes.
+
+## 9. Follow-up performance controls
+
+Added in the same batch after local rig testing:
+
+- The worker batches all AI snapshots into one `ai_states` message per publish
+  instead of sending one `ai_state` message per car. The web client still
+  accepts the old message for compatibility.
+- Graphics adds a global **Tyre effects** setting: `High`, `Low`, or `Off`.
+  `Off` clears and skips both local and remote particle systems; `Low` caps
+  local active particles at 120 and remote at 60.
+- Graphics shows the actual internal render resolution and keeps **50%** as the
+  manual render-scale floor. There is no automatic scaling.
+- Local rig check: `?ai=3` publishes three batched AI states, Tyre effects
+  `Off` reports zero particles, and 50% scale maps 1280x720 to 640x360.

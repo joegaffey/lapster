@@ -13,6 +13,7 @@ export interface SettingsViewer {
   set_debug_lines_visible(visible: boolean): void;
   set_grass_texture_enabled?(enabled: boolean): void;
   set_grass_shader_enabled?(enabled: boolean): void;
+  set_particle_quality?(quality: string): void;
   set_environment_shadow_mode(mode: string): void;
   set_car_shadow_mode(mode: string): void;
   set_time_of_day(hours: number): number;
@@ -24,6 +25,7 @@ export type AntiAliasing = "auto" | "off" | "2x" | "4x";
 export type EnvironmentShadows = "high" | "hybrid" | "baked" | "off";
 export type CarShadow = "dynamic" | "silhouette" | "off";
 export type RenderScale = 1 | 0.85 | 0.75 | 0.67 | 0.5;
+export type TyreEffects = "high" | "low" | "off";
 
 const RENDER_SCALES: RenderScale[] = [1, 0.85, 0.75, 0.67, 0.5];
 
@@ -47,6 +49,7 @@ export interface AssistSettings {
   fpsCounter: boolean;
   renderScale: RenderScale;
   saturation: number;
+  tyreEffects: TyreEffects;
 }
 
 interface SettingsOptions {
@@ -89,6 +92,7 @@ const DEFAULTS: AssistSettings = {
   fpsCounter: false,
   renderScale: 1,
   saturation: 1.15,
+  tyreEffects: "high",
 };
 
 const SETTINGS_STYLE = `
@@ -272,10 +276,22 @@ function settingsDialogHtml(): string {
           <option value="0.5">50%</option>
         </select>
       </label>
+      <div class="assist-row">
+        <span>Output</span>
+        <output id="render-resolution" data-testid="render-resolution">—</output>
+      </div>
       <label class="assist-slider">
         <span>Color saturation</span>
         <output id="color-saturation-value">115%</output>
         <input id="color-saturation" type="range" min="0.75" max="2" step="0.05" value="1.15" />
+      </label>
+      <label class="assist-slider">
+        <span>Tyre effects</span>
+        <select id="tyre-effects">
+          <option value="high">High</option>
+          <option value="low">Low</option>
+          <option value="off">Off</option>
+        </select>
       </label>
       <label class="assist-slider">
         <span>Environment shadows</span>
@@ -388,6 +404,10 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     value?.carShadow === "off"
       ? value.carShadow
       : "dynamic";
+  const tyreEffects =
+    value?.tyreEffects === "low" || value?.tyreEffects === "off"
+      ? value.tyreEffects
+      : "high";
   return {
     tc: value?.tc !== false,
     tcStrength: clamp(value?.tcStrength ?? 0.5, 0, 1, 1),
@@ -415,6 +435,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
       ? (value!.renderScale as RenderScale)
       : 1,
     saturation: clamp(value?.saturation ?? 1.15, 0.75, 2, 1.15),
+    tyreEffects,
   };
 }
 
@@ -506,8 +527,10 @@ export function setupAssistsDialog(
   const msaaApplied = document.querySelector<HTMLOutputElement>("#msaa-applied");
   const renderScaleSelect = document.querySelector<HTMLSelectElement>("#render-scale");
   const renderScaleValue = document.querySelector<HTMLOutputElement>("#render-scale-value");
+  const renderResolution = document.querySelector<HTMLOutputElement>("#render-resolution");
   const saturation = document.querySelector<HTMLInputElement>("#color-saturation");
   const saturationValue = document.querySelector<HTMLOutputElement>("#color-saturation-value");
+  const tyreEffects = document.querySelector<HTMLSelectElement>("#tyre-effects");
   const tcValue = document.querySelector<HTMLOutputElement>("#tc-strength-value");
   const escValue = document.querySelector<HTMLOutputElement>("#esc-strength-value");
   const steeringValue = document.querySelector<HTMLOutputElement>("#steering-sensitivity-value");
@@ -531,8 +554,10 @@ export function setupAssistsDialog(
     !msaaApplied ||
     !renderScaleSelect ||
     !renderScaleValue ||
+    !renderResolution ||
     !saturation ||
     !saturationValue ||
+    !tyreEffects ||
     !status
   ) {
     return null;
@@ -591,6 +616,11 @@ export function setupAssistsDialog(
     }
   };
 
+  const updateRenderResolution = () => {
+    const view = document.querySelector<HTMLCanvasElement>("#view");
+    renderResolution.textContent = view ? `${view.width}×${view.height}` : "—";
+  };
+
   const apply = () => {
     applyAssists();
     applyModes();
@@ -598,9 +628,11 @@ export function setupAssistsDialog(
     viewer.set_debug_lines_visible(settings.debugLines);
     viewer.set_grass_texture_enabled?.(settings.grassTexture);
     viewer.set_grass_shader_enabled?.(settings.grassShader);
+    viewer.set_particle_quality?.(settings.tyreEffects);
     setFpsCounterVisible(settings.fpsCounter);
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     options.onRenderScale?.(settings.renderScale);
+    updateRenderResolution();
     options.onChange?.({ ...settings });
     save(settings);
   };
@@ -641,8 +673,10 @@ export function setupAssistsDialog(
     msaa.value = settings.antiAliasing;
     renderScaleSelect!.value = String(settings.renderScale);
     renderScaleValue!.textContent = `${Math.round(settings.renderScale * 100)}%`;
+    updateRenderResolution();
     saturation!.value = String(settings.saturation);
     saturationValue!.textContent = `${Math.round(settings.saturation * 100)}%`;
+    tyreEffects!.value = settings.tyreEffects;
     const requested = requestedSamples(settings);
     const fallback = requested !== 1 && actualMsaa < requested;
     msaaApplied.textContent =
@@ -841,6 +875,12 @@ export function setupAssistsDialog(
     settings.saturation = Number(saturation.value);
     applySaturation();
     save(settings);
+    refresh();
+    status.textContent = "Saved";
+  });
+  tyreEffects.addEventListener("change", () => {
+    settings.tyreEffects = tyreEffects.value as TyreEffects;
+    apply();
     refresh();
     status.textContent = "Saved";
   });

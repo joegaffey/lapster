@@ -112,15 +112,19 @@ function publishAiFrames(forceRace = false): void {
     lastAiRaceTick = tick;
   }
   const count = Number(simulation.ai_count());
+  const states: Array<Record<string, unknown>> = [];
   for (let index = 0; index < count; index += 1) {
-    const payload: Record<string, unknown> = {
+    const state: Record<string, unknown> = {
       slot: index + 1,
       frame: new Float32Array(simulation.ai_snapshot(index)),
     };
     if (includeRace) {
-      payload.race = simulation.ai_race_state(index);
+      state.race = simulation.ai_race_state(index);
     }
-    post("ai_state", payload);
+    states.push(state);
+  }
+  if (states.length > 0) {
+    post("ai_states", { states });
   }
 }
 
