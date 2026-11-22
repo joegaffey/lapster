@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-22
-Current phase: **AI opponents — race-grid AI in the physics worker**
+Current phase: **AI field — three opponents, pace, and performance**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -52,11 +52,13 @@ Deployment:
 
 ## Current focus
 
-- AI opponents batch active on `feat/ai-opponents`, created from `dev` at
-  `abb7507`. ADR-0014 and `docs/features/ai-opponents.md` define one AI on
-  race-ready tracks, simulated in the physics worker, starting from race grid
-  slot 1, rendered through the remote-car path, with no car-to-car contact.
-  Physics and web are implemented; the full gate passed and the PR is next.
+- AI opponents batch is merged to `dev` as `fc4fdf3` (PR #49): one AI on
+  race-ready tracks, simulated in the physics worker, rendered through the
+  remote-car path, with no car-to-car contact.
+- AI field batch active on `feat/ai-field`, created from `dev` at `fc4fdf3`.
+  `docs/features/ai-field.md` defines three AI by default, `?ai=0..3`,
+  `?aiPace=chill|club|fast`, pace scaling, and `aiCount` diagnostics. Physics
+  and web are next.
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
@@ -223,7 +225,7 @@ Branch: `feat/race-manager`, created from `dev` after PR #44.
   1 skipped); WebGL2 fallback (2/2); track-ed tests (220 passed, 1 skipped) and
   build; agent sync. Track-ed PR #7 merged, the parent pin is updated, and the
   parent PR was merged to `dev` as `45fa03d` (PR #47).
-- Next: AI opponents batch (in progress).
+- Next: AI opponents batch is complete; AI field batch is active.
 
 ## AI opponents resume checkpoint
 
@@ -249,9 +251,23 @@ Branch: `feat/ai-opponents`, created from `dev` at `abb7507`.
   derived from the nearest layout tangent. Recorded as TD-0021.
 - Manual Race Loop probe: AI stayed within 3.62 m of the centreline (5 m
   half-width), completed a lap in about 40 s, and produced no page errors.
-- Gate: cargo fmt, workspace clippy, 213 workspace tests, wasm check; 57 web
-  tests; 106 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
-- Status: complete; full gate passed; PR pending.
+- Gate: cargo fmt, workspace clippy, 213 workspace tests, wasm check; 59 web
+  tests after the dev merge; 106 viewer tests passed / 1 skipped; WebGL2
+  fallback 2/2; agent sync.
+- Status: complete; merged to `dev` as `fc4fdf3` (PR #49).
+
+## AI field resume checkpoint
+
+Branch: `feat/ai-field`, created from `dev` at `fc4fdf3`.
+
+- Plan: `docs/features/ai-field.md`.
+- No versioned contract change. Reuse the existing AI snapshot and race data.
+- Physics: `AiPace` with Chill/Club/Fast scaling and a four-argument
+  `Simulation::new`.
+- Web: three AI by default, `?ai=0..3`, `?aiPace=chill|club|fast`, an `AI N`
+  race-panel field, and `aiCount` worker diagnostics.
+- Measure 1 vs 3 AI worker step timing on Race Loop and record the result.
+- Status: in progress; physics and web are next.
 
 ## Completed checkpoints
 
@@ -277,6 +293,7 @@ Branch: `feat/ai-opponents`, created from `dev` at `abb7507`.
 | track-ed hosted editor + local Test drive | Released to production |
 | Track race foundation | Done; Race chunk, race-loop fixture, launcher entry |
 | Race manager MVP | Done; merged to `dev` (PR #47) |
+| AI opponents | Done; merged to `dev` (PR #49) |
 
 ## Current capabilities
 
