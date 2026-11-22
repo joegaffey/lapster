@@ -1,6 +1,6 @@
 # AI Motion Smoothing and Player Steering Rate
 
-- **Status:** in progress
+- **Status:** complete; full gate passed; PR pending
 - **Date:** 2026-11-22
 - **Owner:** architect
 - **Domains:** architect, physics, web

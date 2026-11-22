@@ -339,7 +339,9 @@ Branch: `feat/ai-motion-smoothing`, created from `dev` at `0754a7c`.
 - Web: one `RemoteStateBuffer(40)` per AI slot; race state updates immediately.
 - Player: time-based steering rate setting, default 6 units/s, 0 = off; wheel
   input stays direct.
-- Status: in progress; physics and web are next.
+- Gate: cargo fmt, workspace clippy, 233 workspace tests, wasm check; 76 web
+  tests; 116 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; full gate passed; PR pending.
 
 ## Completed checkpoints
 

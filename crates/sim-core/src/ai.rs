@@ -8,7 +8,7 @@
 use glam::Vec3;
 
 use crate::race::RaceTracker;
-use crate::vehicle::{Controls, VehicleState};
+use crate::vehicle::{Controls, VehicleState, FIXED_DT};
 
 /// Conservative maximum target speed on a straight, in metres per second.
 const MAX_TARGET_SPEED: f32 = 32.0;
@@ -72,6 +72,10 @@ const DEFAULT_UPSHIFT_RPM: f32 = 6_500.0;
 const DEFAULT_DOWNSHIFT_RPM: f32 = 2_800.0;
 /// Default highest forward gear when no drivetrain data is supplied.
 const DEFAULT_MAX_GEAR: i32 = 6;
+/// Default maximum steering command change in normalized units per second.
+const DEFAULT_STEERING_RATE: f32 = 3.0;
+/// Largest accepted steering rate in normalized units per second.
+const MAX_STEERING_RATE: f32 = 20.0;
 
 /// A deterministic AI driver that follows a race layout centreline.
 ///
@@ -85,6 +89,8 @@ pub struct AiDriver {
     downshift_rpm: f32,
     max_gear: i32,
     pace: AiPace,
+    steering_rate: f32,
+    last_steering: f32,
 }
 
 impl Default for AiDriver {
@@ -120,12 +126,32 @@ impl AiDriver {
             downshift_rpm,
             max_gear: max_gear.max(1),
             pace,
+            steering_rate: DEFAULT_STEERING_RATE,
+            last_steering: 0.0,
         }
     }
 
-    /// Clears the shift cooldown, for example after a car reset.
+    /// Sets the maximum steering command change in normalized units per second.
+    ///
+    /// Non-finite values fall back to the default rate. The rate is clamped to
+    /// `0..=20`, where `0` disables the limit.
+    pub fn set_steering_rate(&mut self, rate: f32) {
+        self.steering_rate = sanitize_steering_rate(rate);
+    }
+
+    /// Returns a copy of the driver with the given steering rate.
+    ///
+    /// See [`AiDriver::set_steering_rate`] for sanitization and clamping.
+    pub fn with_steering_rate(mut self, rate: f32) -> Self {
+        self.set_steering_rate(rate);
+        self
+    }
+
+    /// Clears the shift cooldown and stored steering command, for example after
+    /// a car reset.
     pub fn reset(&mut self) {
         self.shift_cooldown = 0;
+        self.last_steering = 0.0;
     }
 
     /// Returns deterministic controls for the next physics tick.
@@ -162,12 +188,14 @@ impl AiDriver {
             0.0,
             sample.point.z - state.position.z,
         );
+        let mut desired_steering = 0.0;
         if forward.length_squared() > 0.5 && right.length_squared() > 0.5 {
             let forward_component = offset.dot(forward);
             let right_component = offset.dot(right);
             let desired_angle = -right_component.atan2(forward_component);
-            controls.steering = (desired_angle / STEERING_MAX_ANGLE).clamp(-1.0, 1.0);
+            desired_steering = (desired_angle / STEERING_MAX_ANGLE).clamp(-1.0, 1.0);
         }
+        controls.steering = self.rate_limit_steering(desired_steering);
 
         let target_speed = target_speed(tracker, distance, lookahead, self.pace);
         if speed < target_speed - 0.5 {
@@ -182,6 +210,18 @@ impl AiDriver {
         controls
     }
 
+    fn rate_limit_steering(&mut self, desired: f32) -> f32 {
+        let desired = desired.clamp(-1.0, 1.0);
+        if self.steering_rate <= 0.0 {
+            self.last_steering = desired;
+            return desired;
+        }
+        let max_delta = self.steering_rate * FIXED_DT;
+        let delta = (desired - self.last_steering).clamp(-max_delta, max_delta);
+        self.last_steering = (self.last_steering + delta).clamp(-1.0, 1.0);
+        self.last_steering
+    }
+
     fn shift_gears(&mut self, state: &VehicleState, controls: &mut Controls) {
         if self.shift_cooldown > 0 {
             return;
@@ -193,6 +233,14 @@ impl AiDriver {
             controls.gear -= 1;
             self.shift_cooldown = SHIFT_COOLDOWN_TICKS;
         }
+    }
+}
+
+fn sanitize_steering_rate(rate: f32) -> f32 {
+    if rate.is_finite() {
+        rate.clamp(0.0, MAX_STEERING_RATE)
+    } else {
+        DEFAULT_STEERING_RATE
     }
 }
 
@@ -332,7 +380,13 @@ mod tests {
         let state = vehicle_state(position, Quat::IDENTITY, Vec3::ZERO, 900.0, 1);
         let mut driver = AiDriver::default();
 
-        let controls = driver.controls(&state, &tracker);
+        let mut controls = driver.controls(&state, &tracker);
+        for _ in 0..60 {
+            if controls.steering.abs() > 0.05 {
+                break;
+            }
+            controls = driver.controls(&state, &tracker);
+        }
 
         assert!(
             controls.steering < -0.05,
@@ -352,7 +406,13 @@ mod tests {
         let state = vehicle_state(position, Quat::IDENTITY, Vec3::ZERO, 900.0, 1);
         let mut driver = AiDriver::default();
 
-        let controls = driver.controls(&state, &tracker);
+        let mut controls = driver.controls(&state, &tracker);
+        for _ in 0..60 {
+            if controls.steering.abs() > 0.05 {
+                break;
+            }
+            controls = driver.controls(&state, &tracker);
+        }
 
         assert!(
             controls.steering > 0.05,
@@ -504,6 +564,100 @@ mod tests {
             assert_finite(&driver.controls(&bad_state, &degenerate));
             assert_finite(&driver.controls(&good_state, &degenerate));
         }
+    }
+
+    fn corner_state_and_tracker() -> (VehicleState, RaceTracker) {
+        let position = Vec3::new(0.0, 0.0, -5.0);
+        let tracker = tracker(
+            vec![[0.0, 0.0, 0.0], [0.0, 0.0, -10.0], [10.0, 0.0, -10.0]],
+            false,
+            position,
+        );
+        let state = vehicle_state(position, Quat::IDENTITY, Vec3::ZERO, 900.0, 1);
+        (state, tracker)
+    }
+
+    #[test]
+    fn steering_rate_limits_a_large_step_and_keeps_ramping() {
+        let (state, tracker) = corner_state_and_tracker();
+        let max_step = DEFAULT_STEERING_RATE * FIXED_DT;
+        let mut driver = AiDriver::default();
+
+        let first = driver.controls(&state, &tracker).steering;
+        assert!(first.abs() > 0.0);
+        assert!(
+            first.abs() <= max_step + 1e-6,
+            "first tick {} exceeded step {}",
+            first,
+            max_step
+        );
+
+        let second = driver.controls(&state, &tracker).steering;
+        assert!(
+            second.abs() > first.abs(),
+            "expected the second tick to ramp, got {first} then {second}"
+        );
+        assert!(
+            second.abs() <= 2.0 * max_step + 1e-6,
+            "second tick {} exceeded two steps",
+            second
+        );
+
+        let desired = AiDriver::default()
+            .with_steering_rate(0.0)
+            .controls(&state, &tracker)
+            .steering;
+        assert!(desired.abs() > 2.0 * max_step);
+        assert_eq!(first.signum(), desired.signum());
+    }
+
+    #[test]
+    fn zero_steering_rate_applies_desired_steering_immediately() {
+        let (state, tracker) = corner_state_and_tracker();
+        let desired = AiDriver::default()
+            .with_steering_rate(0.0)
+            .controls(&state, &tracker)
+            .steering;
+
+        assert!(
+            desired.abs() > 0.9,
+            "expected a large steering command, got {desired}"
+        );
+    }
+
+    #[test]
+    fn reset_clears_stored_steering() {
+        let (state, tracker) = corner_state_and_tracker();
+        let mut driver = AiDriver::default().with_steering_rate(20.0);
+        let step = 20.0 * FIXED_DT;
+
+        let first = driver.controls(&state, &tracker).steering;
+        assert!((first.abs() - step).abs() < 1e-6, "first tick {first}");
+
+        driver.reset();
+        let after_reset = driver.controls(&state, &tracker).steering;
+        assert!(
+            (after_reset.abs() - first.abs()).abs() < 1e-6,
+            "reset should restart the ramp: {first} then {after_reset}"
+        );
+    }
+
+    #[test]
+    fn steering_rate_sanitizes_and_clamps_inputs() {
+        let mut driver = AiDriver::default();
+        assert_eq!(driver.steering_rate, DEFAULT_STEERING_RATE);
+
+        driver.set_steering_rate(f32::NAN);
+        assert_eq!(driver.steering_rate, DEFAULT_STEERING_RATE);
+        driver.set_steering_rate(f32::INFINITY);
+        assert_eq!(driver.steering_rate, DEFAULT_STEERING_RATE);
+        driver.set_steering_rate(-5.0);
+        assert_eq!(driver.steering_rate, 0.0);
+        driver.set_steering_rate(100.0);
+        assert_eq!(driver.steering_rate, MAX_STEERING_RATE);
+
+        let driver = AiDriver::default().with_steering_rate(7.5);
+        assert_eq!(driver.steering_rate, 7.5);
     }
 
     fn assert_finite(controls: &Controls) {

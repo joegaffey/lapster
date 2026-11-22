@@ -170,7 +170,7 @@ function runSlice(generation: number): void {
       Date.now() / 1000,
       new Float32Array(state),
     );
-    if (Number(simulation.tick()) % 8 === 0) {
+    if (Number(simulation.tick()) % 4 === 0) {
       publishAiFrames();
     }
     writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 20)), true);

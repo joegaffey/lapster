@@ -49,7 +49,7 @@ export class RemoteStateBuffer {
     return this.targetMs;
   }
 
-  push(seq: number, tick: number, state: number[], now: number): boolean {
+  push(seq: number, tick: number, state: ArrayLike<number>, now: number): boolean {
     if (state.length !== NET_STATE_FLOATS || !Number.isFinite(tick) || tick < 0) {
       return false;
     }

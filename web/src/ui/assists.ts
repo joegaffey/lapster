@@ -36,6 +36,7 @@ export interface AssistSettings {
   autoGears: boolean;
   autoClutch: boolean;
   steeringSensitivity: number;
+  steeringRate: number;
   debugLines: boolean;
   environmentShadows: EnvironmentShadows;
   carShadow: CarShadow;
@@ -77,6 +78,7 @@ const DEFAULTS: AssistSettings = {
   autoGears: true,
   autoClutch: true,
   steeringSensitivity: 1,
+  steeringRate: 6,
   debugLines: false,
   environmentShadows: "hybrid",
   carShadow: "dynamic",
@@ -235,6 +237,11 @@ function settingsDialogHtml(): string {
         <output id="steering-sensitivity-value">100%</output>
         <input id="steering-sensitivity" type="range" min="0.25" max="2" step="0.05" value="1" />
       </label>
+      <label class="assist-slider">
+        <span>Steering rate</span>
+        <output id="steering-rate-value">6.0 units/s</output>
+        <input id="steering-rate" data-testid="steering-rate" type="range" min="0" max="20" step="0.5" value="6" />
+      </label>
     </div>
   </section>
   <section id="settings-controls" class="settings-panel" role="tabpanel" aria-labelledby="tab-controls" hidden>
@@ -390,6 +397,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     autoGears: value?.autoGears !== false,
     autoClutch: value?.autoClutch !== false,
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
+    steeringRate: clamp(value?.steeringRate ?? 6, 0, 20, 6),
     debugLines: value?.debugLines === true,
     environmentShadows,
     carShadow,
@@ -484,6 +492,7 @@ export function setupAssistsDialog(
   const tcStrength = document.querySelector<HTMLInputElement>("#tc-strength");
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
+  const steeringRate = document.querySelector<HTMLInputElement>("#steering-rate");
   const debugToggle = document.querySelector<HTMLButtonElement>("#debug-lines-toggle");
   const fpsToggle = document.querySelector<HTMLButtonElement>("#fps-counter-toggle");
   const grassTextureToggle = document.querySelector<HTMLButtonElement>("#grass-texture-toggle");
@@ -502,6 +511,7 @@ export function setupAssistsDialog(
   const tcValue = document.querySelector<HTMLOutputElement>("#tc-strength-value");
   const escValue = document.querySelector<HTMLOutputElement>("#esc-strength-value");
   const steeringValue = document.querySelector<HTMLOutputElement>("#steering-sensitivity-value");
+  const steeringRateValue = document.querySelector<HTMLOutputElement>("#steering-rate-value");
   const status = document.querySelector<HTMLElement>("#assists-status");
   if (
     !dialog ||
@@ -537,9 +547,11 @@ export function setupAssistsDialog(
       !tcStrength ||
       !escStrength ||
       !steering ||
+      !steeringRate ||
       !tcValue ||
       !escValue ||
-      !steeringValue)
+      !steeringValue ||
+      !steeringRateValue)
   ) {
     return null;
   }
@@ -594,7 +606,7 @@ export function setupAssistsDialog(
   };
 
   const refresh = () => {
-    if (gameplay && tcToggle && absToggle && escToggle && autoGearsToggle && autoClutchToggle && tcStrength && escStrength && steering && tcValue && escValue && steeringValue) {
+    if (gameplay && tcToggle && absToggle && escToggle && autoGearsToggle && autoClutchToggle && tcStrength && escStrength && steering && steeringRate && tcValue && escValue && steeringValue && steeringRateValue) {
       tcToggle.textContent = settings.tc ? "TC: On" : "TC: Off";
       tcToggle.setAttribute("aria-pressed", String(settings.tc));
       absToggle.textContent = settings.abs ? "ABS: On" : "ABS: Off";
@@ -608,9 +620,11 @@ export function setupAssistsDialog(
       tcStrength.value = String(settings.tcStrength);
       escStrength.value = String(settings.escStrength);
       steering.value = String(settings.steeringSensitivity);
+      steeringRate.value = String(settings.steeringRate);
       tcValue.textContent = `${Math.round(settings.tcStrength * 100)}%`;
       escValue.textContent = `${Math.round(settings.escStrength * 100)}%`;
       steeringValue.textContent = `${Math.round(settings.steeringSensitivity * 100)}%`;
+      steeringRateValue.textContent = `${settings.steeringRate.toFixed(1)} units/s`;
     }
     debugToggle.textContent = settings.debugLines ? "Debug: On" : "Debug: Off";
     debugToggle.setAttribute("aria-pressed", String(settings.debugLines));
@@ -746,6 +760,12 @@ export function setupAssistsDialog(
     });
     steering!.addEventListener("input", () => {
       settings.steeringSensitivity = Number(steering!.value);
+      apply();
+      refresh();
+      status.textContent = "Saved";
+    });
+    steeringRate!.addEventListener("input", () => {
+      settings.steeringRate = Number(steeringRate!.value);
       apply();
       refresh();
       status.textContent = "Saved";

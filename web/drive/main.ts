@@ -35,6 +35,7 @@ import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
 import { RemoteEngineAudio } from "../src/audio/remote-engine-audio.ts";
 import { WheelFfb } from "../src/input/wheel-ffb.ts";
+import { rateLimitSteering } from "../src/input/steering-rate.ts";
 import { RelayClient } from "../src/net/relay.ts";
 import { RemoteStateBuffer } from "../src/net/remote-state.ts";
 import {
@@ -222,6 +223,10 @@ let relaySeq = 1;
 let relayUploadTimer: ReturnType<typeof setInterval> | null = null;
 let lastRelayTick = -1;
 const remotePlayers = new Map<number, RemotePlayer>();
+const aiBuffers = new Map<number, RemoteStateBuffer>();
+const AI_INTERPOLATION_MS = 40;
+let aiIgnoreFrames = false;
+let playerSteeringRate = 6;
 let audio: EngineSimAudio | null = null;
 let remoteAudio: RemoteEngineAudio | null = null;
 let wheel: WheelFfb | null = null;
@@ -566,6 +571,28 @@ function renderRemotePlayers(
   }
 }
 
+function resetAiBuffers(): void {
+  aiBuffers.clear();
+}
+
+function renderAiFrames(now: number): void {
+  const viewer = window.__driveViewer;
+  if (!viewer) {
+    return;
+  }
+  for (const [slot, buffer] of aiBuffers) {
+    const frame = buffer.frame(now);
+    if (!frame) {
+      continue;
+    }
+    try {
+      viewer.set_remote_state(slot, frame);
+    } catch (error) {
+      console.warn("AI car update failed", error);
+    }
+  }
+}
+
 function startRelayUpload(): void {
   stopRelayUpload();
   relayUploadTimer = setInterval(() => {
@@ -768,9 +795,12 @@ async function startLocalRaceCountdown(): Promise<void> {
   raceCountdown.textContent = "";
   inputLocked = true;
   clearRaceResults();
+  aiIgnoreFrames = true;
+  resetAiBuffers();
   raceDirector?.reset();
   const viewer = window.__driveViewer;
   if (!viewer) {
+    aiIgnoreFrames = false;
     inputLocked = false;
     return;
   }
@@ -779,15 +809,18 @@ async function startLocalRaceCountdown(): Promise<void> {
     try {
       await physics.placeOnRaceGrid(0);
       if (generation !== raceGeneration) {
+        aiIgnoreFrames = false;
         return;
       }
       await physics.pause();
     } catch (error) {
       console.warn("race grid placement failed", error);
+      aiIgnoreFrames = false;
       inputLocked = false;
       return;
     }
   }
+  aiIgnoreFrames = false;
   if (generation !== raceGeneration) {
     return;
   }
@@ -798,6 +831,7 @@ function reset() {
   const viewer = window.__driveViewer;
   if (!viewer) return;
   viewer.reset();
+  resetAiBuffers();
   steer = 0;
   gear = 1;
   lastSpeedMps = 0;
@@ -1291,14 +1325,25 @@ async function boot() {
       );
       physics = client;
       client.onAiFrame = (slot, frame, race) => {
+        if (aiIgnoreFrames) {
+          return;
+        }
+        const tick =
+          frame.length > SNAPSHOT_STATE.tick
+            ? Math.round(frame[SNAPSHOT_STATE.tick])
+            : Number.NaN;
         if (raceDirector) {
           raceDirector.updateAi(slot, race);
         }
-        try {
-          viewer.set_remote_state(slot, frame);
-        } catch (error) {
-          console.warn("AI car update failed", error);
+        if (!Number.isFinite(tick) || tick < 0) {
+          return;
         }
+        let buffer = aiBuffers.get(slot);
+        if (!buffer) {
+          buffer = new RemoteStateBuffer(AI_INTERPOLATION_MS);
+          aiBuffers.set(slot, buffer);
+        }
+        buffer.push(tick, tick, frame, performance.now());
       };
       smoother = new SnapshotSmoother(client.reader);
       physicsWorker = true;
@@ -1474,6 +1519,7 @@ async function boot() {
     onChange: (next) => {
       autoGears = next.autoGears;
       autoClutch = next.autoClutch;
+      playerSteeringRate = next.steeringRate;
     },
     onRenderScale: (scale) => {
       renderScale = scale;
@@ -1556,7 +1602,7 @@ async function boot() {
       const steerLeft = keys.has("a") || keys.has("arrowleft");
       const steerRight = keys.has("d") || keys.has("arrowright");
       const targetSteer = (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
-      steer += (targetSteer - steer) * Math.min(1, delta * 8);
+      steer = rateLimitSteering(steer, targetSteer, playerSteeringRate, delta);
     }
 
     const forwardKey = keys.has("w") || keys.has("arrowup");
@@ -1718,7 +1764,8 @@ async function boot() {
         smoother.update(renderNow);
         const remoteState = smoother.state(renderNow);
         if (remoteState) {
-          renderRemotePlayers(performance.now(), remoteState, delta);
+          renderRemotePlayers(renderNow, remoteState, delta);
+          renderAiFrames(renderNow);
           viewer.render_remote(remoteState);
           const telemetry = JSON.parse(driver.telemetry());
           lastSpeedMps = telemetry.speedMps;
