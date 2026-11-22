@@ -62,10 +62,8 @@ Deployment:
 - AI field batch is merged to `dev` as `670312f` (PR #50): three AI by default,
   `?ai=0..3`, `?aiPace=chill|club|fast`, `AiPace` scaling, `AI N` HUD, and
   `aiCount` diagnostics.
-- AI race batch active on `feat/ai-race`, created from `dev` at `670312f`.
-  `docs/features/ai-race.md` and ADR-0015 define player grid start, countdown,
-  live positions, three laps, and results. Physics, render, and web are
-  implemented; the full gate passed and the PR is next.
+- AI race batch is merged to `dev` as `3f83bc8` (PR #52): player grid start,
+  countdown, live positions, three laps, and results.
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
@@ -305,7 +303,7 @@ Branch: `feat/ai-race`, created from `dev` at `670312f`.
   workspace clippy, 228 workspace tests, wasm check; 68 web tests; 114 viewer
   tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync. Combined branch CI
   covers the merged track-option fixture and launcher tests.
-- Status: complete; full gate passed; PR pending.
+- Status: complete; merged to `dev` as `3f83bc8` (PR #52).
 
 ## Loop Spline Point Terrain track option
 
@@ -352,7 +350,7 @@ Branch: `feat/loop-spline-point-terrain`, created from `dev` at `670312f`.
 | Race manager MVP | Done; merged to `dev` (PR #47) |
 | AI opponents | Done; merged to `dev` (PR #49) |
 | AI field | Done; merged to `dev` (PR #50) |
-| AI race | Implemented; full gate passed; PR pending |
+| AI race | Done; merged to `dev` (PR #52) |
 
 ## Current capabilities
 
