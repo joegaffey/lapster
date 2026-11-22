@@ -92,7 +92,7 @@ impl GrassField {
         field
     }
 
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             collider: None,
             grass_surfaces: Vec::new(),

@@ -8,7 +8,9 @@ import { setupPwa } from "../src/pwa.ts";
 import {
   CAR_OPTIONS,
   findCar,
+  loadCarPaint,
   loadSelectedCar,
+  saveCarPaint,
   saveSelectedBay,
   saveSelectedCar,
   selectedBay as getSelectedBay,
@@ -44,6 +46,8 @@ const steerValue = document.querySelector<HTMLElement>("#steer-value")!;
 const spinValue = document.querySelector<HTMLElement>("#spin-value")!;
 const animateInput = document.querySelector<HTMLInputElement>("#animate")!;
 const bayLabel = document.querySelector<HTMLElement>("#bay-label")!;
+const paintLabel = document.querySelector<HTMLElement>("#paint-label")!;
+const paintOptions = document.querySelector<HTMLElement>("#paint-options")!;
 const bayPrev = document.querySelector<HTMLButtonElement>("#bay-prev")!;
 const bayNext = document.querySelector<HTMLButtonElement>("#bay-next")!;
 const driveCar = document.querySelector<HTMLAnchorElement>("#drive-car")!;
@@ -84,7 +88,6 @@ checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
 const defaultTrack = loadSelectedTrack();
-const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
 const requestedCar = loadSelectedCar();
 const CAR_URLS = CAR_OPTIONS.map((car) => withPackVersion(car.url, APP_VERSION));
 
@@ -166,7 +169,7 @@ function renderDebug(debug: any) {
   ]);
 
   surfaces.replaceChildren();
-  for (const surface of debug.surfaces) {
+  for (const surface of debug.surfaces ?? []) {
     const item = document.createElement("li");
     const swatch = document.createElement("span");
     swatch.className = "name";
@@ -189,21 +192,17 @@ async function boot() {
   await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
   status.textContent = "loading packs";
-  const [trackPack, carPacks] = await Promise.all([
-    loadPack(TRACK_URL),
-    Promise.all(CAR_URLS.map((url) => loadPack(url))),
-  ]);
-
+  const carPacks = await Promise.all(CAR_URLS.map((url) => loadPack(url)));
   resizeCanvas();
   status.textContent = "creating renderer";
-  const viewer = await GarageViewer.create(
+  const viewer = await GarageViewer.create_concrete(
     canvas,
-    trackPack.bytes,
     carPacks.map((pack) => pack.bytes),
   );
   window.__garageViewer = viewer;
   setupAssistsDialog(viewer, {
     gameplay: false,
+    timeOfDay: false,
     onRenderScale: (scale) => {
       renderScale = scale;
       if (resizeCanvas()) {
@@ -219,8 +218,26 @@ async function boot() {
     index: number;
     carId: string;
     colorName: string;
+    paint: number;
+    paintName: string;
+    recolorable: boolean;
+  }>;
+  const palette = JSON.parse(viewer.paint_options()) as Array<{
+    index: number;
+    name: string;
+    color: [number, number, number];
   }>;
   let selectedBay = 0;
+
+  for (const bay of bays) {
+    if (!bay.recolorable) {
+      continue;
+    }
+    const savedPaint = loadCarPaint(bay.carId);
+    if (savedPaint !== null) {
+      viewer.set_bay_paint(bay.index, savedPaint);
+    }
+  }
 
   let steer = 0.3;
   let spin = 0;
@@ -245,21 +262,53 @@ async function boot() {
     animating = animateInput.checked;
   });
 
-  const selectBay = (index: number, animate = true) => {
-    const current = JSON.parse(viewer.bay_info());
-    const count = Math.max(1, current.count);
-    const next = ((index % count) + count) % count;
-    const cameraInfo = JSON.parse(viewer.select_bay(next));
-    orbitCamera?.setHome(cameraInfo, animate);
-    const info = JSON.parse(viewer.bay_info());
+  const swatches: HTMLButtonElement[] = [];
+  for (const option of palette) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "paint-swatch";
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", "false");
+    button.setAttribute("aria-label", option.name);
+    button.title = option.name;
+    button.dataset.paint = String(option.index);
+    const [red, green, blue] = option.color;
+    button.style.setProperty(
+      "--swatch",
+      `rgb(${Math.round(red * 255)} ${Math.round(green * 255)} ${Math.round(blue * 255)})`,
+    );
+    button.addEventListener("click", () => {
+      const info = JSON.parse(viewer.set_selected_paint(option.index));
+      saveCarPaint(info.carId, option.index);
+      applySelectedBay(info);
+    });
+    paintOptions.append(button);
+    swatches.push(button);
+  }
+
+  const renderPaintPicker = (info: any) => {
+    const recolorable = info.recolorable === true;
+    paintLabel.textContent = recolorable ? info.paintName : "Factory livery";
+    paintOptions.hidden = !recolorable;
+    for (const swatch of swatches) {
+      const index = Number(swatch.dataset.paint);
+      swatch.setAttribute(
+        "aria-checked",
+        String(recolorable && index === info.paint),
+      );
+    }
+  };
+
+  const applySelectedBay = (info: any) => {
     selectedBay = info.selected;
     const car = findCar(info.carId) ?? CAR_OPTIONS[0];
     saveSelectedBay(selectedBay);
     saveSelectedCar(car.id);
     asset.textContent = `${debug.asset.id} + ${car.id}`;
     renderCar(info.car ?? debug.car);
-    bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count}) · ${car.name} · ${info.colorName}`;
-    driveCar.title = `Drive the ${info.colorName} ${car.name}`;
+    const paintName = info.paintName || "Factory livery";
+    bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count}) · ${car.name} · ${paintName}`;
+    driveCar.title = `Drive the ${paintName} ${car.name}`;
     const driveUrl = new URL("../drive/", window.location.href);
     const driveParams = new URLSearchParams(params);
     if (!driveParams.has("track")) {
@@ -267,24 +316,28 @@ async function boot() {
     }
     driveParams.set("car", car.url);
     driveParams.set("bay", String(selectedBay + 1));
+    if (info.recolorable === true) {
+      driveParams.set("paint", String(info.paint));
+    } else {
+      driveParams.delete("paint");
+    }
     driveUrl.search = driveParams.toString();
     driveCar.href = driveUrl.href;
+    renderPaintPicker(info);
     applyAngles();
   };
 
-  const bayOrder = (count: number): number[] => {
-    if (count <= 5) {
-      return Array.from({ length: count }, (_, index) => index);
-    }
-    const order = [0];
-    for (let index = 5; index < count; index += 1) {
-      order.push(index);
-    }
-    for (let index = 4; index >= 1; index -= 1) {
-      order.push(index);
-    }
-    return order;
+  const selectBay = (index: number, animate = true) => {
+    const current = JSON.parse(viewer.bay_info());
+    const count = Math.max(1, current.count);
+    const next = ((index % count) + count) % count;
+    const cameraInfo = JSON.parse(viewer.select_bay(next));
+    orbitCamera?.setHome(cameraInfo, animate);
+    applySelectedBay(JSON.parse(viewer.bay_info()));
   };
+
+  const bayOrder = (count: number): number[] =>
+    Array.from({ length: count }, (_, index) => index);
 
   const stepBay = (delta: number) => {
     const info = JSON.parse(viewer.bay_info());

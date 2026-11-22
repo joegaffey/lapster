@@ -27,7 +27,7 @@ test("launcher track selection persists into drive and garage", async ({ page })
     asset: document.querySelector("#asset")?.textContent,
   }));
   expect(garage.error).toBeUndefined();
-  expect(garage.asset).toContain("drift-sketchfab");
+  expect(garage.asset).toContain("concrete-garage + mazda-rx7");
 
   const driveHref = await page.locator("#drive-car").getAttribute("href");
   expect(new URL(driveHref!).searchParams.get("track")).toContain("drift-sketchfab");
@@ -106,9 +106,16 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
     };
   });
   expect(initial.error).toBeUndefined();
-  expect(new Set(initial.bays.map((bay: any) => bay.carId))).toEqual(
-    new Set(["mazda-rx7", "sc-deckard-conejo", "67gp-guthrie-eagle"]),
-  );
+  expect(initial.bays.map((bay: any) => bay.carId)).toEqual([
+    "mazda-rx7",
+    "67gp-cavallo-123",
+    "67gp-guthrie-eagle",
+    "67gp-kuiper-t81",
+    "67gp-mango-ms7",
+    "67gp-murasama-37a",
+    "67gp-upping-ut19",
+    "sc-deckard-conejo",
+  ]);
   expect(initial.menuButtons).toBe(0);
   expect(initial.selected.carId).toBe("mazda-rx7");
 
@@ -122,11 +129,27 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
       stored: localStorage.getItem("lapster.car.v1"),
     };
   });
-  expect(state.info.carId).toBe("67gp-guthrie-eagle");
-  expect(state.info.car.id).toBe("67gp-guthrie-eagle");
-  expect(state.asset).toContain("67gp-guthrie-eagle");
-  expect(state.drive).toContain("67gp-guthrie-eagle");
-  expect(state.stored).toBe("67gp-guthrie-eagle");
+  expect(state.info.carId).toBe("67gp-cavallo-123");
+  expect(state.info.car.id).toBe("67gp-cavallo-123");
+  expect(state.asset).toContain("67gp-cavallo-123");
+  expect(state.drive).toContain("67gp-cavallo-123");
+  expect(state.stored).toBe("67gp-cavallo-123");
+
+  await page.keyboard.press("ArrowRight");
+  const after = await page.evaluate(() => {
+    const viewer = (window as any).__garageViewer;
+    return {
+      info: JSON.parse(viewer.bay_info()),
+      asset: document.querySelector("#asset")?.textContent,
+      drive: document.querySelector("#drive-car")?.getAttribute("href"),
+      stored: localStorage.getItem("lapster.car.v1"),
+    };
+  });
+  expect(after.info.carId).toBe("67gp-guthrie-eagle");
+  expect(after.info.car.id).toBe("67gp-guthrie-eagle");
+  expect(after.asset).toContain("67gp-guthrie-eagle");
+  expect(after.drive).toContain("67gp-guthrie-eagle");
+  expect(after.stored).toBe("67gp-guthrie-eagle");
 });
 
 test("launcher opens loop-spline-point-terrain with race available", async ({ page }) => {

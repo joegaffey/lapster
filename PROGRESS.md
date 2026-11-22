@@ -38,7 +38,8 @@ python3 -m http.server 8123 --bind 127.0.0.1
 Pages:
 
 - Drive: `http://127.0.0.1:8123/web/drive/`
-- Garage: `http://127.0.0.1:8123/web/garage/`
+- Garage: `http://127.0.0.1:8123/web/garage/` (concrete studio; add
+  `?garage=showroom` for the track-backed showroom)
 - Track: `http://127.0.0.1:8123/web/track-viewer/`
 
 Expected browser: Chromium/Chrome. WebGPU is used when available; WebGL2 is the
@@ -60,6 +61,14 @@ Deployment:
   output-resolution readout, and a 50% manual render-scale floor. Full gate
   passed: 233 Rust tests, 76 web tests, 113 viewer passed / 4 skipped, and the
   two WebGL2 fallback tests.
+- Concrete garage replaces the Garage showroom on `feat/concrete-garage`
+  (from `dev` at `0754a7c`): an eight-car single-line concrete studio with
+  overhead spot lights, a procedural floor, a ten-colour paint picker for the
+  Mazda, Drive paint propagation, and the Drive flat wheel shading in the
+  studio. The Mazda appears once; all six 67GP cars and the Deckard are in the
+  catalogue. The old `?garage=showroom` fallback and the showroom
+  `GarageViewer::create` constructor are removed. ADR-0016 is superseded by
+  ADR-0017. Full gate green; merged to `dev` as `6cb1f3a` (PR #55).
 - Loop Spline Point Terrain is added as a fixture and public track option on
   `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
   `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises
