@@ -19,7 +19,8 @@ use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
 use crate::tuning::{GpuTuning, ParticleTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{
-    Controls, PhysicsTuning, TrackCollider, Vehicle, VehicleState, WheelState, FIXED_DT,
+    Controls, PhysicsTuning, RaceTracker, TrackCollider, Vehicle, VehicleState, WheelState,
+    FIXED_DT,
 };
 use sim_types::snapshot_state as snapshot;
 use sim_types::{CarTuning, RaceData, SNAPSHOT_STATE_FLOATS};
@@ -1813,6 +1814,7 @@ pub struct DriveViewer {
     track_id: String,
     car_id: String,
     race: Option<RaceData>,
+    race_tracker: Option<RaceTracker>,
     track_source_hash: [u8; 32],
     car_bay: usize,
     color_offset: usize,
@@ -1990,6 +1992,7 @@ impl DriveViewer {
         );
 
         let previous_state = vehicle.state;
+        let race_tracker = race.as_ref().map(RaceTracker::new);
         let mut drive = DriveViewer {
             renderer,
             vehicle,
@@ -2005,6 +2008,7 @@ impl DriveViewer {
             track_id: track_manifest.id,
             car_id: car_manifest.id,
             race,
+            race_tracker,
             track_source_hash,
             car_bay,
             color_offset,
@@ -2081,12 +2085,27 @@ impl DriveViewer {
         }
     }
 
+    fn update_race_tracker(&mut self) {
+        let position = self.vehicle.state.position;
+        let tick = self.vehicle.state.tick;
+        if let Some(tracker) = self.race_tracker.as_mut() {
+            tracker.update(position, tick);
+        }
+    }
+
+    fn reset_race_tracker(&mut self) {
+        if let Some(tracker) = self.race_tracker.as_mut() {
+            tracker.reset();
+        }
+    }
+
     pub fn reset(&mut self) {
         self.vehicle.reset();
         for _ in 0..500 {
             self.vehicle.step(Controls::default());
         }
         self.previous_state = self.vehicle.state;
+        self.reset_race_tracker();
         self.accumulator = 0.0;
         self.last_time = None;
         self.last_particle_time = None;
@@ -2144,6 +2163,7 @@ impl DriveViewer {
             let start = performance_now();
             self.previous_state = self.vehicle.state;
             self.vehicle.step(controls);
+            self.update_race_tracker();
             let elapsed = (performance_now() - start) as f32;
             if self.step_times.len() >= 250 {
                 self.step_times.remove(0);
@@ -2196,6 +2216,7 @@ impl DriveViewer {
         };
         for _ in 0..steps {
             self.vehicle.step(controls);
+            self.update_race_tracker();
         }
         self.previous_state = self.vehicle.state;
         self.update_visuals();
@@ -2208,6 +2229,7 @@ impl DriveViewer {
         let remote = state_from_frame(frame)?;
         self.vehicle.state = remote;
         self.previous_state = remote;
+        self.update_race_tracker();
         self.last_time = None;
         self.accumulator = 0.0;
         self.set_brake_lights(frame[snapshot::BRAKE]);
@@ -2308,6 +2330,10 @@ impl DriveViewer {
         race_view_json(self.race.as_ref())
     }
 
+    pub fn race_state(&self) -> String {
+        race_state_json(self.race_tracker.as_ref())
+    }
+
     pub fn telemetry(&self) -> String {
         let state = &self.vehicle.state;
         let speed = state.velocity.length();
@@ -2341,6 +2367,7 @@ impl DriveViewer {
             "track": self.track_id,
             "car": self.car_id,
             "raceAvailable": self.race.is_some(),
+            "raceState": race_state_value(self.race_tracker.as_ref()),
             "layoutId": self
                 .race
                 .as_ref()
@@ -3057,6 +3084,31 @@ fn percentile(values: &[f32], fraction: f32) -> f32 {
     values[index.min(values.len() - 1)]
 }
 
+fn race_state_value(tracker: Option<&RaceTracker>) -> serde_json::Value {
+    match tracker {
+        None => serde_json::json!({ "available": false }),
+        Some(tracker) => {
+            let state = tracker.state();
+            serde_json::json!({
+                "available": true,
+                "lap": state.lap,
+                "sector": state.sector,
+                "progress": state.progress,
+                "distance_m": state.distance_m,
+                "wrong_way": state.wrong_way,
+                "started": state.started,
+                "current_lap_time": state.current_lap_time,
+                "last_lap_time": state.last_lap_time,
+                "best_lap_time": state.best_lap_time,
+            })
+        }
+    }
+}
+
+fn race_state_json(tracker: Option<&RaceTracker>) -> String {
+    race_state_value(tracker).to_string()
+}
+
 fn race_view_json(race: Option<&RaceData>) -> String {
     match race {
         None => String::from("{\"available\":false}"),
@@ -3171,6 +3223,63 @@ mod tests {
                 "version"
             ]
         );
+    }
+
+    #[test]
+    fn race_state_unavailable_serializes_contract_shape() {
+        let json = race_state_json(None);
+        assert_eq!(json, "{\"available\":false}");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race state");
+        assert_eq!(value.as_object().map(|object| object.len()), Some(1));
+        assert_eq!(value["available"], serde_json::Value::Bool(false));
+    }
+
+    #[test]
+    fn race_state_available_serializes_all_contract_fields() {
+        let tracker = RaceTracker::new(&sample_race());
+        let json = race_state_json(Some(&tracker));
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race state");
+
+        assert_eq!(value["available"], serde_json::Value::Bool(true));
+        assert_eq!(value["lap"], serde_json::json!(1));
+        assert_eq!(value["sector"], serde_json::json!(1));
+        assert_eq!(value["progress"], serde_json::json!(0.0));
+        assert_eq!(value["distance_m"], serde_json::json!(0.0));
+        assert_eq!(value["wrong_way"], serde_json::Value::Bool(false));
+        assert_eq!(value["started"], serde_json::Value::Bool(false));
+        assert_eq!(value["current_lap_time"], serde_json::json!(0.0));
+
+        let mut keys = value
+            .as_object()
+            .expect("race state object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "available",
+                "best_lap_time",
+                "current_lap_time",
+                "distance_m",
+                "lap",
+                "last_lap_time",
+                "progress",
+                "sector",
+                "started",
+                "wrong_way"
+            ]
+        );
+    }
+
+    #[test]
+    fn race_state_available_without_lap_times_is_null() {
+        let tracker = RaceTracker::new(&sample_race());
+        let value = race_state_value(Some(&tracker));
+
+        assert!(value["last_lap_time"].is_null());
+        assert!(value["best_lap_time"].is_null());
     }
 
     #[test]

@@ -192,6 +192,35 @@ Branch: `feat/track-race-mvp`, created from `dev`.
 - Full details: `docs/features/track-race-mvp.md` §3.1, ADR-0011, and
   ADR-0012.
 
+## Race manager MVP resume checkpoint
+
+Branch: `feat/race-manager`, created from `dev` after PR #44.
+
+- ADR-0013 approves AI racing and online contact as the next direction; `GOALS.md`
+  no longer lists AI opponents as a non-goal. AI implementation remains a later
+  batch.
+- Contract: `RaceState` in `crates/sim-types/src/race.rs`; mirror
+  `web/src/contracts/race-state.ts`; registry updated in `AGENTS.md` and
+  `agents/contracts.md`.
+- Core: `sim-core::RaceTracker` projects the car onto the layout, derives
+  progress/sector, detects forward/backward start-finish crossings, starts the
+  lap timer on movement, records last/best lap, and handles reset/degenerate
+  inputs.
+- Render: `DriveViewer` owns the tracker, updates it on main-thread, worker, and
+  reset paths, and exposes `race_state()` plus telemetry `raceState`.
+- Web: compact race overlay, `RaceStateView` contract tests, and Race Loop /
+  Skidpad browser coverage.
+- Track-ed spawn direction: the exporter did not pre-flip the metadata spawn for
+  Lapster's runtime drive flip. Fixed in track-ed PR #7 (merged); the Race Loop
+  fixture was regenerated, `pack.sima` re-baked, and the parent pin moved to the
+  merged track-ed `main` commit 1b22f5a.
+- Gate passed: cargo fmt, workspace clippy, 194 workspace tests, wasm check;
+  parent `npm test` (57); `CI=1 npm --prefix web run test:viewer` (106 passed,
+  1 skipped); WebGL2 fallback (2/2); track-ed tests (220 passed, 1 skipped) and
+  build; agent sync. Track-ed PR #7 merged and the parent pin is updated; parent
+  PR is ready to merge.
+- Next: parent PR to `dev`, then AI opponents.
+
 ## Completed checkpoints
 
 | Checkpoint | Status |
@@ -215,6 +244,7 @@ Branch: `feat/track-race-mvp`, created from `dev`.
 | Style spike | Working |
 | track-ed hosted editor + local Test drive | Released to production |
 | Track race foundation | Done; Race chunk, race-loop fixture, launcher entry |
+| Race manager MVP | Implemented; HUD + gate passed, PR pending |
 
 ## Current capabilities
 
@@ -247,11 +277,11 @@ Branch: `feat/track-race-mvp`, created from `dev`.
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 180 tests
+- `cargo test --workspace` — 194 tests
 - `cargo check ... --target wasm32-unknown-unknown` including `track-pack-wasm`
-- `npm test` — 50 tests
+- `npm test` — 57 tests
 - `CI=1 npm run test:viewer` — 106 passed, 1 skipped
-- `npm --prefix web/track-ed-src test` — 219 passed, 1 skipped
+- `npm --prefix web/track-ed-src test` — 220 passed, 1 skipped
 - `npm --prefix web/track-ed-src run build` — tsc + Vite clean
 - `bash web/scripts/build-track-ed.sh` — hosted build with notices/licenses
 - `python3 web/scripts/check-track-ed-deps.py` — exact pins, lockfile,
@@ -270,6 +300,9 @@ Branch: `feat/track-race-mvp`, created from `dev`.
 - Track race MVP final gate — cargo fmt/clippy/workspace tests/wasm; parent
   `npm test` 50; `CI=1 npm --prefix web run test:viewer` 106 passed, 1 skipped;
   WebGL2 fallback 2/2; track-ed 219 passed, 1 skipped and build; agent sync.
+- Race manager MVP final gate — cargo fmt/clippy/workspace tests/wasm; parent
+  `npm test` 57; `CI=1 npm --prefix web run test:viewer` 106 passed, 1 skipped;
+  WebGL2 fallback 2/2; track-ed 220 passed, 1 skipped and build; agent sync.
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
 
@@ -403,12 +436,12 @@ Resume in this order:
 
 ## Next steps
 
-**Track race MVP (foundation complete):** the optional Race chunk,
-layout-as-race-route contract, section-owned start/finish/grid, implicit-layout
-export, race-loop demo fixture, and launcher entry are landed on
-`feat/track-race-mvp`; see the resume checkpoint above and
-`docs/features/track-race-mvp.md` §3.1. AI and online contact are later
-batches.
+**Race manager MVP (implemented):** the Race chunk foundation is merged to
+`dev` (PR #44). The local lap/sector/progress tracker and HUD are implemented on
+`feat/race-manager`; the full gate passed and track-ed PR #7 is merged. The
+parent PR is ready to merge. See the resume checkpoint above and
+`docs/features/race-manager.md`. AI opponents and online contact are later
+batches (ADR-0013).
 
 1. **Editor consolidation (next)**: continue
    `docs/features/editor-consolidation-plan.md`. A1, A2/A3, B1, B3, C1–C3 and
@@ -457,6 +490,7 @@ batches.
 - `docs/features/editor-consolidation-plan.md` — active editor consolidation
   and track-ed refactoring plan.
 - `docs/features/track-race-mvp.md` — track-side race layout/race chunk plan.
+- `docs/features/race-manager.md` — lap progress, race state, and HUD plan.
 - `docs/editor-consolidation-report.md` — editor analysis and recommendations.
 - `docs/adr/0007-promote-track-ed-as-sole-editor.md` — sole-editor decision.
 - `docs/adr/0008-defer-layouts-as-route-layer.md` — layout deferral decision.
@@ -465,6 +499,8 @@ batches.
 - `docs/adr/0011-race-layout-race-chunk.md` — race layout/race chunk decision.
 - `docs/adr/0012-contract-roots-and-agent-permissions.md` — directory-based
   contract ownership and mirror roots.
+- `docs/adr/0013-ai-racing-and-online-contact.md` — AI racing and online-contact
+  direction.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.

@@ -86,6 +86,40 @@ impl RaceData {
     }
 }
 
+/// Runtime race progress for one car on a race layout.
+///
+/// `lap` and `sector` are 1-based. `progress` is the normalized distance along
+/// the layout in `[0, 1)`. Times are seconds. This type is a runtime view, not
+/// part of the asset pack.
+#[derive(Debug, Clone, PartialEq, SerdeSerialize, SerdeDeserialize)]
+pub struct RaceState {
+    pub lap: u32,
+    pub sector: u32,
+    pub progress: f32,
+    pub distance_m: f32,
+    pub wrong_way: bool,
+    pub started: bool,
+    pub current_lap_time: f64,
+    pub last_lap_time: Option<f64>,
+    pub best_lap_time: Option<f64>,
+}
+
+impl RaceState {
+    pub fn initial() -> Self {
+        Self {
+            lap: 1,
+            sector: 1,
+            progress: 0.0,
+            distance_m: 0.0,
+            wrong_way: false,
+            started: false,
+            current_lap_time: 0.0,
+            last_lap_time: None,
+            best_lap_time: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +169,37 @@ mod tests {
         let mut future = data;
         future.version = RACE_DATA_VERSION + 1;
         assert!(!future.has_supported_version());
+    }
+
+    #[test]
+    fn race_state_serializes_contract_fields() {
+        let state = RaceState {
+            lap: 2,
+            sector: 3,
+            progress: 0.5,
+            distance_m: 180.0,
+            wrong_way: false,
+            started: true,
+            current_lap_time: 12.5,
+            last_lap_time: Some(31.0),
+            best_lap_time: Some(30.5),
+        };
+        let value = serde_json::to_value(&state).expect("serialize race state");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "lap": 2,
+                "sector": 3,
+                "progress": 0.5,
+                "distance_m": 180.0,
+                "wrong_way": false,
+                "started": true,
+                "current_lap_time": 12.5,
+                "last_lap_time": 31.0,
+                "best_lap_time": 30.5
+            })
+        );
+        let decoded: RaceState = serde_json::from_value(value).expect("deserialize race state");
+        assert_eq!(decoded, state);
     }
 }

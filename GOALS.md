@@ -23,6 +23,8 @@ host with no application server.
 - Keep the simulation deterministic for a given build and input replay.
 - Keep the implementation original and permissively licensed.
 - Provide a small, coherent set of viewers and a relay multiplayer prototype.
+- Add AI racing and online contact on the versioned race layout foundation,
+  with the relay remaining non-authoritative.
 - Keep the multi-agent workflow contract-bound and context-efficient.
 
 ## Success criteria
@@ -36,6 +38,9 @@ host with no application server.
 - Asset packs validate against the current schema and round-trip through the
   compiler.
 - The relay prototype supports up to four players on one car and track.
+- A race-ready track exposes lap, sector, and position progress.
+- AI opponents can start from the grid and follow the race layout.
+- Online clients share track identity and can observe car-to-car contact.
 - No application server is required; a static host with COOP/COEP headers is
   sufficient.
 
@@ -44,7 +49,8 @@ host with no application server.
 - A finished game or a complete Assetto Corsa replacement.
 - Cross-platform deterministic physics.
 - Universal force feedback across all wheelbases.
-- AI opponents, damage, weather, or tire thermal/wear simulation.
+- Damage, weather, or tire thermal/wear simulation.
+- Server-authoritative physics, anti-cheat, or competitive online ranking.
 - Hard real-time guarantees.
 - Delegating vehicle handling to a general-purpose physics engine's vehicle
   controller.

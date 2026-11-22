@@ -20,6 +20,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
     error: (window as any).__driveViewerError,
     telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
     race: JSON.parse((window as any).__driveViewer.race()),
+    raceState: JSON.parse((window as any).__driveViewer.telemetry()).raceState,
   }));
   expect(drive.error).toBeUndefined();
   expect(drive.telemetry.car).toBe("mazda-rx7");
@@ -27,6 +28,8 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   expect(drive.telemetry.contacts).toBe(4);
   expect(drive.telemetry.raceAvailable).toBe(false);
   expect(drive.race).toEqual({ available: false });
+  expect(drive.raceState).toEqual({ available: false });
+  await expect(page.locator("#race-panel")).toBeHidden();
 
   await page.goto("/web/garage/");
   await page.waitForFunction(

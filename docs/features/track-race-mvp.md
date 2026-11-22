@@ -581,6 +581,7 @@ Specific new tests:
 2. **AI racing**: multi-vehicle worker, shared collider, AI controller using
    `Layout` and grid slots.
 3. **Race manager**: lap/sector timing, positions, results, start countdown.
+   The first slice is `docs/features/race-manager.md`.
 4. **Online contact**: car-car collision, contact netcode, room handshake on
    `id + source_hash + layout_id`.
 5. **Layouts**: route legs over sections, per-layout start/finish, sectors,
