@@ -1003,13 +1003,15 @@ async function boot() {
 
   resizeCanvas();
   status.textContent = "creating physics";
+  const hasRace = trackPack.manifest.entrypoints.race != null;
+  const aiCount = !mpMode && hasRace ? 1 : 0;
   const viewer = await DriveViewer.create(
     canvas,
     trackPack.bytes,
     carPack.bytes,
     carBay,
     storedDevTuning ?? undefined,
-    mpMode ? REMOTE_SLOTS : undefined,
+    mpMode ? REMOTE_SLOTS : aiCount,
   );
   const treeDetail = new URLSearchParams(window.location.search).get("trees");
   if (treeDetail === "high" || treeDetail === "low" || treeDetail === "cards") {
@@ -1037,8 +1039,20 @@ async function boot() {
       initializeSab(sab);
       validateSab(sab);
       ffbSab = sab;
-      const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
+      const client = await PhysicsClient.create(
+        sab,
+        trackPack.bytes,
+        carPack.bytes,
+        aiCount,
+      );
       physics = client;
+      client.onAiFrame = (slot, frame) => {
+        try {
+          viewer.set_remote_state(slot, frame);
+        } catch (error) {
+          console.warn("AI car update failed", error);
+        }
+      };
       smoother = new SnapshotSmoother(client.reader);
       physicsWorker = true;
       workerAssists = {

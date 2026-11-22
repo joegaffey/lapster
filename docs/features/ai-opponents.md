@@ -1,6 +1,6 @@
 # AI Opponents — Race-Grid Path Following
 
-- **Status:** in progress
+- **Status:** complete; full gate passed; PR pending
 - **Date:** 2026-11-22
 - **Owner:** architect
 - **Domains:** architect, physics, web
@@ -26,6 +26,8 @@ In scope:
 - one AI opponent by default on race-ready tracks;
 - up to three AI vehicles supported by the worker, with one selected in Drive;
 - AI start from race grid slots 1..N, leaving the player at the track spawn;
+- AI grid heading derived from the nearest layout tangent, because the Race
+  Loop grid rotations do not currently match the layout direction (TD-0021);
 - AI controller using layout samples and `VehicleState`;
 - AI simulation in the physics worker at 500 Hz;
 - AI frames over the worker control channel at about 62.5 Hz;
@@ -117,7 +119,9 @@ Determinism:
 
 Each AI car owns:
 
-- a `Vehicle` spawned from `race.grid[index + 1]` with the runtime `PI` flip;
+- a `Vehicle` spawned at `race.grid[index + 1]` and oriented to the nearest
+  layout tangent (falling back to the grid rotation plus the runtime `PI` flip
+  if the layout sample is unavailable);
 - its own `RaceTracker`;
 - an `AiDriver`;
 - the last throttle/brake values for the snapshot.
@@ -207,3 +211,19 @@ Dependencies:
   semantics.
 - AI pace and line quality are intentionally conservative; racing-line work is
   a later batch.
+
+## 11. Implementation notes
+
+- One AI is requested by default on a race-ready track; the worker supports up
+  to three and clamps to the available grid slots. The player remains at the
+  track spawn.
+- Race Loop grid-slot rotations do not match the layout direction, so AI heading
+  comes from the nearest layout tangent (TD-0021). This is a workaround for the
+  current export, not the intended long-term source of grid heading.
+- AI frames are published at 62.5 Hz and rendered through the existing remote
+  rigs without interpolation. There is no car-to-car contact in this batch.
+- Manual Race Loop probe after the heading fix: the AI stayed within 3.62 m of
+  the centreline (5 m half-width), completed a lap in about 40 s, and produced
+  no page errors.
+- Gate: cargo fmt, workspace clippy, 213 workspace tests, wasm check; 57 web
+  tests; 106 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.

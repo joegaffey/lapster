@@ -56,7 +56,7 @@ Deployment:
   `abb7507`. ADR-0014 and `docs/features/ai-opponents.md` define one AI on
   race-ready tracks, simulated in the physics worker, starting from race grid
   slot 1, rendered through the remote-car path, with no car-to-car contact.
-  Physics and web workers are next.
+  Physics and web are implemented; the full gate passed and the PR is next.
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
@@ -239,8 +239,19 @@ Branch: `feat/ai-opponents`, created from `dev` at `abb7507`.
 - AI uses `sim_core::Vehicle` and the track collider; no car-to-car contact.
 - Web creates hidden remote rigs for AI and applies frames with
   `DriveViewer.set_remote_state`.
-- Status: in progress; waiting on physics AI controller/worker support and web
-  integration.
+- Core: `sim_core::AiDriver`, `RaceTracker::sample`, and
+  `RaceTracker::nearest_sample`.
+- Worker: up to three AI cars, 500 Hz stepping, grid slots 1..N, and 64-float
+  `ai_snapshot` frames.
+- Web: `PhysicsClient.onAiFrame`, `ai_state` worker messages, one AI on
+  race-ready single-player tracks, and remote-rig rendering.
+- Race Loop grid rotations do not match the layout direction; AI heading is
+  derived from the nearest layout tangent. Recorded as TD-0021.
+- Manual Race Loop probe: AI stayed within 3.62 m of the centreline (5 m
+  half-width), completed a lap in about 40 s, and produced no page errors.
+- Gate: cargo fmt, workspace clippy, 213 workspace tests, wasm check; 57 web
+  tests; 106 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; full gate passed; PR pending.
 
 ## Completed checkpoints
 
