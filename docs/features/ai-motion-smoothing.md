@@ -12,14 +12,17 @@
 
 Reduce visible AI jerk and make player steering response configurable.
 
-The AI is simulated at 500 Hz but rendered from 62.5 Hz snapshots with no
+The AI is simulated at 500 Hz but was rendered from 62.5 Hz snapshots with no
 interpolation. Player keyboard steering uses a frame-rate-dependent exponential
-filter; wheel steering is direct.
+filter; wheel steering is direct. A 125 Hz first attempt added too much
+main-thread work, so frames stay at 62.5 Hz with interpolation and race state is
+throttled separately.
 
 ## 2. Scope
 
 - Add an AI steering-rate limit, default **3.0 units/s**.
-- Publish AI frames at **125 Hz** (every 4 physics ticks).
+- Publish AI frames at **62.5 Hz** (every 8 physics ticks).
+- Publish AI race-state JSON at **20 Hz** separately from the frame cadence.
 - Interpolate AI frames in the web with a **40 ms** buffer.
 - Add a player **Steering rate** setting, default **6.0 units/s**; `0` disables.
 - Keep physical wheel steering direct.
@@ -64,7 +67,8 @@ rateLimitSteering(current, target, maxRate, dt): number
 - `AiDriver` stores the last steering command and moves it toward the desired
   command by at most `steering_rate * FIXED_DT` per physics tick.
 - Reset clears the last steering command.
-- The worker publishes AI frames every 4 ticks (`125 Hz`).
+- The worker publishes AI frames every 8 ticks (`62.5 Hz`).
+- AI race state is included on at most every 25th tick (`20 Hz`), or forced on reset/place/start/simulate/tuning.
 - The web keeps one `RemoteStateBuffer(40)` per AI slot and feeds it with the
   frame tick. The render loop samples the buffer each animation frame before
   `render_remote`.
@@ -102,13 +106,13 @@ Web:
 |---|---|---|---|
 | 0 | architect | plan and progress checkpoint | `git diff --check`, agent sync |
 | 1 | physics | `AiDriver` steering rate + tests | `cargo test -p sim-core`, clippy, wasm |
-| 2 | web | 125 Hz AI frames, interpolation, player setting, tests | `npm --prefix web test`, viewer |
+| 2 | web | 62.5 Hz AI frames, 20 Hz race state, interpolation, player setting, tests | `npm --prefix web test`, viewer |
 | 3 | architect | full gate, preview, PR | full gate |
 
 ## 8. Acceptance
 
 - AI steering commands ramp at no more than 3 units/s.
-- AI frames are published at 125 Hz and interpolated at 40 ms.
+- AI frames are published at 62.5 Hz and interpolated at 40 ms; race state is 20 Hz.
 - Player keyboard/touch steering uses the configured rate; wheel is direct.
 - Steering rate setting persists and defaults to 6 units/s.
 - AI cars look smoother on Race Loop.

@@ -15,6 +15,8 @@ const FIXED_STEP_MS = 1000 / 500;
 const MAX_CATCHUP_STEPS = 32;
 const MAX_LAG_MS = 250;
 const PAUSED_WAIT_MS = 20;
+const AI_FRAME_TICKS = 8;
+const AI_RACE_TICKS = 25;
 
 let simulation: Simulation | null = null;
 let sab: SharedArrayBuffer | null = null;
@@ -38,6 +40,7 @@ let catchupEvents = 0;
 let stepTimes: number[] = [];
 let lastDiagnosticsTime = performance.now();
 let lastDiagnosticsTick = 0;
+let lastAiRaceTick = -1;
 
 function post(type: string, payload: Record<string, unknown> = {}): void {
   self.postMessage({ type, ...payload });
@@ -98,17 +101,26 @@ function publish(): void {
   );
 }
 
-function publishAiFrames(): void {
+function publishAiFrames(forceRace = false): void {
   if (!simulation) {
     return;
   }
+  const tick = Number(simulation.tick());
+  const includeRace =
+    forceRace || lastAiRaceTick < 0 || tick - lastAiRaceTick >= AI_RACE_TICKS;
+  if (includeRace) {
+    lastAiRaceTick = tick;
+  }
   const count = Number(simulation.ai_count());
   for (let index = 0; index < count; index += 1) {
-    post("ai_state", {
+    const payload: Record<string, unknown> = {
       slot: index + 1,
       frame: new Float32Array(simulation.ai_snapshot(index)),
-      race: simulation.ai_race_state(index),
-    });
+    };
+    if (includeRace) {
+      payload.race = simulation.ai_race_state(index);
+    }
+    post("ai_state", payload);
   }
 }
 
@@ -121,7 +133,7 @@ function resetFromFlag(): void {
   nextDeadline = performance.now();
   markDiagnosticsBaseline();
   publish();
-  publishAiFrames();
+  publishAiFrames(true);
 }
 
 function runSlice(generation: number): void {
@@ -170,7 +182,7 @@ function runSlice(generation: number): void {
       Date.now() / 1000,
       new Float32Array(state),
     );
-    if (Number(simulation.tick()) % 4 === 0) {
+    if (Number(simulation.tick()) % AI_FRAME_TICKS === 0) {
       publishAiFrames();
     }
     writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 20)), true);
@@ -259,7 +271,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
-      publishAiFrames();
+      publishAiFrames(true);
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
     case "place_on_grid":
@@ -267,7 +279,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
-      publishAiFrames();
+      publishAiFrames(true);
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
     case "place_on_race_grid":
@@ -275,14 +287,14 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
-      publishAiFrames();
+      publishAiFrames(true);
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
     case "start_race":
       simulation.start_race(message.laps ?? 3);
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
-      publishAiFrames();
+      publishAiFrames(true);
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
     case "simulate": {
@@ -296,7 +308,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
-      publishAiFrames();
+      publishAiFrames(true);
       post("ack", { id: message.id, tick });
       break;
     }
@@ -305,7 +317,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
-      publishAiFrames();
+      publishAiFrames(true);
       post("ack", { id: message.id, tick });
       break;
     }

@@ -53,8 +53,9 @@ Deployment:
 ## Current focus
 
 - AI motion smoothing is active on `feat/ai-motion-smoothing`, created from
-  `dev` at `0754a7c`: 125 Hz AI frames, 40 ms interpolation, AI steering rate
-  3/s, and a configurable player steering rate (default 6/s, wheel direct).
+  `dev` at `0754a7c`: 62.5 Hz AI frames, 40 ms interpolation, 20 Hz race
+  state, AI steering rate 3/s, and a configurable player steering rate (default
+  6/s, wheel direct).
 - Loop Spline Point Terrain is added as a fixture and public track option on
   `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
   `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises
@@ -335,7 +336,7 @@ Branch: `feat/ai-motion-smoothing`, created from `dev` at `0754a7c`.
 - No versioned contract change. `RaceState` and the 64-float snapshot stay the
   same.
 - AI: `AiDriver` steering rate default 3.0 units/s; reset clears it.
-- Worker: publish AI frames every 4 ticks (125 Hz).
+- Worker: publish AI frames every 8 ticks (62.5 Hz); race state at 20 Hz.
 - Web: one `RemoteStateBuffer(40)` per AI slot; race state updates immediately.
 - Player: time-based steering rate setting, default 6 units/s, 0 = off; wheel
   input stays direct.
