@@ -424,26 +424,33 @@ fn fs_mesh(input: MeshOut) -> @location(0) vec4<f32> {
         + rim_term
         + model.emissive.xyz;
     if camera.garage_params.x > 0.5 {
-        // Concrete garage studio path: near-black ambient plus per-bay spots.
-        var lit = base * camera.garage_ambient.rgb;
-        let count = u32(camera.garage_params.y);
-        for (var index = 0u; index < count; index = index + 1u) {
-            let spot = camera.spot_lights[index];
-            let to_light = spot.position.xyz - input.world_position;
-            let distance_to_light = length(to_light);
-            let range = max(spot.position.w, 0.001);
-            if distance_to_light < range {
-                let spot_dir = to_light / max(distance_to_light, 0.0001);
-                let cone_cos = dot(-spot_dir, normalize(spot.direction.xyz));
-                let cone = smoothstep(spot.cone.x, spot.direction.w, cone_cos);
-                let attenuation = clamp(1.0 - distance_to_light / range, 0.0, 1.0);
-                let spot_ndl = max(dot(normal, spot_dir), 0.0);
-                lit += base
-                    * spot.color.rgb
-                    * (spot.color.w * attenuation * attenuation * cone * spot_ndl);
+        if flat {
+            // Concrete garage wheels: reuse the Drive flat shading so the
+            // low-poly wheel variant does not band under the spot cones.
+            color = base * (0.30 + 0.70 * (0.45 + 0.55 * ndl) * shadow)
+                + model.emissive.xyz;
+        } else {
+            // Concrete garage studio path: near-black ambient plus per-bay spots.
+            var lit = base * camera.garage_ambient.rgb;
+            let count = u32(camera.garage_params.y);
+            for (var index = 0u; index < count; index = index + 1u) {
+                let spot = camera.spot_lights[index];
+                let to_light = spot.position.xyz - input.world_position;
+                let distance_to_light = length(to_light);
+                let range = max(spot.position.w, 0.001);
+                if distance_to_light < range {
+                    let spot_dir = to_light / max(distance_to_light, 0.0001);
+                    let cone_cos = dot(-spot_dir, normalize(spot.direction.xyz));
+                    let cone = smoothstep(spot.cone.x, spot.direction.w, cone_cos);
+                    let attenuation = clamp(1.0 - distance_to_light / range, 0.0, 1.0);
+                    let spot_ndl = max(dot(normal, spot_dir), 0.0);
+                    lit += base
+                        * spot.color.rgb
+                        * (spot.color.w * attenuation * attenuation * cone * spot_ndl);
+                }
             }
+            color = lit * shadow + model.emissive.xyz;
         }
-        color = lit * shadow + model.emissive.xyz;
     }
     if model.alpha.y > 0.5 {
         color = color * GRASS_TEXTURE_LIFT + vec3<f32>(0.008, 0.008, 0.015);

@@ -991,117 +991,6 @@ pub struct GarageViewer {
 
 #[wasm_bindgen]
 impl GarageViewer {
-    pub async fn create(
-        canvas: web_sys::HtmlCanvasElement,
-        track_pack_bytes: js_sys::Uint8Array,
-        car_packs: js_sys::Array,
-    ) -> Result<GarageViewer, JsValue> {
-        let track_bytes = track_pack_bytes.to_vec();
-        let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
-        if track_pack.kind() != sim_types::AssetKind::Track {
-            return Err(JsValue::from_str(
-                "expected a track pack for the first argument",
-            ));
-        }
-        let track_visual = track_pack.track_visual_owned().map_err(js_error)?;
-        let track_metadata = track_pack.track_metadata_owned().map_err(js_error)?;
-        let track_collision = track_pack.track_collision_owned().map_err(js_error)?;
-        let track_manifest = track_pack.manifest().clone();
-        drop(track_pack);
-
-        if car_packs.length() == 0 {
-            return Err(JsValue::from_str("expected at least one car pack"));
-        }
-        let mut car_data = Vec::with_capacity(car_packs.length() as usize);
-        for value in car_packs.iter() {
-            let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
-            let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-            if car_pack.kind() != sim_types::AssetKind::Car {
-                return Err(JsValue::from_str(
-                    "expected car packs for the second argument",
-                ));
-            }
-            let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-            let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
-            let car_manifest = car_pack.manifest().clone();
-            car_data.push((car_physics, car_visual, car_manifest));
-        }
-        let cars = car_data
-            .iter()
-            .map(|(physics, visual, manifest)| garage::GarageCar {
-                physics,
-                visual,
-                manifest,
-            })
-            .collect::<Vec<_>>();
-
-        let mut scene = Scene::build_garage(
-            &track_visual,
-            &track_metadata,
-            &track_collision,
-            &track_manifest,
-            &cars,
-            10,
-            0,
-            true,
-            false,
-        )
-        .map_err(|error| JsValue::from_str(&error))?;
-        let bays = std::mem::take(&mut scene.garage_bays);
-        let car_shadow_range = scene.car_mesh_range.clone();
-        let debug_info = scene.debug_info.clone();
-        let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
-        let shadow_focus = camera.target;
-        let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
-        let spawn = track_metadata.spawns.first().cloned();
-        let center = spawn
-            .as_ref()
-            .map(|spawn| [spawn.position[0], spawn.position[1], spawn.position[2]])
-            .unwrap_or(shadow_focus);
-        let ground_y = collider
-            .raycast(
-                Vec3::new(center[0], center[1] + 100.0, center[2]),
-                Vec3::NEG_Y,
-                300.0,
-            )
-            .map(|hit| hit.point.y)
-            .unwrap_or(center[1]);
-        let mut min = Vec3::splat(f32::INFINITY);
-        let mut max = Vec3::splat(f32::NEG_INFINITY);
-        for bay in &bays {
-            let point = Vec3::from_array(bay.decal_center);
-            min = min.min(point);
-            max = max.max(point);
-        }
-        let showroom_center = if min.is_finite() && max.is_finite() {
-            (min + max) * 0.5
-        } else {
-            Vec3::new(center[0], ground_y, center[2])
-        };
-        let showroom_half = ((max.x - min.x).max(max.z - min.z) * 0.5 + 20.0).clamp(60.0, 140.0);
-        let width = canvas.width().max(1);
-        let height = canvas.height().max(1);
-        let mut renderer =
-            renderer::Renderer::new(canvas, width, height, scene, &GpuTuning::default()).await?;
-        renderer.set_lines_visible(false);
-        renderer.set_baked_region(showroom_center.to_array(), showroom_half, ground_y);
-        renderer.set_shadow_focus(shadow_focus, GARAGE_SHADOW_EXTENT);
-        let mut viewer = GarageViewer {
-            renderer,
-            debug_info,
-            bays,
-            selected_bay: 0,
-            steer: 0.0,
-            spin: 0.0,
-            initial_camera: camera,
-            camera,
-            car_shadow_range,
-            layout: "grid",
-        };
-        viewer.update_decals();
-        Ok(viewer)
-    }
-
     pub async fn create_concrete(
         canvas: web_sys::HtmlCanvasElement,
         car_packs: js_sys::Array,
@@ -1132,7 +1021,7 @@ impl GarageViewer {
 
         let garage::ConcreteGarageBuild {
             mut scene, lights, ..
-        } = garage::build_concrete_garage(&cars, 10, 0)
+        } = garage::build_concrete_garage(&cars, cars.len(), 0)
             .map_err(|error| JsValue::from_str(&error))?;
         let bays = std::mem::take(&mut scene.garage_bays);
         let debug_info = scene.debug_info.clone();
@@ -1246,6 +1135,9 @@ impl GarageViewer {
             "car": bay.map(|bay| bay.car.clone()),
             "color": bay.map(|bay| bay.color),
             "colorName": bay.map(|bay| bay.color_name).unwrap_or_default(),
+            "paint": bay.map(|bay| bay.paint),
+            "paintName": bay.map(bay_paint_name).unwrap_or_default(),
+            "recolorable": bay.map(|bay| bay.recolorable).unwrap_or(false),
         })
         .to_string()
     }
@@ -1263,11 +1155,50 @@ impl GarageViewer {
                         "carId": bay.car_id,
                         "color": bay.color,
                         "colorName": bay.color_name,
+                        "paint": bay.paint,
+                        "paintName": bay_paint_name(bay),
+                        "recolorable": bay.recolorable,
                     })
                 })
                 .collect::<Vec<_>>(),
         )
         .unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn paint_options(&self) -> String {
+        serde_json::to_string(
+            &(0..garage::BAY_COLORS.len())
+                .map(|index| {
+                    serde_json::json!({
+                        "index": index,
+                        "name": garage::BAY_COLOR_NAMES[index],
+                        "color": garage::BAY_COLORS[index],
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn set_bay_paint(&mut self, bay: usize, paint: usize) -> String {
+        let paint = paint % garage::BAY_COLORS.len();
+        if let Some(bay_state) = self.bays.get_mut(bay) {
+            if bay_state.recolorable {
+                bay_state.paint = paint;
+                bay_state.color = garage::BAY_COLORS[paint];
+                bay_state.color_name = garage::BAY_COLOR_NAMES[paint];
+                if let Some(vertices) = garage::recolored_body_vertices(bay_state, paint) {
+                    self.renderer
+                        .set_mesh_vertex_colors(bay_state.body_mesh_index, &vertices);
+                }
+            }
+        }
+        self.bay_info()
+    }
+
+    pub fn set_selected_paint(&mut self, paint: usize) -> String {
+        let selected = self.selected_bay;
+        self.set_bay_paint(selected, paint)
     }
 
     pub fn render(&mut self) -> Result<(), JsValue> {
@@ -1853,6 +1784,14 @@ fn camera_json(camera: &Camera) -> String {
     .to_string()
 }
 
+fn bay_paint_name(bay: &GarageBay) -> &'static str {
+    if bay.recolorable {
+        garage::BAY_COLOR_NAMES[bay.paint % garage::BAY_COLOR_NAMES.len()]
+    } else {
+        "Factory livery"
+    }
+}
+
 const GARAGE_SHADOW_EXTENT: f32 = 80.0;
 const TRACK_SHADOW_EXTENT: f32 = 120.0;
 
@@ -1925,6 +1864,7 @@ impl DriveViewer {
         car_bay: Option<usize>,
         tuning_json: Option<String>,
         remote_slots: Option<usize>,
+        car_paint: Option<usize>,
     ) -> Result<DriveViewer, JsValue> {
         let mut tuning = tuning_json
             .and_then(|json| serde_json::from_str::<TuningConfig>(&json).ok())
@@ -1986,7 +1926,9 @@ impl DriveViewer {
             manifest: &car_manifest,
         }];
         let remote_particle_tuning = remote_particles_tuning(&tuning.particles);
-        let color_offset = if remote_slots == 0 { car_bay } else { 0 };
+        let color_offset = car_paint
+            .map(|paint| paint % garage::BAY_COLOR_NAMES.len())
+            .unwrap_or(if remote_slots == 0 { car_bay } else { 0 });
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,

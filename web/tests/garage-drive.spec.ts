@@ -19,7 +19,10 @@ test("selected garage car becomes the driving car", async ({ page }) => {
   expect(bay.colorName).toBe("Yellow");
 
   const driveHref = await page.locator("#drive-car").getAttribute("href");
-  expect(new URL(driveHref!).searchParams.get("bay")).toBe("3");
+  const driveUrl = new URL(driveHref!);
+  expect(driveUrl.searchParams.get("bay")).toBe("3");
+  expect(driveUrl.searchParams.get("car")).toContain("67gp-guthrie-eagle");
+  expect(driveUrl.searchParams.has("paint")).toBe(false);
   expect(await page.evaluate(() => localStorage.getItem("lapster.garage.car.v1"))).toBe("2");
 
   await page.click("#drive-car");

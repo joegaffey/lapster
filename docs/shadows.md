@@ -54,8 +54,8 @@ the Baked map is not rebuilt continuously.
 - Apply updates the sun direction, sky tint, dynamic shadow requests, car silhouette
   offset, and rebakes the Baked environment map when necessary.
 - Baked rebake time is reported in the settings status and telemetry.
-- The default concrete garage uses fixed studio lighting; time of day has no visual effect
-  there. `?garage=showroom` keeps the track-backed time-of-day behavior.
+- The concrete garage uses fixed studio lighting; its Graphics tab hides the time-of-day
+  control. Drive and Track Viewer keep the time-of-day control.
 
 ## Concrete garage lighting
 
@@ -73,7 +73,7 @@ the Baked map is not rebuilt continuously.
 - Region:
   - Drive: around the settled vehicle spawn.
   - Track Viewer: around the track spawn.
-  - Garage: the showroom (`?garage=showroom`) or the concrete bay row.
+  - Garage: the concrete bay row.
   - The region covers the full drivable collision extent, excluding grass/terrain, with a
     20 m margin. Very large tracks trade local resolution for complete static coverage;
     Hybrid supplies near dynamic detail without shrinking that coverage.

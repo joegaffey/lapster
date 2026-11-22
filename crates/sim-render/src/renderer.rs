@@ -2150,6 +2150,19 @@ impl Renderer {
         }
     }
 
+    /// Replace a mesh's vertex data, preserving layout. Used by the garage
+    /// paint API to rewrite only the body vertex colours.
+    pub fn set_mesh_vertex_colors(&mut self, index: usize, vertices: &[MeshVertex]) {
+        let Some(mesh) = self.meshes.get(index) else {
+            return;
+        };
+        let bytes = bytemuck::cast_slice(vertices);
+        if bytes.len() as u64 > mesh.vertex_buffer.size() {
+            return;
+        }
+        self.queue.write_buffer(&mesh.vertex_buffer, 0, bytes);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn set_shadow_decal(
         &mut self,
@@ -2331,7 +2344,7 @@ fn create_mesh(
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{} vertices", mesh.name)),
         contents: bytemuck::cast_slice(&mesh.vertices),
-        usage: wgpu::BufferUsages::VERTEX,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     });
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{} indices", mesh.name)),

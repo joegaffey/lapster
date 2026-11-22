@@ -53,12 +53,14 @@ Deployment:
 
 ## Current focus
 
-- Concrete garage batch is active on `feat/concrete-garage` (from `dev` at
-  `0754a7c`): a new default concrete studio with one row of ten cars, overhead
-  spot lights, a procedural floor, and a dark backdrop; `?garage=showroom`
-  keeps the original track-backed showroom. ADR-0016 records the additive mode.
-  The full gate passes and the dev preview is triggered from the branch; PR
-  pending.
+- Concrete garage replaces the Garage showroom on `feat/concrete-garage`
+  (from `dev` at `0754a7c`): an eight-car single-line concrete studio with
+  overhead spot lights, a procedural floor, a ten-colour paint picker for the
+  Mazda, Drive paint propagation, and the Drive flat wheel shading in the
+  studio. The Mazda appears once; all six 67GP cars and the Deckard are in the
+  catalogue. The old `?garage=showroom` fallback and the showroom
+  `GarageViewer::create` constructor are removed. ADR-0016 is superseded by
+  ADR-0017. Full gate green; merging to `dev` as PR #55.
 - Loop Spline Point Terrain is added as a fixture and public track option on
   `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
   `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises

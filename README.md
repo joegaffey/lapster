@@ -22,17 +22,16 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
   can still be loaded with `?car=` and `?track=`. Throttle, brake, edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
   500 Hz physics, and a shareable tuning dialog.
-- **Garage** — defaults to a concrete studio: one row of ten colour-keyed bays under overhead
-  spotlights, with a dark backdrop and a concrete floor. The catalog cars alternate down the
-  row; chevrons or arrow keys step along it. Vertex-coloured cars use the bay paint; the
-  textured Deckard keeps its source livery. Each car sits on the floor with a front
-  three-quarter start view. `?garage=showroom` keeps the original track-backed showroom with
-  two facing rows of five (red/blue/yellow/green/orange opposite
-  black/white/pink/navy/cyan). The chevrons start hidden, fade in on mouse movement or touch,
-  and fade out when idle. Wheel steering/spin controls and an orbit/zoom camera follow the
-  selection. The selected bay's car is remembered and drives with its showroom paint; the
-  garage `Drive` button opens it with the launcher's selected track (Skidpad by default),
-  and the menu's Drive demo uses the same car selection.
+- **Garage** — a concrete studio with one row of eight bays under overhead spotlights, a
+  dark backdrop, and a concrete floor. The catalog has the Mazda RX-7 once, all six Speed
+  Dreams 67GP cars, and the Deckard Conejo; chevrons or arrow keys step along the row. The
+  Mazda has a ten-colour paint picker that persists and carries into Drive; the textured
+  67GP cars and Deckard keep their factory livery and show "Factory livery". Each car sits
+  on the floor with a front three-quarter start view. The chevrons start hidden, fade in on
+  mouse movement or touch, and fade out when idle. Wheel steering/spin controls and an
+  orbit/zoom camera follow the selection. The selected bay's car is remembered and drives
+  with its garage paint; the garage `Drive` button opens it with the launcher's selected
+  track (Skidpad by default), and the menu's Drive demo uses the same car selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation with cursor-anchored wheel zoom and double-click focus.
   Camera height is capped at 60 m to avoid high-angle model artifacts.

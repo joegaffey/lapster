@@ -178,6 +178,10 @@ impl Scene {
                 car: car_info,
                 color,
                 color_name: BAY_COLOR_NAMES[color_index],
+                paint: color_index,
+                recolorable: built.recolorable,
+                body_mesh_index: built.body_mesh_index,
+                original_body: built.original_body,
                 decal_mesh_index,
                 decal_center: [translation.x, built.ground_y, translation.z],
                 decal_yaw,
@@ -460,6 +464,10 @@ pub(crate) fn build_concrete_garage(
             car: car_info,
             color,
             color_name: BAY_COLOR_NAMES[color_index],
+            paint: color_index,
+            recolorable: built.recolorable,
+            body_mesh_index: built.body_mesh_index,
+            original_body: built.original_body,
             decal_mesh_index,
             decal_center: [translation.x, built.ground_y, translation.z],
             decal_yaw,
@@ -1035,18 +1043,51 @@ fn add_car_decal(
     Ok(scene.meshes.len() - 1)
 }
 
+/// Red-ish body paint vertices that the paint API may recolor.
+fn is_paint_vertex(vertex_color: &[f32; 3]) -> bool {
+    vertex_color[0] > 0.2
+        && vertex_color[0] > vertex_color[1] * 1.8
+        && vertex_color[0] > vertex_color[2] * 1.8
+}
+
 fn recolor_paint(buffers: &mut MeshBuffers, color: [f32; 3]) {
     if buffers.colors.is_empty() {
         return;
     }
     for vertex_color in &mut buffers.colors {
-        if vertex_color[0] > 0.2
-            && vertex_color[0] > vertex_color[1] * 1.8
-            && vertex_color[0] > vertex_color[2] * 1.8
-        {
+        if is_paint_vertex(vertex_color) {
             *vertex_color = color;
         }
     }
+}
+
+/// A body accepts paint only when it is vertex-coloured (no base-colour
+/// texture) and a meaningful share of its vertices look like red paint. The
+/// threshold keeps small factory badges on textured cars out of the palette.
+fn is_recolorable(buffers: &MeshBuffers, textured_body: bool) -> bool {
+    if textured_body || buffers.colors.is_empty() {
+        return false;
+    }
+    let paint_vertices = buffers
+        .colors
+        .iter()
+        .filter(|color| is_paint_vertex(color))
+        .count();
+    paint_vertices * 5 >= buffers.colors.len()
+}
+
+/// Rebuild the body's vertices for a paint palette index. Returns `None` when
+/// the body is not recolorable or lacks its retained original buffers.
+pub(crate) fn recolored_body_vertices(bay: &GarageBay, paint: usize) -> Option<Vec<MeshVertex>> {
+    if !bay.recolorable {
+        return None;
+    }
+    let original = bay.original_body.as_ref()?;
+    let paint = paint % BAY_COLORS.len();
+    let color = BAY_COLORS[paint];
+    let mut buffers = original.clone();
+    recolor_paint(&mut buffers, color);
+    Some(build_vertices(&buffers, color))
 }
 
 pub(crate) struct CarBuild {
@@ -1054,6 +1095,9 @@ pub(crate) struct CarBuild {
     pub(crate) wheels: Vec<SceneWheel>,
     pub(crate) bounds: Aabb,
     pub(crate) ground_y: f32,
+    pub(crate) body_mesh_index: usize,
+    pub(crate) recolorable: bool,
+    pub(crate) original_body: Option<MeshBuffers>,
 }
 
 const BAY_SPACING: f32 = 8.0;
@@ -1063,7 +1107,7 @@ pub(crate) const BAY_COLOR_NAMES: [&str; 10] = [
     "Red", "Blue", "Yellow", "Green", "Orange", "Black", "White", "Pink", "Navy", "Cyan",
 ];
 
-const BAY_COLORS: [[f32; 3]; 10] = [
+pub(crate) const BAY_COLORS: [[f32; 3]; 10] = [
     [0.78, 0.08, 0.06],
     [0.08, 0.22, 0.72],
     [0.86, 0.62, 0.07],
@@ -1173,6 +1217,8 @@ pub(crate) fn build_car(
     } else {
         (None, None)
     };
+    let recolorable = is_recolorable(&body_buffers, textured_body);
+    let original_body = recolorable.then(|| body_buffers.clone());
     recolor_paint(&mut body_buffers, body_color);
     let body_local = node_matrix(&car_visual.body);
     let body_model = transform * body_local;
@@ -1590,6 +1636,9 @@ pub(crate) fn build_car(
         wheels,
         bounds: body_bounds,
         ground_y,
+        body_mesh_index,
+        recolorable,
+        original_body,
     })
 }
 

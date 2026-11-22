@@ -53,10 +53,15 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   expect(garage.asset).toContain("concrete-garage + mazda-rx7");
   expect(garage.debug.cars.map((car: any) => car.id)).toEqual([
     "mazda-rx7",
-    "sc-deckard-conejo",
+    "67gp-cavallo-123",
     "67gp-guthrie-eagle",
+    "67gp-kuiper-t81",
+    "67gp-mango-ms7",
+    "67gp-murasama-37a",
+    "67gp-upping-ut19",
+    "sc-deckard-conejo",
   ]);
-  expect(garage.debug.stats.carDrawCalls).toBeGreaterThan(100);
+  expect(garage.debug.stats.carDrawCalls).toBeGreaterThan(50);
 
   await page.goto("/web/track-viewer/");
   await page.waitForFunction(
