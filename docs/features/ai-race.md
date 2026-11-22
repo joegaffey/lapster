@@ -230,8 +230,10 @@ Dependencies:
 - `DriveViewer::place_on_race_grid` places and arms the local tracker.
 - The web adds a pure `RaceDirector`, 3-2-1-GO countdown, live `P?/4` and
   `Lap ?/3`, results overlay, restart flow, and `?laps=1..5`.
-- Gate: cargo fmt, workspace clippy, 228 workspace tests, wasm check; 68 web
-  tests; 114 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Gate for the AI race changes before the track-option merge: cargo fmt,
+  workspace clippy, 228 workspace tests, wasm check; 68 web tests; 114 viewer
+  tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync. The combined branch
+  PR CI covers the merged track-option fixture and launcher tests.
 - Browser coverage covers grid start, countdown, AI options, fast pace, reset,
   results-overlay/restart, and main-thread fallback. Full-race auto-finish is
   covered by `RaceDirector`/results unit tests rather than a long browser race.

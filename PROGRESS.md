@@ -300,8 +300,10 @@ Branch: `feat/ai-race`, created from `dev` at `670312f`.
 - Render: `DriveViewer::place_on_race_grid`.
 - Web: `RaceDirector`, 3-2-1-GO countdown, `P?/4` and `Lap ?/3`, results
   overlay, restart, and `?laps=1..5`.
-- Gate: cargo fmt, workspace clippy, 228 workspace tests, wasm check; 68 web
-  tests; 114 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Gate for the AI race changes before the track-option merge: cargo fmt,
+  workspace clippy, 228 workspace tests, wasm check; 68 web tests; 114 viewer
+  tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync. Combined branch CI
+  covers the merged track-option fixture and launcher tests.
 - Status: complete; full gate passed; PR pending.
 
 ## Loop Spline Point Terrain track option
