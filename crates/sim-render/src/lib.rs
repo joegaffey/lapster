@@ -1376,10 +1376,49 @@ fn state_from_frame(frame: &[f32]) -> Result<VehicleState, JsValue> {
     })
 }
 
-fn remote_particles_tuning(base: &ParticleTuning) -> ParticleTuning {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParticleQuality {
+    High,
+    Low,
+    Off,
+}
+
+impl ParticleQuality {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "high" => Some(Self::High),
+            "low" => Some(Self::Low),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
+fn local_particles_tuning(base: &ParticleTuning, quality: ParticleQuality) -> ParticleTuning {
     let mut tuning = base.clone();
-    tuning.max_active = tuning.max_active.min(160);
-    tuning.max_spawn_per_step = tuning.max_spawn_per_step.min(4);
+    match quality {
+        ParticleQuality::High => {}
+        ParticleQuality::Low => {
+            tuning.max_active = tuning.max_active.min(120);
+            tuning.max_spawn_per_step = tuning.max_spawn_per_step.min(2);
+        }
+        ParticleQuality::Off => {
+            tuning.max_active = 0;
+            tuning.max_spawn_per_step = 0;
+        }
+    }
+    tuning
+}
+
+fn remote_particles_tuning(base: &ParticleTuning, quality: ParticleQuality) -> ParticleTuning {
+    let mut tuning = base.clone();
+    let (max_active, max_spawn_per_step) = match quality {
+        ParticleQuality::High => (160, 4),
+        ParticleQuality::Low => (60, 2),
+        ParticleQuality::Off => (0, 0),
+    };
+    tuning.max_active = tuning.max_active.min(max_active);
+    tuning.max_spawn_per_step = tuning.max_spawn_per_step.min(max_spawn_per_step);
     tuning
 }
 
@@ -1841,6 +1880,8 @@ pub struct DriveViewer {
     particles: ParticleSystem,
     remote_particles: Vec<ParticleSystem>,
     particle_instances: Vec<ParticleInstance>,
+    particle_quality: ParticleQuality,
+    particle_tuning: ParticleTuning,
     remote_particle_tuning: ParticleTuning,
     last_particle_time: Option<f64>,
     tuning: TuningConfig,
@@ -1925,7 +1966,9 @@ impl DriveViewer {
             visual: &car_visual,
             manifest: &car_manifest,
         }];
-        let remote_particle_tuning = remote_particles_tuning(&tuning.particles);
+        let remote_particle_tuning =
+            remote_particles_tuning(&tuning.particles, ParticleQuality::High);
+        let particle_tuning = local_particles_tuning(&tuning.particles, ParticleQuality::High);
         let color_offset = car_paint
             .map(|paint| paint % garage::BAY_COLOR_NAMES.len())
             .unwrap_or(if remote_slots == 0 { car_bay } else { 0 });
@@ -2038,6 +2081,8 @@ impl DriveViewer {
             particles: ParticleSystem::new(),
             remote_particles: (0..=remote_slots).map(|_| ParticleSystem::new()).collect(),
             particle_instances: Vec::with_capacity(crate::particles::MAX_PARTICLES),
+            particle_quality: ParticleQuality::High,
+            particle_tuning,
             remote_particle_tuning,
             last_particle_time: None,
             tuning,
@@ -2781,6 +2826,19 @@ impl DriveViewer {
         self.camera_mode.as_str().to_string()
     }
 
+    pub fn set_particle_quality(&mut self, quality: &str) -> Result<(), JsValue> {
+        let next = ParticleQuality::parse(quality)
+            .ok_or_else(|| JsValue::from_str("expected high, low, or off"))?;
+        if next == self.particle_quality {
+            return Ok(());
+        }
+        self.particle_quality = next;
+        self.refresh_particle_tuning();
+        self.clear_particles();
+        self.update_visuals();
+        self.renderer.render()
+    }
+
     pub fn tuning(&self) -> String {
         let values = serde_json::to_value(&self.tuning).unwrap_or(serde_json::Value::Null);
         let schema = serde_json::from_str(&TuningConfig::schema_json())
@@ -2799,7 +2857,7 @@ impl DriveViewer {
         self.renderer
             .set_particle_render_tuning(&self.tuning.particles.render);
         self.apply_cockpit_glass_alpha();
-        self.remote_particle_tuning = remote_particles_tuning(&self.tuning.particles);
+        self.refresh_particle_tuning();
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
@@ -2830,10 +2888,27 @@ impl DriveViewer {
         self.renderer
             .set_particle_render_tuning(&self.tuning.particles.render);
         self.apply_cockpit_glass_alpha();
-        self.remote_particle_tuning = remote_particles_tuning(&self.tuning.particles);
+        self.refresh_particle_tuning();
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
+    }
+
+    fn refresh_particle_tuning(&mut self) {
+        self.particle_tuning =
+            local_particles_tuning(&self.tuning.particles, self.particle_quality);
+        self.remote_particle_tuning =
+            remote_particles_tuning(&self.tuning.particles, self.particle_quality);
+    }
+
+    fn clear_particles(&mut self) {
+        self.last_particle_time = None;
+        self.particles.clear();
+        for particles in &mut self.remote_particles {
+            particles.clear();
+        }
+        self.particle_instances.clear();
+        self.renderer.set_particles(&[]);
     }
 
     fn write_initial_pose(&mut self) -> Result<(), JsValue> {
@@ -3008,44 +3083,53 @@ impl DriveViewer {
             .map(|last| ((now - last) / 1000.0) as f32)
             .unwrap_or(0.0);
         self.last_particle_time = Some(now);
-        self.particles.update(
-            particle_dt,
-            car_world,
-            state,
-            &self.rigs[self.local_slot],
-            &self.surface_names,
-            &self.tuning.particles,
-        );
-        for slot in 0..self.rigs.len() {
-            if slot == self.local_slot {
-                continue;
+        if self.particle_quality == ParticleQuality::Off {
+            self.particles.clear();
+            for particles in &mut self.remote_particles {
+                particles.clear();
             }
-            let Some(remote_state) = self.remote_states[slot] else {
-                self.remote_particles[slot].clear();
-                continue;
-            };
-            let remote_world =
-                Mat4::from_rotation_translation(remote_state.rotation, remote_state.position);
-            self.remote_particles[slot].update(
+            self.particle_instances.clear();
+            self.renderer.set_particles(&[]);
+        } else {
+            self.particles.update(
                 particle_dt,
-                remote_world,
-                &remote_state,
-                &self.rigs[slot],
+                car_world,
+                state,
+                &self.rigs[self.local_slot],
                 &self.surface_names,
-                &self.remote_particle_tuning,
+                &self.particle_tuning,
             );
-        }
-        self.particle_instances.clear();
-        self.particle_instances
-            .extend_from_slice(self.particles.instances());
-        for slot in 0..self.rigs.len() {
-            if slot == self.local_slot {
-                continue;
+            for slot in 0..self.rigs.len() {
+                if slot == self.local_slot {
+                    continue;
+                }
+                let Some(remote_state) = self.remote_states[slot] else {
+                    self.remote_particles[slot].clear();
+                    continue;
+                };
+                let remote_world =
+                    Mat4::from_rotation_translation(remote_state.rotation, remote_state.position);
+                self.remote_particles[slot].update(
+                    particle_dt,
+                    remote_world,
+                    &remote_state,
+                    &self.rigs[slot],
+                    &self.surface_names,
+                    &self.remote_particle_tuning,
+                );
             }
+            self.particle_instances.clear();
             self.particle_instances
-                .extend_from_slice(self.remote_particles[slot].instances());
+                .extend_from_slice(self.particles.instances());
+            for slot in 0..self.rigs.len() {
+                if slot == self.local_slot {
+                    continue;
+                }
+                self.particle_instances
+                    .extend_from_slice(self.remote_particles[slot].instances());
+            }
+            self.renderer.set_particles(&self.particle_instances);
         }
-        self.renderer.set_particles(&self.particle_instances);
     }
 
     fn update_camera(&mut self) {

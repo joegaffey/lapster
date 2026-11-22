@@ -217,6 +217,21 @@ export class PhysicsClient {
       this.readyReject = null;
       return;
     }
+    if (data?.type === "ai_states") {
+      const states = Array.isArray(data.states) ? data.states : [];
+      for (const state of states) {
+        const frame =
+          state?.frame instanceof Float32Array
+            ? state.frame
+            : new Float32Array(state?.frame ?? []);
+        this.onAiFrame?.(
+          Number(state?.slot),
+          frame,
+          parseAiRaceState(state?.race),
+        );
+      }
+      return;
+    }
     if (data?.type === "ai_state") {
       const frame =
         data.frame instanceof Float32Array

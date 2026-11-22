@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-22
-Current phase: **AI race — grid start, countdown, standings, and results**
+Current phase: **AI race — motion smoothing and performance controls**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +53,14 @@ Deployment:
 
 ## Current focus
 
+- AI motion smoothing is ready for deployment on `feat/ai-motion-smoothing`
+  (PR #54), created from `dev` at `0754a7c`: 62.5 Hz AI frames, 40 ms
+  interpolation, 20 Hz race state, AI steering rate 3/s, and a configurable
+  player steering rate (default 6/s, wheel direct). AI frames are batched into
+  one `ai_states` worker message. Graphics adds Tyre effects High/Low/Off, an
+  output-resolution readout, and a 50% manual render-scale floor. Full gate
+  passed: 233 Rust tests, 76 web tests, 113 viewer passed / 4 skipped, and the
+  two WebGL2 fallback tests.
 - Concrete garage replaces the Garage showroom on `feat/concrete-garage`
   (from `dev` at `0754a7c`): an eight-car single-line concrete studio with
   overhead spot lights, a procedural floor, a ten-colour paint picker for the
@@ -332,6 +340,22 @@ Branch: `feat/loop-spline-point-terrain`, created from `dev` at `670312f`.
 - Gate: cargo fmt, workspace clippy, 217 workspace tests, wasm check; 59 web
   tests; 111 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
 - Status: complete; PR pending.
+
+## AI motion smoothing resume checkpoint
+
+Branch: `feat/ai-motion-smoothing`, created from `dev` at `0754a7c`.
+
+- Plan: `docs/features/ai-motion-smoothing.md`.
+- No versioned contract change. `RaceState` and the 64-float snapshot stay the
+  same.
+- AI: `AiDriver` steering rate default 3.0 units/s; reset clears it.
+- Worker: publish AI frames every 8 ticks (62.5 Hz); race state at 20 Hz.
+- Web: one `RemoteStateBuffer(40)` per AI slot; race state updates immediately.
+- Player: time-based steering rate setting, default 6 units/s, 0 = off; wheel
+  input stays direct.
+- Gate: cargo fmt, workspace clippy, 233 workspace tests, wasm check; 76 web
+  tests; 116 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; full gate passed; PR pending.
 
 ## Completed checkpoints
 

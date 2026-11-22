@@ -282,6 +282,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   const renderScaleValue = page.locator("#render-scale-value");
   const saturation = page.locator("#color-saturation");
   const saturationValue = page.locator("#color-saturation-value");
+  const steeringRate = page.locator("#steering-rate");
+  const steeringRateValue = page.locator("#steering-rate-value");
   const view = page.locator("#view");
 
   await expect(environment).toHaveValue("hybrid");
@@ -301,6 +303,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect(renderScaleValue).toHaveText("100%");
   await expect(saturation).toHaveValue("1.15");
   await expect(saturationValue).toHaveText("115%");
+  await expect(steeringRate).toHaveValue("6");
+  await expect(steeringRateValue).toHaveText("6.0 units/s");
   expect(await view.evaluate((element) => (element as HTMLElement).style.filter)).toBe(
     "saturate(1.15)",
   );
@@ -437,12 +441,19 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await setRange("#tc-strength", "0.5");
   await setRange("#esc-strength", "0.6");
   await setRange("#steering-sensitivity", "1.25");
+  await setRange("#steering-rate", "9");
+  await expect(steeringRateValue).toHaveText("9.0 units/s");
   telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
   expect(telemetry.tractionStrength).toBeCloseTo(0.5);
   expect(telemetry.stabilityStrength).toBeCloseTo(0.6);
   expect(telemetry.steeringSensitivity).toBeCloseTo(1.25);
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem("lapster.settings.v3") ?? "null").steeringRate,
+    ),
+  ).toBe(9);
 
   await page.locator("#tab-graphics").click();
   await timeRange.evaluate((element) => {
@@ -470,6 +481,8 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   expect(telemetry.tractionStrength).toBe(0.5);
   expect(telemetry.stabilityStrength).toBe(0.5);
   expect(telemetry.steeringSensitivity).toBe(1);
+  await expect(steeringRate).toHaveValue("6");
+  await expect(steeringRateValue).toHaveText("6.0 units/s");
   expect(telemetry.debugLinesVisible).toBe(false);
   expect(telemetry.environmentShadowMode).toBe("hybrid");
   expect(telemetry.carShadowMode).toBe("dynamic");
@@ -494,6 +507,39 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await expect
     .poll(() => view.evaluate((element) => (element as HTMLCanvasElement).width))
     .toBe(fullWidth);
+});
+
+test("steering rate setting persists across reload", async ({ page }) => {
+  const url = "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=steering-rate";
+  await page.goto(url);
+  await waitForReady(page);
+  await page.evaluate(() => localStorage.removeItem("lapster.settings.v3"));
+  await page.reload();
+  await waitForReady(page);
+
+  await page.locator("#assists-open").click();
+  const steeringRate = page.locator("#steering-rate");
+  const steeringRateValue = page.locator("#steering-rate-value");
+  await expect(steeringRate).toHaveValue("6");
+  await expect(steeringRateValue).toHaveText("6.0 units/s");
+  expect(
+    await steeringRate.evaluate((element) =>
+      element.closest("label")?.textContent?.includes("Steering rate"),
+    ),
+  ).toBe(true);
+
+  await steeringRate.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "9";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(steeringRateValue).toHaveText("9.0 units/s");
+
+  await page.reload();
+  await waitForReady(page);
+  await page.locator("#assists-open").click();
+  await expect(page.locator("#steering-rate")).toHaveValue("9");
+  await expect(page.locator("#steering-rate-value")).toHaveText("9.0 units/s");
 });
 
 test("migrates automatic shadow settings to baked and dynamic", async ({ page }) => {
