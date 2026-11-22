@@ -211,14 +211,14 @@ Branch: `feat/race-manager`, created from `dev` after PR #44.
 - Web: compact race overlay, `RaceStateView` contract tests, and Race Loop /
   Skidpad browser coverage.
 - Track-ed spawn direction: the exporter did not pre-flip the metadata spawn for
-  Lapster's runtime drive flip. Fixed in track-ed PR #7; the Race Loop fixture
-  was regenerated and `pack.sima` re-baked. The parent pin is the track-ed fix
-  commit until PR #7 merges, then update it to the merged `main` commit.
+  Lapster's runtime drive flip. Fixed in track-ed PR #7 (merged); the Race Loop
+  fixture was regenerated, `pack.sima` re-baked, and the parent pin moved to the
+  merged track-ed `main` commit 1b22f5a.
 - Gate passed: cargo fmt, workspace clippy, 194 workspace tests, wasm check;
   parent `npm test` (57); `CI=1 npm --prefix web run test:viewer` (106 passed,
   1 skipped); WebGL2 fallback (2/2); track-ed tests (220 passed, 1 skipped) and
-  build; agent sync. Parent PR pending; track-ed PR #7 must merge before the
-  parent pin moves to merged `main`.
+  build; agent sync. Track-ed PR #7 merged and the parent pin is updated; parent
+  PR is ready to merge.
 - Next: parent PR to `dev`, then AI opponents.
 
 ## Completed checkpoints
@@ -438,8 +438,8 @@ Resume in this order:
 
 **Race manager MVP (implemented):** the Race chunk foundation is merged to
 `dev` (PR #44). The local lap/sector/progress tracker and HUD are implemented on
-`feat/race-manager`; the full gate passed and the parent PR is pending on
-track-ed PR #7. See the resume checkpoint above and
+`feat/race-manager`; the full gate passed and track-ed PR #7 is merged. The
+parent PR is ready to merge. See the resume checkpoint above and
 `docs/features/race-manager.md`. AI opponents and online contact are later
 batches (ADR-0013).
 

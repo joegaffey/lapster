@@ -1,6 +1,6 @@
 # Race Manager MVP — Lap Progress and HUD
 
-- **Status:** complete; full gate passed; parent PR pending on track-ed PR #7
+- **Status:** complete; full gate passed; parent PR ready
 - **Date:** 2026-11-21
 - **Owner:** architect
 - **Domains:** architect, physics, render, web
@@ -97,9 +97,9 @@ Add `sim-core::race::RaceTracker`:
 
 The Race Loop HUD exposed that track-ed exports did not pre-flip the track
 metadata spawn for Lapster's runtime drive flip. The car spawned facing
-opposite the race layout. The fix is track-ed PR #7; the parent fixture was
-regenerated and the pack re-baked. Update the parent submodule pin to the
-merged track-ed `main` commit after PR #7 merges.
+opposite the race layout. Track-ed PR #7 fixed it; the parent fixture was
+regenerated, the pack re-baked, and the parent submodule pin moved to the merged
+track-ed `main` commit (1b22f5a).
 
 ## 4. Runtime integration
 
