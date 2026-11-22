@@ -16,8 +16,8 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
 
 - **Drive** — choose the Mazda RX-7 or Speed Dreams Deckard Conejo, then Skidpad 0.5,
   Drift Tracks, or Race Loop. Race Loop is the generated demo with a validated race
-  layout; Skidpad and Drift Tracks remain race-unavailable. The RX-7 and Skidpad remain
-  the defaults. The launcher remembers the last car
+  layout and shows lap/sector progress in a compact HUD; Skidpad and Drift Tracks remain
+  race-unavailable. The RX-7 and Skidpad remain the defaults. The launcher remembers the last car
   and track; both become the default for Drive and the garage's `Drive` button. Custom packs
   can still be loaded with `?car=` and `?track=`. Throttle, brake, edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,

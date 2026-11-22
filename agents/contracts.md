@@ -7,6 +7,7 @@ their mirrors. Workers read contracts and never edit them.
 |---|---|---|---|---|
 | SAB ABI v2 | `crates/sim-types/src/abi.rs` | `web/src/types/asset-layout.ts` | `sim-worker`, `web/src/sim/sab.ts`, `web/src/input` | architect |
 | Asset schema v3 / pack format (optional Race chunk) | `crates/sim-types/src/asset.rs`, `crates/sim-types/src/race.rs` | `web/src/assets/types.ts`, `web/src/contracts/**` | `sim-asset`, `asset-compiler`, `track-pack`, `track-pack-wasm`, `sim-render`, `web/src/assets` | architect |
+| Race state view | `crates/sim-types/src/race.rs` (`RaceState`) | `web/src/contracts/race-state.ts` | `sim-core`, `sim-render`, `web/src/ui` | architect |
 | Car tuning | `crates/sim-types/src/setup.rs` | `lapster/setup@1` schema tag in `web/src/ui/car-setup.ts` | `asset-compiler`, `sim-worker`, `sim-render`, `web/src/ui` | architect |
 | Net protocol | `crates/relay-server/src/protocol.rs` | `web/src/net/protocol.ts` | `relay-server`, `web/src/net` | architect |
 | Core public API | `crates/sim-core/src/lib.rs` re-exports | — | `sim-worker`, `asset-compiler` tests | physics |
@@ -49,6 +50,8 @@ The following pairs must stay identical in structure and field offsets:
 The following pair must stay identical in field names and structure:
 
 - `crates/sim-types/src/race.rs` ↔ `web/src/contracts/race.ts`
+- `crates/sim-types/src/race.rs` (`RaceState`) ↔
+  `web/src/contracts/race-state.ts`
 
 If a mirror drifts, stop and fix it before delegating.
 

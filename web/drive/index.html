@@ -188,6 +188,54 @@
       #hud.hud-collapsed {
         display: none;
       }
+      #race-panel {
+        position: fixed;
+        top: 16px;
+        left: 50%;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        max-width: calc(100vw - 32px);
+        padding: 8px 12px;
+        border: 1px solid #2a303a;
+        border-radius: 3px;
+        background: rgba(10, 13, 17, 0.9);
+        backdrop-filter: blur(8px);
+        font-size: 12px;
+        line-height: 1.2;
+        pointer-events: none;
+        transform: translateX(-50%);
+      }
+      #race-panel[hidden] {
+        display: none;
+      }
+      .race-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .race-label {
+        color: #8f9bab;
+        font-size: 9px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .race-value {
+        color: #f8fafc;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      #race-wrong-way {
+        color: #f87171;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        white-space: nowrap;
+      }
+      #race-wrong-way[hidden] {
+        display: none;
+      }
       #touch-controls {
         display: none;
         position: fixed;
@@ -442,6 +490,11 @@
           width: min(360px, calc(100vw - 24px));
           max-height: calc(100vh - 200px);
         }
+        #race-panel {
+          top: 84px;
+          left: 12px;
+          transform: none;
+        }
         .setup-grid {
           grid-template-columns: 1fr;
         }
@@ -508,6 +561,29 @@
       <button id="audio-toggle" data-testid="audio-toggle" aria-pressed="false">Audio: Off</button>
       <button id="assists-open" data-testid="assists-open" aria-haspopup="dialog">Settings</button>
     </nav>
+    <div id="race-panel" data-testid="race-panel" hidden>
+      <div class="race-stat">
+        <span class="race-label">Lap</span>
+        <span class="race-value" id="race-lap" data-testid="race-lap">1</span>
+      </div>
+      <div class="race-stat">
+        <span class="race-label">Sector</span>
+        <span class="race-value" id="race-sector" data-testid="race-sector">S1</span>
+      </div>
+      <div class="race-stat">
+        <span class="race-label">Current</span>
+        <span class="race-value" id="race-current" data-testid="race-current">0:00.00</span>
+      </div>
+      <div class="race-stat">
+        <span class="race-label">Last</span>
+        <span class="race-value" id="race-last" data-testid="race-last">—</span>
+      </div>
+      <div class="race-stat">
+        <span class="race-label">Best</span>
+        <span class="race-value" id="race-best" data-testid="race-best">—</span>
+      </div>
+      <span id="race-wrong-way" data-testid="race-wrong-way" hidden>WRONG WAY</span>
+    </div>
     <aside id="hud" class="hud-collapsed">
       <h1>Drive Viewer</h1>
       <p class="muted" id="asset">loading…</p>
