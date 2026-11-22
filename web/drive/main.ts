@@ -15,6 +15,7 @@ import { setupPwa } from "../src/pwa.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
 import { setupCarSetupDialog } from "../src/ui/car-setup.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { cockpitRpmOffset } from "../src/ui/cockpit-offsets.ts";
 import { setupDevMenu } from "../src/ui/dev-menu.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
@@ -1084,6 +1085,11 @@ async function boot() {
     }
   }
   window.__driveViewer = driver;
+
+  const rpmOffset = cockpitRpmOffset(info.car.id);
+  if (rpmOffset) {
+    driver.set_cockpit_dial_offset("rpm", ...rpmOffset);
+  }
 
   if (mpMode) {
     status.textContent = "joining room";
