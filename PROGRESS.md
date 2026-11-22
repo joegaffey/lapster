@@ -60,7 +60,7 @@ Deployment:
   studio. The Mazda appears once; all six 67GP cars and the Deckard are in the
   catalogue. The old `?garage=showroom` fallback and the showroom
   `GarageViewer::create` constructor are removed. ADR-0016 is superseded by
-  ADR-0017. Full gate green; merging to `dev` as PR #55.
+  ADR-0017. Full gate green; merged to `dev` as `6cb1f3a` (PR #55).
 - Loop Spline Point Terrain is added as a fixture and public track option on
   `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
   `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises
