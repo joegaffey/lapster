@@ -25,6 +25,10 @@ cargo run -p asset-compiler -- bake-glb-track fixtures/tracks/loop-spline-point-
 The compiler is deterministic: re-baking the same `track.json` and `track.glb`
 produces byte-identical output.
 
+## Smoothing
+
+The project uses `samplesPerSegment: 32` for a smoother visual road ribbon.
+
 ## Expected shape
 
 - Pack: kind `Track`, id `loop-spline-point-terrain`, with a `Race` chunk

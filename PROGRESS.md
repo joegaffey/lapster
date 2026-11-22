@@ -53,8 +53,9 @@ Deployment:
 ## Current focus
 
 - Loop Spline Point Terrain is added as a fixture and public track option on
-  `feat/loop-spline-point-terrain`: 26 MB baked pack, 8 grid slots, and the
-  `section-1` race layout. Full gate passed; PR pending.
+  `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
+  `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises
+  the spline sample density to 32 for a smoother road ribbon.
 - AI opponents batch is merged to `dev` as `fc4fdf3` (PR #49): one AI on
   race-ready tracks, simulated in the physics worker, rendered through the
   remote-car path, with no car-to-car contact.
@@ -284,8 +285,8 @@ Branch: `feat/loop-spline-point-terrain`, created from `dev` at `670312f`.
   `track-ed/project@5` project, exported `track.json`/`track.glb`, freshly baked
   `pack.sima`, and README.
 - Pack: id `loop-spline-point-terrain`, 941.3 m layout, 471 centreline points,
-  8 grid slots, 4 sectors, Race chunk present. Pack size is 26 MB; source
-  directory is 45 MB.
+  8 grid slots, 4 sectors, Race chunk present. Pack size is 27 MB; source
+  directory is 45 MB. Follow-up smoothing uses `samplesPerSegment: 32`.
 - Launcher: `Loop Spline Point Terrain` option in `TRACK_OPTIONS` and
   `web/index.html`.
 - Coverage: a `track-pack` fixture test loads the checked-in pack and checks the
