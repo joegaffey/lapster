@@ -51,6 +51,7 @@ export interface AssistSettings {
 interface SettingsOptions {
   gameplay?: boolean;
   wheel?: WheelFfb;
+  timeOfDay?: boolean;
   onChange?: (settings: AssistSettings) => void;
   onRenderScale?: (scale: number) => void;
 }
@@ -295,15 +296,17 @@ function settingsDialogHtml(): string {
         <span>Grass shader</span>
         <button id="grass-shader-toggle" data-testid="grass-shader-toggle" aria-pressed="false" type="button">Shader: Off</button>
       </div>
-      <label class="assist-slider">
-        <span>Time of day</span>
-        <output id="time-of-day-value">15:00</output>
-        <span class="time-start"></span>
-        <input id="time-of-day" type="range" min="6" max="20" step="0.5" value="15" />
-      </label>
-      <div class="assist-row">
-        <span>Apply lighting</span>
-        <button id="time-of-day-apply" type="button">Apply</button>
+      <div id="settings-time-of-day">
+        <label class="assist-slider">
+          <span>Time of day</span>
+          <output id="time-of-day-value">15:00</output>
+          <span class="time-start"></span>
+          <input id="time-of-day" type="range" min="6" max="20" step="0.5" value="15" />
+        </label>
+        <div class="assist-row">
+          <span>Apply lighting</span>
+          <button id="time-of-day-apply" type="button">Apply</button>
+        </div>
       </div>
       <div class="assist-row">
         <span>Debug overlay</span>
@@ -324,7 +327,11 @@ function settingsDialogHtml(): string {
 </dialog>`;
 }
 
-function ensureSettingsUi(gameplay: boolean, hasWheel: boolean): void {
+function ensureSettingsUi(
+  gameplay: boolean,
+  hasWheel: boolean,
+  timeOfDay: boolean,
+): void {
   if (!document.querySelector(`#${SETTINGS_STYLE_ID}`)) {
     const style = document.createElement("style");
     style.id = SETTINGS_STYLE_ID;
@@ -351,6 +358,9 @@ function ensureSettingsUi(gameplay: boolean, hasWheel: boolean): void {
   if (!hasWheel) {
     document.querySelector("#tab-controls")?.remove();
     document.querySelector("#settings-controls")?.remove();
+  }
+  if (!timeOfDay) {
+    document.querySelector("#settings-time-of-day")?.remove();
   }
   const selected = document.querySelector<HTMLButtonElement>(
     ".settings-tab[aria-selected='true']",
@@ -470,7 +480,8 @@ export function setupAssistsDialog(
 ): SettingsController | null {
   const gameplay = options.gameplay !== false;
   const hasWheel = Boolean(options.wheel);
-  ensureSettingsUi(gameplay, hasWheel);
+  const showTimeOfDay = options.timeOfDay !== false;
+  ensureSettingsUi(gameplay, hasWheel, showTimeOfDay);
 
   const dialog = document.querySelector<HTMLDialogElement>("#assists-dialog");
   const openButton = document.querySelector<HTMLButtonElement>("#assists-open");
@@ -514,9 +525,7 @@ export function setupAssistsDialog(
     !grassShaderToggle ||
     !environmentSelect ||
     !carSelect ||
-    !timeRange ||
-    !timeValue ||
-    !timeApply ||
+    (showTimeOfDay && (!timeRange || !timeValue || !timeApply)) ||
     !msaa ||
     !msaaApplied ||
     !renderScaleSelect ||
@@ -622,8 +631,10 @@ export function setupAssistsDialog(
     grassShaderToggle!.setAttribute("aria-pressed", String(settings.grassShader));
     environmentSelect.value = settings.environmentShadows;
     carSelect.value = settings.carShadow;
-    timeRange.value = String(settings.timeOfDay);
-    timeValue.textContent = formatTime(settings.timeOfDay);
+    if (timeRange && timeValue) {
+      timeRange.value = String(settings.timeOfDay);
+      timeValue.textContent = formatTime(settings.timeOfDay);
+    }
     msaa.value = settings.antiAliasing;
     renderScaleSelect!.value = String(settings.renderScale);
     renderScaleValue!.textContent = `${Math.round(settings.renderScale * 100)}%`;
@@ -639,13 +650,17 @@ export function setupAssistsDialog(
           : `${actualMsaa}×`;
   };
 
-  viewer.set_time_of_day(settings.timeOfDay);
+  if (showTimeOfDay) {
+    viewer.set_time_of_day(settings.timeOfDay);
+  }
   apply();
   refresh();
 
   const resetAll = () => {
     settings = { ...DEFAULTS };
-    viewer.set_time_of_day(settings.timeOfDay);
+    if (showTimeOfDay) {
+      viewer.set_time_of_day(settings.timeOfDay);
+    }
     apply();
     refresh();
     try {
@@ -663,7 +678,7 @@ export function setupAssistsDialog(
     update: (patch) => {
       const timeChanged = patch.timeOfDay !== undefined;
       settings = sanitize({ ...settings, ...patch });
-      if (timeChanged) {
+      if (showTimeOfDay && timeChanged) {
         viewer.set_time_of_day(settings.timeOfDay);
       }
       apply();
@@ -766,16 +781,18 @@ export function setupAssistsDialog(
     refresh();
     status.textContent = "Saved";
   });
-  timeRange.addEventListener("input", () => {
-    timeValue.textContent = formatTime(Number(timeRange.value));
-  });
-  timeApply.addEventListener("click", () => {
-    settings.timeOfDay = Number(timeRange.value);
-    const bakeMs = viewer.set_time_of_day(settings.timeOfDay);
-    save(settings);
-    status.textContent =
-      bakeMs > 0 ? `Lighting applied · baked in ${bakeMs.toFixed(1)} ms` : "Lighting applied";
-  });
+  if (timeRange && timeValue && timeApply) {
+    timeRange.addEventListener("input", () => {
+      timeValue.textContent = formatTime(Number(timeRange.value));
+    });
+    timeApply.addEventListener("click", () => {
+      settings.timeOfDay = Number(timeRange.value);
+      const bakeMs = viewer.set_time_of_day(settings.timeOfDay);
+      save(settings);
+      status.textContent =
+        bakeMs > 0 ? `Lighting applied · baked in ${bakeMs.toFixed(1)} ms` : "Lighting applied";
+    });
+  }
   debugToggle.addEventListener("click", () => {
     settings.debugLines = !settings.debugLines;
     viewer.set_debug_lines_visible(settings.debugLines);

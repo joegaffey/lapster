@@ -23,6 +23,7 @@ import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import {
   findCar,
+  loadCarPaint,
   loadSelectedCar,
   saveSelectedBay,
   selectedBay,
@@ -100,6 +101,18 @@ const CAR_URL = withPackVersion(
   APP_VERSION,
 );
 const carBay = selectedBay();
+const carPaint = resolveCarPaint();
+
+function resolveCarPaint(): number | null {
+  const raw = params.get("paint");
+  if (raw !== null && raw.trim() !== "") {
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= 0) {
+      return Math.trunc(value);
+    }
+  }
+  return loadCarPaint(selectedCar.id);
+}
 const mpMode = params.get("mp") === "1";
 const REMOTE_SLOTS = 3;
 const AI_FIELD_MAX = 3;
@@ -1244,6 +1257,7 @@ async function boot() {
     carBay,
     storedDevTuning ?? undefined,
     mpMode ? REMOTE_SLOTS : aiCount,
+    carPaint,
   );
   const treeDetail = new URLSearchParams(window.location.search).get("trees");
   if (treeDetail === "high" || treeDetail === "low" || treeDetail === "cards") {

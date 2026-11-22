@@ -84,19 +84,18 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
   const waitFor = (expression: string) =>
     page.waitForFunction(expression, undefined, { timeout: 30_000 });
 
-  await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
-  );
+  await page.goto("/web/garage/");
   await waitFor(() => (window as any).__garageViewerReady === true || (window as any).__garageViewerError);
   await page.locator("#assists-open").click();
   await expect(page.locator("#tab-gameplay")).toHaveCount(0);
   await expect(page.locator("#tab-controls")).toHaveCount(0);
   await expect(page.locator("#tab-graphics")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#settings-time-of-day")).toHaveCount(0);
   const environment = page.locator("#environment-shadows");
   const carShadow = page.locator("#car-shadow");
   await environment.selectOption("baked");
   await carShadow.selectOption("silhouette");
-  let state = await page.evaluate(() => ({
+  const state = await page.evaluate(() => ({
     environment: (window as any).__garageViewer.environment_shadow_mode(),
     car: (window as any).__garageViewer.car_shadow_mode(),
     resolution: (window as any).__garageViewer.baked_resolution(),
@@ -104,13 +103,6 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
   expect(state.environment).toBe("baked");
   expect(state.car).toBe("silhouette");
   expect(state.resolution).toBe(2048);
-  await page.locator("#time-of-day").evaluate((element) => {
-    const input = element as HTMLInputElement;
-    input.value = "18";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await page.locator("#time-of-day-apply").click();
-  expect(await page.evaluate(() => (window as any).__garageViewer.time_of_day())).toBeCloseTo(18);
   await page.locator("#assists-close").click();
 
   await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
@@ -120,10 +112,10 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
   await expect(page.locator("#tab-controls")).toHaveCount(0);
   await expect(page.locator("#settings-graphics")).toBeVisible();
   await page.locator("#environment-shadows").selectOption("baked");
-  state = await page.evaluate(() => ({
+  const trackState = await page.evaluate(() => ({
     environment: (window as any).__trackViewer.environment_shadow_mode(),
     resolution: (window as any).__trackViewer.baked_resolution(),
   }));
-  expect(state.environment).toBe("baked");
-  expect(state.resolution).toBe(2048);
+  expect(trackState.environment).toBe("baked");
+  expect(trackState.resolution).toBe(2048);
 });
