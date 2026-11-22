@@ -27,6 +27,8 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   expect(drive.telemetry.track).toBe("skidpad05");
   expect(drive.telemetry.contacts).toBe(4);
   expect(drive.telemetry.raceAvailable).toBe(false);
+  expect(drive.telemetry.remoteSlots).toBe(0);
+  expect(drive.telemetry.remoteCars).toEqual([]);
   expect(drive.race).toEqual({ available: false });
   expect(drive.raceState).toEqual({ available: false });
   await expect(page.locator("#race-panel")).toBeHidden();

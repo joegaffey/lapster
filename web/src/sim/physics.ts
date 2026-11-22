@@ -31,6 +31,7 @@ export class PhysicsClient {
   setup = "";
   onDiagnostics: ((diagnostics: PhysicsDiagnostics) => void) | null = null;
   onFatalError: ((message: string) => void) | null = null;
+  onAiFrame: ((slot: number, frame: Float32Array) => void) | null = null;
 
   private readonly worker: Worker;
   private readonly sab: SharedArrayBuffer;
@@ -67,6 +68,7 @@ export class PhysicsClient {
     sab: SharedArrayBuffer,
     trackBytes: Uint8Array,
     carBytes: Uint8Array,
+    aiCount = 0,
   ): Promise<PhysicsClient> {
     const url = new URL(`../worker/physics-worker.js?v=${encodeURIComponent(APP_VERSION)}`, import.meta.url);
     const worker = new Worker(url, { type: "module" });
@@ -87,6 +89,7 @@ export class PhysicsClient {
         sab,
         trackBytes: trackCopy,
         carBytes: carCopy,
+        aiCount,
       },
       [trackCopy.buffer, carCopy.buffer],
     );
@@ -180,6 +183,14 @@ export class PhysicsClient {
       this.readyResolve?.();
       this.readyResolve = null;
       this.readyReject = null;
+      return;
+    }
+    if (data?.type === "ai_state") {
+      const frame =
+        data.frame instanceof Float32Array
+          ? data.frame
+          : new Float32Array(data.frame ?? []);
+      this.onAiFrame?.(Number(data.slot), frame);
       return;
     }
     if (data?.type === "diagnostics") {

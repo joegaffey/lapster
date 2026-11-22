@@ -98,6 +98,19 @@ function publish(): void {
   );
 }
 
+function publishAiFrames(): void {
+  if (!simulation) {
+    return;
+  }
+  const count = Number(simulation.ai_count());
+  for (let index = 0; index < count; index += 1) {
+    post("ai_state", {
+      slot: index + 1,
+      frame: new Float32Array(simulation.ai_snapshot(index)),
+    });
+  }
+}
+
 function resetFromFlag(): void {
   if (!simulation || !sab || (getSabFlags(sab) & 2) === 0) {
     return;
@@ -107,6 +120,7 @@ function resetFromFlag(): void {
   nextDeadline = performance.now();
   markDiagnosticsBaseline();
   publish();
+  publishAiFrames();
 }
 
 function runSlice(generation: number): void {
@@ -155,6 +169,9 @@ function runSlice(generation: number): void {
       Date.now() / 1000,
       new Float32Array(state),
     );
+    if (Number(simulation.tick()) % 8 === 0) {
+      publishAiFrames();
+    }
     writeFfb(sab, Math.max(-1, Math.min(1, state[SNAPSHOT_STATE.rackTorque] / 20)), true);
   }
 
@@ -201,7 +218,11 @@ self.onmessage = async (event: MessageEvent) => {
       validateSab(sab);
       waitWord = new Int32Array(sab, HEADER_FIELDS.flags, 1);
       await init(versionedWasmUrl("../pkg/worker/sim_worker_bg.wasm"));
-      simulation = new Simulation(message.trackBytes, message.carBytes);
+      simulation = new Simulation(
+        message.trackBytes,
+        message.carBytes,
+        message.aiCount ?? 0,
+      );
       post("ready", { setup: simulation.setup() });
       startLoop();
     } catch (error) {
@@ -235,6 +256,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
+      publishAiFrames();
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
     case "place_on_grid":
@@ -242,6 +264,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
+      publishAiFrames();
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;
     case "simulate": {
@@ -255,6 +278,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
+      publishAiFrames();
       post("ack", { id: message.id, tick });
       break;
     }
@@ -263,6 +287,7 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
+      publishAiFrames();
       post("ack", { id: message.id, tick });
       break;
     }

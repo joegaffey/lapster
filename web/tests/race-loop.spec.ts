@@ -8,6 +8,50 @@ async function waitForDrive(page: import("@playwright/test").Page) {
   );
 }
 
+interface LayoutView {
+  closed: boolean;
+  points: number[][];
+  half_width: number;
+}
+
+function distanceToLayout(position: number[], layout: LayoutView): number {
+  const count = layout.points.length;
+  if (count < 2) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const segments = layout.closed ? count : count - 1;
+  let closest = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < segments; index += 1) {
+    const start = layout.points[index];
+    const end = layout.points[(index + 1) % count];
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const dz = end[2] - start[2];
+    const lengthSq = dx * dx + dy * dy + dz * dz;
+    const offsetX = position[0] - start[0];
+    const offsetY = position[1] - start[1];
+    const offsetZ = position[2] - start[2];
+    const t =
+      lengthSq > 0
+        ? Math.min(
+            1,
+            Math.max(
+              0,
+              (offsetX * dx + offsetY * dy + offsetZ * dz) / lengthSq,
+            ),
+          )
+        : 0;
+    const nearestX = start[0] + dx * t - position[0];
+    const nearestY = start[1] + dy * t - position[1];
+    const nearestZ = start[2] + dz * t - position[2];
+    closest = Math.min(
+      closest,
+      Math.hypot(nearestX, nearestY, nearestZ),
+    );
+  }
+  return closest;
+}
+
 test("launcher opens race-loop with the race layout available", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -55,6 +99,62 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   await expect(page.locator("#race-last")).toHaveText("—");
   await expect(page.locator("#race-best")).toHaveText("—");
   await expect(page.locator("#race-wrong-way")).toBeHidden();
+
+  await page.waitForFunction(
+    () => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      return Array.isArray(state.remoteCars) && state.remoteCars.length === 1;
+    },
+    undefined,
+    { timeout: 10_000 },
+  );
+  const aiStart = await page.evaluate(() => {
+    const state = JSON.parse((window as any).__driveViewer.telemetry());
+    return { slots: state.remoteSlots, cars: state.remoteCars };
+  });
+  expect(aiStart.slots).toBe(1);
+  expect(aiStart.cars).toHaveLength(1);
+  expect(aiStart.cars[0].slot).toBe(1);
+  expect(
+    aiStart.cars[0].position.every((value: number) => Number.isFinite(value)),
+  ).toBe(true);
+  const aiStartPosition = aiStart.cars[0].position as number[];
+
+  await page.waitForFunction(
+    (start) => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      const car = state.remoteCars?.[0];
+      return (
+        car &&
+        car.position.every((value: number) => Number.isFinite(value)) &&
+        car.position.some(
+          (value: number, index: number) => Math.abs(value - start[index]) > 0.1,
+        )
+      );
+    },
+    aiStartPosition,
+    { timeout: 15_000 },
+  );
+
+  const layout = drive.race.layout as LayoutView;
+  const roadLimit = layout.half_width + 1.0;
+  const samples: number[][] = [];
+  const sampleDeadline = Date.now() + 5_000;
+  while (Date.now() < sampleDeadline) {
+    const position = await page.evaluate(() => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      return state.remoteCars?.[0]?.position as number[] | undefined;
+    });
+    if (position) {
+      samples.push(position);
+      expect(
+        distanceToLayout(position, layout),
+        `AI left the road at [${position.join(", ")}]`,
+      ).toBeLessThanOrEqual(roadLimit);
+    }
+    await page.waitForTimeout(250);
+  }
+  expect(samples.length).toBeGreaterThan(5);
 
   const before = await page.evaluate(() => {
     const viewer = (window as any).__driveViewer;

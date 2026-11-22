@@ -16,6 +16,19 @@ const LENGTH_EPSILON: f32 = 1e-6;
 const MOVEMENT_EPSILON: f32 = 1e-7;
 /// Tolerance for matching a progress value to a sector start.
 const SECTOR_EPSILON: f32 = 1e-6;
+/// Distance either side of a sample used to estimate layout curvature.
+const CURVATURE_SAMPLE_SPAN: f32 = 2.0;
+
+/// A point on the race layout at a given distance along the centreline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayoutSample {
+    /// World-space point on the layout centreline.
+    pub point: Vec3,
+    /// Unit tangent in the layout direction.
+    pub tangent: Vec3,
+    /// Approximate curvature magnitude in `1 / metre`.
+    pub curvature: f32,
+}
 
 /// Tracks lap, sector, progress, wrong-way state, and lap timing for one car.
 ///
@@ -29,6 +42,7 @@ pub struct RaceTracker {
     segment_lengths: Vec<f32>,
     cumulative: Vec<f32>,
     total_length: f32,
+    closed: bool,
     sector_starts: Vec<f32>,
     valid: bool,
     state: RaceState,
@@ -71,6 +85,7 @@ impl RaceTracker {
         }
 
         let total_length = cumulative.last().copied().unwrap_or(0.0);
+        let closed = data.layout.closed;
         let valid = points_are_finite
             && points.len() >= 2
             && !segment_lengths.is_empty()
@@ -95,6 +110,7 @@ impl RaceTracker {
             segment_lengths,
             cumulative,
             total_length,
+            closed,
             sector_starts,
             valid,
             state: RaceState::initial(),
@@ -189,6 +205,91 @@ impl RaceTracker {
         self.started_tick = None;
     }
 
+    /// Total centreline length in metres, or `0.0` for an inactive layout.
+    pub fn total_length(&self) -> f32 {
+        self.total_length
+    }
+
+    /// Samples the layout centreline at `distance_m` along the track.
+    ///
+    /// Distances wrap for closed layouts and clamp to the ends of open
+    /// layouts. Returns `None` for an inactive layout or a non-finite distance.
+    pub fn sample(&self, distance_m: f32) -> Option<LayoutSample> {
+        if !self.valid || !distance_m.is_finite() {
+            return None;
+        }
+        let (point, tangent) = self.point_at(distance_m)?;
+        let span = CURVATURE_SAMPLE_SPAN.min(self.total_length * 0.25);
+        let behind = self.point_at(distance_m - span)?.0;
+        let ahead = self.point_at(distance_m + span)?.0;
+        Some(LayoutSample {
+            point,
+            tangent,
+            curvature: curvature_from_points(behind, point, ahead),
+        })
+    }
+
+    /// Projects `position` onto the layout and samples the projected distance.
+    ///
+    /// Returns `None` for an inactive layout or a non-finite position.
+    pub fn nearest_sample(&self, position: Vec3) -> Option<LayoutSample> {
+        if !self.valid || !position.is_finite() {
+            return None;
+        }
+        let (distance, _) = self.project(position);
+        self.sample(distance)
+    }
+
+    fn point_at(&self, distance_m: f32) -> Option<(Vec3, Vec3)> {
+        if !self.valid || !distance_m.is_finite() {
+            return None;
+        }
+        let distance = if self.closed {
+            distance_m.rem_euclid(self.total_length)
+        } else {
+            distance_m.clamp(0.0, self.total_length)
+        };
+        let segment_count = self.segment_lengths.len();
+        if segment_count == 0 {
+            return None;
+        }
+        let index = self
+            .cumulative
+            .partition_point(|value| *value <= distance)
+            .saturating_sub(1)
+            .min(segment_count - 1);
+        let start = self.points[index];
+        let end = self.points[(index + 1) % self.points.len()];
+        let segment = end - start;
+        let length = self.segment_lengths[index];
+        let t = if length <= LENGTH_EPSILON {
+            0.0
+        } else {
+            ((distance - self.cumulative[index]) / length).clamp(0.0, 1.0)
+        };
+        let point = start + segment * t;
+        let tangent = if length > LENGTH_EPSILON {
+            segment / length
+        } else {
+            self.tangent_for_segment(index)
+        };
+        Some((point, tangent))
+    }
+
+    fn tangent_for_segment(&self, index: usize) -> Vec3 {
+        let segment_count = self.segment_lengths.len();
+        for offset in 0..segment_count {
+            let candidate = (index + offset) % segment_count;
+            let start = self.points[candidate];
+            let end = self.points[(candidate + 1) % self.points.len()];
+            let segment = end - start;
+            if segment.length_squared() > LENGTH_EPSILON * LENGTH_EPSILON {
+                return segment.normalize();
+            }
+        }
+        Vec3::X
+    }
+
     fn project(&self, position: Vec3) -> (f32, f32) {
         let mut best_distance_sq = f32::INFINITY;
         let mut best_along = 0.0f32;
@@ -233,6 +334,19 @@ impl RaceTracker {
             .map(|start| tick.saturating_sub(start) as f64 * FIXED_DT as f64)
             .unwrap_or(0.0)
     }
+}
+
+/// Curvature magnitude of the circle through three points, in `1 / metre`.
+fn curvature_from_points(behind: Vec3, point: Vec3, ahead: Vec3) -> f32 {
+    let ab = point - behind;
+    let bc = ahead - point;
+    let ca = behind - ahead;
+    let area = ab.cross(ahead - behind).length() * 0.5;
+    let denominator = ab.length() * bc.length() * ca.length();
+    if !area.is_finite() || !denominator.is_finite() || denominator <= 1e-9 {
+        return 0.0;
+    }
+    (4.0 * area / denominator).clamp(0.0, 10.0)
 }
 
 #[cfg(test)]
@@ -475,5 +589,82 @@ mod tests {
             tracker.reset();
             assert_eq!(tracker.state(), initial);
         }
+    }
+
+    #[test]
+    fn layout_sampling_reports_point_and_tangent() {
+        let tracker = RaceTracker::new(&square());
+
+        assert_close(tracker.total_length(), 40.0);
+        let sample = tracker.sample(5.0).expect("sample");
+        assert_close(sample.point.x, 5.0);
+        assert_close(sample.point.z, 0.0);
+        assert_close(sample.tangent.x, 1.0);
+        assert_close(sample.tangent.z, 0.0);
+    }
+
+    #[test]
+    fn layout_sampling_reports_higher_curvature_in_a_corner() {
+        let tracker = RaceTracker::new(&square());
+
+        let straight = tracker.sample(5.0).expect("straight sample");
+        let corner = tracker.sample(10.0).expect("corner sample");
+
+        assert!(straight.curvature < 1e-3);
+        assert!(
+            corner.curvature > 0.1,
+            "expected a corner, got {}",
+            corner.curvature
+        );
+        assert!(corner.curvature > straight.curvature);
+    }
+
+    #[test]
+    fn layout_sampling_wraps_closed_layouts() {
+        let tracker = RaceTracker::new(&square());
+
+        let start = tracker.sample(5.0).expect("start sample");
+        let wrapped = tracker.sample(45.0).expect("wrapped sample");
+
+        assert!((wrapped.point - start.point).length() < 1e-4);
+        assert!((wrapped.tangent - start.tangent).length() < 1e-4);
+    }
+
+    #[test]
+    fn layout_sampling_clamps_open_layouts() {
+        let tracker = RaceTracker::new(&straight());
+
+        let end = tracker.sample(10.0).expect("end sample");
+        let beyond = tracker.sample(15.0).expect("beyond sample");
+
+        assert!((end.point - Vec3::new(10.0, 0.0, 0.0)).length() < 1e-4);
+        assert!((beyond.point - end.point).length() < 1e-4);
+    }
+
+    #[test]
+    fn layout_sampling_handles_invalid_input() {
+        let degenerate = RaceTracker::new(&race_data(Vec::new(), true, Vec::new()));
+        assert_eq!(degenerate.total_length(), 0.0);
+        assert!(degenerate.sample(0.0).is_none());
+
+        let tracker = RaceTracker::new(&square());
+        assert!(tracker.sample(f32::NAN).is_none());
+        assert!(tracker.sample(f32::INFINITY).is_none());
+    }
+
+    #[test]
+    fn nearest_sample_projects_offset_position_onto_segment() {
+        let tracker = RaceTracker::new(&square());
+
+        let sample = tracker
+            .nearest_sample(Vec3::new(2.5, 3.0, 0.0))
+            .expect("nearest sample");
+
+        assert!((sample.point - Vec3::new(2.5, 0.0, 0.0)).length() < 1e-4);
+        assert!((sample.tangent - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-4);
+        assert!(sample.curvature < 1e-3);
+        assert!(tracker
+            .nearest_sample(Vec3::new(f32::NAN, 0.0, 0.0))
+            .is_none());
     }
 }
