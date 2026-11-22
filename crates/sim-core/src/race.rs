@@ -48,6 +48,7 @@ pub struct RaceTracker {
     state: RaceState,
     previous_progress: Option<f32>,
     started_tick: Option<u64>,
+    grid_start_armed: bool,
 }
 
 impl RaceTracker {
@@ -116,6 +117,7 @@ impl RaceTracker {
             state: RaceState::initial(),
             previous_progress: None,
             started_tick: None,
+            grid_start_armed: false,
         }
     }
 
@@ -143,21 +145,40 @@ impl RaceTracker {
         let backward_crossing = previous < 0.2 && progress > 0.8;
 
         if forward_crossing {
-            let lap_time = self.elapsed(tick);
-            self.state.lap = self.state.lap.saturating_add(1);
-            self.state.last_lap_time = Some(lap_time);
-            self.state.best_lap_time = Some(match self.state.best_lap_time {
-                Some(best) => best.min(lap_time),
-                None => lap_time,
-            });
-            self.state.current_lap_time = 0.0;
-            self.state.started = true;
-            self.state.wrong_way = false;
-            self.started_tick = Some(tick);
+            if self.grid_start_armed {
+                // The first forward crossing after a grid start begins lap 1
+                // and starts the lap timer without completing a lap.
+                self.grid_start_armed = false;
+                self.state.started = true;
+                self.state.current_lap_time = 0.0;
+                self.state.wrong_way = false;
+                self.started_tick = Some(tick);
+            } else {
+                let lap_time = self.elapsed(tick);
+                self.state.lap = self.state.lap.saturating_add(1);
+                self.state.last_lap_time = Some(lap_time);
+                self.state.best_lap_time = Some(match self.state.best_lap_time {
+                    Some(best) => best.min(lap_time),
+                    None => lap_time,
+                });
+                self.state.current_lap_time = 0.0;
+                self.state.started = true;
+                self.state.wrong_way = false;
+                self.started_tick = Some(tick);
+            }
         } else if backward_crossing {
             self.state.wrong_way = true;
             if self.state.started {
                 self.state.current_lap_time = self.elapsed(tick);
+            }
+        } else if self.grid_start_armed {
+            // Do not start the lap timer on ordinary forward movement before
+            // the grid has crossed the start/finish line.
+            let delta = progress - previous;
+            if delta < -MOVEMENT_EPSILON {
+                self.state.wrong_way = true;
+            } else if delta > MOVEMENT_EPSILON {
+                self.state.wrong_way = false;
             }
         } else {
             let delta = progress - previous;
@@ -203,6 +224,20 @@ impl RaceTracker {
         self.state.last_lap_time = last_lap_time;
         self.previous_progress = None;
         self.started_tick = None;
+        self.grid_start_armed = false;
+    }
+
+    /// Resets lap progress and arms the next forward start/finish crossing.
+    ///
+    /// The reset preserves best and last lap times, as [`RaceTracker::reset`]
+    /// does. The first forward crossing after this call begins lap 1 and starts
+    /// the lap timer without incrementing the lap. Later crossings increment
+    /// normally. A backward crossing while armed sets wrong-way but neither
+    /// starts the race nor increments the lap. Calling this method always arms
+    /// the tracker, including on an inactive layout.
+    pub fn arm_grid_start(&mut self) {
+        self.reset();
+        self.grid_start_armed = true;
     }
 
     /// Total centreline length in metres, or `0.0` for an inactive layout.
@@ -495,6 +530,95 @@ mod tests {
         let expected_lap = 1100.0 * FIXED_DT as f64;
         assert_time_close(crossed.last_lap_time.expect("last lap"), expected_lap);
         assert_time_close(crossed.best_lap_time.expect("best lap"), expected_lap);
+    }
+
+    #[test]
+    fn grid_start_first_forward_crossing_keeps_lap_one_and_starts_timer() {
+        let mut tracker = RaceTracker::new(&square());
+        tracker.arm_grid_start();
+        let armed = tracker.state();
+        assert_eq!(armed.lap, 1);
+        assert!(!armed.started);
+
+        tracker.update(square_point(0.95), 0);
+        let crossed = tracker.update(square_point(0.05), 500);
+
+        assert_eq!(crossed.lap, 1);
+        assert!(crossed.started);
+        assert!(!crossed.wrong_way);
+        assert_time_close(crossed.current_lap_time, 0.0);
+        assert_eq!(crossed.last_lap_time, None);
+        assert_eq!(crossed.best_lap_time, None);
+
+        let moving = tracker.update(square_point(0.10), 600);
+        assert!(moving.started);
+        assert_time_close(moving.current_lap_time, 100.0 * FIXED_DT as f64);
+    }
+
+    #[test]
+    fn grid_start_second_forward_crossing_increments_lap() {
+        let mut tracker = RaceTracker::new(&square());
+        tracker.arm_grid_start();
+        tracker.update(square_point(0.95), 0);
+        assert_eq!(tracker.update(square_point(0.05), 500).lap, 1);
+
+        tracker.update(square_point(0.50), 1_000);
+        tracker.update(square_point(0.90), 1_500);
+        let crossed = tracker.update(square_point(0.05), 2_000);
+
+        assert_eq!(crossed.lap, 2);
+        assert!(crossed.started);
+        assert!(!crossed.wrong_way);
+        assert_time_close(crossed.current_lap_time, 0.0);
+        assert!(crossed.last_lap_time.expect("last lap") > 0.0);
+        assert!(crossed.best_lap_time.expect("best lap") > 0.0);
+    }
+
+    #[test]
+    fn grid_start_reset_and_rearm_preserves_best_lap() {
+        let mut tracker = RaceTracker::new(&square());
+        tracker.update(square_point(0.10), 0);
+        tracker.update(square_point(0.20), 100);
+        tracker.update(square_point(0.90), 1_000);
+        let best = tracker
+            .update(square_point(0.05), 1_100)
+            .best_lap_time
+            .expect("best lap");
+        assert!(best > 0.0);
+
+        tracker.reset();
+        assert_eq!(tracker.state().best_lap_time, Some(best));
+
+        tracker.arm_grid_start();
+        let armed = tracker.state();
+        assert_eq!(armed.lap, 1);
+        assert!(!armed.started);
+        assert_eq!(armed.best_lap_time, Some(best));
+
+        tracker.update(square_point(0.95), 1_200);
+        let crossed = tracker.update(square_point(0.05), 1_300);
+        assert_eq!(crossed.lap, 1);
+        assert_eq!(crossed.best_lap_time, Some(best));
+    }
+
+    #[test]
+    fn grid_start_backward_crossing_sets_wrong_way_without_incrementing() {
+        let mut tracker = RaceTracker::new(&square());
+        tracker.arm_grid_start();
+        tracker.update(square_point(0.05), 0);
+
+        let crossed = tracker.update(square_point(0.90), 10);
+        assert_eq!(crossed.lap, 1);
+        assert!(crossed.wrong_way);
+        assert!(!crossed.started);
+        assert_eq!(crossed.last_lap_time, None);
+        assert_eq!(crossed.best_lap_time, None);
+
+        // The tracker remains armed, so the next forward crossing starts lap 1.
+        let started = tracker.update(square_point(0.05), 20);
+        assert_eq!(started.lap, 1);
+        assert!(started.started);
+        assert!(!started.wrong_way);
     }
 
     #[test]

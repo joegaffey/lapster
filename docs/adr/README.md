@@ -46,3 +46,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0012](0012-contract-roots-and-agent-permissions.md) | Make contract ownership directory-based | Accepted |
 | [0013](0013-ai-racing-and-online-contact.md) | AI racing and online contact direction | Accepted |
 | [0014](0014-ai-opponents-in-physics-worker.md) | AI opponents in the physics worker | Accepted |
+| [0015](0015-ai-race-start-standings-and-results.md) | AI race start, standings, and results | Accepted |

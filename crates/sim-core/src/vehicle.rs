@@ -153,18 +153,7 @@ pub struct Vehicle {
 
 impl Vehicle {
     pub fn new(physics: CarPhysics, collider: TrackCollider, spawn: &SpawnPoint) -> Self {
-        let rotation = Quat::from_xyzw(
-            spawn.rotation_xyzw[0],
-            spawn.rotation_xyzw[1],
-            spawn.rotation_xyzw[2],
-            spawn.rotation_xyzw[3],
-        );
-        let rotation = if rotation.length_squared() > 1e-8 {
-            rotation.normalize()
-        } else {
-            Quat::IDENTITY
-        };
-        let spawn_position = Vec3::from_array(spawn.position) + Vec3::Y * 0.25;
+        let (spawn_position, rotation) = spawn_transform(spawn);
 
         let default_tuning = CarTuning::from_physics(&physics);
         let physics_tuning = PhysicsTuning::default();
@@ -210,6 +199,17 @@ impl Vehicle {
             steer_angle: 0.0,
             physics_tuning,
         }
+    }
+
+    /// Updates the reset spawn position and rotation, then resets the vehicle.
+    ///
+    /// Use this to place a car on a race grid or move its home spawn. The
+    /// vehicle state is cleared exactly as [`Vehicle::reset`] does.
+    pub fn set_spawn(&mut self, spawn: &SpawnPoint) {
+        let (spawn_position, spawn_rotation) = spawn_transform(spawn);
+        self.spawn_position = spawn_position;
+        self.spawn_rotation = spawn_rotation;
+        self.reset();
     }
 
     pub fn set_physics_tuning(&mut self, tuning: &PhysicsTuning) {
@@ -933,6 +933,21 @@ impl Vehicle {
     fn engine_torque(&self, rpm: f32) -> f32 {
         interpolate_torque(&self.physics.engine.torque_curve, rpm)
     }
+}
+
+fn spawn_transform(spawn: &SpawnPoint) -> (Vec3, Quat) {
+    let rotation = Quat::from_xyzw(
+        spawn.rotation_xyzw[0],
+        spawn.rotation_xyzw[1],
+        spawn.rotation_xyzw[2],
+        spawn.rotation_xyzw[3],
+    );
+    let rotation = if rotation.length_squared() > 1e-8 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+    (Vec3::from_array(spawn.position) + Vec3::Y * 0.25, rotation)
 }
 
 fn wheel_dimensions(
@@ -2283,6 +2298,43 @@ mod tests {
         assert_eq!(vehicle.state.tick, 0);
         assert!(vehicle.state.velocity.length() < f32::EPSILON);
         assert!((vehicle.state.position.x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn set_spawn_updates_reset_position_and_rotation() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        for _ in 0..100 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                ..Controls::default()
+            });
+        }
+
+        let grid_spawn = SpawnPoint {
+            name: String::from("grid_0"),
+            position: [12.0, 0.0, -3.0],
+            rotation_xyzw: Quat::from_rotation_y(0.5).to_array(),
+        };
+        vehicle.set_spawn(&grid_spawn);
+
+        let expected_rotation = Quat::from_rotation_y(0.5).normalize();
+        assert!((vehicle.state.position - Vec3::new(12.0, 0.25, -3.0)).length() < 1e-5);
+        assert!(vehicle.state.rotation.abs_diff_eq(expected_rotation, 1e-5));
+        assert_eq!(vehicle.state.tick, 0);
+        assert!(vehicle.state.velocity.length() < f32::EPSILON);
+
+        for _ in 0..500 {
+            vehicle.step(Controls {
+                throttle: 1.0,
+                ..Controls::default()
+            });
+        }
+        assert!((vehicle.state.position - Vec3::new(12.0, 0.25, -3.0)).length() > 0.5);
+
+        vehicle.reset();
+        assert!((vehicle.state.position - Vec3::new(12.0, 0.25, -3.0)).length() < 1e-5);
+        assert!(vehicle.state.rotation.abs_diff_eq(expected_rotation, 1e-5));
+        assert_eq!(vehicle.state.tick, 0);
     }
 
     #[test]
