@@ -1,6 +1,6 @@
 # Race Manager MVP — Lap Progress and HUD
 
-- **Status:** complete; full gate passed; parent PR ready
+- **Status:** complete; full gate passed; merged to `dev` as PR #47
 - **Date:** 2026-11-21
 - **Owner:** architect
 - **Domains:** architect, physics, render, web

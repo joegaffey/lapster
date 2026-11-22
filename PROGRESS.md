@@ -217,9 +217,9 @@ Branch: `feat/race-manager`, created from `dev` after PR #44.
 - Gate passed: cargo fmt, workspace clippy, 194 workspace tests, wasm check;
   parent `npm test` (57); `CI=1 npm --prefix web run test:viewer` (106 passed,
   1 skipped); WebGL2 fallback (2/2); track-ed tests (220 passed, 1 skipped) and
-  build; agent sync. Track-ed PR #7 merged and the parent pin is updated; parent
-  PR is ready to merge.
-- Next: parent PR to `dev`, then AI opponents.
+  build; agent sync. Track-ed PR #7 merged, the parent pin is updated, and the
+  parent PR was merged to `dev` as `45fa03d` (PR #47).
+- Next: AI opponents.
 
 ## Completed checkpoints
 
@@ -244,7 +244,7 @@ Branch: `feat/race-manager`, created from `dev` after PR #44.
 | Style spike | Working |
 | track-ed hosted editor + local Test drive | Released to production |
 | Track race foundation | Done; Race chunk, race-loop fixture, launcher entry |
-| Race manager MVP | Implemented; HUD + gate passed, PR pending |
+| Race manager MVP | Done; merged to `dev` (PR #47) |
 
 ## Current capabilities
 
@@ -436,12 +436,11 @@ Resume in this order:
 
 ## Next steps
 
-**Race manager MVP (implemented):** the Race chunk foundation is merged to
-`dev` (PR #44). The local lap/sector/progress tracker and HUD are implemented on
-`feat/race-manager`; the full gate passed and track-ed PR #7 is merged. The
-parent PR is ready to merge. See the resume checkpoint above and
-`docs/features/race-manager.md`. AI opponents and online contact are later
-batches (ADR-0013).
+**Race manager MVP (done):** the Race chunk foundation is merged to `dev`
+(PR #44). The local lap/sector/progress tracker and HUD are merged to `dev` as
+`45fa03d` (PR #47); track-ed PR #7 is merged and the parent pin is `1b22f5a`.
+See the resume checkpoint above and `docs/features/race-manager.md`. AI
+opponents are the next batch; online contact follows (ADR-0013).
 
 1. **Editor consolidation (next)**: continue
    `docs/features/editor-consolidation-plan.md`. A1, A2/A3, B1, B3, C1–C3 and
