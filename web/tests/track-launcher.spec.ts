@@ -128,3 +128,36 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
   expect(state.drive).toContain("67gp-guthrie-eagle");
   expect(state.stored).toBe("67gp-guthrie-eagle");
 });
+
+test("launcher opens loop-spline-point-terrain with race available", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/");
+  const entry = page.locator('[data-track-id="loop-spline-point-terrain"]');
+  await expect(entry).toBeVisible();
+  await expect(entry).toHaveAttribute(
+    "href",
+    "./drive/?track=loop-spline-point-terrain",
+  );
+  await entry.click();
+  await page.waitForURL(/\/web\/drive\//);
+  expect(new URL(page.url()).searchParams.get("track")).toBe(
+    "loop-spline-point-terrain",
+  );
+
+  await page.waitForFunction(
+    () =>
+      (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
+    undefined,
+    { timeout: 60_000 },
+  );
+  const drive = await page.evaluate(() => ({
+    error: (window as any).__driveViewerError,
+    telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
+  }));
+  expect(drive.error).toBeUndefined();
+  expect(drive.telemetry.track).toBe("loop-spline-point-terrain");
+  expect(drive.telemetry.raceAvailable).toBe(true);
+  expect(pageErrors).toEqual([]);
+});

@@ -52,6 +52,9 @@ Deployment:
 
 ## Current focus
 
+- Loop Spline Point Terrain is added as a fixture and public track option on
+  `feat/loop-spline-point-terrain`: 26 MB baked pack, 8 grid slots, and the
+  `section-1` race layout. Full gate passed; PR pending.
 - AI opponents batch is merged to `dev` as `fc4fdf3` (PR #49): one AI on
   race-ready tracks, simulated in the physics worker, rendered through the
   remote-car path, with no car-to-car contact.
@@ -272,6 +275,25 @@ Branch: `feat/ai-field`, created from `dev` at `fc4fdf3`.
 - Gate: cargo fmt, workspace clippy, 216 workspace tests, wasm check; 59 web
   tests; 110 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
 - Status: complete; full gate passed; PR pending.
+
+## Loop Spline Point Terrain track option
+
+Branch: `feat/loop-spline-point-terrain`, created from `dev` at `670312f`.
+
+- Fixture: `fixtures/tracks/loop-spline-point-terrain/` with the provided
+  `track-ed/project@5` project, exported `track.json`/`track.glb`, freshly baked
+  `pack.sima`, and README.
+- Pack: id `loop-spline-point-terrain`, 941.3 m layout, 471 centreline points,
+  8 grid slots, 4 sectors, Race chunk present. Pack size is 26 MB; source
+  directory is 45 MB.
+- Launcher: `Loop Spline Point Terrain` option in `TRACK_OPTIONS` and
+  `web/index.html`.
+- Coverage: a `track-pack` fixture test loads the checked-in pack and checks the
+  race shape; Playwright opens the new launcher entry and checks race
+  availability.
+- Gate: cargo fmt, workspace clippy, 217 workspace tests, wasm check; 59 web
+  tests; 111 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; PR pending.
 
 ## Completed checkpoints
 
