@@ -1,8 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-21
-Current phase: **Editor consolidation — track-ed is the sole editor; legacy
-removal is gated on migration, parity and CI coverage**
+Last updated: 2026-11-22
+Current phase: **AI opponents — race-grid AI in the physics worker**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +52,11 @@ Deployment:
 
 ## Current focus
 
+- AI opponents batch active on `feat/ai-opponents`, created from `dev` at
+  `abb7507`. ADR-0014 and `docs/features/ai-opponents.md` define one AI on
+  race-ready tracks, simulated in the physics worker, starting from race grid
+  slot 1, rendered through the remote-car path, with no car-to-car contact.
+  Physics and web workers are next.
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
@@ -219,7 +223,24 @@ Branch: `feat/race-manager`, created from `dev` after PR #44.
   1 skipped); WebGL2 fallback (2/2); track-ed tests (220 passed, 1 skipped) and
   build; agent sync. Track-ed PR #7 merged, the parent pin is updated, and the
   parent PR was merged to `dev` as `45fa03d` (PR #47).
-- Next: AI opponents.
+- Next: AI opponents batch (in progress).
+
+## AI opponents resume checkpoint
+
+Branch: `feat/ai-opponents`, created from `dev` at `abb7507`.
+
+- ADR-0014 accepts AI-in-physics-worker: one AI by default, up to three
+  supported, deterministic layout following, 500 Hz simulation, and 62.5 Hz
+  `ai_state` frames over the worker control channel.
+- Plan: `docs/features/ai-opponents.md`.
+- No versioned contract change. Reuse `RaceData`, `RaceState`, and the
+  64-float `SNAPSHOT_STATE` payload.
+- Player stays at the track spawn/start-finish; AI starts at `race.grid[1..]`.
+- AI uses `sim_core::Vehicle` and the track collider; no car-to-car contact.
+- Web creates hidden remote rigs for AI and applies frames with
+  `DriveViewer.set_remote_state`.
+- Status: in progress; waiting on physics AI controller/worker support and web
+  integration.
 
 ## Completed checkpoints
 
