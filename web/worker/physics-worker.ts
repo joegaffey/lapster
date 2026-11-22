@@ -207,6 +207,7 @@ function emitDiagnostics(now: number): void {
     stepP99Ms: p99,
     droppedTicks,
     catchupEvents,
+    aiCount: Number(simulation.ai_count()),
   });
 }
 
@@ -222,6 +223,7 @@ self.onmessage = async (event: MessageEvent) => {
         message.trackBytes,
         message.carBytes,
         message.aiCount ?? 0,
+        message.aiPace ?? 1,
       );
       post("ready", { setup: simulation.setup() });
       startLoop();

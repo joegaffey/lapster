@@ -52,6 +52,100 @@ function distanceToLayout(position: number[], layout: LayoutView): number {
   return closest;
 }
 
+interface AiCarView {
+  slot: number;
+  position: number[];
+}
+
+interface FieldView {
+  slots: number;
+  aiCount: number;
+  cars: AiCarView[];
+}
+
+async function fieldState(
+  page: import("@playwright/test").Page,
+): Promise<FieldView> {
+  return page.evaluate(() => {
+    const state = JSON.parse((window as any).__driveViewer.telemetry());
+    return {
+      slots: state.remoteSlots,
+      aiCount: state.aiCount,
+      cars: (state.remoteCars ?? []).map((car: any) => ({
+        slot: car.slot,
+        position: car.position,
+      })),
+    };
+  });
+}
+
+async function waitForField(
+  page: import("@playwright/test").Page,
+  count: number,
+) {
+  await page.waitForFunction(
+    (expected) => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      return Array.isArray(state.remoteCars) && state.remoteCars.length === expected;
+    },
+    count,
+    { timeout: 15_000 },
+  );
+}
+
+async function waitForFieldMovement(
+  page: import("@playwright/test").Page,
+  starts: Record<number, number[]>,
+) {
+  await page.waitForFunction(
+    (positions) => {
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      const cars = state.remoteCars ?? [];
+      const expected = Object.keys(positions).length;
+      return (
+        cars.length === expected &&
+        cars.every((car: any) => {
+          const start = positions[car.slot];
+          return (
+            Array.isArray(start) &&
+            car.position.every((value: number) => Number.isFinite(value)) &&
+            car.position.some(
+              (value: number, index: number) =>
+                Math.abs(value - start[index]) > 0.1,
+            )
+          );
+        })
+      );
+    },
+    starts,
+    { timeout: 20_000 },
+  );
+}
+
+async function assertFieldOnRoad(
+  page: import("@playwright/test").Page,
+  layout: LayoutView,
+  count: number,
+  durationMs: number,
+) {
+  const roadLimit = layout.half_width + 1.0;
+  let samples = 0;
+  const deadline = Date.now() + durationMs;
+  while (Date.now() < deadline) {
+    const field = await fieldState(page);
+    expect(field.cars).toHaveLength(count);
+    for (const car of field.cars) {
+      expect(
+        distanceToLayout(car.position, layout),
+        `AI ${car.slot} left the road at [${car.position.join(", ")}]`,
+      ).toBeLessThanOrEqual(roadLimit);
+    }
+    samples += 1;
+    await page.waitForTimeout(250);
+  }
+  expect(samples).toBeGreaterThan(5);
+}
+
 test("launcher opens race-loop with the race layout available", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -100,61 +194,30 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   await expect(page.locator("#race-best")).toHaveText("—");
   await expect(page.locator("#race-wrong-way")).toBeHidden();
 
-  await page.waitForFunction(
-    () => {
-      const state = JSON.parse((window as any).__driveViewer.telemetry());
-      return Array.isArray(state.remoteCars) && state.remoteCars.length === 1;
-    },
-    undefined,
-    { timeout: 10_000 },
-  );
-  const aiStart = await page.evaluate(() => {
-    const state = JSON.parse((window as any).__driveViewer.telemetry());
-    return { slots: state.remoteSlots, cars: state.remoteCars };
-  });
-  expect(aiStart.slots).toBe(1);
-  expect(aiStart.cars).toHaveLength(1);
-  expect(aiStart.cars[0].slot).toBe(1);
-  expect(
-    aiStart.cars[0].position.every((value: number) => Number.isFinite(value)),
-  ).toBe(true);
-  const aiStartPosition = aiStart.cars[0].position as number[];
+  await expect(page.getByTestId("race-ai")).toBeVisible();
+  await expect(page.getByTestId("race-ai")).toContainText("AI");
+  await expect(page.locator("#race-ai")).toHaveText("3");
 
-  await page.waitForFunction(
-    (start) => {
-      const state = JSON.parse((window as any).__driveViewer.telemetry());
-      const car = state.remoteCars?.[0];
-      return (
-        car &&
-        car.position.every((value: number) => Number.isFinite(value)) &&
-        car.position.some(
-          (value: number, index: number) => Math.abs(value - start[index]) > 0.1,
-        )
-      );
-    },
-    aiStartPosition,
-    { timeout: 15_000 },
-  );
+  await waitForField(page, 3);
+  const aiStart = await fieldState(page);
+  expect(aiStart.slots).toBe(3);
+  expect(aiStart.aiCount).toBe(3);
+  expect(aiStart.cars).toHaveLength(3);
+  expect(aiStart.cars.map((car) => car.slot).sort()).toEqual([1, 2, 3]);
+  for (const car of aiStart.cars) {
+    expect(
+      car.position.every((value: number) => Number.isFinite(value)),
+    ).toBe(true);
+  }
+  const starts: Record<number, number[]> = {};
+  for (const car of aiStart.cars) {
+    starts[car.slot] = car.position;
+  }
+
+  await waitForFieldMovement(page, starts);
 
   const layout = drive.race.layout as LayoutView;
-  const roadLimit = layout.half_width + 1.0;
-  const samples: number[][] = [];
-  const sampleDeadline = Date.now() + 5_000;
-  while (Date.now() < sampleDeadline) {
-    const position = await page.evaluate(() => {
-      const state = JSON.parse((window as any).__driveViewer.telemetry());
-      return state.remoteCars?.[0]?.position as number[] | undefined;
-    });
-    if (position) {
-      samples.push(position);
-      expect(
-        distanceToLayout(position, layout),
-        `AI left the road at [${position.join(", ")}]`,
-      ).toBeLessThanOrEqual(roadLimit);
-    }
-    await page.waitForTimeout(250);
-  }
-  expect(samples.length).toBeGreaterThan(5);
+  await assertFieldOnRoad(page, layout, 3, 5_000);
 
   const before = await page.evaluate(() => {
     const viewer = (window as any).__driveViewer;
@@ -202,5 +265,77 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   expect(agreement.telemetry.started).toBe(true);
   expect(agreement.current).not.toBe(before.current);
 
+  expect(pageErrors).toEqual([]);
+});
+
+test("?ai=1 requests a single AI opponent", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&ai=1");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await expect(page.locator("#race-panel")).toBeVisible();
+
+  await expect(page.getByTestId("race-ai")).toBeVisible();
+  await expect(page.locator("#race-ai")).toHaveText("1");
+  await waitForField(page, 1);
+
+  const field = await fieldState(page);
+  expect(field.slots).toBe(1);
+  expect(field.aiCount).toBe(1);
+  expect(field.cars).toHaveLength(1);
+  expect(field.cars[0].slot).toBe(1);
+  expect(
+    field.cars[0].position.every((value: number) => Number.isFinite(value)),
+  ).toBe(true);
+  expect(pageErrors).toEqual([]);
+});
+
+test("?ai=0 keeps the race field empty", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&ai=0");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await expect(page.locator("#race-panel")).toBeVisible();
+  await expect(page.getByTestId("race-ai")).toBeHidden();
+  await page.waitForTimeout(750);
+
+  const field = await fieldState(page);
+  expect(field.slots).toBe(0);
+  expect(field.aiCount).toBe(0);
+  expect(field.cars).toEqual([]);
+  await expect(page.getByTestId("race-ai")).toBeHidden();
+  expect(pageErrors).toEqual([]);
+});
+
+test("?aiPace=fast keeps the three AI field on the road", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&aiPace=fast");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await expect(page.locator("#race-panel")).toBeVisible();
+  await expect(page.getByTestId("race-ai")).toBeVisible();
+  await expect(page.locator("#race-ai")).toHaveText("3");
+
+  await waitForField(page, 3);
+  const field = await fieldState(page);
+  expect(field.slots).toBe(3);
+  expect(field.aiCount).toBe(3);
+  expect(field.cars).toHaveLength(3);
+  const starts: Record<number, number[]> = {};
+  for (const car of field.cars) {
+    starts[car.slot] = car.position;
+  }
+  await waitForFieldMovement(page, starts);
+
+  const race = await page.evaluate(() =>
+    JSON.parse((window as any).__driveViewer.race()),
+  );
+  await assertFieldOnRoad(page, race.layout as LayoutView, 3, 4_000);
   expect(pageErrors).toEqual([]);
 });

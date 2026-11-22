@@ -1,5 +1,7 @@
 use glam::{Quat, Vec3};
-use sim_core::{AiDriver, Controls, PhysicsTuning, RaceTracker, TrackCollider, Vehicle, FIXED_DT};
+use sim_core::{
+    AiDriver, AiPace, Controls, PhysicsTuning, RaceTracker, TrackCollider, Vehicle, FIXED_DT,
+};
 use sim_types::snapshot_state as state;
 use sim_types::{CarTuning, SpawnPoint, SNAPSHOT_STATE_FLOATS};
 use wasm_bindgen::prelude::*;
@@ -90,6 +92,7 @@ impl Simulation {
         track_pack_bytes: &[u8],
         car_pack_bytes: &[u8],
         ai_count: u32,
+        ai_pace: u32,
     ) -> Result<Simulation, JsValue> {
         let track_bytes = track_pack_bytes.to_vec();
         let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
@@ -132,11 +135,12 @@ impl Simulation {
             .map(|race| race.grid.len().saturating_sub(1) as u32)
             .unwrap_or(0);
         let ai_total = requested.min(available);
+        let pace = AiPace::from_index(ai_pace);
 
         let mut ai_cars = Vec::with_capacity(ai_total as usize);
         if let Some(race) = race.as_ref() {
             for index in 0..ai_total as usize {
-                let driver = AiDriver::new(upshift_rpm, downshift_rpm, max_gear);
+                let driver = AiDriver::new(upshift_rpm, downshift_rpm, max_gear, pace);
                 if let Some(car) =
                     AiCar::new(car_physics.clone(), collider.clone(), race, index, driver)
                 {

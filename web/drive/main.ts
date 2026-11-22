@@ -100,7 +100,38 @@ const CAR_URL = withPackVersion(
 const carBay = selectedBay();
 const mpMode = params.get("mp") === "1";
 const REMOTE_SLOTS = 3;
+const AI_FIELD_MAX = 3;
+const DEFAULT_AI_PACE = 1;
+const AI_PACE_INDICES: Record<string, number> = {
+  chill: 0,
+  club: 1,
+  fast: 2,
+};
 const MULTIPLAYER_SEND_HZ = 30;
+
+function resolveAiCount(raceAvailable: boolean): number {
+  if (mpMode || !raceAvailable) {
+    return 0;
+  }
+  const raw = params.get("ai");
+  if (raw === null || raw.trim() === "") {
+    return AI_FIELD_MAX;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return AI_FIELD_MAX;
+  }
+  return Math.min(AI_FIELD_MAX, Math.max(0, Math.trunc(value)));
+}
+
+function resolveAiPace(): number {
+  const raw = params.get("aiPace");
+  if (raw === null) {
+    return DEFAULT_AI_PACE;
+  }
+  const value = AI_PACE_INDICES[raw];
+  return typeof value === "number" ? value : DEFAULT_AI_PACE;
+}
 
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 let renderScale = 1;
@@ -129,6 +160,8 @@ const raceCurrentLabel = document.querySelector<HTMLElement>("#race-current")!;
 const raceLastLabel = document.querySelector<HTMLElement>("#race-last")!;
 const raceBestLabel = document.querySelector<HTMLElement>("#race-best")!;
 const raceWrongWayLabel = document.querySelector<HTMLElement>("#race-wrong-way")!;
+const raceAiStat = document.querySelector<HTMLElement>("#race-ai-stat")!;
+const raceAiValue = document.querySelector<HTMLElement>("#race-ai")!;
 
 const CAMERA_STORAGE_KEY = BUILD_CHANNEL === "dev" ? "lapster.camera.dev.v1" : "lapster.camera.v1";
 const keys = new Set<string>();
@@ -273,6 +306,12 @@ function updateRaceHud(telemetry: any) {
   raceLastLabel.textContent = formatRaceTime(race.last_lap_time);
   raceBestLabel.textContent = formatRaceTime(race.best_lap_time);
   raceWrongWayLabel.hidden = !race.wrong_way;
+  const aiCount =
+    typeof telemetry?.aiCount === "number" && Number.isFinite(telemetry.aiCount)
+      ? Math.max(0, Math.trunc(telemetry.aiCount))
+      : 0;
+  raceAiStat.hidden = aiCount <= 0;
+  raceAiValue.textContent = String(aiCount);
 }
 
 function updateHud(telemetry: any) {
@@ -734,6 +773,7 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
             base.physicsMode = "sab";
             base.workerDroppedTicks = client.diagnostics.droppedTicks;
             base.workerCatchupEvents = client.diagnostics.catchupEvents;
+            base.aiCount = client.diagnostics.aiCount;
             return JSON.stringify(base);
           };
         case "apply_car_setup":
@@ -1005,7 +1045,8 @@ async function boot() {
   resizeCanvas();
   status.textContent = "creating physics";
   const hasRace = trackPack.manifest.entrypoints.race != null;
-  const aiCount = !mpMode && hasRace ? 1 : 0;
+  const aiCount = resolveAiCount(hasRace);
+  const aiPace = resolveAiPace();
   const viewer = await DriveViewer.create(
     canvas,
     trackPack.bytes,
@@ -1045,6 +1086,7 @@ async function boot() {
         trackPack.bytes,
         carPack.bytes,
         aiCount,
+        aiPace,
       );
       physics = client;
       client.onAiFrame = (slot, frame) => {
