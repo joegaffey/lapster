@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-22
-Current phase: **AI field — three opponents, pace, and performance**
+Current phase: **AI race — grid start, countdown, standings, and results**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -55,10 +55,12 @@ Deployment:
 - AI opponents batch is merged to `dev` as `fc4fdf3` (PR #49): one AI on
   race-ready tracks, simulated in the physics worker, rendered through the
   remote-car path, with no car-to-car contact.
-- AI field batch active on `feat/ai-field`, created from `dev` at `fc4fdf3`.
-  `docs/features/ai-field.md` defines three AI by default, `?ai=0..3`,
-  `?aiPace=chill|club|fast`, pace scaling, and `aiCount` diagnostics. Physics
-  and web are implemented; the full gate passed and the PR is next.
+- AI field batch is merged to `dev` as `670312f` (PR #50): three AI by default,
+  `?ai=0..3`, `?aiPace=chill|club|fast`, `AiPace` scaling, `AI N` HUD, and
+  `aiCount` diagnostics.
+- AI race batch active on `feat/ai-race`, created from `dev` at `670312f`.
+  `docs/features/ai-race.md` and ADR-0015 define player grid start, countdown,
+  live positions, three laps, and results. Physics, render, and web are next.
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
@@ -271,7 +273,24 @@ Branch: `feat/ai-field`, created from `dev` at `fc4fdf3`.
   0.034 ms; 3 AI p50 0.039 ms / p99 0.061 ms; both 499.85 Hz, no dropped ticks.
 - Gate: cargo fmt, workspace clippy, 216 workspace tests, wasm check; 59 web
   tests; 110 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
-- Status: complete; full gate passed; PR pending.
+- Status: complete; merged to `dev` as `670312f` (PR #50).
+
+## AI race resume checkpoint
+
+Branch: `feat/ai-race`, created from `dev` at `670312f`.
+
+- ADR-0015 accepts a web-owned race director, grid-start lap semantics, worker
+  race placement/start/laps, and AI race state in `ai_state`.
+- Plan: `docs/features/ai-race.md`.
+- No versioned contract change. `RaceState` and the 64-float snapshot stay the
+  same.
+- Player starts at `race.grid[0]`; AI at `race.grid[1..]`; both use the layout
+  tangent for heading.
+- Countdown holds the worker paused; GO resumes and starts the race clock.
+- Default race is 3 laps; `?laps=1..5` is for validation.
+- Results appear when the player finishes, using current order for unfinished
+  AI.
+- Status: in progress; physics, render, and web are next.
 
 ## Completed checkpoints
 
@@ -298,6 +317,7 @@ Branch: `feat/ai-field`, created from `dev` at `fc4fdf3`.
 | Track race foundation | Done; Race chunk, race-loop fixture, launcher entry |
 | Race manager MVP | Done; merged to `dev` (PR #47) |
 | AI opponents | Done; merged to `dev` (PR #49) |
+| AI field | Done; merged to `dev` (PR #50) |
 
 ## Current capabilities
 
