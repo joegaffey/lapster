@@ -32,6 +32,20 @@ pub enum CarShadowMode {
     Off,
 }
 
+pub const MAX_GARAGE_LIGHTS: usize = 10;
+
+/// A single studio spot light for the concrete garage presentation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GarageLight {
+    pub position: [f32; 3],
+    pub direction: [f32; 3],
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub range: f32,
+    pub inner_cos: f32,
+    pub outer_cos: f32,
+}
+
 static MESH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x3,
     1 => Float32x3,
@@ -101,6 +115,19 @@ struct GrassChunkFade {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+struct SpotLightUniform {
+    /// xyz position, w range.
+    position: [f32; 4],
+    /// xyz normalized direction, w inner cone cosine.
+    direction: [f32; 4],
+    /// rgb colour, w intensity.
+    color: [f32; 4],
+    /// x outer cone cosine, yzw reserved.
+    cone: [f32; 4],
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
@@ -118,6 +145,10 @@ struct CameraUniform {
     camera_up: [f32; 4],
     particle_params: [f32; 4],
     particle_shade: [f32; 4],
+    garage_ambient: [f32; 4],
+    /// x garage mode flag, y active spot-light count, zw reserved.
+    garage_params: [f32; 4],
+    spot_lights: [SpotLightUniform; MAX_GARAGE_LIGHTS],
 }
 
 #[repr(C)]
@@ -271,6 +302,9 @@ pub struct Renderer {
     car_shadow_height: f32,
     particle_params: [f32; 4],
     particle_shade: [f32; 4],
+    garage_mode: bool,
+    garage_ambient: [f32; 3],
+    garage_lights: Vec<GarageLight>,
     environment_mode: EnvironmentShadowMode,
     car_shadow_mode: CarShadowMode,
     car_dynamic_supported: bool,
@@ -472,6 +506,9 @@ impl Renderer {
                 particles.radial_end,
             ],
             [particles.shade_min, particles.shade_max, 0.0, 0.0],
+            [0.0; 4],
+            [0.0; 4],
+            [SpotLightUniform::default(); MAX_GARAGE_LIGHTS],
         );
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera uniform"),
@@ -879,6 +916,9 @@ impl Renderer {
                 particles.radial_end,
             ],
             particle_shade: [particles.shade_min, particles.shade_max, 0.0, 0.0],
+            garage_mode: false,
+            garage_ambient: [0.0; 3],
+            garage_lights: Vec::new(),
             environment_mode: EnvironmentShadowMode::High,
             car_shadow_mode: CarShadowMode::Dynamic,
             car_dynamic_supported: true,
@@ -1685,6 +1725,86 @@ impl Renderer {
         self.sun_time
     }
 
+    /// Enable or disable the concrete-garage studio lighting path.
+    ///
+    /// In garage mode the sun is fixed vertically (so the environment shadow
+    /// map and car silhouette decals keep giving contact shadows), the sky is
+    /// near-black, and up to [`MAX_GARAGE_LIGHTS`] spot lights are evaluated in
+    /// the mesh shader. Calling this with `mode = false` clears the spot lights
+    /// without touching the directional sun.
+    pub fn set_garage_lights(&mut self, mode: bool, ambient: [f32; 3], lights: &[GarageLight]) {
+        self.garage_mode = mode;
+        self.garage_ambient = ambient;
+        self.garage_lights.clear();
+        if mode {
+            self.garage_lights
+                .extend_from_slice(&lights[..lights.len().min(MAX_GARAGE_LIGHTS)]);
+            self.sun_direction = Vec3::NEG_Y;
+            self.sun_elevation = std::f32::consts::FRAC_PI_2;
+            self.sky_horizon = [0.008, 0.009, 0.012, 0.0];
+            self.sky_zenith = [0.0015, 0.0018, 0.0025, 1.0];
+            self.shadow_view_proj = shadow_view_proj(
+                self.active_shadow_map_size(),
+                Vec3::from_array(self.shadow_focus),
+                self.shadow_extent,
+                self.sun_direction,
+            );
+            self.shadow_dirty = true;
+            self.baked_valid = false;
+        }
+        self.write_camera();
+    }
+
+    fn garage_uniforms(&self) -> ([f32; 4], [f32; 4], [SpotLightUniform; MAX_GARAGE_LIGHTS]) {
+        let mut spot_lights = [SpotLightUniform::default(); MAX_GARAGE_LIGHTS];
+        let count = if self.garage_mode {
+            self.garage_lights.len().min(MAX_GARAGE_LIGHTS)
+        } else {
+            0
+        };
+        for (slot, light) in spot_lights
+            .iter_mut()
+            .zip(self.garage_lights.iter().take(count))
+        {
+            *slot = SpotLightUniform {
+                position: [
+                    light.position[0],
+                    light.position[1],
+                    light.position[2],
+                    light.range.max(0.001),
+                ],
+                direction: [
+                    light.direction[0],
+                    light.direction[1],
+                    light.direction[2],
+                    light.inner_cos,
+                ],
+                color: [
+                    light.color[0],
+                    light.color[1],
+                    light.color[2],
+                    light.intensity.max(0.0),
+                ],
+                cone: [light.outer_cos, 0.0, 0.0, 0.0],
+            };
+        }
+        (
+            [
+                self.garage_ambient[0],
+                self.garage_ambient[1],
+                self.garage_ambient[2],
+                0.0,
+            ],
+            [
+                if self.garage_mode { 1.0 } else { 0.0 },
+                count as f32,
+                0.0,
+                0.0,
+            ],
+            spot_lights,
+        )
+    }
+
     fn shadow_modes(&self) -> [f32; 4] {
         [
             if self.environment_mode == EnvironmentShadowMode::High {
@@ -1854,6 +1974,10 @@ impl Renderer {
     }
 
     pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
+        if self.garage_mode {
+            // Studio lighting is independent of the track time-of-day.
+            return 0.0;
+        }
         self.sun_time = hours.clamp(6.0, 20.0);
         let (direction, elevation) = sun_for_time(self.sun_time);
         self.sun_direction = direction;
@@ -1929,6 +2053,9 @@ impl Renderer {
             self.shadow_depth_bias,
             self.particle_params,
             self.particle_shade,
+            [0.0; 4],
+            [0.0; 4],
+            [SpotLightUniform::default(); MAX_GARAGE_LIGHTS],
         );
         self.queue.write_buffer(
             &self.bake_camera_buffer,
@@ -2145,6 +2272,7 @@ impl Renderer {
     }
 
     fn write_camera(&self) {
+        let (garage_ambient, garage_params, spot_lights) = self.garage_uniforms();
         let uniform = camera_uniform(
             &self.camera,
             self.config.width,
@@ -2164,6 +2292,9 @@ impl Renderer {
             self.shadow_depth_bias,
             self.particle_params,
             self.particle_shade,
+            garage_ambient,
+            garage_params,
+            spot_lights,
         );
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -2521,6 +2652,9 @@ fn camera_uniform(
     shadow_depth_bias: f32,
     particle_params: [f32; 4],
     particle_shade: [f32; 4],
+    garage_ambient: [f32; 4],
+    garage_params: [f32; 4],
+    spot_lights: [SpotLightUniform; MAX_GARAGE_LIGHTS],
 ) -> CameraUniform {
     let aspect = width as f32 / height as f32;
     let view_proj = camera.view_proj(aspect).to_cols_array_2d();
@@ -2564,6 +2698,9 @@ fn camera_uniform(
         },
         particle_params,
         particle_shade,
+        garage_ambient,
+        garage_params,
+        spot_lights,
     }
 }
 
@@ -3724,6 +3861,28 @@ mod tests {
         let levels = mip_chain(&rgba8, 2, 2);
         let mid = levels[1].2[0];
         assert!((187..=189).contains(&mid), "mid={mid}");
+    }
+
+    #[test]
+    fn track_shader_parses_and_validates_with_garage_lighting() {
+        let module = wgpu::naga::front::wgsl::parse_str(include_str!("track.wgsl"))
+            .expect("track shader parses");
+        let mut validator = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        );
+        validator.validate(&module).expect("track shader validates");
+    }
+
+    #[test]
+    fn camera_uniform_reserves_ten_spot_light_slots() {
+        assert_eq!(super::MAX_GARAGE_LIGHTS, 10);
+        assert_eq!(std::mem::size_of::<super::SpotLightUniform>(), 64);
+        // 24 shared vec4-sized slots + ambient + params + 10 spot lights.
+        assert_eq!(
+            std::mem::size_of::<super::CameraUniform>(),
+            16 * (24 + 2 + super::MAX_GARAGE_LIGHTS * 4)
+        );
     }
 
     #[test]

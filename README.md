@@ -22,11 +22,13 @@ Both builds default to Hybrid environment shadows (full-track static plus near d
   can still be loaded with `?car=` and `?track=`. Throttle, brake, edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
   500 Hz physics, and a shareable tuning dialog.
-- **Garage** — browse a curated mixed showroom where the catalog cars alternate across ten
-  colour-keyed bays in two facing rows of five: red/blue/yellow/green/orange opposite
-  black/white/pink/navy/cyan. Chevrons or arrow keys step through the bays. Vertex-coloured
-  cars use the bay paint; the textured Deckard keeps its source livery. Each car sits centered in its canopy bay with a front
-  three-quarter start view. The chevrons start hidden, fade in on mouse movement or touch,
+- **Garage** — defaults to a concrete studio: one row of ten colour-keyed bays under overhead
+  spotlights, with a dark backdrop and a concrete floor. The catalog cars alternate down the
+  row; chevrons or arrow keys step along it. Vertex-coloured cars use the bay paint; the
+  textured Deckard keeps its source livery. Each car sits on the floor with a front
+  three-quarter start view. `?garage=showroom` keeps the original track-backed showroom with
+  two facing rows of five (red/blue/yellow/green/orange opposite
+  black/white/pink/navy/cyan). The chevrons start hidden, fade in on mouse movement or touch,
   and fade out when idle. Wheel steering/spin controls and an orbit/zoom camera follow the
   selection. The selected bay's car is remembered and drives with its showroom paint; the
   garage `Drive` button opens it with the launcher's selected track (Skidpad by default),

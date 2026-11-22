@@ -83,6 +83,7 @@ setupHud();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
+const garageMode = params.get("garage") === "showroom" ? "showroom" : "concrete";
 const defaultTrack = loadSelectedTrack();
 const TRACK_URL = withPackVersion(params.get("track") ?? defaultTrack.url, APP_VERSION);
 const requestedCar = loadSelectedCar();
@@ -166,7 +167,7 @@ function renderDebug(debug: any) {
   ]);
 
   surfaces.replaceChildren();
-  for (const surface of debug.surfaces) {
+  for (const surface of debug.surfaces ?? []) {
     const item = document.createElement("li");
     const swatch = document.createElement("span");
     swatch.className = "name";
@@ -189,18 +190,27 @@ async function boot() {
   await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
   status.textContent = "loading packs";
-  const [trackPack, carPacks] = await Promise.all([
-    loadPack(TRACK_URL),
-    Promise.all(CAR_URLS.map((url) => loadPack(url))),
-  ]);
+  const loadCars = () => Promise.all(CAR_URLS.map((url) => loadPack(url)));
 
-  resizeCanvas();
-  status.textContent = "creating renderer";
-  const viewer = await GarageViewer.create(
-    canvas,
-    trackPack.bytes,
-    carPacks.map((pack) => pack.bytes),
-  );
+  let viewer: GarageViewer;
+  if (garageMode === "showroom") {
+    const [trackPack, carPacks] = await Promise.all([loadPack(TRACK_URL), loadCars()]);
+    resizeCanvas();
+    status.textContent = "creating renderer";
+    viewer = await GarageViewer.create(
+      canvas,
+      trackPack.bytes,
+      carPacks.map((pack) => pack.bytes),
+    );
+  } else {
+    const carPacks = await loadCars();
+    resizeCanvas();
+    status.textContent = "creating renderer";
+    viewer = await GarageViewer.create_concrete(
+      canvas,
+      carPacks.map((pack) => pack.bytes),
+    );
+  }
   window.__garageViewer = viewer;
   setupAssistsDialog(viewer, {
     gameplay: false,
@@ -272,7 +282,10 @@ async function boot() {
     applyAngles();
   };
 
-  const bayOrder = (count: number): number[] => {
+  const bayOrder = (count: number, layout: string): number[] => {
+    if (layout === "line") {
+      return Array.from({ length: count }, (_, index) => index);
+    }
     if (count <= 5) {
       return Array.from({ length: count }, (_, index) => index);
     }
@@ -288,7 +301,7 @@ async function boot() {
 
   const stepBay = (delta: number) => {
     const info = JSON.parse(viewer.bay_info());
-    const order = bayOrder(Math.max(1, info.count));
+    const order = bayOrder(Math.max(1, info.count), info.layout);
     const position = Math.max(0, order.indexOf(selectedBay));
     const next = order[(position + delta + order.length) % order.length];
     selectBay(next);

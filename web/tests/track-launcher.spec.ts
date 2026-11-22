@@ -16,7 +16,7 @@ test("launcher track selection persists into drive and garage", async ({ page })
     "drift-sketchfab",
   );
 
-  await page.goto("/web/garage/");
+  await page.goto("/web/garage/?garage=showroom");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
@@ -122,11 +122,27 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
       stored: localStorage.getItem("lapster.car.v1"),
     };
   });
-  expect(state.info.carId).toBe("67gp-guthrie-eagle");
-  expect(state.info.car.id).toBe("67gp-guthrie-eagle");
-  expect(state.asset).toContain("67gp-guthrie-eagle");
-  expect(state.drive).toContain("67gp-guthrie-eagle");
-  expect(state.stored).toBe("67gp-guthrie-eagle");
+  expect(state.info.carId).toBe("sc-deckard-conejo");
+  expect(state.info.car.id).toBe("sc-deckard-conejo");
+  expect(state.asset).toContain("sc-deckard-conejo");
+  expect(state.drive).toContain("sc-deckard-conejo");
+  expect(state.stored).toBe("sc-deckard-conejo");
+
+  await page.keyboard.press("ArrowRight");
+  const after = await page.evaluate(() => {
+    const viewer = (window as any).__garageViewer;
+    return {
+      info: JSON.parse(viewer.bay_info()),
+      asset: document.querySelector("#asset")?.textContent,
+      drive: document.querySelector("#drive-car")?.getAttribute("href"),
+      stored: localStorage.getItem("lapster.car.v1"),
+    };
+  });
+  expect(after.info.carId).toBe("67gp-guthrie-eagle");
+  expect(after.info.car.id).toBe("67gp-guthrie-eagle");
+  expect(after.asset).toContain("67gp-guthrie-eagle");
+  expect(after.drive).toContain("67gp-guthrie-eagle");
+  expect(after.stored).toBe("67gp-guthrie-eagle");
 });
 
 test("launcher opens loop-spline-point-terrain with race available", async ({ page }) => {

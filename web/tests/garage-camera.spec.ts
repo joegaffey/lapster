@@ -59,7 +59,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   const nextBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(nextBay.selected).toBe(5);
+  expect(nextBay.selected).toBe(1);
   await page.waitForTimeout(800);
   const nextCamera = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.camera_info()),
@@ -70,7 +70,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   const keyboardBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(keyboardBay.selected).toBe(6);
+  expect(keyboardBay.selected).toBe(2);
 });
 
 test("garage camera flies between bays", async ({ page }) => {
@@ -116,7 +116,7 @@ test("garage bay navigation reverses order in the second row", async ({ page }) 
     localStorage.setItem("lapster.car.v1", "sc-deckard-conejo");
   });
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6&bay=5",
+    "/web/garage/?garage=showroom&track=../../fixtures/tracks/minimal/pack.sima&v=cp6&bay=5",
   );
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,

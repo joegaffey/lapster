@@ -38,7 +38,8 @@ python3 -m http.server 8123 --bind 127.0.0.1
 Pages:
 
 - Drive: `http://127.0.0.1:8123/web/drive/`
-- Garage: `http://127.0.0.1:8123/web/garage/`
+- Garage: `http://127.0.0.1:8123/web/garage/` (concrete studio; add
+  `?garage=showroom` for the track-backed showroom)
 - Track: `http://127.0.0.1:8123/web/track-viewer/`
 
 Expected browser: Chromium/Chrome. WebGPU is used when available; WebGL2 is the
@@ -52,6 +53,12 @@ Deployment:
 
 ## Current focus
 
+- Concrete garage batch is active on `feat/concrete-garage` (from `dev` at
+  `0754a7c`): a new default concrete studio with one row of ten cars, overhead
+  spot lights, a procedural floor, and a dark backdrop; `?garage=showroom`
+  keeps the original track-backed showroom. ADR-0016 records the additive mode.
+  The full gate passes and the dev preview is triggered from the branch; PR
+  pending.
 - Loop Spline Point Terrain is added as a fixture and public track option on
   `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
   `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises

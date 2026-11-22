@@ -50,7 +50,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
     debug: JSON.parse((window as any).__garageViewer.debug_info()),
   }));
   expect(garage.error).toBeUndefined();
-  expect(garage.asset).toContain("skidpad05 + mazda-rx7");
+  expect(garage.asset).toContain("concrete-garage + mazda-rx7");
   expect(garage.debug.cars.map((car: any) => car.id)).toEqual([
     "mazda-rx7",
     "sc-deckard-conejo",

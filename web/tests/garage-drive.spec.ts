@@ -1,8 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("selected garage car becomes the driving car", async ({ page }) => {
-  const trackQuery = "?track=../../fixtures/tracks/minimal/pack.sima&v=cp6";
-  await page.goto(`/web/garage/${trackQuery}`);
+  await page.goto("/web/garage/");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
@@ -16,12 +15,12 @@ test("selected garage car becomes the driving car", async ({ page }) => {
   const bay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(bay.selected).toBe(6);
-  expect(bay.colorName).toBe("White");
+  expect(bay.selected).toBe(2);
+  expect(bay.colorName).toBe("Yellow");
 
   const driveHref = await page.locator("#drive-car").getAttribute("href");
-  expect(new URL(driveHref!).searchParams.get("bay")).toBe("7");
-  expect(await page.evaluate(() => localStorage.getItem("lapster.garage.car.v1"))).toBe("6");
+  expect(new URL(driveHref!).searchParams.get("bay")).toBe("3");
+  expect(await page.evaluate(() => localStorage.getItem("lapster.garage.car.v1"))).toBe("2");
 
   await page.click("#drive-car");
   await page.waitForFunction(
@@ -33,9 +32,9 @@ test("selected garage car becomes the driving car", async ({ page }) => {
   const telemetry = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
-  expect(telemetry.carBay).toBe(6);
-  expect(telemetry.carColor).toBe("White");
-  await expect(page.locator("#asset")).toContainText("White");
+  expect(telemetry.carBay).toBe(2);
+  expect(telemetry.carColor).toBe("Yellow");
+  await expect(page.locator("#asset")).toContainText("Yellow");
 
   await page.goto(
     "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=cp6",
@@ -48,6 +47,6 @@ test("selected garage car becomes the driving car", async ({ page }) => {
   const persisted = await page.evaluate(() =>
     JSON.parse((window as any).__driveViewer.telemetry()),
   );
-  expect(persisted.carBay).toBe(6);
-  expect(persisted.carColor).toBe("White");
+  expect(persisted.carBay).toBe(2);
+  expect(persisted.carColor).toBe("Yellow");
 });

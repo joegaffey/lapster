@@ -986,6 +986,7 @@ pub struct GarageViewer {
     initial_camera: Camera,
     camera: Camera,
     car_shadow_range: Option<std::ops::Range<usize>>,
+    layout: &'static str,
 }
 
 #[wasm_bindgen]
@@ -1095,6 +1096,81 @@ impl GarageViewer {
             initial_camera: camera,
             camera,
             car_shadow_range,
+            layout: "grid",
+        };
+        viewer.update_decals();
+        Ok(viewer)
+    }
+
+    pub async fn create_concrete(
+        canvas: web_sys::HtmlCanvasElement,
+        car_packs: js_sys::Array,
+    ) -> Result<GarageViewer, JsValue> {
+        if car_packs.length() == 0 {
+            return Err(JsValue::from_str("expected at least one car pack"));
+        }
+        let mut car_data = Vec::with_capacity(car_packs.length() as usize);
+        for value in car_packs.iter() {
+            let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
+            let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
+            if car_pack.kind() != sim_types::AssetKind::Car {
+                return Err(JsValue::from_str("expected car packs"));
+            }
+            let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
+            let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
+            let car_manifest = car_pack.manifest().clone();
+            car_data.push((car_physics, car_visual, car_manifest));
+        }
+        let cars = car_data
+            .iter()
+            .map(|(physics, visual, manifest)| garage::GarageCar {
+                physics,
+                visual,
+                manifest,
+            })
+            .collect::<Vec<_>>();
+
+        let garage::ConcreteGarageBuild {
+            mut scene, lights, ..
+        } = garage::build_concrete_garage(&cars, 10, 0)
+            .map_err(|error| JsValue::from_str(&error))?;
+        let bays = std::mem::take(&mut scene.garage_bays);
+        let debug_info = scene.debug_info.clone();
+        let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
+        let shadow_focus = camera.target;
+        let ground_y = bays.first().map(|bay| bay.decal_ground_y).unwrap_or(0.0);
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for bay in &bays {
+            let point = Vec3::from_array(bay.decal_center);
+            min = min.min(point);
+            max = max.max(point);
+        }
+        let center = if min.is_finite() && max.is_finite() {
+            (min + max) * 0.5
+        } else {
+            Vec3::new(0.0, ground_y, 0.0)
+        };
+        let half_extent = ((max.x - min.x).max(max.z - min.z) * 0.5 + 20.0).clamp(60.0, 140.0);
+        let width = canvas.width().max(1);
+        let height = canvas.height().max(1);
+        let mut renderer =
+            renderer::Renderer::new(canvas, width, height, scene, &GpuTuning::default()).await?;
+        renderer.set_lines_visible(false);
+        renderer.set_baked_region(center.to_array(), half_extent, ground_y);
+        renderer.set_garage_lights(true, garage::CONCRETE_AMBIENT, &lights);
+        renderer.set_shadow_focus(shadow_focus, GARAGE_SHADOW_EXTENT);
+        let mut viewer = GarageViewer {
+            renderer,
+            debug_info,
+            bays,
+            selected_bay: 0,
+            steer: 0.0,
+            spin: 0.0,
+            initial_camera: camera,
+            camera,
+            car_shadow_range: None,
+            layout: "line",
         };
         viewer.update_decals();
         Ok(viewer)
@@ -1164,6 +1240,7 @@ impl GarageViewer {
         serde_json::json!({
             "selected": self.selected_bay,
             "count": self.bays.len(),
+            "layout": self.layout,
             "name": bay.map(|bay| bay.name.clone()).unwrap_or_default(),
             "carId": bay.map(|bay| bay.car_id.clone()).unwrap_or_default(),
             "car": bay.map(|bay| bay.car.clone()),
