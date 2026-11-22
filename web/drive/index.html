@@ -236,6 +236,9 @@
       #race-wrong-way[hidden] {
         display: none;
       }
+      #race-ai-stat[hidden] {
+        display: none;
+      }
       #touch-controls {
         display: none;
         position: fixed;
@@ -581,6 +584,10 @@
       <div class="race-stat">
         <span class="race-label">Best</span>
         <span class="race-value" id="race-best" data-testid="race-best">—</span>
+      </div>
+      <div class="race-stat" id="race-ai-stat" data-testid="race-ai" hidden>
+        <span class="race-label">AI</span>
+        <span class="race-value" id="race-ai" data-testid="race-ai-count">0</span>
       </div>
       <span id="race-wrong-way" data-testid="race-wrong-way" hidden>WRONG WAY</span>
     </div>

@@ -58,7 +58,7 @@ Deployment:
 - AI field batch active on `feat/ai-field`, created from `dev` at `fc4fdf3`.
   `docs/features/ai-field.md` defines three AI by default, `?ai=0..3`,
   `?aiPace=chill|club|fast`, pace scaling, and `aiCount` diagnostics. Physics
-  and web are next.
+  and web are implemented; the full gate passed and the PR is next.
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
@@ -262,12 +262,16 @@ Branch: `feat/ai-field`, created from `dev` at `fc4fdf3`.
 
 - Plan: `docs/features/ai-field.md`.
 - No versioned contract change. Reuse the existing AI snapshot and race data.
-- Physics: `AiPace` with Chill/Club/Fast scaling and a four-argument
-  `Simulation::new`.
-- Web: three AI by default, `?ai=0..3`, `?aiPace=chill|club|fast`, an `AI N`
-  race-panel field, and `aiCount` worker diagnostics.
-- Measure 1 vs 3 AI worker step timing on Race Loop and record the result.
-- Status: in progress; physics and web are next.
+- Physics: `AiPace::{Chill, Club, Fast}` scales target speed and lateral
+  acceleration; the worker accepts a pace index and applies it to all AI via a
+  four-argument `Simulation::new`.
+- Web: three AI by default, `?ai=0..3`, `?aiPace=chill|club|fast`, `AI N` HUD,
+  and `aiCount` diagnostics/telemetry.
+- Measured Race Loop, headless Chromium/SwiftShader: 1 AI p50 0.020 ms / p99
+  0.034 ms; 3 AI p50 0.039 ms / p99 0.061 ms; both 499.85 Hz, no dropped ticks.
+- Gate: cargo fmt, workspace clippy, 216 workspace tests, wasm check; 59 web
+  tests; 110 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; full gate passed; PR pending.
 
 ## Completed checkpoints
 

@@ -16,6 +16,52 @@ const MAX_TARGET_SPEED: f32 = 32.0;
 const MIN_TARGET_SPEED: f32 = 6.0;
 /// Assumed lateral acceleration budget used to derive corner speed.
 const LATERAL_ACCELERATION: f32 = 6.0;
+
+/// Selectable difficulty preset for the layout-following AI controller.
+///
+/// Pace only scales the controller's target speed and lateral acceleration
+/// budget. It never changes the vehicle model, collider, setup, or assists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AiPace {
+    /// Slower target speed and cornering budget.
+    Chill,
+    /// Default reference pace.
+    #[default]
+    Club,
+    /// Faster target speed and cornering budget.
+    Fast,
+}
+
+impl AiPace {
+    /// Maps a worker pace index to a preset. Unknown indices fall back to
+    /// [`AiPace::Club`].
+    pub fn from_index(index: u32) -> AiPace {
+        match index {
+            0 => AiPace::Chill,
+            2 => AiPace::Fast,
+            _ => AiPace::Club,
+        }
+    }
+
+    /// Multiplier applied to the controller's target-speed limits.
+    pub fn target_speed_scale(self) -> f32 {
+        match self {
+            AiPace::Chill => 0.85,
+            AiPace::Club => 1.0,
+            AiPace::Fast => 1.12,
+        }
+    }
+
+    /// Multiplier applied to the controller's lateral acceleration budget.
+    pub fn lateral_acceleration_scale(self) -> f32 {
+        match self {
+            AiPace::Chill => 0.75,
+            AiPace::Club => 1.0,
+            AiPace::Fast => 1.22,
+        }
+    }
+}
+
 /// Steering angle that maps to full lock in the controller.
 const STEERING_MAX_ANGLE: f32 = 0.55;
 /// Physics ticks to wait between gear changes.
@@ -38,20 +84,26 @@ pub struct AiDriver {
     upshift_rpm: f32,
     downshift_rpm: f32,
     max_gear: i32,
+    pace: AiPace,
 }
 
 impl Default for AiDriver {
     fn default() -> Self {
-        Self::new(DEFAULT_UPSHIFT_RPM, DEFAULT_DOWNSHIFT_RPM, DEFAULT_MAX_GEAR)
+        Self::new(
+            DEFAULT_UPSHIFT_RPM,
+            DEFAULT_DOWNSHIFT_RPM,
+            DEFAULT_MAX_GEAR,
+            AiPace::default(),
+        )
     }
 }
 
 impl AiDriver {
-    /// Builds a driver with car-specific shift thresholds.
+    /// Builds a driver with car-specific shift thresholds and a pace preset.
     ///
     /// Non-finite inputs fall back to conservative defaults. `max_gear` is
     /// clamped to at least first gear.
-    pub fn new(upshift_rpm: f32, downshift_rpm: f32, max_gear: i32) -> Self {
+    pub fn new(upshift_rpm: f32, downshift_rpm: f32, max_gear: i32, pace: AiPace) -> Self {
         let upshift_rpm = if upshift_rpm.is_finite() && upshift_rpm > 0.0 {
             upshift_rpm
         } else {
@@ -67,6 +119,7 @@ impl AiDriver {
             upshift_rpm,
             downshift_rpm,
             max_gear: max_gear.max(1),
+            pace,
         }
     }
 
@@ -116,7 +169,7 @@ impl AiDriver {
             controls.steering = (desired_angle / STEERING_MAX_ANGLE).clamp(-1.0, 1.0);
         }
 
-        let target_speed = target_speed(tracker, distance, lookahead);
+        let target_speed = target_speed(tracker, distance, lookahead, self.pace);
         if speed < target_speed - 0.5 {
             controls.throttle = ((target_speed - speed) / 6.0).clamp(0.25, 1.0);
         } else if speed > target_speed + 1.0 {
@@ -161,7 +214,7 @@ fn horizontal_direction(vector: Vec3) -> Vec3 {
 }
 
 /// Conservative target speed from the maximum layout curvature ahead.
-fn target_speed(tracker: &RaceTracker, distance: f32, lookahead: f32) -> f32 {
+fn target_speed(tracker: &RaceTracker, distance: f32, lookahead: f32, pace: AiPace) -> f32 {
     let mut curvature = 0.0f32;
     let mut probe = 4.0;
     let end = lookahead + 12.0;
@@ -173,12 +226,16 @@ fn target_speed(tracker: &RaceTracker, distance: f32, lookahead: f32) -> f32 {
         }
         probe += 4.0;
     }
+    let speed_scale = pace.target_speed_scale();
+    let max_target_speed = MAX_TARGET_SPEED * speed_scale;
+    let min_target_speed = MIN_TARGET_SPEED * speed_scale;
+    let lateral_acceleration = LATERAL_ACCELERATION * pace.lateral_acceleration_scale();
     let target = if curvature <= 1e-4 {
-        MAX_TARGET_SPEED
+        max_target_speed
     } else {
-        (LATERAL_ACCELERATION / curvature).sqrt()
+        (lateral_acceleration / curvature).sqrt()
     };
-    target.clamp(MIN_TARGET_SPEED, MAX_TARGET_SPEED)
+    target.clamp(min_target_speed, max_target_speed)
 }
 
 #[cfg(test)]
@@ -386,6 +443,67 @@ mod tests {
         let controls = driver.controls(&good_state, &degenerate);
         assert_finite(&controls);
         assert!(controls.gear >= 1);
+    }
+
+    #[test]
+    fn pace_from_index_maps_known_indices_and_falls_back() {
+        assert_eq!(AiPace::from_index(0), AiPace::Chill);
+        assert_eq!(AiPace::from_index(1), AiPace::Club);
+        assert_eq!(AiPace::from_index(2), AiPace::Fast);
+        assert_eq!(AiPace::from_index(3), AiPace::Club);
+        assert_eq!(AiPace::from_index(u32::MAX), AiPace::Club);
+        assert_eq!(AiPace::default(), AiPace::Club);
+    }
+
+    #[test]
+    fn pace_changes_target_speed_monotonically_on_the_same_layout() {
+        let position = Vec3::new(0.0, 0.0, -5.0);
+        let straight = straight_tracker(position);
+        let straight_distance = straight.state().distance_m;
+        let chill = target_speed(&straight, straight_distance, 8.0, AiPace::Chill);
+        let club = target_speed(&straight, straight_distance, 8.0, AiPace::Club);
+        let fast = target_speed(&straight, straight_distance, 8.0, AiPace::Fast);
+        assert!(
+            chill < club && club < fast,
+            "straight {chill} {club} {fast}"
+        );
+
+        let corner: Vec<[f32; 3]> = (0..64)
+            .map(|index| {
+                let angle = index as f32 / 64.0 * std::f32::consts::TAU;
+                [40.0 * angle.cos(), 0.0, 40.0 * angle.sin()]
+            })
+            .collect();
+        let curved = tracker(corner, true, Vec3::new(40.0, 0.0, 0.0));
+        let chill = target_speed(&curved, 0.0, 8.0, AiPace::Chill);
+        let club = target_speed(&curved, 0.0, 8.0, AiPace::Club);
+        let fast = target_speed(&curved, 0.0, 8.0, AiPace::Fast);
+        assert!(chill < club && club < fast, "corner {chill} {club} {fast}");
+    }
+
+    #[test]
+    fn all_paces_keep_controls_finite() {
+        let degenerate = RaceTracker::new(&race_data(Vec::new(), true));
+        let position = Vec3::new(0.0, 0.0, 0.0);
+        let good_state = vehicle_state(position, Quat::IDENTITY, Vec3::ZERO, 900.0, 1);
+        let bad_state = vehicle_state(
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0),
+            Vec3::new(f32::INFINITY, 0.0, 0.0),
+            f32::NAN,
+            -1,
+        );
+
+        for pace in [AiPace::Chill, AiPace::Club, AiPace::Fast] {
+            let mut driver = AiDriver::new(
+                DEFAULT_UPSHIFT_RPM,
+                DEFAULT_DOWNSHIFT_RPM,
+                DEFAULT_MAX_GEAR,
+                pace,
+            );
+            assert_finite(&driver.controls(&bad_state, &degenerate));
+            assert_finite(&driver.controls(&good_state, &degenerate));
+        }
     }
 
     fn assert_finite(controls: &Controls) {

@@ -1,6 +1,6 @@
 # AI Field — Three Opponents, Pace, and Performance
 
-- **Status:** in progress
+- **Status:** complete; full gate passed; PR pending
 - **Date:** 2026-11-22
 - **Owner:** architect
 - **Domains:** architect, physics, web
@@ -152,9 +152,35 @@ sustained catch-up.
 - Player race state and existing AI behavior remain unchanged.
 - Full gate passes.
 
-## 10. Risks
+## 10. Measured performance
 
-- Three AI increase worker catch-up pressure; measure before adding a fourth.
+Local headless Chromium/SwiftShader on Race Loop, after warm-up:
+
+| Field | step p50 | step p99 | physics rate | dropped | catch-up |
+|---|---|---|---|---|---|
+| 1 AI | 0.020 ms | 0.034 ms | 499.85 Hz | 0 | 13–20 |
+| 3 AI | 0.039 ms | 0.061 ms | 499.85 Hz | 0 | 14–22 |
+
+Three AI roughly doubles the measured step cost but remains well inside the
+500 Hz budget in this environment. Catch-up counts were periodic timer
+catch-ups, not AI-induced drops.
+
+## 11. Implementation notes
+
+- Three AI are the single-player default on race-ready tracks.
+- `?ai=0..3` and `?aiPace=chill|club|fast` are implemented; unknown pace values
+  fall back to Club.
+- The worker reports `aiCount` in diagnostics, and the facade telemetry carries
+  it for the HUD and tests.
+- The race panel shows `AI N` when AI is active.
+- `?ai=1`, `?ai=0`, and fast-pace road-keeping are covered by Playwright.
+- Gate: cargo fmt, workspace clippy, 216 workspace tests, wasm check; 59 web
+  tests; 110 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+
+## 12. Risks
+
+- Three AI are measured and stay inside the 500 Hz budget in the local test;
+  keep the field at three until further profiling.
 - Identical pace can keep the field bunched without contact; later race work
-  should add pace/difficulty selection and standings.
+  should add per-AI pace/difficulty selection and standings.
 - The AI still uses the layout tangent workaround for TD-0021.

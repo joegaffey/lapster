@@ -8,6 +8,7 @@ export interface PhysicsDiagnostics {
   stepP99Ms: number;
   droppedTicks: number;
   catchupEvents: number;
+  aiCount: number;
 }
 
 interface Ack {
@@ -27,6 +28,7 @@ export class PhysicsClient {
     stepP99Ms: 0,
     droppedTicks: 0,
     catchupEvents: 0,
+    aiCount: 0,
   };
   setup = "";
   onDiagnostics: ((diagnostics: PhysicsDiagnostics) => void) | null = null;
@@ -69,10 +71,12 @@ export class PhysicsClient {
     trackBytes: Uint8Array,
     carBytes: Uint8Array,
     aiCount = 0,
+    aiPace = 1,
   ): Promise<PhysicsClient> {
     const url = new URL(`../worker/physics-worker.js?v=${encodeURIComponent(APP_VERSION)}`, import.meta.url);
     const worker = new Worker(url, { type: "module" });
     const client = new PhysicsClient(worker, sab);
+    client.diagnostics.aiCount = aiCount;
     const trackCopy = trackBytes.slice();
     const carCopy = carBytes.slice();
     const ready = new Promise<void>((resolve, reject) => {
@@ -90,6 +94,7 @@ export class PhysicsClient {
         trackBytes: trackCopy,
         carBytes: carCopy,
         aiCount,
+        aiPace,
       },
       [trackCopy.buffer, carCopy.buffer],
     );
@@ -201,6 +206,7 @@ export class PhysicsClient {
         stepP99Ms: data.stepP99Ms ?? 0,
         droppedTicks: data.droppedTicks ?? 0,
         catchupEvents: data.catchupEvents ?? 0,
+        aiCount: data.aiCount ?? 0,
       };
       this.onDiagnostics?.(this.diagnostics);
       return;
