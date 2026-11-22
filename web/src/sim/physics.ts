@@ -1,4 +1,9 @@
 import { APP_VERSION } from "../version.generated.ts";
+import {
+  isRaceStateView,
+  parseRaceStateView,
+  type RaceStateView,
+} from "../contracts/race-state.ts";
 import { createSnapshotReader, writeInput, type InputState, type SnapshotReader } from "./sab.ts";
 
 export interface PhysicsDiagnostics {
@@ -19,6 +24,20 @@ interface Ack {
   error?: string;
 }
 
+function parseAiRaceState(value: unknown): RaceStateView {
+  if (typeof value === "string") {
+    try {
+      return parseRaceStateView(value);
+    } catch {
+      return { available: false };
+    }
+  }
+  if (isRaceStateView(value)) {
+    return value;
+  }
+  return { available: false };
+}
+
 export class PhysicsClient {
   readonly reader: SnapshotReader;
   diagnostics: PhysicsDiagnostics = {
@@ -33,7 +52,7 @@ export class PhysicsClient {
   setup = "";
   onDiagnostics: ((diagnostics: PhysicsDiagnostics) => void) | null = null;
   onFatalError: ((message: string) => void) | null = null;
-  onAiFrame: ((slot: number, frame: Float32Array) => void) | null = null;
+  onAiFrame: ((slot: number, frame: Float32Array, race: RaceStateView) => void) | null = null;
 
   private readonly worker: Worker;
   private readonly sab: SharedArrayBuffer;
@@ -139,6 +158,14 @@ export class PhysicsClient {
     return this.command("place_on_grid", { slot }).then(() => undefined);
   }
 
+  placeOnRaceGrid(slot: number): Promise<void> {
+    return this.command("place_on_race_grid", { slot }).then(() => undefined);
+  }
+
+  startRace(laps: number): Promise<void> {
+    return this.command("start_race", { laps }).then(() => undefined);
+  }
+
   applySetup(setup: string): void {
     void this.command("apply_setup", { setup });
   }
@@ -195,7 +222,11 @@ export class PhysicsClient {
         data.frame instanceof Float32Array
           ? data.frame
           : new Float32Array(data.frame ?? []);
-      this.onAiFrame?.(Number(data.slot), frame);
+      this.onAiFrame?.(
+        Number(data.slot),
+        frame,
+        parseAiRaceState(data.race),
+      );
       return;
     }
     if (data?.type === "diagnostics") {

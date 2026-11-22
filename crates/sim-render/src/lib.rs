@@ -23,7 +23,7 @@ use sim_core::{
     FIXED_DT,
 };
 use sim_types::snapshot_state as snapshot;
-use sim_types::{CarTuning, RaceData, SNAPSHOT_STATE_FLOATS};
+use sim_types::{CarTuning, RaceData, SpawnPoint, SNAPSHOT_STATE_FLOATS};
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -2298,6 +2298,39 @@ impl DriveViewer {
         self.renderer.render()
     }
 
+    /// Places the local car on the race grid and arms a grid start.
+    ///
+    /// The car uses `race.grid[slot]`, oriented to the nearest layout tangent
+    /// until track-ed grid rotations are fixed (TD-0021). An invalid slot or a
+    /// track without race data leaves the viewer unchanged. The local tracker is
+    /// armed and updated at the grid position, so its state reports lap 1, the
+    /// grid progress, and `started = false`.
+    pub fn place_on_race_grid(&mut self, slot: u32) {
+        let Some(race) = self.race.clone() else {
+            return;
+        };
+        let Some(grid) = race.grid.get(slot as usize).cloned() else {
+            return;
+        };
+        if self.race_tracker.is_none() {
+            self.race_tracker = Some(RaceTracker::new(&race));
+        }
+        if let Some(tracker) = self.race_tracker.as_mut() {
+            place_vehicle_on_race_grid(&mut self.vehicle, tracker, &grid);
+        }
+        self.previous_state = self.vehicle.state;
+        self.accumulator = 0.0;
+        self.last_time = None;
+        self.last_particle_time = None;
+        self.step_times.clear();
+        self.particles.clear();
+        self.set_brake_lights(0.0);
+        self.set_reverse_lights(false);
+        self.update_visuals();
+        self.update_camera();
+        let _ = self.renderer.render();
+    }
+
     pub fn set_local_slot(&mut self, slot: usize) -> Result<(), JsValue> {
         if slot >= self.rigs.len() {
             return Err(JsValue::from_str("local slot is out of range"));
@@ -3076,6 +3109,47 @@ impl DriveViewer {
     }
 }
 
+fn spawn_rotation(spawn: &SpawnPoint) -> Quat {
+    let rotation = Quat::from_xyzw(
+        spawn.rotation_xyzw[0],
+        spawn.rotation_xyzw[1],
+        spawn.rotation_xyzw[2],
+        spawn.rotation_xyzw[3],
+    );
+    if rotation.length_squared() > 1e-8 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    }
+}
+
+/// Orients a grid spawn to the nearest layout tangent (TD-0021 workaround).
+fn oriented_race_spawn(tracker: &RaceTracker, base: &SpawnPoint) -> SpawnPoint {
+    let mut spawn = base.clone();
+    match tracker.nearest_sample(Vec3::from_array(spawn.position)) {
+        Some(sample) => {
+            let yaw = (-sample.tangent.x).atan2(-sample.tangent.z);
+            spawn.rotation_xyzw = Quat::from_rotation_y(yaw).to_array();
+        }
+        None => {
+            let rotation = spawn_rotation(&spawn);
+            spawn.rotation_xyzw =
+                (Quat::from_rotation_y(std::f32::consts::PI) * rotation).to_array();
+        }
+    }
+    spawn
+}
+
+fn place_vehicle_on_race_grid(vehicle: &mut Vehicle, tracker: &mut RaceTracker, grid: &SpawnPoint) {
+    let spawn = oriented_race_spawn(tracker, grid);
+    vehicle.set_spawn(&spawn);
+    for _ in 0..500 {
+        vehicle.step(Controls::default());
+    }
+    tracker.arm_grid_start();
+    tracker.update(vehicle.state.position, vehicle.state.tick);
+}
+
 fn percentile(values: &[f32], fraction: f32) -> f32 {
     if values.is_empty() {
         return 0.0;
@@ -3145,7 +3219,10 @@ fn performance_now() -> f64 {
 mod tests {
     use super::*;
     use sim_types::{
-        Layout, LayoutDirection, SectorSpec, SpawnPoint, StartFinish, RACE_DATA_VERSION,
+        Aabb, AeroSpec, BrakeSpec, DriveLayout, DrivetrainSpec, EngineSpec, Layout,
+        LayoutDirection, PacejkaCoefficients, SectorSpec, SpawnPoint, StartFinish, SteeringSpec,
+        SurfaceSpec, SuspensionSpec, TireSpec, TorquePoint, TrackCollision, TrackMetadata,
+        WheelPhysics, RACE_DATA_VERSION,
     };
     use std::f32::consts::FRAC_PI_2;
 
@@ -3296,6 +3373,232 @@ mod tests {
         assert_eq!(&hex[2..4], "0a");
         assert!(hex[4..62].chars().all(|ch| ch == '0'));
         assert_eq!(hex_source_hash(&[0xab; 32]), "ab".repeat(32));
+    }
+
+    fn grid_spawn(name: &str, position: [f32; 3]) -> SpawnPoint {
+        SpawnPoint {
+            name: String::from(name),
+            position,
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+
+    fn grid_race() -> RaceData {
+        RaceData {
+            version: RACE_DATA_VERSION,
+            layout: Layout {
+                layout_id: String::from("grid"),
+                closed: true,
+                direction: LayoutDirection::Forward,
+                points: vec![
+                    [0.0, 0.0, 0.0],
+                    [10.0, 0.0, 0.0],
+                    [10.0, 0.0, 10.0],
+                    [0.0, 0.0, 10.0],
+                ],
+                half_width: 5.0,
+            },
+            start_finish: StartFinish {
+                section_id: String::from("start"),
+                fraction: 0.0,
+                position: [0.0, 0.0, 0.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+            grid: vec![
+                grid_spawn("grid_0", [0.0, 0.0, 2.0]),
+                grid_spawn("grid_1", [1.0, 0.0, 2.5]),
+                grid_spawn("grid_2", [2.0, 0.0, 3.0]),
+            ],
+            sectors: vec![SectorSpec {
+                name: String::from("sector_1"),
+                start_fraction: 0.0,
+                end_fraction: 1.0,
+            }],
+        }
+    }
+
+    fn square_point(progress: f32) -> Vec3 {
+        let distance = progress * 40.0;
+        if distance <= 10.0 {
+            Vec3::new(distance, 0.0, 0.0)
+        } else if distance <= 20.0 {
+            Vec3::new(10.0, 0.0, distance - 10.0)
+        } else if distance <= 30.0 {
+            Vec3::new(10.0 - (distance - 20.0), 0.0, 10.0)
+        } else {
+            Vec3::new(0.0, 0.0, 10.0 - (distance - 30.0))
+        }
+    }
+
+    fn test_physics() -> sim_types::CarPhysics {
+        let suspension = SuspensionSpec {
+            travel: 0.15,
+            spring_rate: 55_000.0,
+            damper_bump: 7_000.0,
+            damper_rebound: 9_000.0,
+            anti_roll: 18_000.0,
+            ride_height: 0.34,
+        };
+        let tire = TireSpec {
+            lateral: PacejkaCoefficients {
+                b: 10.0,
+                c: 1.9,
+                d: 1.0,
+                e: 0.97,
+            },
+            longitudinal: PacejkaCoefficients {
+                b: 12.0,
+                c: 1.65,
+                d: 1.0,
+                e: 0.9,
+            },
+            relaxation_length: 0.3,
+            peak_slip_ratio: 0.12,
+            peak_slip_angle: 0.12,
+            friction_scale: 1.0,
+        };
+        let wheels = [
+            ("FL", [-0.73, 0.34, -1.2125], true, true, false),
+            ("FR", [0.73, 0.34, -1.2125], true, false, false),
+            ("RL", [-0.73, 0.34, 1.2125], false, true, true),
+            ("RR", [0.73, 0.34, 1.2125], false, false, true),
+        ]
+        .map(|(name, position, front, left, driven)| WheelPhysics {
+            name: String::from(name),
+            is_front: front,
+            is_left: left,
+            position,
+            radius: 0.33,
+            width: 0.225,
+            steerable: front,
+            driven,
+            suspension: SuspensionSpec {
+                anti_roll: if front { 18_000.0 } else { 8_000.0 },
+                ..suspension
+            },
+            tire: TireSpec {
+                friction_scale: if front { 1.0 } else { 1.05 },
+                ..tire
+            },
+        });
+        sim_types::CarPhysics {
+            mass: 1_270.0,
+            inertia: [650.0, 1_300.0, 450.0],
+            center_of_gravity: [0.0, 0.40, 0.0],
+            wheelbase: 2.425,
+            track_width: [1.46, 1.46],
+            wheels,
+            engine: EngineSpec {
+                idle_rpm: 900.0,
+                redline_rpm: 8_000.0,
+                torque_curve: vec![
+                    TorquePoint {
+                        rpm: 1_000.0,
+                        torque_nm: 180.0,
+                    },
+                    TorquePoint {
+                        rpm: 4_500.0,
+                        torque_nm: 314.0,
+                    },
+                    TorquePoint {
+                        rpm: 7_500.0,
+                        torque_nm: 250.0,
+                    },
+                ],
+            },
+            drivetrain: DrivetrainSpec {
+                gear_ratios: vec![3.483, 2.015, 1.391, 1.0, 0.719, 0.6],
+                final_drive: 4.1,
+                clutch_max_torque: 400.0,
+                drive_layout: DriveLayout::Rear,
+            },
+            brakes: BrakeSpec {
+                max_torque: [2_200.0, 2_200.0, 1_400.0, 1_400.0],
+                bias: 0.6,
+            },
+            steering: SteeringSpec {
+                max_angle: 0.6,
+                ratio: 14.0,
+                caster: 0.09,
+                kingpin_inclination: 0.12,
+            },
+            aero: AeroSpec {
+                drag_coefficient: 0.29,
+                frontal_area: 1.85,
+                downforce_coefficient: 0.0,
+            },
+        }
+    }
+
+    fn test_collider() -> TrackCollider {
+        let collision = TrackCollision {
+            vertices: vec![
+                [-500.0, 0.0, -500.0],
+                [-500.0, 0.0, 500.0],
+                [500.0, 0.0, 500.0],
+                [500.0, 0.0, -500.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            surface_ids: vec![0, 0],
+            bounds: Aabb {
+                min: [-500.0, 0.0, -500.0],
+                max: [500.0, 0.0, 500.0],
+            },
+        };
+        let metadata = TrackMetadata {
+            name: String::from("test"),
+            length: 40.0,
+            spawns: Vec::new(),
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+            surfaces: vec![SurfaceSpec {
+                id: 0,
+                name: String::from("asphalt"),
+                friction: 1.0,
+                roughness: 0.0,
+            }],
+        };
+        TrackCollider::from_collision(&collision, &metadata)
+    }
+
+    #[test]
+    fn race_grid_placement_parks_vehicle_at_slot_and_arms_tracker() {
+        let race = grid_race();
+        let mut tracker = RaceTracker::new(&race);
+        let mut vehicle = Vehicle::new(test_physics(), test_collider(), &race.grid[2]);
+        place_vehicle_on_race_grid(&mut vehicle, &mut tracker, &race.grid[0]);
+
+        let grid = &race.grid[0];
+        // telemetry() reports this same `vehicle.state.position`.
+        assert!((vehicle.state.position.x - grid.position[0]).abs() < 0.2);
+        assert!((vehicle.state.position.z - grid.position[2]).abs() < 0.2);
+
+        let state = race_state_value(Some(&tracker));
+        assert_eq!(state["available"], serde_json::Value::Bool(true));
+        assert_eq!(state["lap"], serde_json::json!(1));
+        assert_eq!(state["started"], serde_json::Value::Bool(false));
+        let progress = state["progress"].as_f64().expect("grid progress");
+        assert!((progress - 0.95).abs() < 0.05, "grid progress {progress}");
+    }
+
+    #[test]
+    fn race_grid_placement_arms_first_forward_crossing() {
+        let race = grid_race();
+        let mut tracker = RaceTracker::new(&race);
+        let mut vehicle = Vehicle::new(test_physics(), test_collider(), &race.grid[0]);
+        place_vehicle_on_race_grid(&mut vehicle, &mut tracker, &race.grid[0]);
+        assert!(!tracker.state().started);
+
+        tracker.update(square_point(0.98), 600);
+        let first = tracker.update(square_point(0.02), 601);
+        assert!(first.started);
+        assert_eq!(first.lap, 1);
+
+        tracker.update(square_point(0.5), 700);
+        tracker.update(square_point(0.98), 800);
+        let second = tracker.update(square_point(0.02), 900);
+        assert_eq!(second.lap, 2);
     }
 
     #[test]

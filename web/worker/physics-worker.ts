@@ -107,6 +107,7 @@ function publishAiFrames(): void {
     post("ai_state", {
       slot: index + 1,
       frame: new Float32Array(simulation.ai_snapshot(index)),
+      race: simulation.ai_race_state(index),
     });
   }
 }
@@ -266,6 +267,21 @@ self.onmessage = async (event: MessageEvent) => {
       nextDeadline = performance.now();
       markDiagnosticsBaseline();
       publish();
+      publishAiFrames();
+      post("ack", { id: message.id, tick: Number(simulation.tick()) });
+      break;
+    case "place_on_race_grid":
+      simulation.place_on_race_grid(message.slot ?? 0);
+      nextDeadline = performance.now();
+      markDiagnosticsBaseline();
+      publish();
+      publishAiFrames();
+      post("ack", { id: message.id, tick: Number(simulation.tick()) });
+      break;
+    case "start_race":
+      simulation.start_race(message.laps ?? 3);
+      nextDeadline = performance.now();
+      markDiagnosticsBaseline();
       publishAiFrames();
       post("ack", { id: message.id, tick: Number(simulation.tick()) });
       break;

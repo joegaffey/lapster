@@ -239,6 +239,95 @@
       #race-ai-stat[hidden] {
         display: none;
       }
+      #race-position-stat[hidden] {
+        display: none;
+      }
+      #race-countdown {
+        position: fixed;
+        inset: 0;
+        z-index: 15;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        color: #f8fafc;
+        font-size: clamp(72px, 18vw, 180px);
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        text-shadow: 0 4px 24px rgba(0, 0, 0, 0.65);
+      }
+      #race-countdown[hidden] {
+        display: none;
+      }
+      #race-results {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        z-index: 16;
+        width: min(460px, calc(100vw - 32px));
+        max-height: min(70vh, 560px);
+        overflow: auto;
+        padding: 14px 16px 16px;
+        border: 1px solid #3a4350;
+        border-radius: 4px;
+        background: rgba(10, 13, 17, 0.96);
+        color: #e6e8eb;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+        transform: translate(-50%, -50%);
+      }
+      #race-results[hidden] {
+        display: none;
+      }
+      .race-results-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .race-results-header h2 {
+        margin: 0;
+        color: #f8fafc;
+        font-size: 14px;
+        letter-spacing: 0;
+        text-transform: none;
+      }
+      .race-results-rows {
+        display: grid;
+        gap: 4px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .race-result-row {
+        display: grid;
+        grid-template-columns: 2.5rem minmax(0, 1fr) 4.5rem 4.5rem;
+        gap: 8px;
+        align-items: baseline;
+        padding: 5px 6px;
+        border: 1px solid #202630;
+        background: #0d1117;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      .race-result-row.is-player {
+        border-color: #38bdf8;
+      }
+      .race-result-position {
+        color: #8f9bab;
+      }
+      .race-result-name {
+        overflow: hidden;
+        color: #f8fafc;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .race-result-laps,
+      .race-result-time {
+        color: #cbd5e1;
+        text-align: right;
+        white-space: nowrap;
+      }
       #touch-controls {
         display: none;
         position: fixed;
@@ -565,6 +654,10 @@
       <button id="assists-open" data-testid="assists-open" aria-haspopup="dialog">Settings</button>
     </nav>
     <div id="race-panel" data-testid="race-panel" hidden>
+      <div class="race-stat" id="race-position-stat" data-testid="race-position-stat">
+        <span class="race-label">Position</span>
+        <span class="race-value" id="race-position" data-testid="race-position">P1</span>
+      </div>
       <div class="race-stat">
         <span class="race-label">Lap</span>
         <span class="race-value" id="race-lap" data-testid="race-lap">1</span>
@@ -591,6 +684,14 @@
       </div>
       <span id="race-wrong-way" data-testid="race-wrong-way" hidden>WRONG WAY</span>
     </div>
+    <div id="race-countdown" data-testid="race-countdown" role="status" aria-live="assertive" hidden></div>
+    <section id="race-results" data-testid="race-results" role="dialog" aria-labelledby="race-results-title" hidden>
+      <header class="race-results-header">
+        <h2 id="race-results-title">Results</h2>
+        <button id="race-results-restart" data-testid="race-results-restart" type="button">Restart</button>
+      </header>
+      <ol id="race-results-rows" class="race-results-rows" data-testid="race-results-rows"></ol>
+    </section>
     <aside id="hud" class="hud-collapsed">
       <h1>Drive Viewer</h1>
       <p class="muted" id="asset">loading…</p>

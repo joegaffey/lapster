@@ -34,6 +34,8 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   expect(drive.raceState).toEqual({ available: false });
   await expect(page.locator("#race-panel")).toBeHidden();
   await expect(page.getByTestId("race-ai")).toBeHidden();
+  await expect(page.locator("#race-countdown")).toBeHidden();
+  await expect(page.locator("#race-results")).toBeHidden();
 
   await page.goto("/web/garage/");
   await page.waitForFunction(

@@ -8,6 +8,30 @@ async function waitForDrive(page: import("@playwright/test").Page) {
   );
 }
 
+async function waitForCountdown(page: import("@playwright/test").Page) {
+  await page.waitForFunction(
+    () => {
+      const label = document.querySelector("#race-countdown");
+      return label !== null && !label.hasAttribute("hidden");
+    },
+    undefined,
+    { timeout: 10_000 },
+  );
+}
+
+async function waitForCountdownFinished(
+  page: import("@playwright/test").Page,
+) {
+  await page.waitForFunction(
+    () => {
+      const label = document.querySelector("#race-countdown");
+      return label !== null && label.hasAttribute("hidden");
+    },
+    undefined,
+    { timeout: 15_000 },
+  );
+}
+
 interface LayoutView {
   closed: boolean;
   points: number[][];
@@ -160,6 +184,9 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   await waitForDrive(page);
   await expect(page.locator("#viewer-loading")).toBeHidden();
 
+  await waitForCountdown(page);
+  await expect(page.locator("#race-countdown")).toHaveText(/^(3|2|1|GO)$/);
+
   const drive = await page.evaluate(() => {
     const viewer = (window as any).__driveViewer;
     return {
@@ -178,17 +205,30 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   expect(drive.race.grid).toHaveLength(8);
   expect(drive.race.sectors).toHaveLength(4);
 
+  const grid = drive.race.grid[0].position as number[];
+  const position = drive.telemetry.position as number[];
+  expect(
+    Math.hypot(position[0] - grid[0], position[2] - grid[2]),
+    `player at [${position.join(", ")}] instead of grid [${grid.join(", ")}]`,
+  ).toBeLessThan(1.0);
+
   await expect(page.locator("#race-panel")).toBeVisible();
+  await expect(page.locator("#race-results")).toBeHidden();
   const initialRace = drive.telemetry.raceState;
   expect(initialRace.available).toBe(true);
   expect(initialRace.lap).toBe(1);
-  expect(initialRace.sector).toBe(1);
-  expect(initialRace.progress).toBeLessThanOrEqual(0.02);
+  expect(initialRace.sector).toBeGreaterThanOrEqual(1);
+  expect(initialRace.sector).toBeLessThanOrEqual(4);
+  expect(initialRace.progress).toBeGreaterThanOrEqual(0);
+  expect(initialRace.progress).toBeLessThanOrEqual(1);
   expect(initialRace.wrong_way).toBe(false);
-  // The car is stationary at the start/finish; the timer starts on movement.
+  // The car is stationary on the grid; the race starts at GO.
   expect(initialRace.started).toBe(false);
-  await expect(page.locator("#race-lap")).toHaveText("1");
-  await expect(page.locator("#race-sector")).toHaveText("S1/4");
+  await expect(page.locator("#race-lap")).toHaveText("1/3");
+  await expect(page.locator("#race-position")).toHaveText("P1/4");
+  await expect(page.locator("#race-sector")).toHaveText(
+    `S${initialRace.sector}/4`,
+  );
   await expect(page.locator("#race-current")).toHaveText(/^\d+:\d{2}\.\d{2}$/);
   await expect(page.locator("#race-last")).toHaveText("—");
   await expect(page.locator("#race-best")).toHaveText("—");
@@ -214,6 +254,7 @@ test("launcher opens race-loop with the race layout available", async ({ page })
     starts[car.slot] = car.position;
   }
 
+  await waitForCountdownFinished(page);
   await waitForFieldMovement(page, starts);
 
   const layout = drive.race.layout as LayoutView;
@@ -222,29 +263,36 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   const before = await page.evaluate(() => {
     const viewer = (window as any).__driveViewer;
     return {
-      progress: JSON.parse(viewer.telemetry()).raceState.progress as number,
+      started: JSON.parse(viewer.telemetry()).raceState.started as boolean,
       current: document.querySelector("#race-current")?.textContent ?? "",
     };
   });
+  expect(before.started).toBe(false);
 
   await page.locator("#view").click({ position: { x: 640, y: 360 } });
   await page.keyboard.down("w");
   await page.waitForFunction(
-    (initial) => {
+    () => {
       const state = JSON.parse((window as any).__driveViewer.telemetry()).raceState;
-      const current = document.querySelector("#race-current")?.textContent ?? "";
       return (
         state.available &&
         state.started === true &&
-        state.wrong_way === false &&
-        state.progress > initial.progress + 0.001 &&
-        current !== initial.current
+        state.lap === 1 &&
+        state.wrong_way === false
       );
     },
-    before,
+    undefined,
     { timeout: 15_000 },
   );
   await page.keyboard.up("w");
+  await page.waitForFunction(
+    (initial) => {
+      const current = document.querySelector("#race-current")?.textContent ?? "";
+      return current !== initial;
+    },
+    before.current,
+    { timeout: 5_000 },
+  );
 
   const agreement = await page.evaluate(() => {
     const viewer = (window as any).__driveViewer;
@@ -252,6 +300,8 @@ test("launcher opens race-loop with the race layout available", async ({ page })
       telemetry: JSON.parse(viewer.telemetry()).raceState,
       direct: JSON.parse(viewer.race_state()),
       sector: document.querySelector("#race-sector")?.textContent ?? "",
+      lap: document.querySelector("#race-lap")?.textContent ?? "",
+      position: document.querySelector("#race-position")?.textContent ?? "",
       current: document.querySelector("#race-current")?.textContent ?? "",
     };
   });
@@ -260,11 +310,79 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   expect(agreement.telemetry.lap).toBe(agreement.direct.lap);
   expect(agreement.telemetry.sector).toBe(agreement.direct.sector);
   expect(agreement.sector).toBe(`S${agreement.telemetry.sector}/4`);
-  expect(agreement.telemetry.progress).toBeGreaterThan(before.progress);
-  expect(agreement.telemetry.wrong_way).toBe(false);
   expect(agreement.telemetry.started).toBe(true);
+  expect(agreement.telemetry.wrong_way).toBe(false);
   expect(agreement.current).not.toBe(before.current);
+  expect(agreement.lap).toBe("1/3");
+  expect(agreement.position).toMatch(/^P\d+\/4$/);
+  await expect(page.locator("#race-results")).toBeHidden();
 
+  expect(pageErrors).toEqual([]);
+});
+
+test("reset during a local race re-grids and restarts the countdown", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&ai=1");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await waitForCountdown(page);
+  await waitForCountdownFinished(page);
+
+  await page.getByTestId("reset").click();
+  await waitForCountdown(page);
+  await expect(page.locator("#race-countdown")).toHaveText(/^(3|2|1|GO)$/);
+
+  const drive = await page.evaluate(() => {
+    const viewer = (window as any).__driveViewer;
+    return {
+      telemetry: JSON.parse(viewer.telemetry()),
+      race: JSON.parse(viewer.race()),
+    };
+  });
+  const grid = drive.race.grid[0].position as number[];
+  const position = drive.telemetry.position as number[];
+  expect(
+    Math.hypot(position[0] - grid[0], position[2] - grid[2]),
+  ).toBeLessThan(1.0);
+  expect(drive.telemetry.raceState.lap).toBe(1);
+  expect(drive.telemetry.raceState.started).toBe(false);
+  await expect(page.locator("#race-lap")).toHaveText("1/3");
+  await expect(page.locator("#race-position")).toHaveText("P1/2");
+
+  await waitForCountdownFinished(page);
+  expect(pageErrors).toEqual([]);
+});
+
+test("results restart action hides the overlay and restarts the countdown", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&ai=1");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await waitForCountdownFinished(page);
+  await expect(page.locator("#race-results")).toBeHidden();
+
+  await page.evaluate(() => {
+    const results = document.querySelector<HTMLElement>("#race-results");
+    if (!results) {
+      throw new Error("results overlay missing");
+    }
+    results.hidden = false;
+  });
+  await expect(page.locator("#race-results")).toBeVisible();
+
+  await page.getByTestId("race-results-restart").click();
+  await expect(page.locator("#race-results")).toBeHidden();
+  await waitForCountdown(page);
+  await expect(page.locator("#race-lap")).toHaveText("1/3");
+  await expect(page.locator("#race-position")).toHaveText(/^P\d+\/2$/);
   expect(pageErrors).toEqual([]);
 });
 
@@ -276,6 +394,7 @@ test("?ai=1 requests a single AI opponent", async ({ page }) => {
   await waitForDrive(page);
   await expect(page.locator("#viewer-loading")).toBeHidden();
   await expect(page.locator("#race-panel")).toBeVisible();
+  await waitForCountdownFinished(page);
 
   await expect(page.getByTestId("race-ai")).toBeVisible();
   await expect(page.locator("#race-ai")).toHaveText("1");
@@ -289,6 +408,7 @@ test("?ai=1 requests a single AI opponent", async ({ page }) => {
   expect(
     field.cars[0].position.every((value: number) => Number.isFinite(value)),
   ).toBe(true);
+  await expect(page.locator("#race-position")).toHaveText(/^P\d+\/2$/);
   expect(pageErrors).toEqual([]);
 });
 
@@ -300,6 +420,7 @@ test("?ai=0 keeps the race field empty", async ({ page }) => {
   await waitForDrive(page);
   await expect(page.locator("#viewer-loading")).toBeHidden();
   await expect(page.locator("#race-panel")).toBeVisible();
+  await waitForCountdownFinished(page);
   await expect(page.getByTestId("race-ai")).toBeHidden();
   await page.waitForTimeout(750);
 
@@ -308,6 +429,57 @@ test("?ai=0 keeps the race field empty", async ({ page }) => {
   expect(field.aiCount).toBe(0);
   expect(field.cars).toEqual([]);
   await expect(page.getByTestId("race-ai")).toBeHidden();
+  await expect(page.locator("#race-position")).toHaveText("P1/1");
+  expect(pageErrors).toEqual([]);
+});
+
+test("?laps=2 sets the race lap total", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&ai=0&laps=2");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await expect(page.locator("#race-panel")).toBeVisible();
+  await expect(page.locator("#race-lap")).toHaveText("1/2");
+  expect(pageErrors).toEqual([]);
+});
+
+test("?physics=main starts the race countdown without AI", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&physics=main");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await waitForCountdown(page);
+  await expect(page.locator("#race-countdown")).toHaveText(/^(3|2|1|GO)$/);
+  await waitForCountdownFinished(page);
+
+  const drive = await page.evaluate(() => {
+    const viewer = (window as any).__driveViewer;
+    return {
+      error: (window as any).__driveViewerError,
+      telemetry: JSON.parse(viewer.telemetry()),
+      race: JSON.parse(viewer.race()),
+    };
+  });
+  expect(drive.error).toBeUndefined();
+  expect(drive.telemetry.raceAvailable).toBe(true);
+  expect(drive.race.available).toBe(true);
+
+  const grid = drive.race.grid[0].position as number[];
+  const position = drive.telemetry.position as number[];
+  expect(
+    Math.hypot(position[0] - grid[0], position[2] - grid[2]),
+  ).toBeLessThan(1.0);
+  expect(drive.telemetry.raceState.lap).toBe(1);
+  expect(drive.telemetry.raceState.started).toBe(false);
+  expect(drive.telemetry.remoteCars).toEqual([]);
+
+  await expect(page.locator("#race-position")).toHaveText("P1/1");
+  await expect(page.locator("#race-lap")).toHaveText("1/3");
+  await expect(page.locator("#race-ai")).toBeHidden();
   expect(pageErrors).toEqual([]);
 });
 
@@ -321,6 +493,7 @@ test("?aiPace=fast keeps the three AI field on the road", async ({ page }) => {
   await expect(page.locator("#race-panel")).toBeVisible();
   await expect(page.getByTestId("race-ai")).toBeVisible();
   await expect(page.locator("#race-ai")).toHaveText("3");
+  await waitForCountdownFinished(page);
 
   await waitForField(page, 3);
   const field = await fieldState(page);
