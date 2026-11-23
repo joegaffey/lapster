@@ -226,11 +226,18 @@ test("hosted track-ed boots, edits, creates a junction, exports and test drives"
       error: (window as any).__driveViewerError as string | undefined,
       debug: JSON.parse(viewer.debug_info()),
       telemetry: JSON.parse(viewer.telemetry()),
+      race: JSON.parse(viewer.race()),
     };
   });
   expect(drive.error).toBeUndefined();
   expect(drive.debug.asset.id).toBe("track-ed");
   expect(drive.telemetry.track).toBe("track-ed");
+  expect(drive.telemetry.raceAvailable).toBe(true);
+  expect(drive.race.available).toBe(true);
+  // The MVP layout_id is the spawn section id; the hosted default is "section-1".
+  expect(drive.race.layout.layout_id).toBe(restored.centerlines[0]!.id);
+  expect(drive.race.grid.length).toBe(8);
+  expect(drive.race.sectors.length).toBe(4);
   expect(pageErrors).toEqual([]);
 });
 

@@ -140,10 +140,22 @@ pub struct GarageBay {
     pub wheels: Vec<SceneWheel>,
     pub camera: Camera,
     pub name: String,
+    /// Catalog id for the bay. Loaded bays carry the car manifest id.
     pub car_id: String,
+    /// `None` for configured bays whose car pack has not loaded yet.
     pub car: serde_json::Value,
+    pub loaded: bool,
     pub color: [f32; 3],
     pub color_name: &'static str,
+    /// Palette index for the bay paint.
+    pub paint: usize,
+    /// Whether the body accepts the data-driven paint at all. Textured factory
+    /// liveries and bodies without enough red-ish paint vertices are false.
+    pub recolorable: bool,
+    /// Scene mesh index of the body, used when rewriting painted vertices.
+    pub body_mesh_index: usize,
+    /// Pre-recolour body buffers, retained only for recolorable bodies.
+    pub original_body: Option<MeshBuffers>,
     pub decal_mesh_index: Option<usize>,
     pub decal_center: [f32; 3],
     pub decal_yaw: f32,
@@ -240,6 +252,7 @@ impl Scene {
             [0.78, 0.08, 0.06],
             "style_car",
             true,
+            false,
             false,
         )?;
         scene.style_car_transform = Some(transform);

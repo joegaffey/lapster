@@ -1,0 +1,22 @@
+{
+  "id": "67gp-mango-ms7",
+  "body": "body/67gp-mango-ms7.acc",
+  "xml": "body/67gp-mango-ms7.xml",
+  "wheel": "wheel/wheel0.acc",
+  "body_lift": 0.13,
+  "glass_names": [
+    "^WI[123]_"
+  ],
+  "front": {
+    "axle_x": 1.05,
+    "half_track": 0.75,
+    "radius": 0.3089,
+    "width": 0.285
+  },
+  "rear": {
+    "axle_x": -1.25,
+    "half_track": 0.76,
+    "radius": 0.339,
+    "width": 0.33
+  }
+}

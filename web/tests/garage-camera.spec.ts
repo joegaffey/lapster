@@ -52,14 +52,14 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   const initialBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(initialBay.count).toBe(10);
+  expect(initialBay.count).toBe(8);
   expect(initialBay.selected).toBe(0);
 
   await page.click("#bay-next");
   const nextBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(nextBay.selected).toBe(5);
+  expect(nextBay.selected).toBe(1);
   await page.waitForTimeout(800);
   const nextCamera = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.camera_info()),
@@ -70,7 +70,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   const keyboardBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(keyboardBay.selected).toBe(6);
+  expect(keyboardBay.selected).toBe(2);
 });
 
 test("garage camera flies between bays", async ({ page }) => {
@@ -111,10 +111,8 @@ test("garage camera flies between bays", async ({ page }) => {
   expect(final.target).not.toEqual(initial.target);
 });
 
-test("garage bay navigation reverses order in the second row", async ({ page }) => {
-  await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6&bay=5",
-  );
+test("garage bay navigation steps along the line", async ({ page }) => {
+  await page.goto("/web/garage/?v=cp6");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
@@ -123,15 +121,15 @@ test("garage bay navigation reverses order in the second row", async ({ page }) 
 
   await page.mouse.move(640, 360);
   const bay = page.locator("#bay-label");
-  await expect(bay).toContainText("Bay 5");
+  await expect(bay).toContainText("Bay 1");
   await page.click("#bay-next");
-  await expect(bay).toContainText("Bay 4");
+  await expect(bay).toContainText("Bay 2");
   await page.click("#bay-next");
   await expect(bay).toContainText("Bay 3");
   await page.click("#bay-prev");
-  await expect(bay).toContainText("Bay 4");
+  await expect(bay).toContainText("Bay 2");
   await page.click("#bay-prev");
-  await expect(bay).toContainText("Bay 5");
+  await expect(bay).toContainText("Bay 1");
 });
 
 test("garage car arrows use the screen sides and toggle on mouse movement", async ({ page }) => {

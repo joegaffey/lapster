@@ -401,4 +401,170 @@ mod tests {
         assert!((physics.wheels[2].suspension.anti_roll - 42_000.0).abs() < 1.0);
         assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
     }
+
+    #[test]
+    fn maps_guthrie_eagle_xml_physics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/sources/cars/67gp-guthrie-eagle/body/67gp-guthrie-eagle.xml");
+        let mut physics = source_physics();
+        apply_physics(&mut physics, &path).unwrap();
+
+        assert_eq!(physics.mass, 620.0);
+        assert!((physics.center_of_gravity[1] - 0.19).abs() < 1e-6);
+        assert_eq!(physics.engine.idle_rpm, 1_000.0);
+        assert_eq!(physics.engine.redline_rpm, 9_500.0);
+        assert_eq!(physics.engine.torque_curve.len(), 14);
+        assert_eq!(
+            physics.drivetrain.gear_ratios,
+            vec![3.26, 2.28, 1.50, 1.01, 0.87]
+        );
+        assert_eq!(physics.drivetrain.final_drive, 3.73);
+        assert!((physics.steering.max_angle - 30.0f32.to_radians()).abs() < 1e-6);
+        assert_eq!(physics.wheels[0].tire.friction_scale, 1.2);
+        assert!((physics.wheels[0].suspension.spring_rate - 32_500.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.spring_rate - 20_000.0).abs() < 1.0);
+        assert!((physics.wheels[0].suspension.anti_roll - 30_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.anti_roll - 5_000.0).abs() < 1.0);
+        assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
+    }
+
+    #[test]
+    fn maps_cavallo_123_xml_physics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/sources/cars/67gp-cavallo-123/body/67gp-cavallo-123.xml");
+        let mut physics = source_physics();
+        apply_physics(&mut physics, &path).unwrap();
+
+        assert_eq!(physics.mass, 628.0);
+        assert!((physics.center_of_gravity[1] - 0.215).abs() < 1e-6);
+        assert_eq!(physics.engine.idle_rpm, 1_000.0);
+        assert_eq!(physics.engine.redline_rpm, 10_000.0);
+        assert_eq!(physics.engine.torque_curve.len(), 42);
+        assert_eq!(physics.drivetrain.gear_ratios.len(), 5);
+        assert_eq!(
+            physics.drivetrain.gear_ratios,
+            vec![3.5, 2.4, 1.795, 1.224, 0.95]
+        );
+        assert_eq!(physics.drivetrain.final_drive, 3.73);
+        assert!((physics.steering.max_angle - 30.0f32.to_radians()).abs() < 1e-6);
+        assert_eq!(physics.wheels[0].tire.friction_scale, 1.2);
+        assert!((physics.wheels[0].suspension.spring_rate - 35_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.spring_rate - 19_000.0).abs() < 1.0);
+        assert!((physics.wheels[0].suspension.anti_roll - 30_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.anti_roll - 5_000.0).abs() < 1.0);
+        assert!((physics.brakes.bias - 0.51).abs() < 1e-6);
+        assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
+    }
+
+    #[test]
+    fn maps_kuiper_t81_xml_physics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/sources/cars/67gp-kuiper-t81/body/67gp-kuiper-t81.xml");
+        let mut physics = source_physics();
+        apply_physics(&mut physics, &path).unwrap();
+
+        assert_eq!(physics.mass, 690.0);
+        assert!((physics.center_of_gravity[1] - 0.225).abs() < 1e-6);
+        assert_eq!(physics.engine.idle_rpm, 1_000.0);
+        assert_eq!(physics.engine.redline_rpm, 10_000.0);
+        assert_eq!(physics.engine.torque_curve.len(), 42);
+        assert_eq!(physics.drivetrain.gear_ratios.len(), 5);
+        assert_eq!(
+            physics.drivetrain.gear_ratios,
+            vec![2.66, 1.78, 1.35, 1.01, 0.87]
+        );
+        assert_eq!(physics.drivetrain.final_drive, 3.73);
+        assert!((physics.steering.max_angle - 30.0f32.to_radians()).abs() < 1e-6);
+        assert_eq!(physics.wheels[0].tire.friction_scale, 1.2);
+        assert!((physics.wheels[0].suspension.spring_rate - 35_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.spring_rate - 19_000.0).abs() < 1.0);
+        assert!((physics.wheels[0].suspension.anti_roll - 30_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.anti_roll - 10_000.0).abs() < 1.0);
+        assert!((physics.brakes.bias - 0.56).abs() < 1e-6);
+        assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
+    }
+
+    #[test]
+    fn maps_mango_ms7_xml_physics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/sources/cars/67gp-mango-ms7/body/67gp-mango-ms7.xml");
+        let mut physics = source_physics();
+        apply_physics(&mut physics, &path).unwrap();
+
+        assert_eq!(physics.mass, 590.0);
+        assert!((physics.center_of_gravity[1] - 0.23).abs() < 1e-6);
+        assert_eq!(physics.engine.idle_rpm, 1_000.0);
+        assert_eq!(physics.engine.redline_rpm, 10_000.0);
+        assert_eq!(physics.engine.torque_curve.len(), 21);
+        assert_eq!(physics.drivetrain.gear_ratios.len(), 5);
+        assert_eq!(
+            physics.drivetrain.gear_ratios,
+            vec![2.66, 1.78, 1.35, 1.01, 0.86]
+        );
+        assert_eq!(physics.drivetrain.final_drive, 3.73);
+        assert!((physics.steering.max_angle - 23.0f32.to_radians()).abs() < 1e-6);
+        assert_eq!(physics.wheels[0].tire.friction_scale, 1.2);
+        assert!((physics.wheels[0].suspension.spring_rate - 35_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.spring_rate - 19_000.0).abs() < 1.0);
+        assert!((physics.wheels[0].suspension.anti_roll - 30_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.anti_roll - 5_000.0).abs() < 1.0);
+        assert!((physics.brakes.bias - 0.53).abs() < 1e-6);
+        assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
+    }
+
+    #[test]
+    fn maps_murasama_37a_xml_physics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/sources/cars/67gp-murasama-37a/body/67gp-murasama-37a.xml");
+        let mut physics = source_physics();
+        apply_physics(&mut physics, &path).unwrap();
+
+        assert_eq!(physics.mass, 690.0);
+        assert!((physics.center_of_gravity[1] - 0.245).abs() < 1e-6);
+        assert_eq!(physics.engine.idle_rpm, 1_000.0);
+        assert_eq!(physics.engine.redline_rpm, 10_000.0);
+        assert_eq!(physics.engine.torque_curve.len(), 42);
+        assert_eq!(physics.drivetrain.gear_ratios.len(), 5);
+        assert_eq!(
+            physics.drivetrain.gear_ratios,
+            vec![3.5, 2.4, 1.795, 1.224, 0.97]
+        );
+        assert_eq!(physics.drivetrain.final_drive, 3.73);
+        assert!((physics.steering.max_angle - 30.0f32.to_radians()).abs() < 1e-6);
+        assert_eq!(physics.wheels[0].tire.friction_scale, 1.2);
+        assert!((physics.wheels[0].suspension.spring_rate - 35_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.spring_rate - 19_000.0).abs() < 1.0);
+        assert!((physics.wheels[0].suspension.anti_roll - 30_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.anti_roll - 5_000.0).abs() < 1.0);
+        assert!((physics.brakes.bias - 0.53).abs() < 1e-6);
+        assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
+    }
+
+    #[test]
+    fn maps_upping_ut19_xml_physics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/sources/cars/67gp-upping-ut19/body/67gp-upping-ut19.xml");
+        let mut physics = source_physics();
+        apply_physics(&mut physics, &path).unwrap();
+
+        assert_eq!(physics.mass, 640.0);
+        assert!((physics.center_of_gravity[1] - 0.23).abs() < 1e-6);
+        assert_eq!(physics.engine.idle_rpm, 1_000.0);
+        assert_eq!(physics.engine.redline_rpm, 9_000.0);
+        assert_eq!(physics.engine.torque_curve.len(), 37);
+        assert_eq!(physics.drivetrain.gear_ratios.len(), 5);
+        assert_eq!(
+            physics.drivetrain.gear_ratios,
+            vec![2.66, 1.78, 1.35, 1.01, 0.87]
+        );
+        assert_eq!(physics.drivetrain.final_drive, 3.73);
+        assert!((physics.steering.max_angle - 30.0f32.to_radians()).abs() < 1e-6);
+        assert_eq!(physics.wheels[0].tire.friction_scale, 1.2);
+        assert!((physics.wheels[0].suspension.spring_rate - 30_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.spring_rate - 20_000.0).abs() < 1.0);
+        assert!((physics.wheels[0].suspension.anti_roll - 20_000.0).abs() < 1.0);
+        assert!((physics.wheels[2].suspension.anti_roll - 5_000.0).abs() < 1.0);
+        assert!((physics.brakes.bias - 0.52).abs() < 1e-6);
+        assert!(physics.brakes.max_torque[0] > physics.brakes.max_torque[2]);
+    }
 }

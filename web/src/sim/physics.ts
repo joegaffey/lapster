@@ -1,4 +1,9 @@
 import { APP_VERSION } from "../version.generated.ts";
+import {
+  isRaceStateView,
+  parseRaceStateView,
+  type RaceStateView,
+} from "../contracts/race-state.ts";
 import { createSnapshotReader, writeInput, type InputState, type SnapshotReader } from "./sab.ts";
 
 export interface PhysicsDiagnostics {
@@ -8,6 +13,7 @@ export interface PhysicsDiagnostics {
   stepP99Ms: number;
   droppedTicks: number;
   catchupEvents: number;
+  aiCount: number;
 }
 
 interface Ack {
@@ -16,6 +22,20 @@ interface Ack {
   tick?: number;
   setup?: string;
   error?: string;
+}
+
+function parseAiRaceState(value: unknown): RaceStateView {
+  if (typeof value === "string") {
+    try {
+      return parseRaceStateView(value);
+    } catch {
+      return { available: false };
+    }
+  }
+  if (isRaceStateView(value)) {
+    return value;
+  }
+  return { available: false };
 }
 
 export class PhysicsClient {
@@ -27,10 +47,12 @@ export class PhysicsClient {
     stepP99Ms: 0,
     droppedTicks: 0,
     catchupEvents: 0,
+    aiCount: 0,
   };
   setup = "";
   onDiagnostics: ((diagnostics: PhysicsDiagnostics) => void) | null = null;
   onFatalError: ((message: string) => void) | null = null;
+  onAiFrame: ((slot: number, frame: Float32Array, race: RaceStateView) => void) | null = null;
 
   private readonly worker: Worker;
   private readonly sab: SharedArrayBuffer;
@@ -67,10 +89,13 @@ export class PhysicsClient {
     sab: SharedArrayBuffer,
     trackBytes: Uint8Array,
     carBytes: Uint8Array,
+    aiCount = 0,
+    aiPace = 1,
   ): Promise<PhysicsClient> {
     const url = new URL(`../worker/physics-worker.js?v=${encodeURIComponent(APP_VERSION)}`, import.meta.url);
     const worker = new Worker(url, { type: "module" });
     const client = new PhysicsClient(worker, sab);
+    client.diagnostics.aiCount = aiCount;
     const trackCopy = trackBytes.slice();
     const carCopy = carBytes.slice();
     const ready = new Promise<void>((resolve, reject) => {
@@ -87,6 +112,8 @@ export class PhysicsClient {
         sab,
         trackBytes: trackCopy,
         carBytes: carCopy,
+        aiCount,
+        aiPace,
       },
       [trackCopy.buffer, carCopy.buffer],
     );
@@ -129,6 +156,14 @@ export class PhysicsClient {
 
   placeOnGrid(slot: number): Promise<void> {
     return this.command("place_on_grid", { slot }).then(() => undefined);
+  }
+
+  placeOnRaceGrid(slot: number): Promise<void> {
+    return this.command("place_on_race_grid", { slot }).then(() => undefined);
+  }
+
+  startRace(laps: number): Promise<void> {
+    return this.command("start_race", { laps }).then(() => undefined);
   }
 
   applySetup(setup: string): void {
@@ -182,6 +217,33 @@ export class PhysicsClient {
       this.readyReject = null;
       return;
     }
+    if (data?.type === "ai_states") {
+      const states = Array.isArray(data.states) ? data.states : [];
+      for (const state of states) {
+        const frame =
+          state?.frame instanceof Float32Array
+            ? state.frame
+            : new Float32Array(state?.frame ?? []);
+        this.onAiFrame?.(
+          Number(state?.slot),
+          frame,
+          parseAiRaceState(state?.race),
+        );
+      }
+      return;
+    }
+    if (data?.type === "ai_state") {
+      const frame =
+        data.frame instanceof Float32Array
+          ? data.frame
+          : new Float32Array(data.frame ?? []);
+      this.onAiFrame?.(
+        Number(data.slot),
+        frame,
+        parseAiRaceState(data.race),
+      );
+      return;
+    }
     if (data?.type === "diagnostics") {
       this.diagnostics = {
         tick: data.tick ?? 0,
@@ -190,6 +252,7 @@ export class PhysicsClient {
         stepP99Ms: data.stepP99Ms ?? 0,
         droppedTicks: data.droppedTicks ?? 0,
         catchupEvents: data.catchupEvents ?? 0,
+        aiCount: data.aiCount ?? 0,
       };
       this.onDiagnostics?.(this.diagnostics);
       return;

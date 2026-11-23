@@ -15,6 +15,48 @@ export const CAR_OPTIONS: CarOption[] = [
     vehicle: "sports",
   },
   {
+    id: "67gp-cavallo-123",
+    name: "Cavallo 123",
+    url: "../../fixtures/cars/67gp-cavallo-123/67gp-cavallo-123.sima",
+    engine: "v12",
+    vehicle: "sports",
+  },
+  {
+    id: "67gp-guthrie-eagle",
+    name: "Guthrie Eagle",
+    url: "../../fixtures/cars/67gp-guthrie-eagle/67gp-guthrie-eagle.sima",
+    engine: "v12",
+    vehicle: "sports",
+  },
+  {
+    id: "67gp-kuiper-t81",
+    name: "Kuiper T81",
+    url: "../../fixtures/cars/67gp-kuiper-t81/67gp-kuiper-t81.sima",
+    engine: "v12",
+    vehicle: "sports",
+  },
+  {
+    id: "67gp-mango-ms7",
+    name: "Mango MS7",
+    url: "../../fixtures/cars/67gp-mango-ms7/67gp-mango-ms7.sima",
+    engine: "v8cross",
+    vehicle: "sports",
+  },
+  {
+    id: "67gp-murasama-37a",
+    name: "Murasama 37A",
+    url: "../../fixtures/cars/67gp-murasama-37a/67gp-murasama-37a.sima",
+    engine: "v12",
+    vehicle: "sports",
+  },
+  {
+    id: "67gp-upping-ut19",
+    name: "Upping UT19",
+    url: "../../fixtures/cars/67gp-upping-ut19/67gp-upping-ut19.sima",
+    engine: "v8cross",
+    vehicle: "sports",
+  },
+  {
     id: "sc-deckard-conejo",
     name: "Deckard Conejo",
     url: "../../fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima",
@@ -25,8 +67,9 @@ export const CAR_OPTIONS: CarOption[] = [
 
 export const DEFAULT_CAR = CAR_OPTIONS[0];
 export const CAR_STORAGE_KEY = "lapster.car.v1";
+export const PAINT_STORAGE_KEY = "lapster.garage.paint.v1";
 
-const BAY_COUNT = 10;
+const BAY_COUNT = CAR_OPTIONS.length;
 const STORAGE_KEY = "lapster.garage.car.v1";
 
 export function findCar(id: string | null | undefined): CarOption | null {
@@ -49,6 +92,47 @@ export function saveSelectedCar(id: string): CarOption {
     // Storage may be unavailable in private or embedded contexts.
   }
   return car;
+}
+
+function loadPaintMap(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(PAINT_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const map: Record<string, number> = {};
+    for (const [carId, value] of Object.entries(parsed)) {
+      if (Number.isInteger(value) && (value as number) >= 0) {
+        map[carId] = value as number;
+      }
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+export function loadCarPaint(carId: string): number | null {
+  const map = loadPaintMap();
+  return Object.prototype.hasOwnProperty.call(map, carId) ? map[carId] : null;
+}
+
+export function saveCarPaint(carId: string, paint: number): number {
+  if (!Number.isInteger(paint) || paint < 0) {
+    return loadCarPaint(carId) ?? 0;
+  }
+  const map = loadPaintMap();
+  map[carId] = paint;
+  try {
+    localStorage.setItem(PAINT_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // Storage may be unavailable in private or embedded contexts.
+  }
+  return paint;
 }
 
 export function normalizeBay(index: number): number {

@@ -1,0 +1,25 @@
+{
+  "id": "67gp-cavallo-123",
+  "body": "body/67gp-cavallo-123.acc",
+  "xml": "body/67gp-cavallo-123.xml",
+  "wheel": "wheel/wheel0.acc",
+  "body_lift": 0.076,
+  "glass_names": [
+    "^WIFRONT"
+  ],
+  "exclude_nodes": [
+    "^WHEELARCH"
+  ],
+  "front": {
+    "axle_x": 1.11,
+    "half_track": 0.75,
+    "radius": 0.2974,
+    "width": 0.26
+  },
+  "rear": {
+    "axle_x": -1.25,
+    "half_track": 0.73,
+    "radius": 0.3399,
+    "width": 0.332
+  }
+}

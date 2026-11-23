@@ -7,10 +7,11 @@ use sim_types::{
 use std::collections::{HashMap, HashSet};
 
 use crate::camera::Camera;
+use crate::renderer::{GarageLight, MAX_GARAGE_LIGHTS};
 use crate::scene::{
     build_outline, build_vertices, push_line, scene_texture, CarRig, CockpitCover,
     CockpitGearSegment, CockpitNeedle, CockpitNeedleSource, GarageBay, LineVertex, MeshData,
-    MeshVertex, RigWheel, Scene, SceneTexture, SceneWheel,
+    MeshVertex, RigWheel, Scene, SceneStats, SceneTexture, SceneWheel,
 };
 use crate::shadow_decal_yaw;
 
@@ -116,6 +117,7 @@ impl Scene {
                 &format!("bay_{index}"),
                 brake_lights,
                 true,
+                car.physics.mass < 900.0,
             )?;
             if static_car_shadows {
                 for mesh in &mut scene.meshes[car_mesh_start..] {
@@ -124,14 +126,7 @@ impl Scene {
                 }
             }
             let row_forward = rotation * Vec3::NEG_Z;
-            let row_right = rotation * Vec3::X;
-            let camera = Camera {
-                eye: (translation + row_forward * 4.860569 - row_right * 3.148117
-                    + Vec3::Y * 1.029985)
-                    .to_array(),
-                target: (translation + Vec3::Y * 0.6).to_array(),
-                fov_y: 0.85,
-            };
+            let camera = bay_camera(translation, rotation);
             let decal_mesh_index = match (silhouette.as_ref(), decal_texture) {
                 (Some(silhouette), Some(texture)) => Some(add_car_decal(
                     &mut scene,
@@ -181,8 +176,13 @@ impl Scene {
                 name: format!("Bay {}", index + 1),
                 car_id: car.manifest.id.clone(),
                 car: car_info,
+                loaded: true,
                 color,
                 color_name: BAY_COLOR_NAMES[color_index],
+                paint: color_index,
+                recolorable: built.recolorable,
+                body_mesh_index: built.body_mesh_index,
+                original_body: built.original_body,
                 decal_mesh_index,
                 decal_center: [translation.x, built.ground_y, translation.z],
                 decal_yaw,
@@ -296,6 +296,773 @@ impl Scene {
         .to_string();
 
         Ok(scene)
+    }
+}
+
+/// Near-black studio ambient used by the concrete garage presentation.
+pub(crate) const CONCRETE_AMBIENT: [f32; 3] = [0.045, 0.047, 0.055];
+
+const CONCRETE_FLOOR_HALF_X: f32 = 60.0;
+const CONCRETE_FLOOR_HALF_Z: f32 = 30.0;
+const CONCRETE_FLOOR_TILE: f32 = 15.0;
+const CONCRETE_LAMP_HEIGHT: f32 = 7.5;
+const CONCRETE_LAMP_RADIUS: f32 = 1.15;
+const CONCRETE_LAMP_HOUSING_HEIGHT: f32 = 0.14;
+const CONCRETE_LAMP_SEGMENTS: usize = 32;
+const CONCRETE_SPOT_RANGE: f32 = 16.0;
+const CONCRETE_SPOT_INNER_COS: f32 = 0.96;
+/// Wide-enough outer cone to fill each bay while leaving a small dark gap.
+const CONCRETE_SPOT_OUTER_COS: f32 = 0.888;
+const CONCRETE_SPOT_INTENSITY: f32 = 5.0;
+const CONCRETE_SPOT_LIGHT_HEIGHT: f32 = CONCRETE_LAMP_HEIGHT - 0.15;
+pub(crate) const CONCRETE_LAMP_HOUSING_EMISSIVE: [f32; 3] = [0.05, 0.045, 0.035];
+pub(crate) const CONCRETE_LAMP_LENS_EMISSIVE: [f32; 3] = [1.8, 1.5, 1.05];
+/// Loaded bays flicker on for this long before settling at full output.
+pub(crate) const CONCRETE_FLICKER_DURATION: f32 = 0.9;
+const CONCRETE_FLICKER_PATTERN: [f32; 12] = [
+    0.0, 1.0, 0.15, 0.95, 0.0, 1.0, 0.3, 0.8, 0.05, 1.0, 0.55, 1.0,
+];
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ConcreteLamp {
+    pub(crate) housing_mesh: usize,
+    pub(crate) lens_mesh: usize,
+}
+
+pub(crate) struct ConcreteGarageBuild {
+    pub(crate) scene: Scene,
+    pub(crate) lights: Vec<GarageLight>,
+    pub(crate) lamps: Vec<ConcreteLamp>,
+}
+
+/// Deterministic per-bay lamp brightness. Negative elapsed is before the
+/// flicker starts; values after the duration settle at full output.
+pub(crate) fn concrete_lamp_flicker(elapsed: f32, bay: usize) -> f32 {
+    if elapsed.is_nan() || elapsed < 0.0 {
+        return 0.0;
+    }
+    if elapsed >= CONCRETE_FLICKER_DURATION {
+        return 1.0;
+    }
+    let pattern_len = CONCRETE_FLICKER_PATTERN.len();
+    let step = ((elapsed / CONCRETE_FLICKER_DURATION) * pattern_len as f32) as usize;
+    let step = step.min(pattern_len - 1);
+    CONCRETE_FLICKER_PATTERN[(step + bay % pattern_len) % pattern_len]
+}
+
+fn empty_concrete_scene(textures: Vec<SceneTexture>) -> Scene {
+    let texture_count = textures.len() as u32;
+    Scene {
+        meshes: Vec::new(),
+        textures,
+        lines: Vec::new(),
+        grass: crate::grass::GrassField::empty(),
+        camera: Camera {
+            eye: [3.15, 1.03, 4.86],
+            target: [0.0, 0.6, 0.0],
+            fov_y: 0.85,
+        },
+        debug_info: String::new(),
+        wheels: Vec::new(),
+        garage_bays: Vec::new(),
+        car_mesh_range: None,
+        stats: SceneStats {
+            vertices: 0,
+            triangles: 0,
+            draw_calls: 0,
+            textures: texture_count,
+            collision_triangles: 0,
+        },
+        car_rig: None,
+        car_rigs: Vec::new(),
+        vegetation: None,
+        mass_foliage: None,
+        style_car_transform: None,
+        style_car_bounds: None,
+    }
+}
+
+/// Build one car into `scene` at its bay slot. `camera` is supplied by the
+/// caller so loading a car later never moves the bay camera. Textures are
+/// appended to `scene`, so the renderer append path can remap their indices.
+fn add_concrete_car(
+    scene: &mut Scene,
+    car: &GarageCar<'_>,
+    index: usize,
+    bay_count: usize,
+    paint_index: usize,
+    camera: Camera,
+    prefix: &str,
+) -> Result<(GarageBay, CarRig, Aabb), String> {
+    let facing = Quat::from_rotation_y(std::f32::consts::PI);
+    let color_index = paint_index % BAY_COLORS.len();
+    let color = BAY_COLORS[color_index];
+    let contact = wheel_contact_offset(car.visual, facing);
+    let translation = Vec3::new(line_bay_x(index, bay_count), -contact, 0.0);
+    let rotation = facing;
+    let transform = Mat4::from_rotation_translation(rotation, translation);
+
+    let car_texture_base = scene.textures.len();
+    for texture in &car.visual.textures {
+        scene.textures.push(scene_texture(texture)?);
+    }
+    let silhouette = build_car_silhouette(car.visual)?;
+    let decal_texture = silhouette.as_ref().map(|silhouette| {
+        let index = scene.textures.len();
+        scene.textures.push(silhouette.texture.clone());
+        index
+    });
+
+    let built = build_car(
+        scene,
+        car.visual,
+        car_texture_base,
+        transform,
+        color,
+        prefix,
+        false,
+        true,
+        car.physics.mass < 900.0,
+    )?;
+    let decal_mesh_index = match (silhouette.as_ref(), decal_texture) {
+        (Some(silhouette), Some(texture)) => Some(add_car_decal(
+            scene,
+            texture,
+            silhouette.width,
+            silhouette.length,
+        )?),
+        _ => None,
+    };
+    let mut rig = built.rig.clone();
+    rig.decal_mesh_index = decal_mesh_index;
+    rig.decal_width = silhouette.as_ref().map(|s| s.width).unwrap_or(1.0);
+    rig.decal_length = silhouette.as_ref().map(|s| s.length).unwrap_or(1.0);
+    let row_forward = rotation * Vec3::NEG_Z;
+    let decal_yaw = shadow_decal_yaw(row_forward);
+    let car_info = json!({
+        "id": car.manifest.id,
+        "mass": car.physics.mass,
+        "wheelbase": car.physics.wheelbase,
+        "trackWidth": car.physics.track_width,
+        "wheels": car.physics.wheels.iter().map(|wheel| json!({
+            "name": wheel.name,
+            "position": wheel.position,
+            "radius": wheel.radius,
+            "width": wheel.width,
+            "front": wheel.is_front,
+            "left": wheel.is_left,
+            "driven": wheel.driven,
+        })).collect::<Vec<_>>(),
+        "meshCount": car.visual.meshes.len(),
+        "meshBufferCount": car.visual.mesh_buffers.len(),
+        "steeringWheel": car.visual.steering_wheel.is_some(),
+        "bounds": {
+            "min": built.bounds.min,
+            "max": built.bounds.max,
+        },
+    });
+    let bay = GarageBay {
+        wheels: built.wheels,
+        camera,
+        name: format!("Bay {}", index + 1),
+        car_id: car.manifest.id.clone(),
+        car: car_info,
+        loaded: true,
+        color,
+        color_name: BAY_COLOR_NAMES[color_index],
+        paint: color_index,
+        recolorable: built.recolorable,
+        body_mesh_index: built.body_mesh_index,
+        original_body: built.original_body,
+        decal_mesh_index,
+        decal_center: [translation.x, built.ground_y, translation.z],
+        decal_yaw,
+        decal_width: silhouette.as_ref().map(|s| s.width).unwrap_or(1.0),
+        decal_length: silhouette.as_ref().map(|s| s.length).unwrap_or(1.0),
+        decal_ground_y: built.ground_y,
+    };
+    Ok((bay, rig, built.bounds))
+}
+
+/// Build a detached scene containing only one car and its decal textures.
+/// Used by [`GarageViewer::load_bay`](crate::GarageViewer::load_bay).
+pub(crate) fn build_concrete_car_scene(
+    car: &GarageCar<'_>,
+    index: usize,
+    bay_count: usize,
+    paint_index: usize,
+    camera: Camera,
+) -> Result<(Scene, GarageBay), String> {
+    let mut scene = empty_concrete_scene(Vec::new());
+    let (bay, _rig, _bounds) = add_concrete_car(
+        &mut scene,
+        car,
+        index,
+        bay_count,
+        paint_index,
+        camera,
+        &format!("bay_{index}"),
+    )?;
+    Ok((scene, bay))
+}
+
+fn empty_concrete_bay(
+    index: usize,
+    bay_count: usize,
+    car_id: String,
+    paint_index: usize,
+    camera: Camera,
+) -> GarageBay {
+    let color_index = paint_index % BAY_COLORS.len();
+    let facing = Quat::from_rotation_y(std::f32::consts::PI);
+    let decal_yaw = shadow_decal_yaw(facing * Vec3::NEG_Z);
+    GarageBay {
+        wheels: Vec::new(),
+        camera,
+        name: format!("Bay {}", index + 1),
+        car_id,
+        car: serde_json::Value::Null,
+        loaded: false,
+        color: BAY_COLORS[color_index],
+        color_name: BAY_COLOR_NAMES[color_index],
+        paint: color_index,
+        recolorable: false,
+        body_mesh_index: 0,
+        original_body: None,
+        decal_mesh_index: None,
+        decal_center: [line_bay_x(index, bay_count), 0.0, 0.0],
+        decal_yaw,
+        decal_width: 1.0,
+        decal_length: 1.0,
+        decal_ground_y: 0.0,
+    }
+}
+
+/// Build the additive concrete-garage venue: one floor slab, a single line of
+/// bays, and one overhead lamp and spot light per bay. `cars` is sparse and
+/// index-aligned with `bay_ids`; `None` bays stay empty but keep a camera and
+/// light. No track data is used.
+pub(crate) fn build_concrete_garage(
+    bay_ids: &[String],
+    cars: &[Option<GarageCar<'_>>],
+    color_offset: usize,
+) -> Result<ConcreteGarageBuild, String> {
+    if bay_ids.is_empty() {
+        return Err("concrete garage requires at least one bay".to_string());
+    }
+    if bay_ids.len() > MAX_GARAGE_LIGHTS {
+        return Err(format!(
+            "concrete garage supports at most {MAX_GARAGE_LIGHTS} bays, got {}",
+            bay_ids.len()
+        ));
+    }
+    let bay_count = bay_ids.len();
+    let mut scene = empty_concrete_scene(vec![concrete_floor_texture()]);
+
+    let floor = concrete_floor_mesh(0.0);
+    let floor_triangles = (floor.indices.len() / 3) as u32;
+    scene.meshes.push(floor);
+
+    let facing = Quat::from_rotation_y(std::f32::consts::PI);
+    let car_start = scene.meshes.len();
+    let mut bays = Vec::with_capacity(bay_count);
+    let mut first_loaded: Option<(&GarageCar<'_>, Aabb)> = None;
+    let mut loaded_debug_cars = Vec::new();
+    let mut car_texture_count = 0u32;
+    let mut decal_texture_count = 0u32;
+    for (index, bay_id) in bay_ids.iter().enumerate() {
+        let paint_index = color_offset + index;
+        let camera = bay_camera(Vec3::new(line_bay_x(index, bay_count), 0.0, 0.0), facing);
+        match cars.get(index).and_then(Option::as_ref) {
+            Some(car) => {
+                let (bay, rig, bounds) = add_concrete_car(
+                    &mut scene,
+                    car,
+                    index,
+                    bay_count,
+                    paint_index,
+                    camera,
+                    &format!("bay_{index}"),
+                )?;
+                car_texture_count += car.visual.textures.len() as u32;
+                decal_texture_count += u32::from(bay.decal_mesh_index.is_some());
+                loaded_debug_cars.push(json!({
+                    "id": car.manifest.id,
+                    "meshCount": car.visual.meshes.len(),
+                }));
+                if first_loaded.is_none() {
+                    first_loaded = Some((car, bounds));
+                    scene.camera = camera;
+                    scene.car_rig = Some(rig.clone());
+                    scene.wheels = bay.wheels.clone();
+                }
+                scene.car_rigs.push(rig);
+                bays.push(bay);
+            }
+            None => bays.push(empty_concrete_bay(
+                index,
+                bay_count,
+                bay_id.clone(),
+                paint_index,
+                camera,
+            )),
+        }
+    }
+    let car_end = scene.meshes.len();
+    if first_loaded.is_none() {
+        scene.camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
+    }
+    scene.garage_bays = bays;
+
+    let mut lights = Vec::with_capacity(bay_count);
+    let mut lamps = Vec::with_capacity(bay_count);
+    for index in 0..bay_count {
+        let x = line_bay_x(index, bay_count);
+        let center = Vec3::new(x, CONCRETE_LAMP_HEIGHT, 0.0);
+        lamps.push(add_lamp_mesh(&mut scene, index, center));
+        lights.push(GarageLight {
+            position: [x, CONCRETE_SPOT_LIGHT_HEIGHT, 0.0],
+            direction: [0.0, -1.0, 0.0],
+            color: [1.0, 0.93, 0.80],
+            intensity: CONCRETE_SPOT_INTENSITY,
+            range: CONCRETE_SPOT_RANGE,
+            inner_cos: CONCRETE_SPOT_INNER_COS,
+            outer_cos: CONCRETE_SPOT_OUTER_COS,
+        });
+    }
+    let lamp_meshes = bay_count;
+    let spot_lights = lights.len();
+
+    scene.stats = SceneStats {
+        vertices: scene
+            .meshes
+            .iter()
+            .map(|mesh| mesh.vertices.len() as u32)
+            .sum(),
+        triangles: scene
+            .meshes
+            .iter()
+            .map(|mesh| mesh.indices.len() as u32 / 3)
+            .sum(),
+        draw_calls: scene.meshes.len() as u32,
+        textures: scene.textures.len() as u32,
+        collision_triangles: 0,
+    };
+
+    let car_draw_calls = car_end - car_start;
+    let car_triangles = scene.meshes[car_start..car_end]
+        .iter()
+        .map(|mesh| mesh.indices.len() as u32 / 3)
+        .sum::<u32>();
+    let car_json = match first_loaded {
+        Some((car, bounds)) => json!({
+            "id": car.manifest.id,
+            "mass": car.physics.mass,
+            "wheelbase": car.physics.wheelbase,
+            "trackWidth": car.physics.track_width,
+            "wheels": car.physics.wheels.iter().map(|wheel| json!({
+                "name": wheel.name,
+                "position": wheel.position,
+                "radius": wheel.radius,
+                "width": wheel.width,
+                "front": wheel.is_front,
+                "left": wheel.is_left,
+                "driven": wheel.driven,
+            })).collect::<Vec<_>>(),
+            "meshCount": car.visual.meshes.len(),
+            "meshBufferCount": car.visual.mesh_buffers.len(),
+            "steeringWheel": car.visual.steering_wheel.is_some(),
+            "bounds": {
+                "min": bounds.min,
+                "max": bounds.max,
+            },
+        }),
+        None => serde_json::Value::Null,
+    };
+
+    scene.debug_info = json!({
+        "asset": { "id": "concrete-garage", "kind": "Garage" },
+        "car": car_json,
+        "cars": loaded_debug_cars,
+        "garage": {
+            "mode": "concrete",
+            "layout": "line",
+            "spotLights": spot_lights,
+            "floorTriangles": floor_triangles,
+            "lampMeshes": lamp_meshes,
+            "bayCount": bay_count,
+            "baySpacing": BAY_SPACING,
+            "floorHalfExtent": [CONCRETE_FLOOR_HALF_X, CONCRETE_FLOOR_HALF_Z],
+        },
+        "stats": {
+            "vertices": scene.stats.vertices,
+            "triangles": scene.stats.triangles,
+            "drawCalls": scene.stats.draw_calls,
+            "textures": scene.stats.textures,
+            "texturedMeshes": scene.meshes.iter().filter(|mesh| mesh.texture.is_some()).count(),
+            "outlinedMeshes": scene.meshes.iter().filter(|mesh| mesh.outline.is_some()).count(),
+            "collisionTriangles": 0,
+            "trackTriangles": 0,
+            "carTriangles": car_triangles,
+            "trackDrawCalls": 0,
+            "carDrawCalls": car_draw_calls,
+            "carTextures": car_texture_count,
+            "decalTextures": decal_texture_count,
+        },
+        "meshes": scene.meshes.iter().map(|mesh| json!({
+            "name": mesh.name,
+            "vertices": mesh.vertices.len(),
+            "triangles": mesh.indices.len() / 3,
+        })).collect::<Vec<_>>(),
+        "warnings": cars.iter().flatten().flat_map(|car| car.manifest.warnings.iter()).cloned().collect::<Vec<_>>(),
+    })
+    .to_string();
+
+    Ok(ConcreteGarageBuild {
+        scene,
+        lights,
+        lamps,
+    })
+}
+
+fn line_bay_x(index: usize, bay_count: usize) -> f32 {
+    let center = bay_count.saturating_sub(1) as f32 * 0.5;
+    (index as f32 - center) * BAY_SPACING
+}
+
+fn wheel_contact_offset(car_visual: &CarVisual, rotation: Quat) -> f32 {
+    let offset = car_visual
+        .wheels
+        .iter()
+        .map(|wheel| {
+            let center = rotation * Vec3::from_array(wheel.transform.translation);
+            center.y - wheel.radius
+        })
+        .fold(f32::INFINITY, f32::min);
+    if offset.is_finite() {
+        offset
+    } else {
+        0.0
+    }
+}
+
+fn bay_camera(translation: Vec3, rotation: Quat) -> Camera {
+    let row_forward = rotation * Vec3::NEG_Z;
+    let row_right = rotation * Vec3::X;
+    Camera {
+        eye: (translation + row_forward * 4.860569 - row_right * 3.148117 + Vec3::Y * 1.029985)
+            .to_array(),
+        target: (translation + Vec3::Y * 0.6).to_array(),
+        fov_y: 0.85,
+    }
+}
+
+fn concrete_floor_mesh(y: f32) -> MeshData {
+    let positions = [
+        [-CONCRETE_FLOOR_HALF_X, y, -CONCRETE_FLOOR_HALF_Z],
+        [CONCRETE_FLOOR_HALF_X, y, -CONCRETE_FLOOR_HALF_Z],
+        [CONCRETE_FLOOR_HALF_X, y, CONCRETE_FLOOR_HALF_Z],
+        [-CONCRETE_FLOOR_HALF_X, y, CONCRETE_FLOOR_HALF_Z],
+    ];
+    let vertices = positions
+        .iter()
+        .map(|position| MeshVertex {
+            position: *position,
+            normal: [0.0, 1.0, 0.0],
+            color: [0.62, 0.62, 0.60],
+            uv: [
+                (position[0] + CONCRETE_FLOOR_HALF_X) / CONCRETE_FLOOR_TILE,
+                (position[2] + CONCRETE_FLOOR_HALF_Z) / CONCRETE_FLOOR_TILE,
+            ],
+            wind: [0.0, 0.0],
+        })
+        .collect();
+    MeshData {
+        name: "garage_floor".to_string(),
+        vertices,
+        // Counter-clockwise as seen from above so the normal points up.
+        indices: vec![0, 2, 1, 0, 3, 2],
+        model: Mat4::IDENTITY,
+        texture: Some(0),
+        grass_texture: None,
+        outline: None,
+        alpha: 1.0,
+        emissive: [0.0; 3],
+        casts_static_shadow: false,
+        casts_dynamic_shadow: false,
+        is_decal: false,
+        foliage: false,
+        billboard: false,
+        track_blend: None,
+    }
+}
+
+fn concrete_floor_texture() -> SceneTexture {
+    let width = 256usize;
+    let height = 256usize;
+    let mut rgba8 = Vec::with_capacity(width * height * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let u = x as f32 / width as f32;
+            let v = y as f32 / height as f32;
+            let noise = concrete_noise(u, v);
+            let joint = 1.0
+                - smoothstep(
+                    0.0,
+                    0.012,
+                    joint_distance(u * 2.0).min(joint_distance(v * 2.0)),
+                );
+            let value = (0.52 + (noise - 0.5) * 0.16 - joint * 0.18).clamp(0.0, 1.0);
+            let grey = (value * 255.0 + 0.5) as u8;
+            rgba8.extend_from_slice(&[grey, grey, grey, 255]);
+        }
+    }
+    SceneTexture {
+        width: width as u32,
+        height: height as u32,
+        rgba8,
+    }
+}
+
+fn joint_distance(value: f32) -> f32 {
+    let fraction = value.fract();
+    fraction.min(1.0 - fraction)
+}
+
+fn concrete_noise(u: f32, v: f32) -> f32 {
+    const OCTAVES: [(i32, u32); 4] = [
+        (8, 0x9e37_79b9),
+        (16, 0x85eb_ca77),
+        (32, 0xc2b2_ae3d),
+        (64, 0x27d4_eb2f),
+    ];
+    let mut sum = 0.0;
+    let mut amplitude = 0.5;
+    let mut total = 0.0;
+    for (period, seed) in OCTAVES {
+        sum += tileable_value_noise(u, v, period, seed) * amplitude;
+        total += amplitude;
+        amplitude *= 0.5;
+    }
+    sum / total
+}
+
+fn tileable_value_noise(u: f32, v: f32, period: i32, seed: u32) -> f32 {
+    let x = u * period as f32;
+    let y = v * period as f32;
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+    let top = lattice_value(x0, y0, period, seed)
+        + (lattice_value(x0 + 1, y0, period, seed) - lattice_value(x0, y0, period, seed)) * sx;
+    let bottom = lattice_value(x0, y0 + 1, period, seed)
+        + (lattice_value(x0 + 1, y0 + 1, period, seed) - lattice_value(x0, y0 + 1, period, seed))
+            * sx;
+    top + (bottom - top) * sy
+}
+
+fn lattice_value(x: i32, y: i32, period: i32, seed: u32) -> f32 {
+    let x = x.rem_euclid(period) as u32;
+    let y = y.rem_euclid(period) as u32;
+    let mut hash = x
+        .wrapping_mul(0x9e37_79b1)
+        .wrapping_add(y.wrapping_mul(0x85eb_ca77))
+        .wrapping_add(seed);
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x7feb_352d);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x846c_a68b);
+    hash ^= hash >> 16;
+    (hash & 0xffff) as f32 / 65535.0
+}
+
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn push_lamp_disc(
+    buffers: &mut MeshBuffers,
+    center: Vec3,
+    y: f32,
+    radius: f32,
+    normal: [f32; 3],
+    color: [f32; 3],
+    upper: bool,
+) {
+    let segments = CONCRETE_LAMP_SEGMENTS;
+    let center_index = buffers.positions.len() as u32;
+    buffers.positions.push([center.x, y, center.z]);
+    buffers.normals.push(normal);
+    buffers.uvs.push([0.5, 0.5]);
+    buffers.colors.push(color);
+    for index in 0..=segments {
+        let angle = std::f32::consts::TAU * index as f32 / segments as f32;
+        let cos = angle.cos();
+        let sin = angle.sin();
+        buffers
+            .positions
+            .push([center.x + cos * radius, y, center.z + sin * radius]);
+        buffers.normals.push(normal);
+        buffers.uvs.push([0.5 + 0.5 * cos, 0.5 + 0.5 * sin]);
+        buffers.colors.push(color);
+    }
+    for index in 0..segments {
+        let current = center_index + 1 + index as u32;
+        let next = current + 1;
+        if upper {
+            buffers
+                .indices
+                .extend_from_slice(&[center_index, next, current]);
+        } else {
+            buffers
+                .indices
+                .extend_from_slice(&[center_index, current, next]);
+        }
+    }
+}
+
+fn lamp_mesh_data(
+    name: String,
+    buffers: MeshBuffers,
+    color: [f32; 3],
+    emissive: [f32; 3],
+) -> MeshData {
+    let vertices = build_vertices(&buffers, color);
+    MeshData {
+        name,
+        vertices,
+        indices: buffers.indices,
+        model: Mat4::IDENTITY,
+        texture: None,
+        grass_texture: None,
+        outline: None,
+        alpha: 1.0,
+        emissive,
+        casts_static_shadow: false,
+        casts_dynamic_shadow: false,
+        is_decal: false,
+        foliage: false,
+        billboard: false,
+        track_blend: None,
+    }
+}
+
+fn build_lamp_meshes(index: usize, center: Vec3) -> (MeshData, MeshData) {
+    let segments = CONCRETE_LAMP_SEGMENTS;
+    let half_height = CONCRETE_LAMP_HOUSING_HEIGHT * 0.5;
+    let top_y = center.y + half_height;
+    let bottom_y = center.y - half_height;
+    let housing_color = [0.13, 0.12, 0.11];
+    let mut housing = new_light_buffers();
+    for segment in 0..segments {
+        let angle0 = std::f32::consts::TAU * segment as f32 / segments as f32;
+        let angle1 = std::f32::consts::TAU * (segment + 1) as f32 / segments as f32;
+        let (sin0, cos0) = angle0.sin_cos();
+        let (sin1, cos1) = angle1.sin_cos();
+        let base = housing.positions.len() as u32;
+        housing.positions.extend_from_slice(&[
+            [
+                center.x + cos0 * CONCRETE_LAMP_RADIUS,
+                bottom_y,
+                center.z + sin0 * CONCRETE_LAMP_RADIUS,
+            ],
+            [
+                center.x + cos1 * CONCRETE_LAMP_RADIUS,
+                bottom_y,
+                center.z + sin1 * CONCRETE_LAMP_RADIUS,
+            ],
+            [
+                center.x + cos0 * CONCRETE_LAMP_RADIUS,
+                top_y,
+                center.z + sin0 * CONCRETE_LAMP_RADIUS,
+            ],
+            [
+                center.x + cos1 * CONCRETE_LAMP_RADIUS,
+                top_y,
+                center.z + sin1 * CONCRETE_LAMP_RADIUS,
+            ],
+        ]);
+        housing.normals.extend_from_slice(&[
+            [cos0, 0.0, sin0],
+            [cos1, 0.0, sin1],
+            [cos0, 0.0, sin0],
+            [cos1, 0.0, sin1],
+        ]);
+        let u0 = segment as f32 / segments as f32;
+        let u1 = (segment + 1) as f32 / segments as f32;
+        housing
+            .uvs
+            .extend_from_slice(&[[u0, 0.0], [u1, 0.0], [u0, 1.0], [u1, 1.0]]);
+        housing.colors.extend_from_slice(&[
+            housing_color,
+            housing_color,
+            housing_color,
+            housing_color,
+        ]);
+        housing
+            .indices
+            .extend_from_slice(&[base, base + 2, base + 3, base, base + 3, base + 1]);
+    }
+    push_lamp_disc(
+        &mut housing,
+        center,
+        top_y,
+        CONCRETE_LAMP_RADIUS,
+        [0.0, 1.0, 0.0],
+        housing_color,
+        true,
+    );
+    push_lamp_disc(
+        &mut housing,
+        center,
+        bottom_y,
+        CONCRETE_LAMP_RADIUS,
+        [0.0, -1.0, 0.0],
+        housing_color,
+        false,
+    );
+
+    let lens_color = [1.0, 0.86, 0.62];
+    let mut lens = new_light_buffers();
+    push_lamp_disc(
+        &mut lens,
+        center,
+        bottom_y - 0.012,
+        CONCRETE_LAMP_RADIUS * 0.86,
+        [0.0, -1.0, 0.0],
+        lens_color,
+        false,
+    );
+
+    (
+        lamp_mesh_data(
+            format!("garage_lamp_{index}"),
+            housing,
+            housing_color,
+            CONCRETE_LAMP_HOUSING_EMISSIVE,
+        ),
+        lamp_mesh_data(
+            format!("garage_lamp_{index}_lens"),
+            lens,
+            lens_color,
+            CONCRETE_LAMP_LENS_EMISSIVE,
+        ),
+    )
+}
+
+fn add_lamp_mesh(scene: &mut Scene, index: usize, center: Vec3) -> ConcreteLamp {
+    let (housing, lens) = build_lamp_meshes(index, center);
+    let housing_mesh = scene.meshes.len();
+    scene.meshes.push(housing);
+    let lens_mesh = scene.meshes.len();
+    scene.meshes.push(lens);
+    ConcreteLamp {
+        housing_mesh,
+        lens_mesh,
     }
 }
 
@@ -482,18 +1249,51 @@ fn add_car_decal(
     Ok(scene.meshes.len() - 1)
 }
 
+/// Red-ish body paint vertices that the paint API may recolor.
+fn is_paint_vertex(vertex_color: &[f32; 3]) -> bool {
+    vertex_color[0] > 0.2
+        && vertex_color[0] > vertex_color[1] * 1.8
+        && vertex_color[0] > vertex_color[2] * 1.8
+}
+
 fn recolor_paint(buffers: &mut MeshBuffers, color: [f32; 3]) {
     if buffers.colors.is_empty() {
         return;
     }
     for vertex_color in &mut buffers.colors {
-        if vertex_color[0] > 0.2
-            && vertex_color[0] > vertex_color[1] * 1.8
-            && vertex_color[0] > vertex_color[2] * 1.8
-        {
+        if is_paint_vertex(vertex_color) {
             *vertex_color = color;
         }
     }
+}
+
+/// A body accepts paint only when it is vertex-coloured (no base-colour
+/// texture) and a meaningful share of its vertices look like red paint. The
+/// threshold keeps small factory badges on textured cars out of the palette.
+fn is_recolorable(buffers: &MeshBuffers, textured_body: bool) -> bool {
+    if textured_body || buffers.colors.is_empty() {
+        return false;
+    }
+    let paint_vertices = buffers
+        .colors
+        .iter()
+        .filter(|color| is_paint_vertex(color))
+        .count();
+    paint_vertices * 5 >= buffers.colors.len()
+}
+
+/// Rebuild the body's vertices for a paint palette index. Returns `None` when
+/// the body is not recolorable or lacks its retained original buffers.
+pub(crate) fn recolored_body_vertices(bay: &GarageBay, paint: usize) -> Option<Vec<MeshVertex>> {
+    if !bay.recolorable {
+        return None;
+    }
+    let original = bay.original_body.as_ref()?;
+    let paint = paint % BAY_COLORS.len();
+    let color = BAY_COLORS[paint];
+    let mut buffers = original.clone();
+    recolor_paint(&mut buffers, color);
+    Some(build_vertices(&buffers, color))
 }
 
 pub(crate) struct CarBuild {
@@ -501,6 +1301,9 @@ pub(crate) struct CarBuild {
     pub(crate) wheels: Vec<SceneWheel>,
     pub(crate) bounds: Aabb,
     pub(crate) ground_y: f32,
+    pub(crate) body_mesh_index: usize,
+    pub(crate) recolorable: bool,
+    pub(crate) original_body: Option<MeshBuffers>,
 }
 
 const BAY_SPACING: f32 = 8.0;
@@ -510,7 +1313,7 @@ pub(crate) const BAY_COLOR_NAMES: [&str; 10] = [
     "Red", "Blue", "Yellow", "Green", "Orange", "Black", "White", "Pink", "Navy", "Cyan",
 ];
 
-const BAY_COLORS: [[f32; 3]; 10] = [
+pub(crate) const BAY_COLORS: [[f32; 3]; 10] = [
     [0.78, 0.08, 0.06],
     [0.08, 0.22, 0.72],
     [0.86, 0.62, 0.07],
@@ -567,6 +1370,21 @@ const CAMARO_COCKPIT_DIALS: [CockpitDial; 3] = [
     ),
 ];
 
+const OPEN_WHEEL_COCKPIT_DIALS: [CockpitDial; 1] =
+    [(CockpitNeedleSource::Rpm, [0.0, 0.64, -0.32], 0.050, 0.045)];
+
+/// Select the cockpit dial layout. Open-wheel cars always use the single-RPM
+/// open-wheel layout, even when they retain a source interior mesh.
+fn select_cockpit_dials(open_wheel: bool, has_interior: bool) -> &'static [CockpitDial] {
+    if open_wheel {
+        &OPEN_WHEEL_COCKPIT_DIALS
+    } else if has_interior {
+        &CAMARO_COCKPIT_DIALS
+    } else {
+        &COCKPIT_DIALS
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_car(
     scene: &mut Scene,
@@ -577,6 +1395,7 @@ pub(crate) fn build_car(
     prefix: &str,
     brake_lights: bool,
     cockpit_gauges: bool,
+    open_wheel: bool,
 ) -> Result<CarBuild, String> {
     let body_index = mesh_index_by_name(car_visual, "body").unwrap_or(0);
     let body_mesh = car_visual
@@ -597,17 +1416,15 @@ pub(crate) fn build_car(
         .iter()
         .any(|mesh| mesh.name == "body_interior");
     let synthetic_cockpit = cockpit_gauges && brake_lights && !has_interior;
-    let cockpit_dials: &[CockpitDial] = if has_interior {
-        &CAMARO_COCKPIT_DIALS
-    } else {
-        &COCKPIT_DIALS
-    };
+    let cockpit_dials = select_cockpit_dials(open_wheel, has_interior);
     let has_cockpit_gauges = synthetic_cockpit || has_interior;
     let (brake_light_buffers, reverse_light_buffers) = if brake_lights {
         split_rear_lights(&mut body_buffers, &body_mesh.bounds, textured_body)
     } else {
         (None, None)
     };
+    let recolorable = is_recolorable(&body_buffers, textured_body);
+    let original_body = recolorable.then(|| body_buffers.clone());
     recolor_paint(&mut body_buffers, body_color);
     let body_local = node_matrix(&car_visual.body);
     let body_model = transform * body_local;
@@ -708,7 +1525,7 @@ pub(crate) fn build_car(
         None
     };
 
-    let dashboard_mesh_index = if synthetic_cockpit {
+    let dashboard_mesh_index = if synthetic_cockpit && !open_wheel {
         let dashboard = mesh_index_by_name(car_visual, "body_glass")
             .and_then(|index| car_visual.mesh_buffers.get(index))
             .and_then(cockpit_cowl_buffers);
@@ -1025,6 +1842,9 @@ pub(crate) fn build_car(
         wheels,
         bounds: body_bounds,
         ground_y,
+        body_mesh_index,
+        recolorable,
+        original_body,
     })
 }
 
@@ -1928,4 +2748,497 @@ fn add_wheel_marker(lines: &mut Vec<LineVertex>, model: Mat4, color: [f32; 3]) {
         [center.x, center.y, center.z + size],
         color,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cockpit_dials_prefer_open_wheel_over_source_interior() {
+        assert_eq!(
+            select_cockpit_dials(true, true),
+            OPEN_WHEEL_COCKPIT_DIALS.as_slice()
+        );
+        assert_eq!(
+            select_cockpit_dials(true, false),
+            OPEN_WHEEL_COCKPIT_DIALS.as_slice()
+        );
+        assert_eq!(
+            select_cockpit_dials(false, true),
+            CAMARO_COCKPIT_DIALS.as_slice()
+        );
+        assert_eq!(select_cockpit_dials(false, false), COCKPIT_DIALS.as_slice());
+    }
+
+    #[test]
+    fn concrete_line_layout_is_centered_and_constant_spacing() {
+        let bay_count = 10;
+        let xs = (0..bay_count)
+            .map(|index| line_bay_x(index, bay_count))
+            .collect::<Vec<_>>();
+        assert!((xs[0] + xs[bay_count - 1]).abs() < 1e-4);
+        for pair in xs.windows(2) {
+            let spacing = pair[1] - pair[0];
+            assert!((spacing - BAY_SPACING).abs() < 1e-4);
+            assert!((7.5..=8.0).contains(&spacing));
+        }
+        let spacing = xs[1] - xs[0];
+        assert!((7.5..=8.0).contains(&spacing));
+    }
+
+    #[test]
+    fn concrete_floor_has_upward_winding_and_full_slab() {
+        let floor = concrete_floor_mesh(0.0);
+        assert_eq!(floor.indices.len() / 3, 2);
+        assert!(floor
+            .vertices
+            .iter()
+            .all(|vertex| vertex.normal == [0.0, 1.0, 0.0]));
+        let width = floor
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position[0])
+            .fold(f32::NEG_INFINITY, f32::max)
+            - floor
+                .vertices
+                .iter()
+                .map(|vertex| vertex.position[0])
+                .fold(f32::INFINITY, f32::min);
+        let depth = floor
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position[2])
+            .fold(f32::NEG_INFINITY, f32::max)
+            - floor
+                .vertices
+                .iter()
+                .map(|vertex| vertex.position[2])
+                .fold(f32::INFINITY, f32::min);
+        assert!((width - 2.0 * CONCRETE_FLOOR_HALF_X).abs() < 1e-4);
+        assert!((depth - 2.0 * CONCRETE_FLOOR_HALF_Z).abs() < 1e-4);
+        let a = Vec3::from_array(floor.vertices[floor.indices[0] as usize].position);
+        let b = Vec3::from_array(floor.vertices[floor.indices[1] as usize].position);
+        let c = Vec3::from_array(floor.vertices[floor.indices[2] as usize].position);
+        assert!((b - a).cross(c - a).y > 0.0);
+    }
+
+    #[test]
+    fn concrete_texture_is_greyscale_and_tileable_at_seam() {
+        let texture = concrete_floor_texture();
+        assert_eq!(texture.width, 256);
+        assert_eq!(texture.height, 256);
+        assert_eq!(texture.rgba8.len(), 256 * 256 * 4);
+        let first = texture.rgba8[0];
+        let last = texture.rgba8[(255 * 4) as usize];
+        assert!(first.abs_diff(last) < 6);
+        for start in (0..texture.rgba8.len()).step_by(4) {
+            let pixel = &texture.rgba8[start..start + 4];
+            assert_eq!(pixel[0], pixel[1]);
+            assert_eq!(pixel[1], pixel[2]);
+            assert_eq!(pixel[3], 255);
+        }
+    }
+
+    #[test]
+    fn concrete_wheel_contact_offset_plants_wheels_at_zero() {
+        let identity = NodeTransform {
+            translation: [0.0; 3],
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+        };
+        let wheel = sim_types::WheelVisual {
+            name: "wheel".to_string(),
+            mesh: 0,
+            transform: NodeTransform {
+                translation: [0.0, 0.5, 0.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+            },
+            radius: 0.34,
+            width: 0.2,
+            is_front: true,
+            is_left: true,
+        };
+        let visual = CarVisual {
+            meshes: Vec::new(),
+            mesh_buffers: Vec::new(),
+            materials: Vec::new(),
+            textures: Vec::new(),
+            wheels: [wheel.clone(), wheel.clone(), wheel.clone(), wheel],
+            body: identity,
+            steering_wheel: None,
+        };
+        let offset = wheel_contact_offset(&visual, Quat::IDENTITY);
+        assert!((offset - 0.16).abs() < 1e-5);
+        let flipped = wheel_contact_offset(&visual, Quat::from_rotation_y(std::f32::consts::PI));
+        assert!((flipped - 0.16).abs() < 1e-5);
+    }
+
+    fn test_node(translation: [f32; 3]) -> NodeTransform {
+        NodeTransform {
+            translation,
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+        }
+    }
+
+    fn test_car_visual() -> CarVisual {
+        let body = MeshBuffers {
+            positions: vec![
+                [-1.0, 0.0, -2.0],
+                [1.0, 0.0, -2.0],
+                [1.0, 1.0, 2.0],
+                [-1.0, 1.0, 2.0],
+                [-1.0, 0.0, 2.0],
+                [1.0, 0.0, 2.0],
+            ],
+            normals: vec![[0.0, 1.0, 0.0]; 6],
+            uvs: vec![[0.0, 0.0]; 6],
+            colors: vec![[0.8, 0.1, 0.1]; 6],
+            indices: vec![0, 1, 2, 0, 2, 3, 0, 3, 4, 4, 3, 5],
+        };
+        let bounds = Aabb {
+            min: [-1.0, 0.0, -2.0],
+            max: [1.0, 1.0, 2.0],
+        };
+        let mesh = MeshRef {
+            name: "body".to_string(),
+            vertex_offset: 0,
+            vertex_count: body.positions.len() as u32,
+            index_offset: 0,
+            index_count: body.indices.len() as u32,
+            material: 0,
+            bounds,
+            lod: 0,
+        };
+        let material = sim_types::MaterialRef {
+            name: "paint".to_string(),
+            base_color: [0.8, 0.1, 0.1, 1.0],
+            metallic: 0.0,
+            roughness: 0.5,
+            base_color_texture: None,
+            outline: false,
+        };
+        let wheels = [
+            ("FL", [-0.8, 0.34, -1.2], true, true),
+            ("FR", [0.8, 0.34, -1.2], true, false),
+            ("RL", [-0.8, 0.34, 1.2], false, true),
+            ("RR", [0.8, 0.34, 1.2], false, false),
+        ]
+        .map(
+            |(name, translation, is_front, is_left)| sim_types::WheelVisual {
+                name: name.to_string(),
+                mesh: 0,
+                transform: test_node(translation),
+                radius: 0.34,
+                width: 0.2,
+                is_front,
+                is_left,
+            },
+        );
+        CarVisual {
+            meshes: vec![mesh],
+            mesh_buffers: vec![body],
+            materials: vec![material],
+            textures: Vec::new(),
+            wheels,
+            body: test_node([0.0, 0.0, 0.0]),
+            steering_wheel: None,
+        }
+    }
+
+    fn test_car_physics() -> CarPhysics {
+        let suspension = sim_types::SuspensionSpec {
+            travel: 0.15,
+            spring_rate: 55_000.0,
+            damper_bump: 7_000.0,
+            damper_rebound: 9_000.0,
+            anti_roll: 18_000.0,
+            ride_height: 0.34,
+        };
+        let tire = sim_types::TireSpec {
+            lateral: sim_types::PacejkaCoefficients {
+                b: 10.0,
+                c: 1.9,
+                d: 1.0,
+                e: 0.97,
+            },
+            longitudinal: sim_types::PacejkaCoefficients {
+                b: 12.0,
+                c: 1.65,
+                d: 1.0,
+                e: 0.9,
+            },
+            relaxation_length: 0.3,
+            peak_slip_ratio: 0.12,
+            peak_slip_angle: 0.12,
+            friction_scale: 1.0,
+        };
+        let wheels = [
+            ("FL", [-0.73, 0.34, -1.2125], true, true, false),
+            ("FR", [0.73, 0.34, -1.2125], true, false, false),
+            ("RL", [-0.73, 0.34, 1.2125], false, true, true),
+            ("RR", [0.73, 0.34, 1.2125], false, false, true),
+        ]
+        .map(
+            |(name, position, front, left, driven)| sim_types::WheelPhysics {
+                name: name.to_string(),
+                is_front: front,
+                is_left: left,
+                position,
+                radius: 0.34,
+                width: 0.2,
+                steerable: front,
+                driven,
+                suspension,
+                tire,
+            },
+        );
+        CarPhysics {
+            mass: 1_270.0,
+            inertia: [650.0, 1_300.0, 450.0],
+            center_of_gravity: [0.0, 0.40, 0.0],
+            wheelbase: 2.425,
+            track_width: [1.46, 1.46],
+            wheels,
+            engine: sim_types::EngineSpec {
+                idle_rpm: 900.0,
+                redline_rpm: 8_000.0,
+                torque_curve: vec![sim_types::TorquePoint {
+                    rpm: 4_500.0,
+                    torque_nm: 314.0,
+                }],
+            },
+            drivetrain: sim_types::DrivetrainSpec {
+                gear_ratios: vec![3.483, 2.015],
+                final_drive: 4.1,
+                clutch_max_torque: 400.0,
+                drive_layout: sim_types::DriveLayout::Rear,
+            },
+            brakes: sim_types::BrakeSpec {
+                max_torque: [2_200.0, 2_200.0, 1_400.0, 1_400.0],
+                bias: 0.6,
+            },
+            steering: sim_types::SteeringSpec {
+                max_angle: 0.6,
+                ratio: 14.0,
+                caster: 0.09,
+                kingpin_inclination: 0.12,
+            },
+            aero: sim_types::AeroSpec {
+                drag_coefficient: 0.29,
+                frontal_area: 1.85,
+                downforce_coefficient: 0.0,
+            },
+        }
+    }
+
+    fn test_manifest(id: &str) -> AssetManifest {
+        AssetManifest {
+            magic: *b"SIMA",
+            schema_version: sim_types::SCHEMA_VERSION,
+            kind: sim_types::AssetKind::Car,
+            id: id.to_string(),
+            source_hash: [0; 32],
+            units: sim_types::ENGINE_UNITS,
+            frame: sim_types::ENGINE_FRAME,
+            bounds: Aabb {
+                min: [-1.0, 0.0, -2.0],
+                max: [1.0, 1.0, 2.0],
+            },
+            chunks: Vec::new(),
+            entrypoints: sim_types::EntryPoints {
+                physics: None,
+                visual: None,
+                collision: None,
+                metadata: None,
+                audio: None,
+                texture: None,
+                race: None,
+            },
+            stats: sim_types::AssetStats {
+                vertices: 6,
+                triangles: 4,
+                materials: 1,
+                textures: 0,
+                draw_calls: 1,
+            },
+            warnings: Vec::new(),
+        }
+    }
+
+    fn sparse_ids() -> Vec<String> {
+        [
+            "bay-a", "bay-b", "bay-c", "bay-d", "bay-e", "bay-f", "bay-g", "bay-h",
+        ]
+        .map(String::from)
+        .to_vec()
+    }
+
+    #[test]
+    fn concrete_spotlight_pools_stay_inside_half_bay() {
+        let outer_radius = CONCRETE_SPOT_LIGHT_HEIGHT * CONCRETE_SPOT_OUTER_COS.acos().tan();
+        let inner_radius = CONCRETE_SPOT_LIGHT_HEIGHT * CONCRETE_SPOT_INNER_COS.acos().tan();
+        assert!(inner_radius < outer_radius);
+        assert!(
+            outer_radius <= BAY_SPACING * 0.5,
+            "outer pool radius {outer_radius} overlaps adjacent bays"
+        );
+        assert!(
+            outer_radius >= 3.7,
+            "outer pool radius {outer_radius} is deliberately large"
+        );
+    }
+
+    #[test]
+    fn concrete_lamp_fixture_is_round_and_bounded() {
+        let center = Vec3::new(1.5, CONCRETE_LAMP_HEIGHT, -0.5);
+        let (housing, lens) = build_lamp_meshes(0, center);
+        let top_y = center.y + CONCRETE_LAMP_HOUSING_HEIGHT * 0.5;
+        let bottom_y = center.y - CONCRETE_LAMP_HOUSING_HEIGHT * 0.5;
+        for mesh in [&housing, &lens] {
+            for vertex in &mesh.vertices {
+                let dx = vertex.position[0] - center.x;
+                let dz = vertex.position[2] - center.z;
+                assert!((dx * dx + dz * dz).sqrt() <= CONCRETE_LAMP_RADIUS + 1e-4);
+                assert!(vertex.position[1] <= top_y + 1e-4);
+                assert!(vertex.position[1] >= bottom_y - 0.02);
+            }
+        }
+        assert_eq!(
+            housing.indices.len(),
+            CONCRETE_LAMP_SEGMENTS * 3 * 4,
+            "housing has side, top and bottom faces"
+        );
+        assert_eq!(lens.indices.len(), CONCRETE_LAMP_SEGMENTS * 3);
+        assert!(housing
+            .vertices
+            .iter()
+            .any(|vertex| vertex.normal[1] > 0.99));
+        assert!(housing
+            .vertices
+            .iter()
+            .any(|vertex| vertex.normal[1] < -0.99));
+        assert!(housing
+            .vertices
+            .iter()
+            .any(|vertex| vertex.normal[0].abs() > 0.99));
+        assert!(lens
+            .vertices
+            .iter()
+            .all(|vertex| vertex.normal == [0.0, -1.0, 0.0]));
+    }
+
+    #[test]
+    fn concrete_sparse_builder_keeps_empty_bay_catalog_ids() {
+        let physics = test_car_physics();
+        let visual = test_car_visual();
+        let manifest = test_manifest("pack-car");
+        let ids = sparse_ids();
+        let mut slots = (0..ids.len())
+            .map(|_| None)
+            .collect::<Vec<Option<GarageCar<'_>>>>();
+        slots[2] = Some(GarageCar {
+            physics: &physics,
+            visual: &visual,
+            manifest: &manifest,
+        });
+
+        let build = build_concrete_garage(&ids, &slots, 0).expect("sparse concrete garage");
+        assert_eq!(build.scene.garage_bays.len(), ids.len());
+        assert_eq!(build.lights.len(), ids.len());
+        for (index, bay) in build.scene.garage_bays.iter().enumerate() {
+            assert_eq!(bay.name, format!("Bay {}", index + 1));
+            if index == 2 {
+                assert!(bay.loaded);
+                assert_eq!(bay.car_id, "pack-car");
+                assert!(!bay.car.is_null());
+                assert_eq!(bay.paint, 2);
+            } else {
+                assert!(!bay.loaded);
+                assert_eq!(bay.car_id, ids[index]);
+                assert!(bay.car.is_null());
+                assert!(!bay.recolorable);
+                assert!(bay.wheels.is_empty());
+            }
+        }
+
+        let debug: serde_json::Value =
+            serde_json::from_str(&build.scene.debug_info).expect("debug json");
+        assert_eq!(debug["car"]["id"], serde_json::json!("pack-car"));
+        assert_eq!(debug["cars"].as_array().map(Vec::len), Some(1));
+        assert_eq!(debug["garage"]["bayCount"], serde_json::json!(ids.len()));
+        assert_eq!(build.lamps.len(), ids.len());
+        for (index, lamp) in build.lamps.iter().enumerate() {
+            assert_eq!(
+                build.scene.meshes[lamp.housing_mesh].name,
+                format!("garage_lamp_{index}")
+            );
+            assert_eq!(
+                build.scene.meshes[lamp.lens_mesh].name,
+                format!("garage_lamp_{index}_lens")
+            );
+        }
+    }
+
+    #[test]
+    fn concrete_lamp_flicker_is_bounded_and_deterministic() {
+        assert_eq!(concrete_lamp_flicker(-0.01, 0), 0.0);
+        assert_eq!(concrete_lamp_flicker(-1.0, 3), 0.0);
+        for bay in 0..8 {
+            for step in 0..40 {
+                let value = concrete_lamp_flicker(step as f32 * 0.03, bay);
+                assert!((0.0..=1.0).contains(&value), "flicker {value} at {step}");
+            }
+            assert_eq!(concrete_lamp_flicker(CONCRETE_FLICKER_DURATION, bay), 1.0);
+            assert_eq!(concrete_lamp_flicker(5.0, bay), 1.0);
+        }
+        assert_ne!(
+            concrete_lamp_flicker(0.01, 0),
+            concrete_lamp_flicker(0.01, 1)
+        );
+    }
+
+    #[test]
+    fn concrete_sparse_load_keeps_existing_bay_camera() {
+        let physics = test_car_physics();
+        let visual = test_car_visual();
+        let manifest = test_manifest("late-car");
+        let car = GarageCar {
+            physics: &physics,
+            visual: &visual,
+            manifest: &manifest,
+        };
+        let ids = sparse_ids();
+        let empty_slots = (0..ids.len())
+            .map(|_| None)
+            .collect::<Vec<Option<GarageCar<'_>>>>();
+        let empty = build_concrete_garage(&ids, &empty_slots, 0).expect("empty garage");
+        let camera = empty.scene.garage_bays[3].camera;
+        assert!(!empty.scene.garage_bays[3].loaded);
+
+        let (scene, bay) =
+            build_concrete_car_scene(&car, 3, ids.len(), 3, camera).expect("build late car scene");
+        assert!(bay.loaded);
+        assert_eq!(bay.car_id, "late-car");
+        assert_eq!(bay.camera.eye, camera.eye);
+        assert_eq!(bay.camera.target, camera.target);
+        assert!(!scene.meshes.is_empty());
+        assert!(!scene.textures.is_empty());
+    }
+
+    #[test]
+    fn concrete_garage_rejects_more_bays_than_light_slots() {
+        let ids = (0..=MAX_GARAGE_LIGHTS)
+            .map(|index| format!("bay-{index}"))
+            .collect::<Vec<_>>();
+        let slots = (0..ids.len())
+            .map(|_| None)
+            .collect::<Vec<Option<GarageCar<'_>>>>();
+        let error = build_concrete_garage(&ids, &slots, 0)
+            .err()
+            .expect("oversized garage should fail");
+        assert!(error.contains(&MAX_GARAGE_LIGHTS.to_string()));
+    }
 }

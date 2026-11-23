@@ -8,17 +8,22 @@ import {
 } from "../src/assets/editor-track.ts";
 import { loadPackFromBytes, loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { isRaceStateView, type RaceStateView } from "../src/contracts/race-state.ts";
+import { RaceDirector, raceLayoutLength, type RaceView } from "../src/race/race-director.ts";
+import { buildRaceResultRows } from "../src/race/race-results.ts";
 import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import { setupTouchControls } from "../src/ui/touch.ts";
 import { setupCarSetupDialog } from "../src/ui/car-setup.ts";
 import { setupAssistsDialog } from "../src/ui/assists.ts";
+import { cockpitRpmOffset } from "../src/ui/cockpit-offsets.ts";
 import { setupDevMenu } from "../src/ui/dev-menu.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import {
   findCar,
+  loadCarPaint,
   loadSelectedCar,
   saveSelectedBay,
   selectedBay,
@@ -31,6 +36,7 @@ import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
 import { RemoteEngineAudio } from "../src/audio/remote-engine-audio.ts";
 import { WheelFfb } from "../src/input/wheel-ffb.ts";
+import { rateLimitSteering } from "../src/input/steering-rate.ts";
 import { RelayClient } from "../src/net/relay.ts";
 import { RemoteStateBuffer } from "../src/net/remote-state.ts";
 import {
@@ -96,9 +102,73 @@ const CAR_URL = withPackVersion(
   APP_VERSION,
 );
 const carBay = selectedBay();
+const carPaint = resolveCarPaint();
+
+function resolveCarPaint(): number | null {
+  const raw = params.get("paint");
+  if (raw !== null && raw.trim() !== "") {
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= 0) {
+      return Math.trunc(value);
+    }
+  }
+  return loadCarPaint(selectedCar.id);
+}
 const mpMode = params.get("mp") === "1";
+const soloMode = params.get("race") === "0";
 const REMOTE_SLOTS = 3;
+const AI_FIELD_MAX = 3;
+const DEFAULT_AI_PACE = 1;
+const AI_PACE_INDICES: Record<string, number> = {
+  chill: 0,
+  club: 1,
+  fast: 2,
+};
 const MULTIPLAYER_SEND_HZ = 30;
+
+function resolveAiCount(raceAvailable: boolean): number {
+  if (mpMode || soloMode || !raceAvailable) {
+    return 0;
+  }
+  const raw = params.get("ai");
+  if (raw === null || raw.trim() === "") {
+    return AI_FIELD_MAX;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return AI_FIELD_MAX;
+  }
+  return Math.min(AI_FIELD_MAX, Math.max(0, Math.trunc(value)));
+}
+
+function resolveAiPace(): number {
+  const raw = params.get("aiPace");
+  if (raw === null) {
+    return DEFAULT_AI_PACE;
+  }
+  const value = AI_PACE_INDICES[raw];
+  return typeof value === "number" ? value : DEFAULT_AI_PACE;
+}
+
+const DEFAULT_RACE_LAPS = 3;
+const MIN_RACE_LAPS = 1;
+const MAX_RACE_LAPS = 5;
+
+function resolveRaceLaps(): number {
+  const raw = params.get("laps");
+  if (raw === null || raw.trim() === "") {
+    return DEFAULT_RACE_LAPS;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return DEFAULT_RACE_LAPS;
+  }
+  const laps = Math.trunc(value);
+  if (laps < MIN_RACE_LAPS || laps > MAX_RACE_LAPS) {
+    return DEFAULT_RACE_LAPS;
+  }
+  return laps;
+}
 
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 let renderScale = 1;
@@ -120,6 +190,21 @@ const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
 const netBadge = document.querySelector<HTMLElement>("#net-badge")!;
+const racePanel = document.querySelector<HTMLElement>("#race-panel")!;
+const racePositionStat = document.querySelector<HTMLElement>("#race-position-stat")!;
+const racePositionLabel = document.querySelector<HTMLElement>("#race-position")!;
+const raceLapLabel = document.querySelector<HTMLElement>("#race-lap")!;
+const raceSectorLabel = document.querySelector<HTMLElement>("#race-sector")!;
+const raceCurrentLabel = document.querySelector<HTMLElement>("#race-current")!;
+const raceLastLabel = document.querySelector<HTMLElement>("#race-last")!;
+const raceBestLabel = document.querySelector<HTMLElement>("#race-best")!;
+const raceWrongWayLabel = document.querySelector<HTMLElement>("#race-wrong-way")!;
+const raceAiStat = document.querySelector<HTMLElement>("#race-ai-stat")!;
+const raceAiValue = document.querySelector<HTMLElement>("#race-ai")!;
+const raceCountdown = document.querySelector<HTMLElement>("#race-countdown")!;
+const raceResults = document.querySelector<HTMLElement>("#race-results")!;
+const raceResultsRows = document.querySelector<HTMLElement>("#race-results-rows")!;
+const raceRestartButton = document.querySelector<HTMLButtonElement>("#race-results-restart")!;
 
 const CAMERA_STORAGE_KEY = BUILD_CHANNEL === "dev" ? "lapster.camera.dev.v1" : "lapster.camera.v1";
 const keys = new Set<string>();
@@ -152,6 +237,10 @@ let relaySeq = 1;
 let relayUploadTimer: ReturnType<typeof setInterval> | null = null;
 let lastRelayTick = -1;
 const remotePlayers = new Map<number, RemotePlayer>();
+const aiBuffers = new Map<number, RemoteStateBuffer>();
+const AI_INTERPOLATION_MS = 40;
+let aiIgnoreFrames = false;
+let playerSteeringRate = 6;
 let audio: EngineSimAudio | null = null;
 let remoteAudio: RemoteEngineAudio | null = null;
 let wheel: WheelFfb | null = null;
@@ -162,6 +251,14 @@ let audioMuted = storedAudioPreference.muted;
 let audioGestureCleanup: (() => void) | null = null;
 let lastRpm = 900;
 let redlineRpm = 8_000;
+let raceSectorCount = 0;
+let raceDirector: RaceDirector | null = null;
+let localRace = false;
+let raceLaps = DEFAULT_RACE_LAPS;
+let raceGeneration = 0;
+let inputLocked = false;
+let countdownTimers: ReturnType<typeof setTimeout>[] = [];
+let resultsShown = false;
 let gearRatios: number[] = [3.48, 2.02, 1.39, 1.0, 0.72, 0.6];
 let maxGear = gearRatios.length;
 let autoShiftCooldown = 0;
@@ -235,6 +332,59 @@ function resizeCanvas() {
   return false;
 }
 
+function formatRaceTime(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) {
+    return "—";
+  }
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "—";
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds - minutes * 60;
+  return `${minutes}:${remainder.toFixed(2).padStart(5, "0")}`;
+}
+
+function updateRaceHud(telemetry: any) {
+  if (soloMode) {
+    racePanel.hidden = true;
+    return;
+  }
+  const race = telemetry?.raceState;
+  if (!isRaceStateView(race) || !race.available) {
+    racePanel.hidden = true;
+    return;
+  }
+  racePanel.hidden = false;
+  if (raceDirector) {
+    raceDirector.updatePlayer(race);
+    const view = raceDirector.view();
+    const displayLap = Math.min(Math.max(1, race.lap), view.totalLaps);
+    raceLapLabel.textContent = `${displayLap}/${view.totalLaps}`;
+    racePositionStat.hidden = false;
+    racePositionLabel.textContent = `P${view.playerPosition}/${view.cars.length}`;
+    if (view.playerFinished && !resultsShown) {
+      showRaceResults(view);
+    }
+  } else {
+    raceLapLabel.textContent = String(race.lap);
+    racePositionStat.hidden = true;
+  }
+  raceSectorLabel.textContent =
+    raceSectorCount > 0
+      ? `S${race.sector}/${raceSectorCount}`
+      : `S${race.sector}`;
+  raceCurrentLabel.textContent = formatRaceTime(race.current_lap_time);
+  raceLastLabel.textContent = formatRaceTime(race.last_lap_time);
+  raceBestLabel.textContent = formatRaceTime(race.best_lap_time);
+  raceWrongWayLabel.hidden = !race.wrong_way;
+  const aiCount =
+    typeof telemetry?.aiCount === "number" && Number.isFinite(telemetry.aiCount)
+      ? Math.max(0, Math.trunc(telemetry.aiCount))
+      : 0;
+  raceAiStat.hidden = aiCount <= 0;
+  raceAiValue.textContent = String(aiCount);
+}
+
 function updateHud(telemetry: any) {
   speedLabel.textContent = telemetry.speedKph.toFixed(1);
   rpmLabel.textContent = String(Math.round(telemetry.rpm));
@@ -277,6 +427,7 @@ function updateHud(telemetry: any) {
     item.append(name, detail);
     wheelsLabel.append(item);
   }
+  updateRaceHud(telemetry);
 }
 
 function setBodyVisible(visible: boolean) {
@@ -438,6 +589,28 @@ function renderRemotePlayers(
   }
 }
 
+function resetAiBuffers(): void {
+  aiBuffers.clear();
+}
+
+function renderAiFrames(now: number): void {
+  const viewer = window.__driveViewer;
+  if (!viewer) {
+    return;
+  }
+  for (const [slot, buffer] of aiBuffers) {
+    const frame = buffer.frame(now);
+    if (!frame) {
+      continue;
+    }
+    try {
+      viewer.set_remote_state(slot, frame);
+    } catch (error) {
+      console.warn("AI car update failed", error);
+    }
+  }
+}
+
 function startRelayUpload(): void {
   stopRelayUpload();
   relayUploadTimer = setInterval(() => {
@@ -526,10 +699,157 @@ async function setupMultiplayer(viewer: DriveViewer, info: any): Promise<void> {
   }
 }
 
+function clearRaceResults(): void {
+  resultsShown = false;
+  raceResults.hidden = true;
+  raceResultsRows.replaceChildren();
+}
+
+function showRaceResults(view: RaceView): void {
+  const rows = buildRaceResultRows(view);
+  raceResultsRows.replaceChildren();
+  for (const row of rows) {
+    const item = document.createElement("li");
+    item.className = "race-result-row";
+    if (row.name === "You") {
+      item.classList.add("is-player");
+    }
+    item.setAttribute("data-testid", "race-result-row");
+
+    const position = document.createElement("span");
+    position.className = "race-result-position";
+    position.textContent = `P${row.position}`;
+
+    const name = document.createElement("span");
+    name.className = "race-result-name";
+    name.textContent = row.name;
+
+    const laps = document.createElement("span");
+    laps.className = "race-result-laps";
+    laps.textContent = `${row.laps} ${row.laps === 1 ? "lap" : "laps"}`;
+
+    const time = document.createElement("span");
+    time.className = "race-result-time";
+    time.textContent = row.timeText;
+
+    item.append(position, name, laps, time);
+    raceResultsRows.append(item);
+  }
+  raceResults.hidden = false;
+  resultsShown = true;
+}
+
+function clearCountdownTimers(): void {
+  for (const timer of countdownTimers) {
+    clearTimeout(timer);
+  }
+  countdownTimers = [];
+}
+
+function runRaceCountdown(generation: number): void {
+  clearCountdownTimers();
+  raceCountdown.hidden = false;
+  raceCountdown.textContent = "3";
+  const step = (delay: number, text: string) => {
+    countdownTimers.push(
+      setTimeout(() => {
+        if (generation !== raceGeneration) {
+          return;
+        }
+        raceCountdown.textContent = text;
+      }, delay),
+    );
+  };
+  step(1_000, "2");
+  step(2_000, "1");
+  countdownTimers.push(
+    setTimeout(() => {
+      if (generation !== raceGeneration) {
+        return;
+      }
+      raceCountdown.textContent = "GO";
+      void startRace(generation);
+    }, 3_000),
+  );
+  countdownTimers.push(
+    setTimeout(() => {
+      if (generation !== raceGeneration) {
+        return;
+      }
+      raceCountdown.hidden = true;
+      raceCountdown.textContent = "";
+    }, 3_800),
+  );
+}
+
+async function startRace(generation: number): Promise<void> {
+  inputLocked = false;
+  if (!physics) {
+    if (generation === raceGeneration) {
+      raceDirector?.start();
+    }
+    return;
+  }
+  try {
+    await physics.startRace(raceLaps);
+    if (generation !== raceGeneration) {
+      return;
+    }
+    await physics.resume();
+    if (generation !== raceGeneration) {
+      return;
+    }
+    raceDirector?.start();
+  } catch (error) {
+    console.warn("race start failed", error);
+  }
+}
+
+async function startLocalRaceCountdown(): Promise<void> {
+  const generation = raceGeneration + 1;
+  raceGeneration = generation;
+  clearCountdownTimers();
+  raceCountdown.hidden = true;
+  raceCountdown.textContent = "";
+  inputLocked = true;
+  clearRaceResults();
+  aiIgnoreFrames = true;
+  resetAiBuffers();
+  raceDirector?.reset();
+  const viewer = window.__driveViewer;
+  if (!viewer) {
+    aiIgnoreFrames = false;
+    inputLocked = false;
+    return;
+  }
+  viewer.place_on_race_grid(0);
+  if (physics) {
+    try {
+      await physics.placeOnRaceGrid(0);
+      if (generation !== raceGeneration) {
+        aiIgnoreFrames = false;
+        return;
+      }
+      await physics.pause();
+    } catch (error) {
+      console.warn("race grid placement failed", error);
+      aiIgnoreFrames = false;
+      inputLocked = false;
+      return;
+    }
+  }
+  aiIgnoreFrames = false;
+  if (generation !== raceGeneration) {
+    return;
+  }
+  runRaceCountdown(generation);
+}
+
 function reset() {
   const viewer = window.__driveViewer;
   if (!viewer) return;
   viewer.reset();
+  resetAiBuffers();
   steer = 0;
   gear = 1;
   lastSpeedMps = 0;
@@ -547,7 +867,9 @@ function reset() {
   wheelButtons.clear();
   keys.clear();
   lastFrame = performance.now() / 1000;
-  if (relay && physics) {
+  if (localRace) {
+    void startLocalRaceCountdown();
+  } else if (relay && physics) {
     void physics.placeOnGrid(relay.slot);
   }
 }
@@ -693,6 +1015,7 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
             base.physicsMode = "sab";
             base.workerDroppedTicks = client.diagnostics.droppedTicks;
             base.workerCatchupEvents = client.diagnostics.catchupEvents;
+            base.aiCount = client.diagnostics.aiCount;
             return JSON.stringify(base);
           };
         case "apply_car_setup":
@@ -963,13 +1286,17 @@ async function boot() {
 
   resizeCanvas();
   status.textContent = "creating physics";
+  const hasRace = trackPack.manifest.entrypoints.race != null;
+  const aiCount = resolveAiCount(hasRace);
+  const aiPace = resolveAiPace();
   const viewer = await DriveViewer.create(
     canvas,
     trackPack.bytes,
     carPack.bytes,
     carBay,
     storedDevTuning ?? undefined,
-    mpMode ? REMOTE_SLOTS : undefined,
+    mpMode ? REMOTE_SLOTS : aiCount,
+    carPaint,
   );
   const treeDetail = new URLSearchParams(window.location.search).get("trees");
   if (treeDetail === "high" || treeDetail === "low" || treeDetail === "cards") {
@@ -979,6 +1306,22 @@ async function boot() {
 
   const info = JSON.parse(viewer.info());
   const initial = JSON.parse(viewer.telemetry());
+  const raceView = JSON.parse(viewer.race());
+  raceSectorCount =
+    raceView.available && Array.isArray(raceView.sectors)
+      ? raceView.sectors.length
+      : 0;
+  const configuredRaceLaps = hasRace && raceView.available
+    ? resolveRaceLaps()
+    : DEFAULT_RACE_LAPS;
+  const configuredRaceDirector =
+    hasRace && !mpMode && !soloMode && raceView.available
+      ? new RaceDirector({
+          totalLaps: configuredRaceLaps,
+          layoutLength: raceLayoutLength(raceView.layout),
+          aiSlots: Array.from({ length: aiCount }, (_, index) => index + 1),
+        })
+      : null;
   const setup = JSON.parse(viewer.car_setup());
   syncCarSetup(setup);
   lastRpm = initial.rpm;
@@ -992,8 +1335,35 @@ async function boot() {
       initializeSab(sab);
       validateSab(sab);
       ffbSab = sab;
-      const client = await PhysicsClient.create(sab, trackPack.bytes, carPack.bytes);
+      const client = await PhysicsClient.create(
+        sab,
+        trackPack.bytes,
+        carPack.bytes,
+        aiCount,
+        aiPace,
+      );
       physics = client;
+      client.onAiFrame = (slot, frame, race) => {
+        if (aiIgnoreFrames) {
+          return;
+        }
+        const tick =
+          frame.length > SNAPSHOT_STATE.tick
+            ? Math.round(frame[SNAPSHOT_STATE.tick])
+            : Number.NaN;
+        if (raceDirector) {
+          raceDirector.updateAi(slot, race);
+        }
+        if (!Number.isFinite(tick) || tick < 0) {
+          return;
+        }
+        let buffer = aiBuffers.get(slot);
+        if (!buffer) {
+          buffer = new RemoteStateBuffer(AI_INTERPOLATION_MS);
+          aiBuffers.set(slot, buffer);
+        }
+        buffer.push(tick, tick, frame, performance.now());
+      };
       smoother = new SnapshotSmoother(client.reader);
       physicsWorker = true;
       workerAssists = {
@@ -1028,6 +1398,11 @@ async function boot() {
         physics?.dispose();
       });
       driver = createDriveFacade(viewer, client);
+      if (configuredRaceDirector) {
+        raceDirector = configuredRaceDirector;
+        raceLaps = configuredRaceLaps;
+        localRace = true;
+      }
     } catch (error) {
       console.warn("SAB physics unavailable; using main thread", error);
       physics?.dispose();
@@ -1038,7 +1413,21 @@ async function boot() {
       driver = viewer;
     }
   }
+  if (!localRace && configuredRaceDirector) {
+    raceDirector = new RaceDirector({
+      totalLaps: configuredRaceLaps,
+      layoutLength: configuredRaceDirector.layoutLength,
+      aiSlots: [],
+    });
+    raceLaps = configuredRaceLaps;
+    localRace = true;
+  }
   window.__driveViewer = driver;
+
+  const rpmOffset = cockpitRpmOffset(info.car.id);
+  if (rpmOffset) {
+    driver.set_cockpit_dial_offset("rpm", ...rpmOffset);
+  }
 
   if (mpMode) {
     status.textContent = "joining room";
@@ -1129,6 +1518,7 @@ async function boot() {
   });
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", reset);
+  raceRestartButton.addEventListener("click", reset);
   cameraButton.addEventListener("click", toggleCameraMode);
   bodyToggle.addEventListener("click", () => setBodyVisible(!bodyVisible));
   setCameraMode(loadCameraMode());
@@ -1148,6 +1538,7 @@ async function boot() {
     onChange: (next) => {
       autoGears = next.autoGears;
       autoClutch = next.autoClutch;
+      playerSteeringRate = next.steeringRate;
     },
     onRenderScale: (scale) => {
       renderScale = scale;
@@ -1210,6 +1601,16 @@ async function boot() {
   });
   observer.observe(canvas);
 
+  if (soloMode) {
+    racePanel.hidden = true;
+    raceResults.hidden = true;
+    raceCountdown.hidden = true;
+  }
+
+  if (localRace) {
+    await startLocalRaceCountdown();
+  }
+
   status.textContent = "ready";
   status.className = "status ready";
   window.__driveViewerReady = true;
@@ -1226,7 +1627,7 @@ async function boot() {
       const steerLeft = keys.has("a") || keys.has("arrowleft");
       const steerRight = keys.has("d") || keys.has("arrowright");
       const targetSteer = (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
-      steer += (targetSteer - steer) * Math.min(1, delta * 8);
+      steer = rateLimitSteering(steer, targetSteer, playerSteeringRate, delta);
     }
 
     const forwardKey = keys.has("w") || keys.has("arrowup");
@@ -1271,7 +1672,7 @@ async function boot() {
 
     throttle = Math.max(throttle, wheelChannel("throttle"));
     brake = Math.max(brake, wheelChannel("brake"));
-    const handbrake = Math.max(
+    let handbrake = Math.max(
       keys.has(" ") ? 1 : 0,
       wheelChannel("handbrake"),
     );
@@ -1364,6 +1765,15 @@ async function boot() {
     }
     clutch = Math.min(1, Math.max(0, clutch));
 
+    if (inputLocked) {
+      steer = 0;
+      throttle = 0;
+      brake = 0;
+      clutch = 1;
+      gear = 1;
+      handbrake = 0;
+    }
+
     try {
       if (physicsWorker && physics && smoother) {
         physics.writeInput({
@@ -1379,7 +1789,8 @@ async function boot() {
         smoother.update(renderNow);
         const remoteState = smoother.state(renderNow);
         if (remoteState) {
-          renderRemotePlayers(performance.now(), remoteState, delta);
+          renderRemotePlayers(renderNow, remoteState, delta);
+          renderAiFrames(renderNow);
           viewer.render_remote(remoteState);
           const telemetry = JSON.parse(driver.telemetry());
           lastSpeedMps = telemetry.speedMps;

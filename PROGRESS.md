@@ -1,8 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-20
-Current phase: **Editor consolidation — track-ed is the sole editor; legacy
-removal is gated on migration, parity and CI coverage**
+Last updated: 2026-11-22
+Current phase: **AI race — motion smoothing and performance controls**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -39,7 +38,8 @@ python3 -m http.server 8123 --bind 127.0.0.1
 Pages:
 
 - Drive: `http://127.0.0.1:8123/web/drive/`
-- Garage: `http://127.0.0.1:8123/web/garage/`
+- Garage: `http://127.0.0.1:8123/web/garage/` (concrete studio; add
+  `?garage=showroom` for the track-backed showroom)
 - Track: `http://127.0.0.1:8123/web/track-viewer/`
 
 Expected browser: Chromium/Chrome. WebGPU is used when available; WebGL2 is the
@@ -53,6 +53,51 @@ Deployment:
 
 ## Current focus
 
+- The root page is now both the public landing and launcher. It carries the
+  Drive/Race panels, selected car, separate track selections, Track Editor and
+  Tools. `/web/` is a compatibility redirect to the root. The Pages build
+  substitutes the root version marker. Tests target `/` for the launcher.
+- Start-menu cleanup is merged to `dev` as `6f5baa4` (PR #59): Drive and Race launch
+  panels replace the car/track link wall, the selected car opens the Garage,
+  Drive uses `race=0` solo mode, Race is limited to Loop Spline Point Terrain
+  and marked under development, Track Editor is a main panel, and developer
+  views sit under Tools. Drive and Race track selections persist separately.
+  Full gate: 245 Rust tests, 76 web tests, 117 viewer passed / 4 skipped, and
+  WebGL2 2/2.
+- AI motion smoothing is ready for deployment on `feat/ai-motion-smoothing`
+  (PR #54), created from `dev` at `0754a7c`: 62.5 Hz AI frames, 40 ms
+  interpolation, 20 Hz race state, AI steering rate 3/s, and a configurable
+  player steering rate (default 6/s, wheel direct). AI frames are batched into
+  one `ai_states` worker message. Graphics adds Tyre effects High/Low/Off, an
+  output-resolution readout, and a 50% manual render-scale floor. Full gate
+  passed: 233 Rust tests, 76 web tests, 113 viewer passed / 4 skipped, and the
+  two WebGL2 fallback tests.
+- Concrete garage replaces the Garage showroom on `feat/concrete-garage`
+  (from `dev` at `0754a7c`): an eight-car single-line concrete studio with
+  overhead spot lights, a procedural floor, a ten-colour paint picker for the
+  Mazda, Drive paint propagation, and the Drive flat wheel shading in the
+  studio. The Mazda appears once; all six 67GP cars and the Deckard are in the
+  catalogue. The old `?garage=showroom` fallback and the showroom
+  `GarageViewer::create` constructor are removed. ADR-0016 is superseded by
+  ADR-0017. Full gate green; merged to `dev` as `6cb1f3a` (PR #55).
+- Garage follow-ups are merged to `dev`: selected-first on-demand car loading
+  with a centered loading indicator (`35cf2bb`, PR #60), WebGPU geometry and
+  per-mesh model uploads via `queue.write_buffer` (`67dec0f`/`36201bc`, PRs
+  #61/#62), and per-bay lights that stay off until a car loads and then flicker
+  on over 0.9 s (`0e4cfd1`, PR #63). The default smoke test was scoped to the
+  selected bay (`b7e45ae`, PR #58).
+- Loop Spline Point Terrain is added as a fixture and public track option on
+  `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
+  `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises
+  the spline sample density to 32 for a smoother road ribbon.
+- AI opponents batch is merged to `dev` as `fc4fdf3` (PR #49): one AI on
+  race-ready tracks, simulated in the physics worker, rendered through the
+  remote-car path, with no car-to-car contact.
+- AI field batch is merged to `dev` as `670312f` (PR #50): three AI by default,
+  `?ai=0..3`, `?aiPace=chill|club|fast`, `AiPace` scaling, `AI N` HUD, and
+  `aiCount` diagnostics.
+- AI race batch is merged to `dev` as `3f83bc8` (PR #52): player grid start,
+  countdown, live positions, three laps, and results.
 - Editor consolidation is active. `docs/editor-consolidation-report.md` records
   the analysis; ADR-0007 promotes track-ed as the sole editor and ADR-0008
   defers layouts as a future route layer. `docs/features/editor-consolidation-plan.md`
@@ -131,6 +176,204 @@ Deployment:
   consolidation: Speed Dreams physics, wheel/FFB hardware validation, and CP7
   HID/audio integration.
 
+## Track race MVP resume checkpoint
+
+Branch: `feat/track-race-mvp`, created from `dev`.
+
+- Documentation commit: `6fea5dd` (plan, ADR-0011, registry and progress
+  updates).
+- `origin/dev` is merged in as `6e94c69` (PR #43, 67GP Guthrie Eagle car).
+  There were no conflicts with this branch or the foundation work.
+- The contract/compiler foundation is committed on this branch:
+  - `sim-types`: `RaceData`, `Layout`, `StartFinish`, `ChunkKind::Race`,
+    optional `EntryPoints.race`.
+  - `sim-asset`: `Pack::track_race_owned()`.
+  - `track-pack`: `sim-track-glb-v1`/`v2` optional race parsing, validation,
+    Race chunk and entrypoint.
+  - `asset-compiler` and `sim-render`: `race: None` constructor fixes.
+  - web loader: optional Race entrypoint support and tests.
+  - TS mirror: `web/src/contracts/race.ts`.
+  - runtime exposure: `DriveViewer.race()`, plus `raceAvailable`, `layoutId`,
+    and `trackSourceHash` in telemetry.
+  - web identity: `trackIdentity()` in the pack loader, `RaceView` /
+    `parseRaceView`, and contract tests.
+  - architect role card/adapter: `web/src/contracts/**` directory permission
+    (ADR-0012); confirmed after the server restart.
+- After the dev merge and the runtime exposure batch, the full gate passed:
+  `cargo fmt --check`, `cargo test --workspace`, workspace clippy, wasm check,
+  `npm --prefix web test`, `CI=1 npm --prefix web run test:viewer`
+  (105 passed, 1 skipped), the WebGL2 fallback tests, and
+  `python3 scripts/check-agent-sync.py`.
+- Resolved: the TS mirror exists, the generic contract-root permission works,
+  and the grid-inside-road and start/finish-fraction validations are in place.
+- Track-ed implicit-layout export is merged into track-ed `main` as
+  `e087ee1` (PR #6):
+  - closed spawn sections emit the optional `race` block in
+    `sim-track-glb-v2` with a centreline layout, start/finish, 8 grid slots,
+    and 4 sectors;
+  - open spawn sections omit `race` with a warning;
+  - track-ed scope docs and the GLB manifest schema were updated.
+- The parent `web/track-ed-src` pin is updated to `e087ee1`; the hosted-track-ed
+  Test drive now asserts `race()` availability, 8 grid slots, and 4 sectors.
+- The race-ready demo fixture is committed at `fixtures/tracks/race-loop/`:
+  `project.json` from track-ed's loop project, generated `track.json`/`track.glb`,
+  baked `pack.sima`, and a README. The pack carries layout `main`, 180 points,
+  8 grid slots, and 4 sectors.
+- The launcher exposes **Race Loop** through
+  `web/src/ui/track-selection.ts` and `web/index.html`; Drive resolves
+  `?track=race-loop`. The default remains Skidpad.
+- Coverage: `crates/track-pack/tests/race_loop_fixture.rs` proves the checked-in
+  pack matches a fresh compile and carries race data; web pack-loader tests
+  cover the Race entrypoint and `chunkBytes("Race")`; `web/tests/race-loop.spec.ts`
+  covers launcher selection and the runtime race view; the default Skidpad test
+  asserts race-unavailable.
+- Final full gate passed: cargo fmt/clippy/workspace tests/wasm; parent
+  `npm test` (50); `CI=1 npm --prefix web run test:viewer` (106 passed,
+  1 skipped); WebGL2 fallback (2/2); track-ed tests (219 passed, 1 skipped) and
+  build; agent sync.
+- Next: AI driver, race manager, and online-contact follow-ups. The demo fixture
+  is the only shipped track with race data; Skidpad, Drift Tracks, and
+  `fixtures/tracks/minimal` remain race-unavailable.
+- Full details: `docs/features/track-race-mvp.md` §3.1, ADR-0011, and
+  ADR-0012.
+
+## Race manager MVP resume checkpoint
+
+Branch: `feat/race-manager`, created from `dev` after PR #44.
+
+- ADR-0013 approves AI racing and online contact as the next direction; `GOALS.md`
+  no longer lists AI opponents as a non-goal. AI implementation remains a later
+  batch.
+- Contract: `RaceState` in `crates/sim-types/src/race.rs`; mirror
+  `web/src/contracts/race-state.ts`; registry updated in `AGENTS.md` and
+  `agents/contracts.md`.
+- Core: `sim-core::RaceTracker` projects the car onto the layout, derives
+  progress/sector, detects forward/backward start-finish crossings, starts the
+  lap timer on movement, records last/best lap, and handles reset/degenerate
+  inputs.
+- Render: `DriveViewer` owns the tracker, updates it on main-thread, worker, and
+  reset paths, and exposes `race_state()` plus telemetry `raceState`.
+- Web: compact race overlay, `RaceStateView` contract tests, and Race Loop /
+  Skidpad browser coverage.
+- Track-ed spawn direction: the exporter did not pre-flip the metadata spawn for
+  Lapster's runtime drive flip. Fixed in track-ed PR #7 (merged); the Race Loop
+  fixture was regenerated, `pack.sima` re-baked, and the parent pin moved to the
+  merged track-ed `main` commit 1b22f5a.
+- Gate passed: cargo fmt, workspace clippy, 194 workspace tests, wasm check;
+  parent `npm test` (57); `CI=1 npm --prefix web run test:viewer` (106 passed,
+  1 skipped); WebGL2 fallback (2/2); track-ed tests (220 passed, 1 skipped) and
+  build; agent sync. Track-ed PR #7 merged, the parent pin is updated, and the
+  parent PR was merged to `dev` as `45fa03d` (PR #47).
+- Next: AI opponents batch is complete; AI field batch is active.
+
+## AI opponents resume checkpoint
+
+Branch: `feat/ai-opponents`, created from `dev` at `abb7507`.
+
+- ADR-0014 accepts AI-in-physics-worker: one AI by default, up to three
+  supported, deterministic layout following, 500 Hz simulation, and 62.5 Hz
+  `ai_state` frames over the worker control channel.
+- Plan: `docs/features/ai-opponents.md`.
+- No versioned contract change. Reuse `RaceData`, `RaceState`, and the
+  64-float `SNAPSHOT_STATE` payload.
+- Player stays at the track spawn/start-finish; AI starts at `race.grid[1..]`.
+- AI uses `sim_core::Vehicle` and the track collider; no car-to-car contact.
+- Web creates hidden remote rigs for AI and applies frames with
+  `DriveViewer.set_remote_state`.
+- Core: `sim_core::AiDriver`, `RaceTracker::sample`, and
+  `RaceTracker::nearest_sample`.
+- Worker: up to three AI cars, 500 Hz stepping, grid slots 1..N, and 64-float
+  `ai_snapshot` frames.
+- Web: `PhysicsClient.onAiFrame`, `ai_state` worker messages, one AI on
+  race-ready single-player tracks, and remote-rig rendering.
+- Race Loop grid rotations do not match the layout direction; AI heading is
+  derived from the nearest layout tangent. Recorded as TD-0021.
+- Manual Race Loop probe: AI stayed within 3.62 m of the centreline (5 m
+  half-width), completed a lap in about 40 s, and produced no page errors.
+- Gate: cargo fmt, workspace clippy, 213 workspace tests, wasm check; 59 web
+  tests after the dev merge; 106 viewer tests passed / 1 skipped; WebGL2
+  fallback 2/2; agent sync.
+- Status: complete; merged to `dev` as `fc4fdf3` (PR #49).
+
+## AI field resume checkpoint
+
+Branch: `feat/ai-field`, created from `dev` at `fc4fdf3`.
+
+- Plan: `docs/features/ai-field.md`.
+- No versioned contract change. Reuse the existing AI snapshot and race data.
+- Physics: `AiPace::{Chill, Club, Fast}` scales target speed and lateral
+  acceleration; the worker accepts a pace index and applies it to all AI via a
+  four-argument `Simulation::new`.
+- Web: three AI by default, `?ai=0..3`, `?aiPace=chill|club|fast`, `AI N` HUD,
+  and `aiCount` diagnostics/telemetry.
+- Measured Race Loop, headless Chromium/SwiftShader: 1 AI p50 0.020 ms / p99
+  0.034 ms; 3 AI p50 0.039 ms / p99 0.061 ms; both 499.85 Hz, no dropped ticks.
+- Gate: cargo fmt, workspace clippy, 216 workspace tests, wasm check; 59 web
+  tests; 110 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; merged to `dev` as `670312f` (PR #50).
+
+## AI race resume checkpoint
+
+Branch: `feat/ai-race`, created from `dev` at `670312f`.
+
+- ADR-0015 accepts a web-owned race director, grid-start lap semantics, worker
+  race placement/start/laps, and AI race state in `ai_state`.
+- Plan: `docs/features/ai-race.md`.
+- No versioned contract change. `RaceState` and the 64-float snapshot stay the
+  same.
+- Player starts at `race.grid[0]`; AI at `race.grid[1..]`; both use the layout
+  tangent for heading.
+- Countdown holds the worker paused; GO resumes and starts the race clock.
+- Default race is 3 laps; `?laps=1..5` is for validation.
+- Results appear when the player finishes, using current order for unfinished
+  AI.
+- Core: `RaceTracker::arm_grid_start`, `Vehicle::set_spawn`.
+- Worker: race-grid placement, explicit start/lap limit, AI stop-after-limit,
+  and AI `RaceState` JSON in `ai_state`.
+- Render: `DriveViewer::place_on_race_grid`.
+- Web: `RaceDirector`, 3-2-1-GO countdown, `P?/4` and `Lap ?/3`, results
+  overlay, restart, and `?laps=1..5`.
+- Gate for the AI race changes before the track-option merge: cargo fmt,
+  workspace clippy, 228 workspace tests, wasm check; 68 web tests; 114 viewer
+  tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync. Combined branch CI
+  covers the merged track-option fixture and launcher tests.
+- Status: complete; merged to `dev` as `3f83bc8` (PR #52).
+
+## Loop Spline Point Terrain track option
+
+Branch: `feat/loop-spline-point-terrain`, created from `dev` at `670312f`.
+
+- Fixture: `fixtures/tracks/loop-spline-point-terrain/` with the provided
+  `track-ed/project@5` project, exported `track.json`/`track.glb`, freshly baked
+  `pack.sima`, and README.
+- Pack: id `loop-spline-point-terrain`, 941.3 m layout, 471 centreline points,
+  8 grid slots, 4 sectors, Race chunk present. Pack size is 27 MB; source
+  directory is 45 MB. Follow-up smoothing uses `samplesPerSegment: 32`.
+- Launcher: `Loop Spline Point Terrain` option in `TRACK_OPTIONS` and
+  `web/index.html`.
+- Coverage: a `track-pack` fixture test loads the checked-in pack and checks the
+  race shape; Playwright opens the new launcher entry and checks race
+  availability.
+- Gate: cargo fmt, workspace clippy, 217 workspace tests, wasm check; 59 web
+  tests; 111 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; PR pending.
+
+## AI motion smoothing resume checkpoint
+
+Branch: `feat/ai-motion-smoothing`, created from `dev` at `0754a7c`.
+
+- Plan: `docs/features/ai-motion-smoothing.md`.
+- No versioned contract change. `RaceState` and the 64-float snapshot stay the
+  same.
+- AI: `AiDriver` steering rate default 3.0 units/s; reset clears it.
+- Worker: publish AI frames every 8 ticks (62.5 Hz); race state at 20 Hz.
+- Web: one `RemoteStateBuffer(40)` per AI slot; race state updates immediately.
+- Player: time-based steering rate setting, default 6 units/s, 0 = off; wheel
+  input stays direct.
+- Gate: cargo fmt, workspace clippy, 233 workspace tests, wasm check; 76 web
+  tests; 116 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Status: complete; full gate passed; PR pending.
+
 ## Completed checkpoints
 
 | Checkpoint | Status |
@@ -153,6 +396,11 @@ Deployment:
 | Relay multiplayer prototype | Working prototype |
 | Style spike | Working |
 | track-ed hosted editor + local Test drive | Released to production |
+| Track race foundation | Done; Race chunk, race-loop fixture, launcher entry |
+| Race manager MVP | Done; merged to `dev` (PR #47) |
+| AI opponents | Done; merged to `dev` (PR #49) |
+| AI field | Done; merged to `dev` (PR #50) |
+| AI race | Done; merged to `dev` (PR #52) |
 
 ## Current capabilities
 
@@ -168,6 +416,9 @@ Deployment:
 - Track authoring: hosted track-ed with browser-side `track-pack` compilation,
   local Test drive, and `track.glb` + `track.json` file import. The procedural
   editor remains available as Legacy Track Editor.
+- Track race foundation: optional Race chunk, layout as the race route,
+  start/finish, 8 grid slots, 4 sectors, track identity, and the Race Loop demo
+  fixture/launcher entry.
 - Viewers: drive, garage, track viewer, track-ed, track import, legacy track
   editor, style spike, debug viewer, and multiplayer.
 - Audio spike: Engine_Sim-based engine audio, tire screech, and surface noise;
@@ -182,11 +433,11 @@ Deployment:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — 161 tests
+- `cargo test --workspace` — 194 tests
 - `cargo check ... --target wasm32-unknown-unknown` including `track-pack-wasm`
-- `npm test` — 38 tests
-- `CI=1 npm run test:viewer` — 101 passed, 1 skipped
-- `npm --prefix web/track-ed-src test` — 211 tests (after B1 autosave)
+- `npm test` — 57 tests
+- `CI=1 npm run test:viewer` — 106 passed, 1 skipped
+- `npm --prefix web/track-ed-src test` — 220 passed, 1 skipped
 - `npm --prefix web/track-ed-src run build` — tsc + Vite clean
 - `bash web/scripts/build-track-ed.sh` — hosted build with notices/licenses
 - `python3 web/scripts/check-track-ed-deps.py` — exact pins, lockfile,
@@ -202,6 +453,12 @@ Deployment:
 - Production smoke: hosted track-ed Test drive on a current `project@2`
   terrain-follow project opens drive with no page or console errors
 - `npm run bench:physics`
+- Track race MVP final gate — cargo fmt/clippy/workspace tests/wasm; parent
+  `npm test` 50; `CI=1 npm --prefix web run test:viewer` 106 passed, 1 skipped;
+  WebGL2 fallback 2/2; track-ed 219 passed, 1 skipped and build; agent sync.
+- Race manager MVP final gate — cargo fmt/clippy/workspace tests/wasm; parent
+  `npm test` 57; `CI=1 npm --prefix web run test:viewer` 106 passed, 1 skipped;
+  WebGL2 fallback 2/2; track-ed 220 passed, 1 skipped and build; agent sync.
 - Playwright runs Chromium with WebGPU; WebGL2 fallback checked separately.
 - Manual GLB car and AC track checks passed on WebGPU.
 
@@ -335,6 +592,12 @@ Resume in this order:
 
 ## Next steps
 
+**Race manager MVP (done):** the Race chunk foundation is merged to `dev`
+(PR #44). The local lap/sector/progress tracker and HUD are merged to `dev` as
+`45fa03d` (PR #47); track-ed PR #7 is merged and the parent pin is `1b22f5a`.
+See the resume checkpoint above and `docs/features/race-manager.md`. AI
+opponents are the next batch; online contact follows (ADR-0013).
+
 1. **Editor consolidation (next)**: continue
    `docs/features/editor-consolidation-plan.md`. A1, A2/A3, B1, B3, C1–C3 and
    D1 are done. Next: D2 kernel/Worker work (bake is ~8.4 s on a 10-section
@@ -381,11 +644,18 @@ Resume in this order:
 - `PLAN.md` — checkpoint plan.
 - `docs/features/editor-consolidation-plan.md` — active editor consolidation
   and track-ed refactoring plan.
+- `docs/features/track-race-mvp.md` — track-side race layout/race chunk plan.
+- `docs/features/race-manager.md` — lap progress, race state, and HUD plan.
 - `docs/editor-consolidation-report.md` — editor analysis and recommendations.
 - `docs/adr/0007-promote-track-ed-as-sole-editor.md` — sole-editor decision.
 - `docs/adr/0008-defer-layouts-as-route-layer.md` — layout deferral decision.
 - `docs/adr/0009-agent-runtime-policy-and-editor-domain.md` — agent limits,
   default agent, permissions and editor domain.
+- `docs/adr/0011-race-layout-race-chunk.md` — race layout/race chunk decision.
+- `docs/adr/0012-contract-roots-and-agent-permissions.md` — directory-based
+  contract ownership and mirror roots.
+- `docs/adr/0013-ai-racing-and-online-contact.md` — AI racing and online-contact
+  direction.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.

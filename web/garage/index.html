@@ -113,6 +113,61 @@
       .name {
         flex: 1;
       }
+      #paint-panel {
+        position: fixed;
+        left: 50%;
+        bottom: max(12px, env(safe-area-inset-bottom));
+        z-index: 9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        max-width: calc(100vw - 24px);
+        padding: 5px 9px;
+        border: 1px solid #2a303a;
+        border-radius: 999px;
+        background: rgba(10, 13, 17, 0.9);
+        backdrop-filter: blur(8px);
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, 8px);
+        transition:
+          opacity 180ms ease,
+          transform 200ms ease;
+      }
+      #paint-panel.paint-panel-visible {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translate(-50%, 0);
+      }
+      .paint-options {
+        display: flex;
+        flex-wrap: nowrap;
+        justify-content: center;
+        gap: 6px;
+      }
+      .paint-swatch {
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: 2px solid transparent;
+        border-radius: 999px;
+        background: var(--swatch, #8f9bab);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+        cursor: pointer;
+      }
+      .paint-swatch:hover {
+        transform: scale(1.08);
+      }
+      .paint-swatch[aria-checked="true"] {
+        border-color: #38bdf8;
+        box-shadow:
+          0 0 0 2px #0a0d11,
+          0 0 0 4px #38bdf8;
+      }
+      .paint-swatch:focus-visible {
+        outline: 2px solid #38bdf8;
+        outline-offset: 2px;
+      }
       .controls {
         display: grid;
         gap: 8px;
@@ -239,11 +294,61 @@
           top: 84px;
           max-height: calc(100vh - 116px);
         }
+        #paint-panel {
+          bottom: max(10px, env(safe-area-inset-bottom));
+          padding: 4px 8px;
+        }
+        .paint-swatch {
+          width: 20px;
+          height: 20px;
+        }
       }
       @media (prefers-reduced-motion: reduce) {
-        #car-nav button {
+        #car-nav button,
+        #paint-panel,
+        #car-loading {
           transition: none;
         }
+      }
+      #car-loading {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        z-index: 7;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100vw - 24px);
+        padding: 5px 10px;
+        border: 1px solid #2a303a;
+        border-radius: 999px;
+        background: rgba(10, 13, 17, 0.82);
+        backdrop-filter: blur(8px);
+        color: #9aa4b2;
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, calc(-50% + 6px));
+        transition:
+          opacity 200ms ease,
+          transform 220ms ease;
+      }
+      #car-loading.car-loading-visible {
+        opacity: 1;
+        transform: translate(-50%, -50%);
+      }
+      #car-loading .loading-spinner {
+        width: 12px;
+        height: 12px;
+      }
+      #car-loading[data-state="error"] {
+        color: #f87171;
+      }
+      #car-loading[data-state="error"] .loading-spinner {
+        display: none;
       }
       #viewer-loading {
         position: fixed;
@@ -294,6 +399,10 @@
     <div id="viewer-loading" role="status" aria-live="polite">
       <span class="loading-spinner" aria-hidden="true"></span>
       <span data-loading-label>Loading…</span>
+    </div>
+    <div id="car-loading" role="status" aria-live="polite" aria-hidden="true">
+      <span class="loading-spinner" aria-hidden="true"></span>
+      <span data-car-loading-label>Loading cars</span>
     </div>
 
     <canvas id="view"></canvas>
@@ -353,6 +462,14 @@
       <h2>Surfaces</h2>
       <ul id="surfaces"></ul>
     </aside>
+    <section id="paint-panel" aria-label="Car paint" aria-hidden="true" inert>
+      <div
+        id="paint-options"
+        class="paint-options"
+        role="radiogroup"
+        aria-label="Car paint"
+      ></div>
+    </section>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

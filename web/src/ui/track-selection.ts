@@ -15,6 +15,16 @@ export const TRACK_OPTIONS: TrackOption[] = [
     name: "Drift Tracks",
     url: "../../fixtures/tracks/drift-sketchfab/pack.sima",
   },
+  {
+    id: "race-loop",
+    name: "Race Loop",
+    url: "../../fixtures/tracks/race-loop/pack.sima",
+  },
+  {
+    id: "loop-spline-point-terrain",
+    name: "Loop Spline Point Terrain",
+    url: "../../fixtures/tracks/loop-spline-point-terrain/pack.sima",
+  },
 ];
 
 export const DEFAULT_TRACK = TRACK_OPTIONS[0];

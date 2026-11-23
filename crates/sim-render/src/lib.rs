@@ -19,10 +19,11 @@ use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
 use crate::tuning::{GpuTuning, ParticleTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{
-    Controls, PhysicsTuning, TrackCollider, Vehicle, VehicleState, WheelState, FIXED_DT,
+    Controls, PhysicsTuning, RaceTracker, TrackCollider, Vehicle, VehicleState, WheelState,
+    FIXED_DT,
 };
 use sim_types::snapshot_state as snapshot;
-use sim_types::{CarTuning, SNAPSHOT_STATE_FLOATS};
+use sim_types::{CarTuning, RaceData, SpawnPoint, SNAPSHOT_STATE_FLOATS};
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -974,96 +975,103 @@ impl TrackViewer {
     }
 }
 
+struct GaragePack {
+    physics: sim_types::CarPhysics,
+    visual: sim_types::CarVisual,
+    manifest: sim_types::AssetManifest,
+}
+
+fn parse_garage_pack(car_bytes: &[u8]) -> Result<GaragePack, JsValue> {
+    let car_pack = sim_asset::Pack::from_bytes(car_bytes).map_err(js_error)?;
+    if car_pack.kind() != sim_types::AssetKind::Car {
+        return Err(JsValue::from_str("expected car packs"));
+    }
+    Ok(GaragePack {
+        physics: car_pack.car_physics_owned().map_err(js_error)?,
+        visual: car_pack.car_visual_owned().map_err(js_error)?,
+        manifest: car_pack.manifest().clone(),
+    })
+}
+
+fn scale_emissive(color: [f32; 3], scale: f32) -> [f32; 3] {
+    [color[0] * scale, color[1] * scale, color[2] * scale]
+}
+
 #[wasm_bindgen]
 pub struct GarageViewer {
     renderer: renderer::Renderer,
     debug_info: String,
     bays: Vec<GarageBay>,
+    lamps: Vec<garage::ConcreteLamp>,
+    flicker_start: Vec<Option<f64>>,
+    base_spot_intensity: f32,
     selected_bay: usize,
     steer: f32,
     spin: f32,
     initial_camera: Camera,
     camera: Camera,
     car_shadow_range: Option<std::ops::Range<usize>>,
+    layout: &'static str,
 }
 
 #[wasm_bindgen]
 impl GarageViewer {
-    pub async fn create(
+    pub async fn create_concrete(
         canvas: web_sys::HtmlCanvasElement,
-        track_pack_bytes: js_sys::Uint8Array,
+        bay_ids: js_sys::Array,
         car_packs: js_sys::Array,
     ) -> Result<GarageViewer, JsValue> {
-        let track_bytes = track_pack_bytes.to_vec();
-        let track_pack = sim_asset::Pack::from_bytes(&track_bytes).map_err(js_error)?;
-        if track_pack.kind() != sim_types::AssetKind::Track {
-            return Err(JsValue::from_str(
-                "expected a track pack for the first argument",
-            ));
+        let bay_count = bay_ids.length() as usize;
+        if bay_count == 0 {
+            return Err(JsValue::from_str("expected at least one bay id"));
         }
-        let track_visual = track_pack.track_visual_owned().map_err(js_error)?;
-        let track_metadata = track_pack.track_metadata_owned().map_err(js_error)?;
-        let track_collision = track_pack.track_collision_owned().map_err(js_error)?;
-        let track_manifest = track_pack.manifest().clone();
-        drop(track_pack);
-
-        if car_packs.length() == 0 {
-            return Err(JsValue::from_str("expected at least one car pack"));
+        let mut ids = Vec::with_capacity(bay_count);
+        for value in bay_ids.iter() {
+            let id = value
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("bay id must be a string"))?;
+            ids.push(id);
         }
-        let mut car_data = Vec::with_capacity(car_packs.length() as usize);
-        for value in car_packs.iter() {
-            let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
-            let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-            if car_pack.kind() != sim_types::AssetKind::Car {
-                return Err(JsValue::from_str(
-                    "expected car packs for the second argument",
-                ));
+        let mut packs = Vec::with_capacity(bay_count);
+        for index in 0..bay_count {
+            let value = car_packs.get(index as u32);
+            if value.is_null() || value.is_undefined() {
+                packs.push(None);
+            } else {
+                let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
+                packs.push(Some(parse_garage_pack(&car_bytes)?));
             }
-            let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-            let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
-            let car_manifest = car_pack.manifest().clone();
-            car_data.push((car_physics, car_visual, car_manifest));
         }
-        let cars = car_data
+        let cars = packs
             .iter()
-            .map(|(physics, visual, manifest)| garage::GarageCar {
-                physics,
-                visual,
-                manifest,
+            .map(|pack| {
+                pack.as_ref().map(|pack| garage::GarageCar {
+                    physics: &pack.physics,
+                    visual: &pack.visual,
+                    manifest: &pack.manifest,
+                })
             })
             .collect::<Vec<_>>();
 
-        let mut scene = Scene::build_garage(
-            &track_visual,
-            &track_metadata,
-            &track_collision,
-            &track_manifest,
-            &cars,
-            10,
-            0,
-            true,
-            false,
-        )
-        .map_err(|error| JsValue::from_str(&error))?;
+        let garage::ConcreteGarageBuild {
+            mut scene,
+            mut lights,
+            lamps,
+        } = garage::build_concrete_garage(&ids, &cars, 0)
+            .map_err(|error| JsValue::from_str(&error))?;
+        let base_spot_intensity = lights.first().map(|light| light.intensity).unwrap_or(0.0);
+        for light in &mut lights {
+            light.intensity = 0.0;
+        }
         let bays = std::mem::take(&mut scene.garage_bays);
-        let car_shadow_range = scene.car_mesh_range.clone();
         let debug_info = scene.debug_info.clone();
         let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
         let shadow_focus = camera.target;
-        let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
-        let spawn = track_metadata.spawns.first().cloned();
-        let center = spawn
-            .as_ref()
-            .map(|spawn| [spawn.position[0], spawn.position[1], spawn.position[2]])
-            .unwrap_or(shadow_focus);
-        let ground_y = collider
-            .raycast(
-                Vec3::new(center[0], center[1] + 100.0, center[2]),
-                Vec3::NEG_Y,
-                300.0,
-            )
-            .map(|hit| hit.point.y)
-            .unwrap_or(center[1]);
+        let ground_y = bays
+            .iter()
+            .find(|bay| bay.loaded)
+            .map(|bay| bay.decal_ground_y)
+            .unwrap_or(0.0);
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for bay in &bays {
@@ -1071,32 +1079,110 @@ impl GarageViewer {
             min = min.min(point);
             max = max.max(point);
         }
-        let showroom_center = if min.is_finite() && max.is_finite() {
+        let center = if min.is_finite() && max.is_finite() {
             (min + max) * 0.5
         } else {
-            Vec3::new(center[0], ground_y, center[2])
+            Vec3::new(0.0, ground_y, 0.0)
         };
-        let showroom_half = ((max.x - min.x).max(max.z - min.z) * 0.5 + 20.0).clamp(60.0, 140.0);
+        let half_extent = ((max.x - min.x).max(max.z - min.z) * 0.5 + 20.0).clamp(60.0, 140.0);
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
         let mut renderer =
             renderer::Renderer::new(canvas, width, height, scene, &GpuTuning::default()).await?;
         renderer.set_lines_visible(false);
-        renderer.set_baked_region(showroom_center.to_array(), showroom_half, ground_y);
+        renderer.set_baked_region(center.to_array(), half_extent, ground_y);
+        renderer.set_garage_lights(true, garage::CONCRETE_AMBIENT, &lights);
         renderer.set_shadow_focus(shadow_focus, GARAGE_SHADOW_EXTENT);
+        for lamp in &lamps {
+            renderer.set_mesh_emissive(lamp.housing_mesh, [0.0; 3]);
+            renderer.set_mesh_emissive(lamp.lens_mesh, [0.0; 3]);
+        }
+        let flicker_start = vec![None; bays.len()];
         let mut viewer = GarageViewer {
             renderer,
             debug_info,
             bays,
+            lamps,
+            flicker_start,
+            base_spot_intensity,
             selected_bay: 0,
             steer: 0.0,
             spin: 0.0,
             initial_camera: camera,
             camera,
-            car_shadow_range,
+            car_shadow_range: None,
+            layout: "line",
         };
         viewer.update_decals();
         Ok(viewer)
+    }
+
+    /// Load a car pack into an existing empty bay. The bay camera and light do
+    /// not move; only the car meshes, textures and decal are appended.
+    pub fn load_bay(
+        &mut self,
+        index: usize,
+        car_pack: js_sys::Uint8Array,
+    ) -> Result<String, JsValue> {
+        let Some(existing) = self.bays.get(index) else {
+            return Err(JsValue::from_str("bay index out of range"));
+        };
+        if existing.loaded {
+            return Err(JsValue::from_str("bay is already loaded"));
+        }
+        let camera = existing.camera;
+        let paint_index = existing.paint;
+        let car_bytes = car_pack.to_vec();
+        let pack = parse_garage_pack(&car_bytes)?;
+        let car = garage::GarageCar {
+            physics: &pack.physics,
+            visual: &pack.visual,
+            manifest: &pack.manifest,
+        };
+        let (scene, mut bay) =
+            garage::build_concrete_car_scene(&car, index, self.bays.len(), paint_index, camera)
+                .map_err(|error| JsValue::from_str(&error))?;
+        let mesh_offset = self.renderer.append_scene(&scene).start;
+        bay.body_mesh_index += mesh_offset;
+        for wheel in &mut bay.wheels {
+            wheel.mesh_index += mesh_offset;
+        }
+        if let Some(decal) = bay.decal_mesh_index.as_mut() {
+            *decal += mesh_offset;
+        }
+        if let Some(slot) = self.bays.get_mut(index) {
+            *slot = bay;
+        }
+        if let Some(start) = self.flicker_start.get_mut(index) {
+            *start = None;
+        }
+        self.update_decals();
+        self.refresh_debug_info();
+        Ok(self.bay_info())
+    }
+
+    fn refresh_debug_info(&mut self) {
+        let Some(bay) = self.bays.iter().find(|bay| bay.loaded) else {
+            return;
+        };
+        let cars = self
+            .bays
+            .iter()
+            .filter(|bay| bay.loaded)
+            .map(|bay| {
+                serde_json::json!({
+                    "id": bay.car_id,
+                    "meshCount": bay.car.get("meshCount").cloned().unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&self.debug_info).unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(object) = value.as_object_mut() {
+            object.insert("car".to_string(), bay.car.clone());
+            object.insert("cars".to_string(), serde_json::Value::Array(cars));
+        }
+        self.debug_info = value.to_string();
     }
 
     fn update_decals(&mut self) {
@@ -1163,11 +1249,16 @@ impl GarageViewer {
         serde_json::json!({
             "selected": self.selected_bay,
             "count": self.bays.len(),
+            "layout": self.layout,
+            "loaded": bay.map(|bay| bay.loaded).unwrap_or(false),
             "name": bay.map(|bay| bay.name.clone()).unwrap_or_default(),
             "carId": bay.map(|bay| bay.car_id.clone()).unwrap_or_default(),
-            "car": bay.map(|bay| bay.car.clone()),
+            "car": bay.map(|bay| bay.car.clone()).unwrap_or(serde_json::Value::Null),
             "color": bay.map(|bay| bay.color),
             "colorName": bay.map(|bay| bay.color_name).unwrap_or_default(),
+            "paint": bay.map(|bay| bay.paint),
+            "paintName": bay.map(bay_paint_name).unwrap_or_default(),
+            "recolorable": bay.map(|bay| bay.recolorable).unwrap_or(false),
         })
         .to_string()
     }
@@ -1181,10 +1272,14 @@ impl GarageViewer {
                 .map(|(index, bay)| {
                     serde_json::json!({
                         "index": index,
+                        "loaded": bay.loaded,
                         "name": bay.name,
                         "carId": bay.car_id,
                         "color": bay.color,
                         "colorName": bay.color_name,
+                        "paint": bay.paint,
+                        "paintName": bay_paint_name(bay),
+                        "recolorable": bay.recolorable,
                     })
                 })
                 .collect::<Vec<_>>(),
@@ -1192,7 +1287,75 @@ impl GarageViewer {
         .unwrap_or_else(|_| "[]".to_string())
     }
 
+    pub fn paint_options(&self) -> String {
+        serde_json::to_string(
+            &(0..garage::BAY_COLORS.len())
+                .map(|index| {
+                    serde_json::json!({
+                        "index": index,
+                        "name": garage::BAY_COLOR_NAMES[index],
+                        "color": garage::BAY_COLORS[index],
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn set_bay_paint(&mut self, bay: usize, paint: usize) -> String {
+        let paint = paint % garage::BAY_COLORS.len();
+        if let Some(bay_state) = self.bays.get_mut(bay) {
+            if bay_state.recolorable {
+                bay_state.paint = paint;
+                bay_state.color = garage::BAY_COLORS[paint];
+                bay_state.color_name = garage::BAY_COLOR_NAMES[paint];
+                if let Some(vertices) = garage::recolored_body_vertices(bay_state, paint) {
+                    self.renderer
+                        .set_mesh_vertex_colors(bay_state.body_mesh_index, &vertices);
+                }
+            }
+        }
+        self.bay_info()
+    }
+
+    pub fn set_selected_paint(&mut self, paint: usize) -> String {
+        let selected = self.selected_bay;
+        self.set_bay_paint(selected, paint)
+    }
+
+    fn update_garage_lights(&mut self) {
+        let now = performance_now();
+        for index in 0..self.bays.len() {
+            let scale = if self.bays[index].loaded {
+                let start = match self.flicker_start[index] {
+                    Some(start) => start,
+                    None => {
+                        let start = now + index as f64 * 0.03;
+                        self.flicker_start[index] = Some(start);
+                        start
+                    }
+                };
+                garage::concrete_lamp_flicker((now - start) as f32, index)
+            } else {
+                0.0
+            };
+            self.renderer
+                .set_garage_light_intensity(index, self.base_spot_intensity * scale);
+            if let Some(lamp) = self.lamps.get(index) {
+                self.renderer.set_mesh_emissive(
+                    lamp.housing_mesh,
+                    scale_emissive(garage::CONCRETE_LAMP_HOUSING_EMISSIVE, scale),
+                );
+                self.renderer.set_mesh_emissive(
+                    lamp.lens_mesh,
+                    scale_emissive(garage::CONCRETE_LAMP_LENS_EMISSIVE, scale),
+                );
+            }
+        }
+    }
+
     pub fn render(&mut self) -> Result<(), JsValue> {
+        self.update_garage_lights();
         self.renderer.render()
     }
 
@@ -1367,10 +1530,49 @@ fn state_from_frame(frame: &[f32]) -> Result<VehicleState, JsValue> {
     })
 }
 
-fn remote_particles_tuning(base: &ParticleTuning) -> ParticleTuning {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParticleQuality {
+    High,
+    Low,
+    Off,
+}
+
+impl ParticleQuality {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "high" => Some(Self::High),
+            "low" => Some(Self::Low),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
+fn local_particles_tuning(base: &ParticleTuning, quality: ParticleQuality) -> ParticleTuning {
     let mut tuning = base.clone();
-    tuning.max_active = tuning.max_active.min(160);
-    tuning.max_spawn_per_step = tuning.max_spawn_per_step.min(4);
+    match quality {
+        ParticleQuality::High => {}
+        ParticleQuality::Low => {
+            tuning.max_active = tuning.max_active.min(120);
+            tuning.max_spawn_per_step = tuning.max_spawn_per_step.min(2);
+        }
+        ParticleQuality::Off => {
+            tuning.max_active = 0;
+            tuning.max_spawn_per_step = 0;
+        }
+    }
+    tuning
+}
+
+fn remote_particles_tuning(base: &ParticleTuning, quality: ParticleQuality) -> ParticleTuning {
+    let mut tuning = base.clone();
+    let (max_active, max_spawn_per_step) = match quality {
+        ParticleQuality::High => (160, 4),
+        ParticleQuality::Low => (60, 2),
+        ParticleQuality::Off => (0, 0),
+    };
+    tuning.max_active = tuning.max_active.min(max_active);
+    tuning.max_spawn_per_step = tuning.max_spawn_per_step.min(max_spawn_per_step);
     tuning
 }
 
@@ -1775,6 +1977,14 @@ fn camera_json(camera: &Camera) -> String {
     .to_string()
 }
 
+fn bay_paint_name(bay: &GarageBay) -> &'static str {
+    if bay.recolorable {
+        garage::BAY_COLOR_NAMES[bay.paint % garage::BAY_COLOR_NAMES.len()]
+    } else {
+        "Factory livery"
+    }
+}
+
 const GARAGE_SHADOW_EXTENT: f32 = 80.0;
 const TRACK_SHADOW_EXTENT: f32 = 120.0;
 
@@ -1812,6 +2022,9 @@ pub struct DriveViewer {
     step_times: Vec<f32>,
     track_id: String,
     car_id: String,
+    race: Option<RaceData>,
+    race_tracker: Option<RaceTracker>,
+    track_source_hash: [u8; 32],
     car_bay: usize,
     color_offset: usize,
     camera_mode: CameraMode,
@@ -1821,6 +2034,8 @@ pub struct DriveViewer {
     particles: ParticleSystem,
     remote_particles: Vec<ParticleSystem>,
     particle_instances: Vec<ParticleInstance>,
+    particle_quality: ParticleQuality,
+    particle_tuning: ParticleTuning,
     remote_particle_tuning: ParticleTuning,
     last_particle_time: Option<f64>,
     tuning: TuningConfig,
@@ -1844,6 +2059,7 @@ impl DriveViewer {
         car_bay: Option<usize>,
         tuning_json: Option<String>,
         remote_slots: Option<usize>,
+        car_paint: Option<usize>,
     ) -> Result<DriveViewer, JsValue> {
         let mut tuning = tuning_json
             .and_then(|json| serde_json::from_str::<TuningConfig>(&json).ok())
@@ -1859,8 +2075,10 @@ impl DriveViewer {
         let track_visual = track_pack.track_visual_owned().map_err(js_error)?;
         let track_metadata = track_pack.track_metadata_owned().map_err(js_error)?;
         let track_collision = track_pack.track_collision_owned().map_err(js_error)?;
+        let race = track_pack.track_race_owned().map_err(js_error)?;
         let track_manifest = track_pack.manifest().clone();
         drop(track_pack);
+        let track_source_hash = track_manifest.source_hash;
         let surface_names = track_metadata
             .surfaces
             .iter()
@@ -1889,6 +2107,12 @@ impl DriveViewer {
             tuning.camera.cockpit.fov_y = 1.0;
         }
 
+        if car_physics.mass < 900.0 {
+            tuning.camera.cockpit.eye = [0.0, 0.84, 0.16];
+            tuning.camera.cockpit.target = [0.0, 0.78, -20.0];
+            tuning.camera.cockpit.fov_y = 1.0;
+        }
+
         let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
         let remote_slots = remote_slots.unwrap_or(0).min(7);
         let cars = [garage::GarageCar {
@@ -1896,8 +2120,12 @@ impl DriveViewer {
             visual: &car_visual,
             manifest: &car_manifest,
         }];
-        let remote_particle_tuning = remote_particles_tuning(&tuning.particles);
-        let color_offset = if remote_slots == 0 { car_bay } else { 0 };
+        let remote_particle_tuning =
+            remote_particles_tuning(&tuning.particles, ParticleQuality::High);
+        let particle_tuning = local_particles_tuning(&tuning.particles, ParticleQuality::High);
+        let color_offset = car_paint
+            .map(|paint| paint % garage::BAY_COLOR_NAMES.len())
+            .unwrap_or(if remote_slots == 0 { car_bay } else { 0 });
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
@@ -1980,6 +2208,7 @@ impl DriveViewer {
         );
 
         let previous_state = vehicle.state;
+        let race_tracker = race.as_ref().map(RaceTracker::new);
         let mut drive = DriveViewer {
             renderer,
             vehicle,
@@ -1994,6 +2223,9 @@ impl DriveViewer {
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
             car_id: car_manifest.id,
+            race,
+            race_tracker,
+            track_source_hash,
             car_bay,
             color_offset,
             camera_mode: CameraMode::Chase,
@@ -2003,6 +2235,8 @@ impl DriveViewer {
             particles: ParticleSystem::new(),
             remote_particles: (0..=remote_slots).map(|_| ParticleSystem::new()).collect(),
             particle_instances: Vec::with_capacity(crate::particles::MAX_PARTICLES),
+            particle_quality: ParticleQuality::High,
+            particle_tuning,
             remote_particle_tuning,
             last_particle_time: None,
             tuning,
@@ -2069,12 +2303,27 @@ impl DriveViewer {
         }
     }
 
+    fn update_race_tracker(&mut self) {
+        let position = self.vehicle.state.position;
+        let tick = self.vehicle.state.tick;
+        if let Some(tracker) = self.race_tracker.as_mut() {
+            tracker.update(position, tick);
+        }
+    }
+
+    fn reset_race_tracker(&mut self) {
+        if let Some(tracker) = self.race_tracker.as_mut() {
+            tracker.reset();
+        }
+    }
+
     pub fn reset(&mut self) {
         self.vehicle.reset();
         for _ in 0..500 {
             self.vehicle.step(Controls::default());
         }
         self.previous_state = self.vehicle.state;
+        self.reset_race_tracker();
         self.accumulator = 0.0;
         self.last_time = None;
         self.last_particle_time = None;
@@ -2132,6 +2381,7 @@ impl DriveViewer {
             let start = performance_now();
             self.previous_state = self.vehicle.state;
             self.vehicle.step(controls);
+            self.update_race_tracker();
             let elapsed = (performance_now() - start) as f32;
             if self.step_times.len() >= 250 {
                 self.step_times.remove(0);
@@ -2184,6 +2434,7 @@ impl DriveViewer {
         };
         for _ in 0..steps {
             self.vehicle.step(controls);
+            self.update_race_tracker();
         }
         self.previous_state = self.vehicle.state;
         self.update_visuals();
@@ -2196,6 +2447,7 @@ impl DriveViewer {
         let remote = state_from_frame(frame)?;
         self.vehicle.state = remote;
         self.previous_state = remote;
+        self.update_race_tracker();
         self.last_time = None;
         self.accumulator = 0.0;
         self.set_brake_lights(frame[snapshot::BRAKE]);
@@ -2264,6 +2516,39 @@ impl DriveViewer {
         self.renderer.render()
     }
 
+    /// Places the local car on the race grid and arms a grid start.
+    ///
+    /// The car uses `race.grid[slot]`, oriented to the nearest layout tangent
+    /// until track-ed grid rotations are fixed (TD-0021). An invalid slot or a
+    /// track without race data leaves the viewer unchanged. The local tracker is
+    /// armed and updated at the grid position, so its state reports lap 1, the
+    /// grid progress, and `started = false`.
+    pub fn place_on_race_grid(&mut self, slot: u32) {
+        let Some(race) = self.race.clone() else {
+            return;
+        };
+        let Some(grid) = race.grid.get(slot as usize).cloned() else {
+            return;
+        };
+        if self.race_tracker.is_none() {
+            self.race_tracker = Some(RaceTracker::new(&race));
+        }
+        if let Some(tracker) = self.race_tracker.as_mut() {
+            place_vehicle_on_race_grid(&mut self.vehicle, tracker, &grid);
+        }
+        self.previous_state = self.vehicle.state;
+        self.accumulator = 0.0;
+        self.last_time = None;
+        self.last_particle_time = None;
+        self.step_times.clear();
+        self.particles.clear();
+        self.set_brake_lights(0.0);
+        self.set_reverse_lights(false);
+        self.update_visuals();
+        self.update_camera();
+        let _ = self.renderer.render();
+    }
+
     pub fn set_local_slot(&mut self, slot: usize) -> Result<(), JsValue> {
         if slot >= self.rigs.len() {
             return Err(JsValue::from_str("local slot is out of range"));
@@ -2290,6 +2575,14 @@ impl DriveViewer {
 
     pub fn debug_info(&self) -> String {
         self.info.clone()
+    }
+
+    pub fn race(&self) -> String {
+        race_view_json(self.race.as_ref())
+    }
+
+    pub fn race_state(&self) -> String {
+        race_state_json(self.race_tracker.as_ref())
     }
 
     pub fn telemetry(&self) -> String {
@@ -2324,6 +2617,13 @@ impl DriveViewer {
         serde_json::json!({
             "track": self.track_id,
             "car": self.car_id,
+            "raceAvailable": self.race.is_some(),
+            "raceState": race_state_value(self.race_tracker.as_ref()),
+            "layoutId": self
+                .race
+                .as_ref()
+                .map(|race| race.layout.layout_id.as_str()),
+            "trackSourceHash": hex_source_hash(&self.track_source_hash),
             "carBay": self.car_bay,
             "localSlot": self.local_slot,
             "remoteSlots": self.rigs.len().saturating_sub(1),
@@ -2680,6 +2980,19 @@ impl DriveViewer {
         self.camera_mode.as_str().to_string()
     }
 
+    pub fn set_particle_quality(&mut self, quality: &str) -> Result<(), JsValue> {
+        let next = ParticleQuality::parse(quality)
+            .ok_or_else(|| JsValue::from_str("expected high, low, or off"))?;
+        if next == self.particle_quality {
+            return Ok(());
+        }
+        self.particle_quality = next;
+        self.refresh_particle_tuning();
+        self.clear_particles();
+        self.update_visuals();
+        self.renderer.render()
+    }
+
     pub fn tuning(&self) -> String {
         let values = serde_json::to_value(&self.tuning).unwrap_or(serde_json::Value::Null);
         let schema = serde_json::from_str(&TuningConfig::schema_json())
@@ -2698,7 +3011,7 @@ impl DriveViewer {
         self.renderer
             .set_particle_render_tuning(&self.tuning.particles.render);
         self.apply_cockpit_glass_alpha();
-        self.remote_particle_tuning = remote_particles_tuning(&self.tuning.particles);
+        self.refresh_particle_tuning();
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
@@ -2729,10 +3042,27 @@ impl DriveViewer {
         self.renderer
             .set_particle_render_tuning(&self.tuning.particles.render);
         self.apply_cockpit_glass_alpha();
-        self.remote_particle_tuning = remote_particles_tuning(&self.tuning.particles);
+        self.refresh_particle_tuning();
         self.update_visuals();
         self.update_camera();
         self.renderer.render()
+    }
+
+    fn refresh_particle_tuning(&mut self) {
+        self.particle_tuning =
+            local_particles_tuning(&self.tuning.particles, self.particle_quality);
+        self.remote_particle_tuning =
+            remote_particles_tuning(&self.tuning.particles, self.particle_quality);
+    }
+
+    fn clear_particles(&mut self) {
+        self.last_particle_time = None;
+        self.particles.clear();
+        for particles in &mut self.remote_particles {
+            particles.clear();
+        }
+        self.particle_instances.clear();
+        self.renderer.set_particles(&[]);
     }
 
     fn write_initial_pose(&mut self) -> Result<(), JsValue> {
@@ -2907,44 +3237,53 @@ impl DriveViewer {
             .map(|last| ((now - last) / 1000.0) as f32)
             .unwrap_or(0.0);
         self.last_particle_time = Some(now);
-        self.particles.update(
-            particle_dt,
-            car_world,
-            state,
-            &self.rigs[self.local_slot],
-            &self.surface_names,
-            &self.tuning.particles,
-        );
-        for slot in 0..self.rigs.len() {
-            if slot == self.local_slot {
-                continue;
+        if self.particle_quality == ParticleQuality::Off {
+            self.particles.clear();
+            for particles in &mut self.remote_particles {
+                particles.clear();
             }
-            let Some(remote_state) = self.remote_states[slot] else {
-                self.remote_particles[slot].clear();
-                continue;
-            };
-            let remote_world =
-                Mat4::from_rotation_translation(remote_state.rotation, remote_state.position);
-            self.remote_particles[slot].update(
+            self.particle_instances.clear();
+            self.renderer.set_particles(&[]);
+        } else {
+            self.particles.update(
                 particle_dt,
-                remote_world,
-                &remote_state,
-                &self.rigs[slot],
+                car_world,
+                state,
+                &self.rigs[self.local_slot],
                 &self.surface_names,
-                &self.remote_particle_tuning,
+                &self.particle_tuning,
             );
-        }
-        self.particle_instances.clear();
-        self.particle_instances
-            .extend_from_slice(self.particles.instances());
-        for slot in 0..self.rigs.len() {
-            if slot == self.local_slot {
-                continue;
+            for slot in 0..self.rigs.len() {
+                if slot == self.local_slot {
+                    continue;
+                }
+                let Some(remote_state) = self.remote_states[slot] else {
+                    self.remote_particles[slot].clear();
+                    continue;
+                };
+                let remote_world =
+                    Mat4::from_rotation_translation(remote_state.rotation, remote_state.position);
+                self.remote_particles[slot].update(
+                    particle_dt,
+                    remote_world,
+                    &remote_state,
+                    &self.rigs[slot],
+                    &self.surface_names,
+                    &self.remote_particle_tuning,
+                );
             }
+            self.particle_instances.clear();
             self.particle_instances
-                .extend_from_slice(self.remote_particles[slot].instances());
+                .extend_from_slice(self.particles.instances());
+            for slot in 0..self.rigs.len() {
+                if slot == self.local_slot {
+                    continue;
+                }
+                self.particle_instances
+                    .extend_from_slice(self.remote_particles[slot].instances());
+            }
+            self.renderer.set_particles(&self.particle_instances);
         }
-        self.renderer.set_particles(&self.particle_instances);
     }
 
     fn update_camera(&mut self) {
@@ -3027,12 +3366,103 @@ impl DriveViewer {
     }
 }
 
+fn spawn_rotation(spawn: &SpawnPoint) -> Quat {
+    let rotation = Quat::from_xyzw(
+        spawn.rotation_xyzw[0],
+        spawn.rotation_xyzw[1],
+        spawn.rotation_xyzw[2],
+        spawn.rotation_xyzw[3],
+    );
+    if rotation.length_squared() > 1e-8 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    }
+}
+
+/// Orients a grid spawn to the nearest layout tangent (TD-0021 workaround).
+fn oriented_race_spawn(tracker: &RaceTracker, base: &SpawnPoint) -> SpawnPoint {
+    let mut spawn = base.clone();
+    match tracker.nearest_sample(Vec3::from_array(spawn.position)) {
+        Some(sample) => {
+            let yaw = (-sample.tangent.x).atan2(-sample.tangent.z);
+            spawn.rotation_xyzw = Quat::from_rotation_y(yaw).to_array();
+        }
+        None => {
+            let rotation = spawn_rotation(&spawn);
+            spawn.rotation_xyzw =
+                (Quat::from_rotation_y(std::f32::consts::PI) * rotation).to_array();
+        }
+    }
+    spawn
+}
+
+fn place_vehicle_on_race_grid(vehicle: &mut Vehicle, tracker: &mut RaceTracker, grid: &SpawnPoint) {
+    let spawn = oriented_race_spawn(tracker, grid);
+    vehicle.set_spawn(&spawn);
+    for _ in 0..500 {
+        vehicle.step(Controls::default());
+    }
+    tracker.arm_grid_start();
+    tracker.update(vehicle.state.position, vehicle.state.tick);
+}
+
 fn percentile(values: &[f32], fraction: f32) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
     let index = ((values.len() - 1) as f32 * fraction).round() as usize;
     values[index.min(values.len() - 1)]
+}
+
+fn race_state_value(tracker: Option<&RaceTracker>) -> serde_json::Value {
+    match tracker {
+        None => serde_json::json!({ "available": false }),
+        Some(tracker) => {
+            let state = tracker.state();
+            serde_json::json!({
+                "available": true,
+                "lap": state.lap,
+                "sector": state.sector,
+                "progress": state.progress,
+                "distance_m": state.distance_m,
+                "wrong_way": state.wrong_way,
+                "started": state.started,
+                "current_lap_time": state.current_lap_time,
+                "last_lap_time": state.last_lap_time,
+                "best_lap_time": state.best_lap_time,
+            })
+        }
+    }
+}
+
+fn race_state_json(tracker: Option<&RaceTracker>) -> String {
+    race_state_value(tracker).to_string()
+}
+
+fn race_view_json(race: Option<&RaceData>) -> String {
+    match race {
+        None => String::from("{\"available\":false}"),
+        Some(race) => serde_json::json!({
+            "available": true,
+            "version": race.version,
+            "layout": race.layout,
+            "start_finish": race.start_finish,
+            "grid": race.grid,
+            "sectors": race.sectors,
+        })
+        .to_string(),
+    }
+}
+
+fn hex_source_hash(hash: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+
+    let mut hex = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
 }
 
 fn performance_now() -> f64 {
@@ -3045,7 +3475,388 @@ fn performance_now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sim_types::{
+        Aabb, AeroSpec, BrakeSpec, DriveLayout, DrivetrainSpec, EngineSpec, Layout,
+        LayoutDirection, PacejkaCoefficients, SectorSpec, SpawnPoint, StartFinish, SteeringSpec,
+        SurfaceSpec, SuspensionSpec, TireSpec, TorquePoint, TrackCollision, TrackMetadata,
+        WheelPhysics, RACE_DATA_VERSION,
+    };
     use std::f32::consts::FRAC_PI_2;
+
+    fn sample_race() -> RaceData {
+        RaceData {
+            version: RACE_DATA_VERSION,
+            layout: Layout {
+                layout_id: String::from("main"),
+                closed: true,
+                direction: LayoutDirection::Forward,
+                points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+                half_width: 5.0,
+            },
+            start_finish: StartFinish {
+                section_id: String::from("start"),
+                fraction: 0.0,
+                position: [0.0, 0.0, 0.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+            grid: vec![SpawnPoint {
+                name: String::from("grid_0"),
+                position: [0.0, 0.0, 2.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            }],
+            sectors: vec![SectorSpec {
+                name: String::from("sector_1"),
+                start_fraction: 0.0,
+                end_fraction: 1.0,
+            }],
+        }
+    }
+
+    #[test]
+    fn race_view_unavailable_serializes_contract_shape() {
+        let json = race_view_json(None);
+        assert_eq!(json, "{\"available\":false}");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race view");
+        assert_eq!(value.as_object().map(|object| object.len()), Some(1));
+        assert_eq!(value["available"], serde_json::Value::Bool(false));
+    }
+
+    #[test]
+    fn race_view_available_serializes_contract_shape() {
+        let race = sample_race();
+        let json = race_view_json(Some(&race));
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race view");
+        assert_eq!(value["available"], serde_json::Value::Bool(true));
+        assert_eq!(value["version"], serde_json::json!(RACE_DATA_VERSION));
+        assert_eq!(value["layout"]["layout_id"], serde_json::json!("main"));
+        assert_eq!(value["layout"]["closed"], serde_json::Value::Bool(true));
+        assert_eq!(value["layout"]["direction"], serde_json::json!("forward"));
+        assert_eq!(value["layout"]["points"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            value["start_finish"]["section_id"],
+            serde_json::json!("start")
+        );
+        assert_eq!(value["grid"][0]["name"], serde_json::json!("grid_0"));
+        assert_eq!(value["sectors"][0]["name"], serde_json::json!("sector_1"));
+
+        let mut keys = value
+            .as_object()
+            .expect("race view object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "available",
+                "grid",
+                "layout",
+                "sectors",
+                "start_finish",
+                "version"
+            ]
+        );
+    }
+
+    #[test]
+    fn race_state_unavailable_serializes_contract_shape() {
+        let json = race_state_json(None);
+        assert_eq!(json, "{\"available\":false}");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race state");
+        assert_eq!(value.as_object().map(|object| object.len()), Some(1));
+        assert_eq!(value["available"], serde_json::Value::Bool(false));
+    }
+
+    #[test]
+    fn race_state_available_serializes_all_contract_fields() {
+        let tracker = RaceTracker::new(&sample_race());
+        let json = race_state_json(Some(&tracker));
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse race state");
+
+        assert_eq!(value["available"], serde_json::Value::Bool(true));
+        assert_eq!(value["lap"], serde_json::json!(1));
+        assert_eq!(value["sector"], serde_json::json!(1));
+        assert_eq!(value["progress"], serde_json::json!(0.0));
+        assert_eq!(value["distance_m"], serde_json::json!(0.0));
+        assert_eq!(value["wrong_way"], serde_json::Value::Bool(false));
+        assert_eq!(value["started"], serde_json::Value::Bool(false));
+        assert_eq!(value["current_lap_time"], serde_json::json!(0.0));
+
+        let mut keys = value
+            .as_object()
+            .expect("race state object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "available",
+                "best_lap_time",
+                "current_lap_time",
+                "distance_m",
+                "lap",
+                "last_lap_time",
+                "progress",
+                "sector",
+                "started",
+                "wrong_way"
+            ]
+        );
+    }
+
+    #[test]
+    fn race_state_available_without_lap_times_is_null() {
+        let tracker = RaceTracker::new(&sample_race());
+        let value = race_state_value(Some(&tracker));
+
+        assert!(value["last_lap_time"].is_null());
+        assert!(value["best_lap_time"].is_null());
+    }
+
+    #[test]
+    fn source_hash_hex_is_lowercase_two_digits_per_byte() {
+        let mut hash = [0u8; 32];
+        hash[0] = 0x00;
+        hash[1] = 0x0a;
+        hash[31] = 0xff;
+
+        let hex = hex_source_hash(&hash);
+        assert_eq!(hex.len(), 64);
+        assert!(hex.starts_with("000a"));
+        assert!(hex.ends_with("ff"));
+        assert_eq!(&hex[2..4], "0a");
+        assert!(hex[4..62].chars().all(|ch| ch == '0'));
+        assert_eq!(hex_source_hash(&[0xab; 32]), "ab".repeat(32));
+    }
+
+    fn grid_spawn(name: &str, position: [f32; 3]) -> SpawnPoint {
+        SpawnPoint {
+            name: String::from(name),
+            position,
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+
+    fn grid_race() -> RaceData {
+        RaceData {
+            version: RACE_DATA_VERSION,
+            layout: Layout {
+                layout_id: String::from("grid"),
+                closed: true,
+                direction: LayoutDirection::Forward,
+                points: vec![
+                    [0.0, 0.0, 0.0],
+                    [10.0, 0.0, 0.0],
+                    [10.0, 0.0, 10.0],
+                    [0.0, 0.0, 10.0],
+                ],
+                half_width: 5.0,
+            },
+            start_finish: StartFinish {
+                section_id: String::from("start"),
+                fraction: 0.0,
+                position: [0.0, 0.0, 0.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+            grid: vec![
+                grid_spawn("grid_0", [0.0, 0.0, 2.0]),
+                grid_spawn("grid_1", [1.0, 0.0, 2.5]),
+                grid_spawn("grid_2", [2.0, 0.0, 3.0]),
+            ],
+            sectors: vec![SectorSpec {
+                name: String::from("sector_1"),
+                start_fraction: 0.0,
+                end_fraction: 1.0,
+            }],
+        }
+    }
+
+    fn square_point(progress: f32) -> Vec3 {
+        let distance = progress * 40.0;
+        if distance <= 10.0 {
+            Vec3::new(distance, 0.0, 0.0)
+        } else if distance <= 20.0 {
+            Vec3::new(10.0, 0.0, distance - 10.0)
+        } else if distance <= 30.0 {
+            Vec3::new(10.0 - (distance - 20.0), 0.0, 10.0)
+        } else {
+            Vec3::new(0.0, 0.0, 10.0 - (distance - 30.0))
+        }
+    }
+
+    fn test_physics() -> sim_types::CarPhysics {
+        let suspension = SuspensionSpec {
+            travel: 0.15,
+            spring_rate: 55_000.0,
+            damper_bump: 7_000.0,
+            damper_rebound: 9_000.0,
+            anti_roll: 18_000.0,
+            ride_height: 0.34,
+        };
+        let tire = TireSpec {
+            lateral: PacejkaCoefficients {
+                b: 10.0,
+                c: 1.9,
+                d: 1.0,
+                e: 0.97,
+            },
+            longitudinal: PacejkaCoefficients {
+                b: 12.0,
+                c: 1.65,
+                d: 1.0,
+                e: 0.9,
+            },
+            relaxation_length: 0.3,
+            peak_slip_ratio: 0.12,
+            peak_slip_angle: 0.12,
+            friction_scale: 1.0,
+        };
+        let wheels = [
+            ("FL", [-0.73, 0.34, -1.2125], true, true, false),
+            ("FR", [0.73, 0.34, -1.2125], true, false, false),
+            ("RL", [-0.73, 0.34, 1.2125], false, true, true),
+            ("RR", [0.73, 0.34, 1.2125], false, false, true),
+        ]
+        .map(|(name, position, front, left, driven)| WheelPhysics {
+            name: String::from(name),
+            is_front: front,
+            is_left: left,
+            position,
+            radius: 0.33,
+            width: 0.225,
+            steerable: front,
+            driven,
+            suspension: SuspensionSpec {
+                anti_roll: if front { 18_000.0 } else { 8_000.0 },
+                ..suspension
+            },
+            tire: TireSpec {
+                friction_scale: if front { 1.0 } else { 1.05 },
+                ..tire
+            },
+        });
+        sim_types::CarPhysics {
+            mass: 1_270.0,
+            inertia: [650.0, 1_300.0, 450.0],
+            center_of_gravity: [0.0, 0.40, 0.0],
+            wheelbase: 2.425,
+            track_width: [1.46, 1.46],
+            wheels,
+            engine: EngineSpec {
+                idle_rpm: 900.0,
+                redline_rpm: 8_000.0,
+                torque_curve: vec![
+                    TorquePoint {
+                        rpm: 1_000.0,
+                        torque_nm: 180.0,
+                    },
+                    TorquePoint {
+                        rpm: 4_500.0,
+                        torque_nm: 314.0,
+                    },
+                    TorquePoint {
+                        rpm: 7_500.0,
+                        torque_nm: 250.0,
+                    },
+                ],
+            },
+            drivetrain: DrivetrainSpec {
+                gear_ratios: vec![3.483, 2.015, 1.391, 1.0, 0.719, 0.6],
+                final_drive: 4.1,
+                clutch_max_torque: 400.0,
+                drive_layout: DriveLayout::Rear,
+            },
+            brakes: BrakeSpec {
+                max_torque: [2_200.0, 2_200.0, 1_400.0, 1_400.0],
+                bias: 0.6,
+            },
+            steering: SteeringSpec {
+                max_angle: 0.6,
+                ratio: 14.0,
+                caster: 0.09,
+                kingpin_inclination: 0.12,
+            },
+            aero: AeroSpec {
+                drag_coefficient: 0.29,
+                frontal_area: 1.85,
+                downforce_coefficient: 0.0,
+            },
+        }
+    }
+
+    fn test_collider() -> TrackCollider {
+        let collision = TrackCollision {
+            vertices: vec![
+                [-500.0, 0.0, -500.0],
+                [-500.0, 0.0, 500.0],
+                [500.0, 0.0, 500.0],
+                [500.0, 0.0, -500.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            surface_ids: vec![0, 0],
+            bounds: Aabb {
+                min: [-500.0, 0.0, -500.0],
+                max: [500.0, 0.0, 500.0],
+            },
+        };
+        let metadata = TrackMetadata {
+            name: String::from("test"),
+            length: 40.0,
+            spawns: Vec::new(),
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+            surfaces: vec![SurfaceSpec {
+                id: 0,
+                name: String::from("asphalt"),
+                friction: 1.0,
+                roughness: 0.0,
+            }],
+        };
+        TrackCollider::from_collision(&collision, &metadata)
+    }
+
+    #[test]
+    fn race_grid_placement_parks_vehicle_at_slot_and_arms_tracker() {
+        let race = grid_race();
+        let mut tracker = RaceTracker::new(&race);
+        let mut vehicle = Vehicle::new(test_physics(), test_collider(), &race.grid[2]);
+        place_vehicle_on_race_grid(&mut vehicle, &mut tracker, &race.grid[0]);
+
+        let grid = &race.grid[0];
+        // telemetry() reports this same `vehicle.state.position`.
+        assert!((vehicle.state.position.x - grid.position[0]).abs() < 0.2);
+        assert!((vehicle.state.position.z - grid.position[2]).abs() < 0.2);
+
+        let state = race_state_value(Some(&tracker));
+        assert_eq!(state["available"], serde_json::Value::Bool(true));
+        assert_eq!(state["lap"], serde_json::json!(1));
+        assert_eq!(state["started"], serde_json::Value::Bool(false));
+        let progress = state["progress"].as_f64().expect("grid progress");
+        assert!((progress - 0.95).abs() < 0.05, "grid progress {progress}");
+    }
+
+    #[test]
+    fn race_grid_placement_arms_first_forward_crossing() {
+        let race = grid_race();
+        let mut tracker = RaceTracker::new(&race);
+        let mut vehicle = Vehicle::new(test_physics(), test_collider(), &race.grid[0]);
+        place_vehicle_on_race_grid(&mut vehicle, &mut tracker, &race.grid[0]);
+        assert!(!tracker.state().started);
+
+        tracker.update(square_point(0.98), 600);
+        let first = tracker.update(square_point(0.02), 601);
+        assert!(first.started);
+        assert_eq!(first.lap, 1);
+
+        tracker.update(square_point(0.5), 700);
+        tracker.update(square_point(0.98), 800);
+        let second = tracker.update(square_point(0.02), 900);
+        assert_eq!(second.lap, 2);
+    }
 
     #[test]
     fn shadow_decal_yaw_matches_car_heading() {

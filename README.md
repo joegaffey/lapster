@@ -14,21 +14,24 @@ Development preview: **https://joegaffey.com/lapster-dev/**
 
 Both builds default to Hybrid environment shadows (full-track static plus near dynamic) and the Dynamic car shadow.
 
-- **Drive** — choose the Mazda RX-7 or Speed Dreams Deckard Conejo, then Skidpad 0.5 or
-  Drift Tracks. The RX-7 and Skidpad remain the defaults. The launcher remembers the last car
+- **Drive** — choose the Mazda RX-7 or Speed Dreams Deckard Conejo, then Skidpad 0.5,
+  Drift Tracks, or Race Loop. Race Loop is the generated demo with a validated race
+  layout and shows lap/sector progress in a compact HUD; Skidpad and Drift Tracks remain
+  race-unavailable. The RX-7 and Skidpad remain the defaults. The launcher remembers the last car
   and track; both become the default for Drive and the garage's `Drive` button. Custom packs
   can still be loaded with `?car=` and `?track=`. Throttle, brake, edge-triggered reverse,
   steering, automatic gearbox with optional auto clutch, chase/cockpit cameras, wheel loads,
   500 Hz physics, and a shareable tuning dialog.
-- **Garage** — browse a curated mixed showroom where the catalog cars alternate across ten
-  colour-keyed bays in two facing rows of five: red/blue/yellow/green/orange opposite
-  black/white/pink/navy/cyan. Chevrons or arrow keys step through the bays. Vertex-coloured
-  cars use the bay paint; the textured Deckard keeps its source livery. Each car sits centered in its canopy bay with a front
-  three-quarter start view. The chevrons start hidden, fade in on mouse movement or touch,
-  and fade out when idle. Wheel steering/spin controls and an orbit/zoom camera follow the
-  selection. The selected bay's car is remembered and drives with its showroom paint; the
-  garage `Drive` button opens it with the launcher's selected track (Skidpad by default),
-  and the menu's Drive demo uses the same car selection.
+- **Garage** — a concrete studio with one row of eight bays under overhead spotlights, a
+  dark backdrop, and a concrete floor. The catalog has the Mazda RX-7 once, all six Speed
+  Dreams 67GP cars, and the Deckard Conejo; chevrons or arrow keys step along the row. The
+  Mazda has a ten-colour paint picker that persists and carries into Drive; the textured
+  67GP cars and Deckard keep their factory livery and show "Factory livery". Each car sits
+  on the floor with a front three-quarter start view. The chevrons start hidden, fade in on
+  mouse movement or touch, and fade out when idle. Wheel steering/spin controls and an
+  orbit/zoom camera follow the selection. The selected bay's car is remembered and drives
+  with its garage paint; the garage `Drive` button opens it with the launcher's selected
+  track (Skidpad by default), and the menu's Drive demo uses the same car selection.
 - **Track viewer** — skidpad render, spawn point, bounds, axes, collision-surface overlay,
   and orbit/pan/zoom camera navigation with cursor-anchored wheel zoom and double-click focus.
   Camera height is capped at 60 m to avoid high-angle model artifacts.

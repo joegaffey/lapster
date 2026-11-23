@@ -32,6 +32,20 @@ pub enum CarShadowMode {
     Off,
 }
 
+pub const MAX_GARAGE_LIGHTS: usize = 10;
+
+/// A single studio spot light for the concrete garage presentation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GarageLight {
+    pub position: [f32; 3],
+    pub direction: [f32; 3],
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub range: f32,
+    pub inner_cos: f32,
+    pub outer_cos: f32,
+}
+
 static MESH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x3,
     1 => Float32x3,
@@ -101,6 +115,19 @@ struct GrassChunkFade {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+struct SpotLightUniform {
+    /// xyz position, w range.
+    position: [f32; 4],
+    /// xyz normalized direction, w inner cone cosine.
+    direction: [f32; 4],
+    /// rgb colour, w intensity.
+    color: [f32; 4],
+    /// x outer cone cosine, yzw reserved.
+    cone: [f32; 4],
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
@@ -118,6 +145,10 @@ struct CameraUniform {
     camera_up: [f32; 4],
     particle_params: [f32; 4],
     particle_shade: [f32; 4],
+    garage_ambient: [f32; 4],
+    /// x garage mode flag, y active spot-light count, zw reserved.
+    garage_params: [f32; 4],
+    spot_lights: [SpotLightUniform; MAX_GARAGE_LIGHTS],
 }
 
 #[repr(C)]
@@ -126,6 +157,7 @@ struct ModelUniform {
     model: [[f32; 4]; 4],
     alpha: [f32; 4],
     emissive: [f32; 4],
+    flags: [f32; 4],
 }
 
 struct GpuOutline {
@@ -179,6 +211,7 @@ struct GpuMesh {
     texture_bind_group: wgpu::BindGroup,
     grass_texture_bind_group: Option<wgpu::BindGroup>,
     outline: Option<GpuOutline>,
+    flat_shade: bool,
     visible: bool,
     alpha: f32,
     emissive: [f32; 3],
@@ -251,8 +284,10 @@ pub struct Renderer {
     grass_start_ms: f64,
     mass_foliage: Option<MassFoliageGpu>,
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    model_bind_group_layout: wgpu::BindGroupLayout,
     mesh_texture_layout: wgpu::BindGroupLayout,
     mesh_sampler: wgpu::Sampler,
+    white_view: wgpu::TextureView,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     bake_camera_buffer: wgpu::Buffer,
@@ -269,6 +304,9 @@ pub struct Renderer {
     car_shadow_height: f32,
     particle_params: [f32; 4],
     particle_shade: [f32; 4],
+    garage_mode: bool,
+    garage_ambient: [f32; 3],
+    garage_lights: Vec<GarageLight>,
     environment_mode: EnvironmentShadowMode,
     car_shadow_mode: CarShadowMode,
     car_dynamic_supported: bool,
@@ -470,6 +508,9 @@ impl Renderer {
                 particles.radial_end,
             ],
             [particles.shade_min, particles.shade_max, 0.0, 0.0],
+            [0.0; 4],
+            [0.0; 4],
+            [SpotLightUniform::default(); MAX_GARAGE_LIGHTS],
         );
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera uniform"),
@@ -747,7 +788,7 @@ impl Renderer {
         let particle_pipeline =
             create_particle_pipeline(&device, &camera_bind_group_layout, format, sample_count);
         let (particle_vertex_buffer, particle_index_buffer, particle_index_count) =
-            create_particle_mesh(&device);
+            create_particle_mesh(&device, &queue);
         let particle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particle instances"),
             size: (MAX_PARTICLES * std::mem::size_of::<ParticleInstance>()) as u64,
@@ -801,17 +842,19 @@ impl Renderer {
             .collect::<Vec<_>>();
 
         let (grass_vertex_buffer, grass_index_buffer, grass_index_count) =
-            create_grass_mesh(&device);
+            create_grass_mesh(&device, &queue);
         let grass_field = scene.grass;
 
         let (line_buffer, line_count) = if scene.lines.is_empty() {
             (None, 0)
         } else {
-            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("debug lines"),
-                contents: bytemuck::cast_slice(&scene.lines),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+            let buffer = create_geometry_buffer(
+                &device,
+                &queue,
+                "debug lines",
+                bytemuck::cast_slice(&scene.lines),
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            );
             (Some(buffer), scene.lines.len() as u32)
         };
 
@@ -854,8 +897,10 @@ impl Renderer {
             grass_start_ms: performance_now(),
             mass_foliage,
             camera_bind_group_layout: camera_bind_group_layout.clone(),
+            model_bind_group_layout: model_bind_group_layout.clone(),
             mesh_texture_layout: texture_bind_group_layout,
             mesh_sampler: sampler,
+            white_view,
             camera_buffer,
             camera_bind_group,
             bake_camera_buffer,
@@ -877,6 +922,9 @@ impl Renderer {
                 particles.radial_end,
             ],
             particle_shade: [particles.shade_min, particles.shade_max, 0.0, 0.0],
+            garage_mode: false,
+            garage_ambient: [0.0; 3],
+            garage_lights: Vec::new(),
             environment_mode: EnvironmentShadowMode::High,
             car_shadow_mode: CarShadowMode::Dynamic,
             car_dynamic_supported: true,
@@ -1322,6 +1370,7 @@ impl Renderer {
                     mesh.emissive[2],
                     wind_time,
                 ],
+                flags: [if mesh.flat_shade { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             };
             self.queue
                 .write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -1682,6 +1731,104 @@ impl Renderer {
         self.sun_time
     }
 
+    /// Enable or disable the concrete-garage studio lighting path.
+    ///
+    /// In garage mode the sun is fixed vertically (so the environment shadow
+    /// map and car silhouette decals keep giving contact shadows), the sky is
+    /// near-black, and up to [`MAX_GARAGE_LIGHTS`] spot lights are evaluated in
+    /// the mesh shader. Calling this with `mode = false` clears the spot lights
+    /// without touching the directional sun.
+    pub fn set_garage_lights(&mut self, mode: bool, ambient: [f32; 3], lights: &[GarageLight]) {
+        self.garage_mode = mode;
+        self.garage_ambient = ambient;
+        self.garage_lights.clear();
+        if mode {
+            self.garage_lights
+                .extend_from_slice(&lights[..lights.len().min(MAX_GARAGE_LIGHTS)]);
+            self.sun_direction = Vec3::NEG_Y;
+            self.sun_elevation = std::f32::consts::FRAC_PI_2;
+            self.sky_horizon = [0.008, 0.009, 0.012, 0.0];
+            self.sky_zenith = [0.0015, 0.0018, 0.0025, 1.0];
+            self.shadow_view_proj = shadow_view_proj(
+                self.active_shadow_map_size(),
+                Vec3::from_array(self.shadow_focus),
+                self.shadow_extent,
+                self.sun_direction,
+            );
+            self.shadow_dirty = true;
+            self.baked_valid = false;
+        }
+        self.write_camera();
+    }
+
+    /// Set one garage spot light's intensity and refresh the camera uniform.
+    pub fn set_garage_light_intensity(&mut self, index: usize, intensity: f32) {
+        let intensity = intensity.max(0.0);
+        let changed = if let Some(light) = self.garage_lights.get_mut(index) {
+            if light.intensity != intensity {
+                light.intensity = intensity;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if changed {
+            self.write_camera();
+        }
+    }
+
+    fn garage_uniforms(&self) -> ([f32; 4], [f32; 4], [SpotLightUniform; MAX_GARAGE_LIGHTS]) {
+        let mut spot_lights = [SpotLightUniform::default(); MAX_GARAGE_LIGHTS];
+        let count = if self.garage_mode {
+            self.garage_lights.len().min(MAX_GARAGE_LIGHTS)
+        } else {
+            0
+        };
+        for (slot, light) in spot_lights
+            .iter_mut()
+            .zip(self.garage_lights.iter().take(count))
+        {
+            *slot = SpotLightUniform {
+                position: [
+                    light.position[0],
+                    light.position[1],
+                    light.position[2],
+                    light.range.max(0.001),
+                ],
+                direction: [
+                    light.direction[0],
+                    light.direction[1],
+                    light.direction[2],
+                    light.inner_cos,
+                ],
+                color: [
+                    light.color[0],
+                    light.color[1],
+                    light.color[2],
+                    light.intensity.max(0.0),
+                ],
+                cone: [light.outer_cos, 0.0, 0.0, 0.0],
+            };
+        }
+        (
+            [
+                self.garage_ambient[0],
+                self.garage_ambient[1],
+                self.garage_ambient[2],
+                0.0,
+            ],
+            [
+                if self.garage_mode { 1.0 } else { 0.0 },
+                count as f32,
+                0.0,
+                0.0,
+            ],
+            spot_lights,
+        )
+    }
+
     fn shadow_modes(&self) -> [f32; 4] {
         [
             if self.environment_mode == EnvironmentShadowMode::High {
@@ -1851,6 +1998,10 @@ impl Renderer {
     }
 
     pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
+        if self.garage_mode {
+            // Studio lighting is independent of the track time-of-day.
+            return 0.0;
+        }
         self.sun_time = hours.clamp(6.0, 20.0);
         let (direction, elevation) = sun_for_time(self.sun_time);
         self.sun_direction = direction;
@@ -1926,6 +2077,9 @@ impl Renderer {
             self.shadow_depth_bias,
             self.particle_params,
             self.particle_shade,
+            [0.0; 4],
+            [0.0; 4],
+            [SpotLightUniform::default(); MAX_GARAGE_LIGHTS],
         );
         self.queue.write_buffer(
             &self.bake_camera_buffer,
@@ -2013,10 +2167,24 @@ impl Renderer {
                 model: model.to_cols_array_2d(),
                 alpha: model_alpha(mesh, grass_texture_enabled),
                 emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
+                flags: [if mesh.flat_shade { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             };
             self.queue
                 .write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&uniform));
         }
+    }
+
+    /// Replace a mesh's vertex data, preserving layout. Used by the garage
+    /// paint API to rewrite only the body vertex colours.
+    pub fn set_mesh_vertex_colors(&mut self, index: usize, vertices: &[MeshVertex]) {
+        let Some(mesh) = self.meshes.get(index) else {
+            return;
+        };
+        let bytes = bytemuck::cast_slice(vertices);
+        if bytes.len() as u64 > mesh.vertex_buffer.size() {
+            return;
+        }
+        self.queue.write_buffer(&mesh.vertex_buffer, 0, bytes);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2106,6 +2274,33 @@ impl Renderer {
         }
     }
 
+    /// Append a detached scene's meshes to this renderer. Mesh texture indices
+    /// are local to the detached scene and used directly to create GPU bind
+    /// groups; the CPU texture bytes can be dropped by the caller afterwards.
+    pub fn append_scene(&mut self, scene: &Scene) -> Range<usize> {
+        let start = self.meshes.len();
+        let resources = MeshTextureResources {
+            layout: &self.mesh_texture_layout,
+            textures: &scene.textures,
+            white_view: &self.white_view,
+            sampler: &self.mesh_sampler,
+        };
+        let mut appended = Vec::with_capacity(scene.meshes.len());
+        for mesh in &scene.meshes {
+            appended.push(create_mesh(
+                &self.device,
+                &self.queue,
+                mesh,
+                &self.model_bind_group_layout,
+                &resources,
+            ));
+        }
+        self.meshes.extend(appended);
+        self.shadow_dirty = true;
+        self.baked_valid = false;
+        start..self.meshes.len()
+    }
+
     pub fn set_mesh_alpha(&mut self, index: usize, alpha: f32) {
         let grass_texture_enabled = self.grass_texture_enabled;
         if let Some(mesh) = self.meshes.get_mut(index) {
@@ -2141,6 +2336,7 @@ impl Renderer {
     }
 
     fn write_camera(&self) {
+        let (garage_ambient, garage_params, spot_lights) = self.garage_uniforms();
         let uniform = camera_uniform(
             &self.camera,
             self.config.width,
@@ -2160,6 +2356,9 @@ impl Renderer {
             self.shadow_depth_bias,
             self.particle_params,
             self.particle_shade,
+            garage_ambient,
+            garage_params,
+            spot_lights,
         );
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -2186,6 +2385,45 @@ fn create_surface(
     ))
 }
 
+/// Upload non-uniform geometry with a normal allocation and `write_buffer`.
+///
+/// `create_buffer_init` maps at creation, and some WebGPU implementations reject
+/// mapped-at-creation buffers once rendering has started. Geometry goes through
+/// the copy path instead; renderer-setup uniforms still use `create_buffer_init`.
+fn create_geometry_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: (contents.len() as u64).max(1),
+        usage,
+        mapped_at_creation: false,
+    });
+    if !contents.is_empty() {
+        queue.write_buffer(&buffer, 0, contents);
+    }
+    buffer
+}
+
+fn create_optional_geometry_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> Option<wgpu::Buffer> {
+    if contents.is_empty() {
+        return None;
+    }
+    Some(create_geometry_buffer(
+        device, queue, label, contents, usage,
+    ))
+}
+
 fn create_mesh(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -2193,22 +2431,27 @@ fn create_mesh(
     model_bind_group_layout: &wgpu::BindGroupLayout,
     texture_resources: &MeshTextureResources<'_>,
 ) -> GpuMesh {
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{} vertices", mesh.name)),
-        contents: bytemuck::cast_slice(&mesh.vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{} indices", mesh.name)),
-        contents: bytemuck::cast_slice(&mesh.indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        &format!("{} vertices", mesh.name),
+        bytemuck::cast_slice(&mesh.vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        &format!("{} indices", mesh.name),
+        bytemuck::cast_slice(&mesh.indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
     let grass_texture_enabled = if mesh.grass_texture.is_some() {
         1.0
     } else {
         0.0
     };
     let track_blend = mesh.track_blend;
+    let flat_shade = mesh.name.to_ascii_lowercase().contains("wheel");
     let model_uniform = ModelUniform {
         model: mesh.model.to_cols_array_2d(),
         alpha: [
@@ -2224,12 +2467,15 @@ fn create_mesh(
             track_blend.unwrap_or(0.0),
         ],
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
+        flags: [if flat_shade { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
     };
-    let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let model_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("{} model", mesh.name)),
-        contents: bytemuck::bytes_of(&model_uniform),
+        size: std::mem::size_of::<ModelUniform>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
+    queue.write_buffer(&model_buffer, 0, bytemuck::bytes_of(&model_uniform));
     let model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(&format!("{} model bind group", mesh.name)),
         layout: model_bind_group_layout,
@@ -2256,23 +2502,31 @@ fn create_mesh(
         )
     });
 
-    let outline = mesh.outline.as_ref().map(|outline| {
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("{} outline vertices", mesh.name)),
-            contents: bytemuck::cast_slice(&outline.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("{} outline indices", mesh.name)),
-            contents: bytemuck::cast_slice(&outline.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        GpuOutline {
-            vertex_buffer,
-            index_buffer,
-            index_count: outline.indices.len() as u32,
-        }
-    });
+    let outline = if flat_shade {
+        None
+    } else {
+        mesh.outline.as_ref().and_then(|outline| {
+            let vertex_buffer = create_optional_geometry_buffer(
+                device,
+                queue,
+                &format!("{} outline vertices", mesh.name),
+                bytemuck::cast_slice(&outline.vertices),
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            )?;
+            let index_buffer = create_optional_geometry_buffer(
+                device,
+                queue,
+                &format!("{} outline indices", mesh.name),
+                bytemuck::cast_slice(&outline.indices),
+                wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            )?;
+            Some(GpuOutline {
+                vertex_buffer,
+                index_buffer,
+                index_count: outline.indices.len() as u32,
+            })
+        })
+    };
 
     GpuMesh {
         vertex_buffer,
@@ -2283,6 +2537,7 @@ fn create_mesh(
         texture_bind_group,
         grass_texture_bind_group,
         outline,
+        flat_shade,
         visible: true,
         alpha: mesh.alpha,
         emissive: mesh.emissive,
@@ -2510,6 +2765,9 @@ fn camera_uniform(
     shadow_depth_bias: f32,
     particle_params: [f32; 4],
     particle_shade: [f32; 4],
+    garage_ambient: [f32; 4],
+    garage_params: [f32; 4],
+    spot_lights: [SpotLightUniform; MAX_GARAGE_LIGHTS],
 ) -> CameraUniform {
     let aspect = width as f32 / height as f32;
     let view_proj = camera.view_proj(aspect).to_cols_array_2d();
@@ -2553,6 +2811,9 @@ fn camera_uniform(
         },
         particle_params,
         particle_shade,
+        garage_ambient,
+        garage_params,
+        spot_lights,
     }
 }
 
@@ -2820,7 +3081,10 @@ struct ParticleVertex {
     uv: [f32; 2],
 }
 
-fn create_particle_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+fn create_particle_mesh(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Buffer, wgpu::Buffer, u32) {
     let vertices = [
         ParticleVertex {
             position: [-1.0, -1.0, 0.0],
@@ -2840,16 +3104,20 @@ fn create_particle_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u
         },
     ];
     let indices = [0u32, 1, 2, 0, 2, 3];
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("particle puff vertices"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("particle puff indices"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "particle puff vertices",
+        bytemuck::cast_slice(&vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "particle puff indices",
+        bytemuck::cast_slice(&indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
     (vertex_buffer, index_buffer, indices.len() as u32)
 }
 
@@ -2951,20 +3219,32 @@ fn create_mass_foliage(
         },
     ];
     let indices = [0u32, 1, 2, 0, 2, 3];
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mass foliage vertices"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mass foliage indices"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-    let tree_instance_buffer =
-        create_mass_instance_buffer(device, "mass foliage tree instances", &mass.tree_instances);
-    let bush_instance_buffer =
-        create_mass_instance_buffer(device, "mass foliage bush instances", &mass.bush_instances);
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "mass foliage vertices",
+        bytemuck::cast_slice(&vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "mass foliage indices",
+        bytemuck::cast_slice(&indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let tree_instance_buffer = create_mass_instance_buffer(
+        device,
+        queue,
+        "mass foliage tree instances",
+        &mass.tree_instances,
+    );
+    let bush_instance_buffer = create_mass_instance_buffer(
+        device,
+        queue,
+        "mass foliage bush instances",
+        &mass.bush_instances,
+    );
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("mass foliage uniform"),
         contents: bytemuck::bytes_of(&MassUniform {
@@ -3040,18 +3320,16 @@ fn create_mass_foliage(
 
 fn create_mass_instance_buffer(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     label: &str,
     instances: &[MassFoliageInstance],
 ) -> Option<wgpu::Buffer> {
-    if instances.is_empty() {
-        return None;
-    }
-    Some(
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(instances),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }),
+    create_optional_geometry_buffer(
+        device,
+        queue,
+        label,
+        bytemuck::cast_slice(instances),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     )
 }
 
@@ -3114,7 +3392,10 @@ fn create_mass_foliage_pipeline(
     })
 }
 
-fn create_grass_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+fn create_grass_mesh(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Buffer, wgpu::Buffer, u32) {
     const SEGMENTS: usize = 3;
     let mut vertices = Vec::with_capacity(SEGMENTS * 2 + 1);
     for segment in 0..SEGMENTS {
@@ -3142,16 +3423,20 @@ fn create_grass_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32)
     let last_left = ((SEGMENTS - 1) * 2) as u32;
     indices.extend_from_slice(&[last_left, (SEGMENTS * 2) as u32, last_left + 1]);
 
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grass blade vertices"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grass blade indices"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "grass blade vertices",
+        bytemuck::cast_slice(&vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "grass blade indices",
+        bytemuck::cast_slice(&indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
     (vertex_buffer, index_buffer, indices.len() as u32)
 }
 
@@ -3713,6 +3998,28 @@ mod tests {
         let levels = mip_chain(&rgba8, 2, 2);
         let mid = levels[1].2[0];
         assert!((187..=189).contains(&mid), "mid={mid}");
+    }
+
+    #[test]
+    fn track_shader_parses_and_validates_with_garage_lighting() {
+        let module = wgpu::naga::front::wgsl::parse_str(include_str!("track.wgsl"))
+            .expect("track shader parses");
+        let mut validator = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        );
+        validator.validate(&module).expect("track shader validates");
+    }
+
+    #[test]
+    fn camera_uniform_reserves_ten_spot_light_slots() {
+        assert_eq!(super::MAX_GARAGE_LIGHTS, 10);
+        assert_eq!(std::mem::size_of::<super::SpotLightUniform>(), 64);
+        // 24 shared vec4-sized slots + ambient + params + 10 spot lights.
+        assert_eq!(
+            std::mem::size_of::<super::CameraUniform>(),
+            16 * (24 + 2 + super::MAX_GARAGE_LIGHTS * 4)
+        );
     }
 
     #[test]

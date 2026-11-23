@@ -24,7 +24,8 @@ flags, loose props (including the metal box), and the tree-wall billboard are ex
 the visual import. The dockyard entrance posts and light pole are retained. GLB base-colour textures are imported and referenced by the baked materials,
 and unused materials/textures are pruned from the pack. Kerbs use `"mountable": true`, which
 keeps their top faces for wheel support but removes vertical faces so they do not act as
-walls.
+walls. Fence collision is tagged with the `wall` surface and is solid, so cars cannot drive
+through the fences.
 
 Re-bake with:
 

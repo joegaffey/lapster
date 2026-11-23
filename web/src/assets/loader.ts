@@ -29,6 +29,25 @@ export interface PackCache {
   delete(key: string): Promise<void>;
 }
 
+export interface TrackIdentity {
+  id: string;
+  sourceHash: string;
+  layoutId: string | null;
+}
+
+export function trackIdentity(
+  pack: LoadedPack,
+  layoutId: string | null = null,
+): TrackIdentity {
+  return {
+    id: pack.manifest.id,
+    sourceHash: pack.manifest.source_hash
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join(""),
+    layoutId,
+  };
+}
+
 export function parsePack(bytes: Uint8Array): LoadedPack {
   if (bytes.length < PACK_HEADER_SIZE) {
     throw new PackLoadError("pack is shorter than the header");
@@ -260,6 +279,8 @@ function chunkKindForEntrypoint(key: string): ChunkKind | undefined {
       return "Audio";
     case "texture":
       return "Texture";
+    case "race":
+      return "Race";
     default:
       return undefined;
   }
@@ -279,6 +300,8 @@ function entrypointKey(kind: ChunkKind): keyof AssetManifest["entrypoints"] {
       return "audio";
     case "Texture":
       return "texture";
+    case "Race":
+      return "race";
   }
 }
 

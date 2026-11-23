@@ -13,6 +13,7 @@ export interface SettingsViewer {
   set_debug_lines_visible(visible: boolean): void;
   set_grass_texture_enabled?(enabled: boolean): void;
   set_grass_shader_enabled?(enabled: boolean): void;
+  set_particle_quality?(quality: string): void;
   set_environment_shadow_mode(mode: string): void;
   set_car_shadow_mode(mode: string): void;
   set_time_of_day(hours: number): number;
@@ -24,6 +25,7 @@ export type AntiAliasing = "auto" | "off" | "2x" | "4x";
 export type EnvironmentShadows = "high" | "hybrid" | "baked" | "off";
 export type CarShadow = "dynamic" | "silhouette" | "off";
 export type RenderScale = 1 | 0.85 | 0.75 | 0.67 | 0.5;
+export type TyreEffects = "high" | "low" | "off";
 
 const RENDER_SCALES: RenderScale[] = [1, 0.85, 0.75, 0.67, 0.5];
 
@@ -36,6 +38,7 @@ export interface AssistSettings {
   autoGears: boolean;
   autoClutch: boolean;
   steeringSensitivity: number;
+  steeringRate: number;
   debugLines: boolean;
   environmentShadows: EnvironmentShadows;
   carShadow: CarShadow;
@@ -46,11 +49,13 @@ export interface AssistSettings {
   fpsCounter: boolean;
   renderScale: RenderScale;
   saturation: number;
+  tyreEffects: TyreEffects;
 }
 
 interface SettingsOptions {
   gameplay?: boolean;
   wheel?: WheelFfb;
+  timeOfDay?: boolean;
   onChange?: (settings: AssistSettings) => void;
   onRenderScale?: (scale: number) => void;
 }
@@ -77,6 +82,7 @@ const DEFAULTS: AssistSettings = {
   autoGears: true,
   autoClutch: true,
   steeringSensitivity: 1,
+  steeringRate: 6,
   debugLines: false,
   environmentShadows: "hybrid",
   carShadow: "dynamic",
@@ -87,6 +93,7 @@ const DEFAULTS: AssistSettings = {
   fpsCounter: false,
   renderScale: 1,
   saturation: 1.15,
+  tyreEffects: "high",
 };
 
 const SETTINGS_STYLE = `
@@ -235,6 +242,11 @@ function settingsDialogHtml(): string {
         <output id="steering-sensitivity-value">100%</output>
         <input id="steering-sensitivity" type="range" min="0.25" max="2" step="0.05" value="1" />
       </label>
+      <label class="assist-slider">
+        <span>Steering rate</span>
+        <output id="steering-rate-value">6.0 units/s</output>
+        <input id="steering-rate" data-testid="steering-rate" type="range" min="0" max="20" step="0.5" value="6" />
+      </label>
     </div>
   </section>
   <section id="settings-controls" class="settings-panel" role="tabpanel" aria-labelledby="tab-controls" hidden>
@@ -265,10 +277,22 @@ function settingsDialogHtml(): string {
           <option value="0.5">50%</option>
         </select>
       </label>
+      <div class="assist-row">
+        <span>Output</span>
+        <output id="render-resolution" data-testid="render-resolution">—</output>
+      </div>
       <label class="assist-slider">
         <span>Color saturation</span>
         <output id="color-saturation-value">115%</output>
         <input id="color-saturation" type="range" min="0.75" max="2" step="0.05" value="1.15" />
+      </label>
+      <label class="assist-slider">
+        <span>Tyre effects</span>
+        <select id="tyre-effects">
+          <option value="high">High</option>
+          <option value="low">Low</option>
+          <option value="off">Off</option>
+        </select>
       </label>
       <label class="assist-slider">
         <span>Environment shadows</span>
@@ -295,15 +319,17 @@ function settingsDialogHtml(): string {
         <span>Grass shader</span>
         <button id="grass-shader-toggle" data-testid="grass-shader-toggle" aria-pressed="false" type="button">Shader: Off</button>
       </div>
-      <label class="assist-slider">
-        <span>Time of day</span>
-        <output id="time-of-day-value">15:00</output>
-        <span class="time-start"></span>
-        <input id="time-of-day" type="range" min="6" max="20" step="0.5" value="15" />
-      </label>
-      <div class="assist-row">
-        <span>Apply lighting</span>
-        <button id="time-of-day-apply" type="button">Apply</button>
+      <div id="settings-time-of-day">
+        <label class="assist-slider">
+          <span>Time of day</span>
+          <output id="time-of-day-value">15:00</output>
+          <span class="time-start"></span>
+          <input id="time-of-day" type="range" min="6" max="20" step="0.5" value="15" />
+        </label>
+        <div class="assist-row">
+          <span>Apply lighting</span>
+          <button id="time-of-day-apply" type="button">Apply</button>
+        </div>
       </div>
       <div class="assist-row">
         <span>Debug overlay</span>
@@ -324,7 +350,11 @@ function settingsDialogHtml(): string {
 </dialog>`;
 }
 
-function ensureSettingsUi(gameplay: boolean, hasWheel: boolean): void {
+function ensureSettingsUi(
+  gameplay: boolean,
+  hasWheel: boolean,
+  timeOfDay: boolean,
+): void {
   if (!document.querySelector(`#${SETTINGS_STYLE_ID}`)) {
     const style = document.createElement("style");
     style.id = SETTINGS_STYLE_ID;
@@ -351,6 +381,9 @@ function ensureSettingsUi(gameplay: boolean, hasWheel: boolean): void {
   if (!hasWheel) {
     document.querySelector("#tab-controls")?.remove();
     document.querySelector("#settings-controls")?.remove();
+  }
+  if (!timeOfDay) {
+    document.querySelector("#settings-time-of-day")?.remove();
   }
   const selected = document.querySelector<HTMLButtonElement>(
     ".settings-tab[aria-selected='true']",
@@ -381,6 +414,10 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     value?.carShadow === "off"
       ? value.carShadow
       : "dynamic";
+  const tyreEffects =
+    value?.tyreEffects === "low" || value?.tyreEffects === "off"
+      ? value.tyreEffects
+      : "high";
   return {
     tc: value?.tc !== false,
     tcStrength: clamp(value?.tcStrength ?? 0.5, 0, 1, 1),
@@ -390,6 +427,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
     autoGears: value?.autoGears !== false,
     autoClutch: value?.autoClutch !== false,
     steeringSensitivity: clamp(value?.steeringSensitivity ?? 1, 0.25, 2, 1),
+    steeringRate: clamp(value?.steeringRate ?? 6, 0, 20, 6),
     debugLines: value?.debugLines === true,
     environmentShadows,
     carShadow,
@@ -407,6 +445,7 @@ function sanitize(value: Partial<AssistSettings> | null): AssistSettings {
       ? (value!.renderScale as RenderScale)
       : 1,
     saturation: clamp(value?.saturation ?? 1.15, 0.75, 2, 1.15),
+    tyreEffects,
   };
 }
 
@@ -470,7 +509,8 @@ export function setupAssistsDialog(
 ): SettingsController | null {
   const gameplay = options.gameplay !== false;
   const hasWheel = Boolean(options.wheel);
-  ensureSettingsUi(gameplay, hasWheel);
+  const showTimeOfDay = options.timeOfDay !== false;
+  ensureSettingsUi(gameplay, hasWheel, showTimeOfDay);
 
   const dialog = document.querySelector<HTMLDialogElement>("#assists-dialog");
   const openButton = document.querySelector<HTMLButtonElement>("#assists-open");
@@ -484,6 +524,7 @@ export function setupAssistsDialog(
   const tcStrength = document.querySelector<HTMLInputElement>("#tc-strength");
   const escStrength = document.querySelector<HTMLInputElement>("#esc-strength");
   const steering = document.querySelector<HTMLInputElement>("#steering-sensitivity");
+  const steeringRate = document.querySelector<HTMLInputElement>("#steering-rate");
   const debugToggle = document.querySelector<HTMLButtonElement>("#debug-lines-toggle");
   const fpsToggle = document.querySelector<HTMLButtonElement>("#fps-counter-toggle");
   const grassTextureToggle = document.querySelector<HTMLButtonElement>("#grass-texture-toggle");
@@ -497,11 +538,14 @@ export function setupAssistsDialog(
   const msaaApplied = document.querySelector<HTMLOutputElement>("#msaa-applied");
   const renderScaleSelect = document.querySelector<HTMLSelectElement>("#render-scale");
   const renderScaleValue = document.querySelector<HTMLOutputElement>("#render-scale-value");
+  const renderResolution = document.querySelector<HTMLOutputElement>("#render-resolution");
   const saturation = document.querySelector<HTMLInputElement>("#color-saturation");
   const saturationValue = document.querySelector<HTMLOutputElement>("#color-saturation-value");
+  const tyreEffects = document.querySelector<HTMLSelectElement>("#tyre-effects");
   const tcValue = document.querySelector<HTMLOutputElement>("#tc-strength-value");
   const escValue = document.querySelector<HTMLOutputElement>("#esc-strength-value");
   const steeringValue = document.querySelector<HTMLOutputElement>("#steering-sensitivity-value");
+  const steeringRateValue = document.querySelector<HTMLOutputElement>("#steering-rate-value");
   const status = document.querySelector<HTMLElement>("#assists-status");
   if (
     !dialog ||
@@ -514,15 +558,15 @@ export function setupAssistsDialog(
     !grassShaderToggle ||
     !environmentSelect ||
     !carSelect ||
-    !timeRange ||
-    !timeValue ||
-    !timeApply ||
+    (showTimeOfDay && (!timeRange || !timeValue || !timeApply)) ||
     !msaa ||
     !msaaApplied ||
     !renderScaleSelect ||
     !renderScaleValue ||
+    !renderResolution ||
     !saturation ||
     !saturationValue ||
+    !tyreEffects ||
     !status
   ) {
     return null;
@@ -537,9 +581,11 @@ export function setupAssistsDialog(
       !tcStrength ||
       !escStrength ||
       !steering ||
+      !steeringRate ||
       !tcValue ||
       !escValue ||
-      !steeringValue)
+      !steeringValue ||
+      !steeringRateValue)
   ) {
     return null;
   }
@@ -579,6 +625,11 @@ export function setupAssistsDialog(
     }
   };
 
+  const updateRenderResolution = () => {
+    const view = document.querySelector<HTMLCanvasElement>("#view");
+    renderResolution.textContent = view ? `${view.width}×${view.height}` : "—";
+  };
+
   const apply = () => {
     applyAssists();
     applyModes();
@@ -586,15 +637,17 @@ export function setupAssistsDialog(
     viewer.set_debug_lines_visible(settings.debugLines);
     viewer.set_grass_texture_enabled?.(settings.grassTexture);
     viewer.set_grass_shader_enabled?.(settings.grassShader);
+    viewer.set_particle_quality?.(settings.tyreEffects);
     setFpsCounterVisible(settings.fpsCounter);
     actualMsaa = viewer.set_msaa_samples(requestedSamples(settings));
     options.onRenderScale?.(settings.renderScale);
+    updateRenderResolution();
     options.onChange?.({ ...settings });
     save(settings);
   };
 
   const refresh = () => {
-    if (gameplay && tcToggle && absToggle && escToggle && autoGearsToggle && autoClutchToggle && tcStrength && escStrength && steering && tcValue && escValue && steeringValue) {
+    if (gameplay && tcToggle && absToggle && escToggle && autoGearsToggle && autoClutchToggle && tcStrength && escStrength && steering && steeringRate && tcValue && escValue && steeringValue && steeringRateValue) {
       tcToggle.textContent = settings.tc ? "TC: On" : "TC: Off";
       tcToggle.setAttribute("aria-pressed", String(settings.tc));
       absToggle.textContent = settings.abs ? "ABS: On" : "ABS: Off";
@@ -608,9 +661,11 @@ export function setupAssistsDialog(
       tcStrength.value = String(settings.tcStrength);
       escStrength.value = String(settings.escStrength);
       steering.value = String(settings.steeringSensitivity);
+      steeringRate.value = String(settings.steeringRate);
       tcValue.textContent = `${Math.round(settings.tcStrength * 100)}%`;
       escValue.textContent = `${Math.round(settings.escStrength * 100)}%`;
       steeringValue.textContent = `${Math.round(settings.steeringSensitivity * 100)}%`;
+      steeringRateValue.textContent = `${settings.steeringRate.toFixed(1)} units/s`;
     }
     debugToggle.textContent = settings.debugLines ? "Debug: On" : "Debug: Off";
     debugToggle.setAttribute("aria-pressed", String(settings.debugLines));
@@ -622,13 +677,17 @@ export function setupAssistsDialog(
     grassShaderToggle!.setAttribute("aria-pressed", String(settings.grassShader));
     environmentSelect.value = settings.environmentShadows;
     carSelect.value = settings.carShadow;
-    timeRange.value = String(settings.timeOfDay);
-    timeValue.textContent = formatTime(settings.timeOfDay);
+    if (timeRange && timeValue) {
+      timeRange.value = String(settings.timeOfDay);
+      timeValue.textContent = formatTime(settings.timeOfDay);
+    }
     msaa.value = settings.antiAliasing;
     renderScaleSelect!.value = String(settings.renderScale);
     renderScaleValue!.textContent = `${Math.round(settings.renderScale * 100)}%`;
+    updateRenderResolution();
     saturation!.value = String(settings.saturation);
     saturationValue!.textContent = `${Math.round(settings.saturation * 100)}%`;
+    tyreEffects!.value = settings.tyreEffects;
     const requested = requestedSamples(settings);
     const fallback = requested !== 1 && actualMsaa < requested;
     msaaApplied.textContent =
@@ -639,13 +698,17 @@ export function setupAssistsDialog(
           : `${actualMsaa}×`;
   };
 
-  viewer.set_time_of_day(settings.timeOfDay);
+  if (showTimeOfDay) {
+    viewer.set_time_of_day(settings.timeOfDay);
+  }
   apply();
   refresh();
 
   const resetAll = () => {
     settings = { ...DEFAULTS };
-    viewer.set_time_of_day(settings.timeOfDay);
+    if (showTimeOfDay) {
+      viewer.set_time_of_day(settings.timeOfDay);
+    }
     apply();
     refresh();
     try {
@@ -663,7 +726,7 @@ export function setupAssistsDialog(
     update: (patch) => {
       const timeChanged = patch.timeOfDay !== undefined;
       settings = sanitize({ ...settings, ...patch });
-      if (timeChanged) {
+      if (showTimeOfDay && timeChanged) {
         viewer.set_time_of_day(settings.timeOfDay);
       }
       apply();
@@ -750,6 +813,12 @@ export function setupAssistsDialog(
       refresh();
       status.textContent = "Saved";
     });
+    steeringRate!.addEventListener("input", () => {
+      settings.steeringRate = Number(steeringRate!.value);
+      apply();
+      refresh();
+      status.textContent = "Saved";
+    });
   }
 
   environmentSelect.addEventListener("change", () => {
@@ -766,16 +835,18 @@ export function setupAssistsDialog(
     refresh();
     status.textContent = "Saved";
   });
-  timeRange.addEventListener("input", () => {
-    timeValue.textContent = formatTime(Number(timeRange.value));
-  });
-  timeApply.addEventListener("click", () => {
-    settings.timeOfDay = Number(timeRange.value);
-    const bakeMs = viewer.set_time_of_day(settings.timeOfDay);
-    save(settings);
-    status.textContent =
-      bakeMs > 0 ? `Lighting applied · baked in ${bakeMs.toFixed(1)} ms` : "Lighting applied";
-  });
+  if (timeRange && timeValue && timeApply) {
+    timeRange.addEventListener("input", () => {
+      timeValue.textContent = formatTime(Number(timeRange.value));
+    });
+    timeApply.addEventListener("click", () => {
+      settings.timeOfDay = Number(timeRange.value);
+      const bakeMs = viewer.set_time_of_day(settings.timeOfDay);
+      save(settings);
+      status.textContent =
+        bakeMs > 0 ? `Lighting applied · baked in ${bakeMs.toFixed(1)} ms` : "Lighting applied";
+    });
+  }
   debugToggle.addEventListener("click", () => {
     settings.debugLines = !settings.debugLines;
     viewer.set_debug_lines_visible(settings.debugLines);
@@ -821,6 +892,12 @@ export function setupAssistsDialog(
     settings.saturation = Number(saturation.value);
     applySaturation();
     save(settings);
+    refresh();
+    status.textContent = "Saved";
+  });
+  tyreEffects.addEventListener("change", () => {
+    settings.tyreEffects = tyreEffects.value as TyreEffects;
+    apply();
     refresh();
     status.textContent = "Saved";
   });

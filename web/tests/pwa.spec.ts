@@ -33,8 +33,10 @@ test("pwa installs a service worker and enables cross-origin isolation", async (
   expect(state.startUrl).toBe("./");
   expect(state.iconStatus).toBe(200);
 
-  await page.goto("/web/");
-  await expect(page.locator('a[href="./drive/"]')).toBeVisible();
-  await expect(page.locator('a[href="./garage/"]')).toBeVisible();
-  await expect(page.locator('a[href="./track-viewer/"]')).toBeVisible();
+  await page.goto("/");
+  await expect(page.locator("#drive-form")).toBeVisible();
+  await expect(page.locator("#race-form")).toBeVisible();
+  await expect(page.locator('.car-summary[href="./web/garage/"]').first()).toBeVisible();
+  await page.locator("details.tools > summary").click();
+  await expect(page.locator('a[href="./web/track-viewer/"]')).toBeVisible();
 });
