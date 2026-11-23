@@ -1,6 +1,6 @@
 # Project Progress
 
-Last updated: 2026-11-22
+Last updated: 2026-11-23
 Current phase: **AI race — motion smoothing and performance controls**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
@@ -53,6 +53,11 @@ Deployment:
 
 ## Current focus
 
+- Deckard textured paint is on `feat/deckard-paint`: the existing ten-colour
+  garage picker now works for the Deckard via an opt-in catalog flag and a
+  renderer texture path that repaints only red body-paint texels. The other
+  textured cars stay factory livery, the default Deckard colour is Red, and
+  the selected index follows the Garage -> Drive `paint` link. See ADR-0018.
 - The root page is now both the public landing and launcher. It carries the
   Drive/Race panels, selected car, separate track selections, Track Editor and
   Tools. `/web/` is a compatibility redirect to the root. The Pages build

@@ -154,8 +154,11 @@ pub struct GarageBay {
     pub recolorable: bool,
     /// Scene mesh index of the body, used when rewriting painted vertices.
     pub body_mesh_index: usize,
-    /// Pre-recolour body buffers, retained only for recolorable bodies.
+    /// Pre-recolour body buffers, retained only for vertex-recolorable bodies.
     pub original_body: Option<MeshBuffers>,
+    /// Pre-recolour body texture, retained only for paint-capable textured
+    /// bodies so paint changes can rebuild from the factory texels.
+    pub original_body_texture: Option<SceneTexture>,
     pub decal_mesh_index: Option<usize>,
     pub decal_center: [f32; 3],
     pub decal_yaw: f32,
@@ -251,6 +254,7 @@ impl Scene {
             transform,
             [0.78, 0.08, 0.06],
             "style_car",
+            false,
             true,
             false,
             false,

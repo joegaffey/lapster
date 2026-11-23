@@ -221,7 +221,8 @@ async function boot() {
   status.textContent = "creating renderer";
   const packs: Array<Uint8Array | null> = carIds.map(() => null);
   packs[initialBay] = initialPack.bytes;
-  const viewer = await GarageViewer.create_concrete(canvas, carIds, packs);
+  const paintable = CAR_OPTIONS.map((car) => car.paintable === true);
+  const viewer = await GarageViewer.create_concrete(canvas, carIds, packs, paintable);
   window.__garageViewer = viewer;
 
   const loadedBays = new Set<number>([initialBay]);
@@ -268,12 +269,14 @@ async function boot() {
   const applySavedPaint = (index: number) => {
     const car = findCar(bays[index]?.carId ?? carIds[index]);
     const savedPaint = car ? loadCarPaint(car.id) : null;
-    if (savedPaint === null) {
+    const paint =
+      car?.paintable === true ? savedPaint ?? car.defaultPaint ?? null : savedPaint;
+    if (paint === null) {
       return;
     }
     const bay = (JSON.parse(viewer.bay_list()) as GarageBayMeta[])[index];
     if (bay?.recolorable) {
-      viewer.set_bay_paint(index, savedPaint);
+      viewer.set_bay_paint(index, paint);
     }
   };
   applySavedPaint(initialBay);
@@ -387,7 +390,7 @@ async function boot() {
       try {
         const pack = await loadPack(CAR_URLS[index]);
         await frameYield();
-        viewer.load_bay(index, pack.bytes);
+        viewer.load_bay(index, pack.bytes, CAR_OPTIONS[index].paintable === true);
         loadedBays.add(index);
         window.__garageCarsLoaded = loadedBays.size;
         applySavedPaint(index);

@@ -33,6 +33,7 @@ impl Scene {
         color_offset: usize,
         static_car_shadows: bool,
         brake_lights: bool,
+        paintable: &[bool],
     ) -> Result<Scene, String> {
         if cars.is_empty() {
             return Err("garage requires at least one car".to_string());
@@ -115,6 +116,7 @@ impl Scene {
                 transform,
                 color,
                 &format!("bay_{index}"),
+                paintable.get(index).copied().unwrap_or(false),
                 brake_lights,
                 true,
                 car.physics.mass < 900.0,
@@ -183,6 +185,7 @@ impl Scene {
                 recolorable: built.recolorable,
                 body_mesh_index: built.body_mesh_index,
                 original_body: built.original_body,
+                original_body_texture: built.original_body_texture,
                 decal_mesh_index,
                 decal_center: [translation.x, built.ground_y, translation.z],
                 decal_yaw,
@@ -385,6 +388,7 @@ fn empty_concrete_scene(textures: Vec<SceneTexture>) -> Scene {
 /// Build one car into `scene` at its bay slot. `camera` is supplied by the
 /// caller so loading a car later never moves the bay camera. Textures are
 /// appended to `scene`, so the renderer append path can remap their indices.
+#[allow(clippy::too_many_arguments)]
 fn add_concrete_car(
     scene: &mut Scene,
     car: &GarageCar<'_>,
@@ -393,6 +397,7 @@ fn add_concrete_car(
     paint_index: usize,
     camera: Camera,
     prefix: &str,
+    paintable: bool,
 ) -> Result<(GarageBay, CarRig, Aabb), String> {
     let facing = Quat::from_rotation_y(std::f32::consts::PI);
     let color_index = paint_index % BAY_COLORS.len();
@@ -420,6 +425,7 @@ fn add_concrete_car(
         transform,
         color,
         prefix,
+        paintable,
         false,
         true,
         car.physics.mass < 900.0,
@@ -479,6 +485,7 @@ fn add_concrete_car(
         recolorable: built.recolorable,
         body_mesh_index: built.body_mesh_index,
         original_body: built.original_body,
+        original_body_texture: built.original_body_texture,
         decal_mesh_index,
         decal_center: [translation.x, built.ground_y, translation.z],
         decal_yaw,
@@ -497,6 +504,7 @@ pub(crate) fn build_concrete_car_scene(
     bay_count: usize,
     paint_index: usize,
     camera: Camera,
+    paintable: bool,
 ) -> Result<(Scene, GarageBay), String> {
     let mut scene = empty_concrete_scene(Vec::new());
     let (bay, _rig, _bounds) = add_concrete_car(
@@ -507,6 +515,7 @@ pub(crate) fn build_concrete_car_scene(
         paint_index,
         camera,
         &format!("bay_{index}"),
+        paintable,
     )?;
     Ok((scene, bay))
 }
@@ -534,6 +543,7 @@ fn empty_concrete_bay(
         recolorable: false,
         body_mesh_index: 0,
         original_body: None,
+        original_body_texture: None,
         decal_mesh_index: None,
         decal_center: [line_bay_x(index, bay_count), 0.0, 0.0],
         decal_yaw,
@@ -551,6 +561,7 @@ pub(crate) fn build_concrete_garage(
     bay_ids: &[String],
     cars: &[Option<GarageCar<'_>>],
     color_offset: usize,
+    paintable: &[bool],
 ) -> Result<ConcreteGarageBuild, String> {
     if bay_ids.is_empty() {
         return Err("concrete garage requires at least one bay".to_string());
@@ -588,6 +599,7 @@ pub(crate) fn build_concrete_garage(
                     paint_index,
                     camera,
                     &format!("bay_{index}"),
+                    paintable.get(index).copied().unwrap_or(false),
                 )?;
                 car_texture_count += car.visual.textures.len() as u32;
                 decal_texture_count += u32::from(bay.decal_mesh_index.is_some());
@@ -1255,10 +1267,87 @@ fn add_car_decal(
 }
 
 /// Red-ish body paint vertices that the paint API may recolor.
+fn is_paint_color(color: [f32; 3]) -> bool {
+    color[0] > 0.2 && color[0] > color[1] * 1.8 && color[0] > color[2] * 1.8
+}
+
 fn is_paint_vertex(vertex_color: &[f32; 3]) -> bool {
-    vertex_color[0] > 0.2
-        && vertex_color[0] > vertex_color[1] * 1.8
-        && vertex_color[0] > vertex_color[2] * 1.8
+    is_paint_color(*vertex_color)
+}
+
+/// A body texture is paint-capable only when enough red-dominant texels look
+/// like paint. The threshold keeps small factory badges out of the palette.
+const TEXTURE_PAINT_MIN_SHARE: f32 = 0.10;
+
+fn is_paint_texel(rgba: &[u8]) -> bool {
+    is_paint_color([
+        rgba[0] as f32 / 255.0,
+        rgba[1] as f32 / 255.0,
+        rgba[2] as f32 / 255.0,
+    ])
+}
+
+/// Classify each texel as body paint. Returns `None` when the texture is
+/// malformed or less than [`TEXTURE_PAINT_MIN_SHARE`] of its texels look like
+/// paint, so small factory accents and non-red liveries stay untouched.
+fn texture_paint_mask(texture: &SceneTexture) -> Option<Vec<bool>> {
+    let pixels = (texture.width as usize).checked_mul(texture.height as usize)?;
+    if pixels == 0 || texture.rgba8.len() != pixels * 4 {
+        return None;
+    }
+    let mut mask = Vec::with_capacity(pixels);
+    let mut paint = 0usize;
+    for texel in texture.rgba8.as_chunks::<4>().0 {
+        let is_paint = is_paint_texel(texel);
+        paint += usize::from(is_paint);
+        mask.push(is_paint);
+    }
+    if (paint as f32) < pixels as f32 * TEXTURE_PAINT_MIN_SHARE {
+        return None;
+    }
+    Some(mask)
+}
+
+fn texel_luminance(rgba: &[u8]) -> f32 {
+    0.2126 * rgba[0] as f32 + 0.7152 * rgba[1] as f32 + 0.0722 * rgba[2] as f32
+}
+
+/// Recolour paint-classified texels to `color`, scaling the palette by each
+/// texel's luminance relative to the paint average so factory shading survives.
+/// Non-paint texels and every alpha byte stay byte-identical.
+fn recolored_texture(texture: &SceneTexture, mask: &[bool], color: [f32; 3]) -> SceneTexture {
+    let mut rgba8 = texture.rgba8.clone();
+    let mut luminance_sum = 0.0f64;
+    let mut paint_count = 0usize;
+    for (texel, &is_paint) in rgba8.as_chunks::<4>().0.iter().zip(mask) {
+        if is_paint {
+            luminance_sum += texel_luminance(texel) as f64;
+            paint_count += 1;
+        }
+    }
+    let average = if paint_count == 0 {
+        0.0
+    } else {
+        (luminance_sum / paint_count as f64) as f32
+    };
+    for (texel, &is_paint) in rgba8.as_chunks_mut::<4>().0.iter_mut().zip(mask) {
+        if !is_paint {
+            continue;
+        }
+        let shade = if average > 1e-3 {
+            (texel_luminance(texel) / average).clamp(0.35, 1.6)
+        } else {
+            1.0
+        };
+        for (channel, &value) in texel.iter_mut().take(3).zip(color.iter()) {
+            *channel = (value * shade * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    SceneTexture {
+        width: texture.width,
+        height: texture.height,
+        rgba8,
+    }
 }
 
 fn recolor_paint(buffers: &mut MeshBuffers, color: [f32; 3]) {
@@ -1301,6 +1390,18 @@ pub(crate) fn recolored_body_vertices(bay: &GarageBay, paint: usize) -> Option<V
     Some(build_vertices(&buffers, color))
 }
 
+/// Rebuild a paint-capable body texture for a palette index from the retained
+/// factory texels. Returns `None` for vertex-painted or non-paintable bodies.
+pub(crate) fn recolored_body_texture(bay: &GarageBay, paint: usize) -> Option<SceneTexture> {
+    if !bay.recolorable {
+        return None;
+    }
+    let original = bay.original_body_texture.as_ref()?;
+    let mask = texture_paint_mask(original)?;
+    let paint = paint % BAY_COLORS.len();
+    Some(recolored_texture(original, &mask, BAY_COLORS[paint]))
+}
+
 pub(crate) struct CarBuild {
     pub(crate) rig: CarRig,
     pub(crate) wheels: Vec<SceneWheel>,
@@ -1309,6 +1410,7 @@ pub(crate) struct CarBuild {
     pub(crate) body_mesh_index: usize,
     pub(crate) recolorable: bool,
     pub(crate) original_body: Option<MeshBuffers>,
+    pub(crate) original_body_texture: Option<SceneTexture>,
 }
 
 const BAY_SPACING: f32 = 8.0;
@@ -1398,6 +1500,7 @@ pub(crate) fn build_car(
     transform: Mat4,
     body_color: [f32; 3],
     prefix: &str,
+    paintable: bool,
     brake_lights: bool,
     cockpit_gauges: bool,
     open_wheel: bool,
@@ -1428,8 +1531,25 @@ pub(crate) fn build_car(
     } else {
         (None, None)
     };
-    let recolorable = is_recolorable(&body_buffers, textured_body);
-    let original_body = recolorable.then(|| body_buffers.clone());
+    let body_texture = car_texture(car_visual, body_mesh, car_texture_base)?;
+    let mut original_body_texture = None;
+    let mut painted_body_texture = None;
+    if paintable && textured_body {
+        if let Some(index) = body_texture {
+            if let Some(original) = scene.textures.get(index).cloned() {
+                if let Some(mask) = texture_paint_mask(&original) {
+                    let painted = recolored_texture(&original, &mask, body_color);
+                    let painted_index = scene.textures.len();
+                    scene.textures.push(painted);
+                    original_body_texture = Some(original);
+                    painted_body_texture = Some(painted_index);
+                }
+            }
+        }
+    }
+    let vertex_recolorable = is_recolorable(&body_buffers, textured_body);
+    let recolorable = vertex_recolorable || painted_body_texture.is_some();
+    let original_body = vertex_recolorable.then(|| body_buffers.clone());
     recolor_paint(&mut body_buffers, body_color);
     let body_local = node_matrix(&car_visual.body);
     let body_model = transform * body_local;
@@ -1442,7 +1562,7 @@ pub(crate) fn build_car(
         body_color,
         body_model,
         CarMeshStyle {
-            texture: car_texture(car_visual, body_mesh, car_texture_base)?,
+            texture: painted_body_texture.or(body_texture),
             outline: car_outline(car_visual, body_mesh),
             alpha: car_material_alpha(car_visual, body_mesh.material as usize),
         },
@@ -1476,7 +1596,6 @@ pub(crate) fn build_car(
         extra_body_meshes.push(mesh_index);
     }
 
-    let body_texture = car_texture(car_visual, body_mesh, car_texture_base)?;
     let brake_light_mesh_index = if let Some(buffers) = brake_light_buffers {
         Some(push_car_light_mesh(
             scene,
@@ -1850,6 +1969,7 @@ pub(crate) fn build_car(
         body_mesh_index,
         recolorable,
         original_body,
+        original_body_texture,
     })
 }
 
@@ -2981,6 +3101,37 @@ mod tests {
         }
     }
 
+    fn paint_texture(paint_texels: usize, total: usize) -> SceneTexture {
+        let mut rgba8 = Vec::with_capacity(total * 4);
+        for index in 0..total {
+            if index < paint_texels {
+                rgba8.extend_from_slice(&[200, 20, 20, 255]);
+            } else {
+                rgba8.extend_from_slice(&[30, 80, 200, 128]);
+            }
+        }
+        SceneTexture {
+            width: total as u32,
+            height: 1,
+            rgba8,
+        }
+    }
+
+    fn textured_car_visual(texture: SceneTexture) -> CarVisual {
+        let mut visual = test_car_visual();
+        visual.materials[0].base_color_texture = Some(0);
+        visual.textures = vec![sim_types::TextureRef {
+            name: "body".to_string(),
+            mime: "image/png".to_string(),
+            hash: [0; 32],
+            width: texture.width,
+            height: texture.height,
+            rgba8: texture.rgba8,
+        }];
+        visual.mesh_buffers[0].colors.fill([1.0, 1.0, 1.0]);
+        visual
+    }
+
     fn test_car_physics() -> CarPhysics {
         let suspension = sim_types::SuspensionSpec {
             travel: 0.15,
@@ -3178,7 +3329,7 @@ mod tests {
             manifest: &manifest,
         });
 
-        let build = build_concrete_garage(&ids, &slots, 0).expect("sparse concrete garage");
+        let build = build_concrete_garage(&ids, &slots, 0, &[]).expect("sparse concrete garage");
         assert_eq!(build.scene.garage_bays.len(), ids.len());
         assert_eq!(build.lights.len(), ids.len());
         for (index, bay) in build.scene.garage_bays.iter().enumerate() {
@@ -3247,12 +3398,12 @@ mod tests {
         let empty_slots = (0..ids.len())
             .map(|_| None)
             .collect::<Vec<Option<GarageCar<'_>>>>();
-        let empty = build_concrete_garage(&ids, &empty_slots, 0).expect("empty garage");
+        let empty = build_concrete_garage(&ids, &empty_slots, 0, &[]).expect("empty garage");
         let camera = empty.scene.garage_bays[3].camera;
         assert!(!empty.scene.garage_bays[3].loaded);
 
-        let (scene, bay) =
-            build_concrete_car_scene(&car, 3, ids.len(), 3, camera).expect("build late car scene");
+        let (scene, bay) = build_concrete_car_scene(&car, 3, ids.len(), 3, camera, false)
+            .expect("build late car scene");
         assert!(bay.loaded);
         assert_eq!(bay.car_id, "late-car");
         assert_eq!(bay.camera.eye, camera.eye);
@@ -3269,9 +3420,128 @@ mod tests {
         let slots = (0..ids.len())
             .map(|_| None)
             .collect::<Vec<Option<GarageCar<'_>>>>();
-        let error = build_concrete_garage(&ids, &slots, 0)
+        let error = build_concrete_garage(&ids, &slots, 0, &[])
             .err()
             .expect("oversized garage should fail");
         assert!(error.contains(&MAX_GARAGE_LIGHTS.to_string()));
+    }
+
+    #[test]
+    fn texture_paint_classification_requires_meaningful_red_share() {
+        let dominant = paint_texture(70, 100);
+        let mask = texture_paint_mask(&dominant).expect("red-dominant texture is paint-capable");
+        assert_eq!(mask.iter().filter(|paint| **paint).count(), 70);
+
+        let at_threshold = paint_texture(10, 100);
+        assert!(texture_paint_mask(&at_threshold).is_some());
+
+        let weak = paint_texture(9, 100);
+        assert!(
+            texture_paint_mask(&weak).is_none(),
+            "textures below the red-paint share stay factory"
+        );
+    }
+
+    #[test]
+    fn recolored_texture_changes_only_paint_texels_and_keeps_shading() {
+        let texture = SceneTexture {
+            width: 4,
+            height: 1,
+            rgba8: vec![
+                200, 20, 20, 200, // bright paint
+                100, 10, 10, 100, // dim paint
+                30, 80, 200, 50, // non-paint
+                150, 200, 20, 0, // non-paint with zero alpha
+            ],
+        };
+        let mask = texture_paint_mask(&texture).expect("paint-capable");
+        let recolored = recolored_texture(&texture, &mask, BAY_COLORS[1]);
+        assert_ne!(&recolored.rgba8[0..4], &texture.rgba8[0..4]);
+        assert_ne!(&recolored.rgba8[4..8], &texture.rgba8[4..8]);
+        assert_eq!(&recolored.rgba8[8..12], &texture.rgba8[8..12]);
+        assert_eq!(&recolored.rgba8[12..16], &texture.rgba8[12..16]);
+        for (original, repainted) in texture
+            .rgba8
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(recolored.rgba8.as_chunks::<4>().0.iter())
+        {
+            assert_eq!(original[3], repainted[3], "alpha must not change");
+        }
+        let bright = texel_luminance(&recolored.rgba8[0..4]);
+        let dim = texel_luminance(&recolored.rgba8[4..8]);
+        assert!(bright > dim, "relative shading order must survive");
+    }
+
+    #[test]
+    fn textured_bay_paintability_follows_hint() {
+        let factory = paint_texture(70, 100);
+        let visual = textured_car_visual(factory.clone());
+        let physics = test_car_physics();
+        let manifest = test_manifest("textured-car");
+        let ids = vec!["paint-bay".to_string(), "factory-bay".to_string()];
+        let slots = vec![
+            Some(GarageCar {
+                physics: &physics,
+                visual: &visual,
+                manifest: &manifest,
+            }),
+            Some(GarageCar {
+                physics: &physics,
+                visual: &visual,
+                manifest: &manifest,
+            }),
+        ];
+
+        let build = build_concrete_garage(&ids, &slots, 0, &[true, false])
+            .expect("textured concrete garage");
+        let painted = &build.scene.garage_bays[0];
+        let factory_bay = &build.scene.garage_bays[1];
+        assert!(painted.recolorable);
+        assert!(painted.original_body_texture.is_some());
+        assert_eq!(
+            painted
+                .original_body_texture
+                .as_ref()
+                .map(|texture| &texture.rgba8),
+            Some(&factory.rgba8)
+        );
+        assert!(!factory_bay.recolorable);
+        assert!(factory_bay.original_body_texture.is_none());
+
+        let repainted = recolored_body_texture(painted, 1).expect("paintable bay rebuilds texture");
+        assert_ne!(repainted.rgba8, factory.rgba8);
+        assert_eq!(
+            &repainted.rgba8[70 * 4..71 * 4],
+            &factory.rgba8[70 * 4..71 * 4]
+        );
+
+        let painted_texture = build.scene.meshes[painted.body_mesh_index]
+            .texture
+            .expect("painted body mesh keeps a texture");
+        let factory_texture = build.scene.meshes[factory_bay.body_mesh_index]
+            .texture
+            .expect("factory body mesh keeps a texture");
+        assert_ne!(build.scene.textures[painted_texture].rgba8, factory.rgba8);
+        assert_eq!(build.scene.textures[factory_texture].rgba8, factory.rgba8);
+    }
+
+    #[test]
+    fn vertex_painted_bay_ignores_texture_hint() {
+        let physics = test_car_physics();
+        let visual = test_car_visual();
+        let manifest = test_manifest("vertex-car");
+        let car = GarageCar {
+            physics: &physics,
+            visual: &visual,
+            manifest: &manifest,
+        };
+        let camera = bay_camera(Vec3::ZERO, Quat::IDENTITY);
+        let (_scene, bay) =
+            build_concrete_car_scene(&car, 0, 1, 0, camera, false).expect("vertex car scene");
+        assert!(bay.recolorable);
+        assert!(bay.original_body.is_some());
+        assert!(bay.original_body_texture.is_none());
     }
 }
