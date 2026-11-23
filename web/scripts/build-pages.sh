@@ -20,7 +20,7 @@ VERSION="$(python3 -c 'import json; print(json.load(open("web/version.json"))["v
 rm -rf "$DIST"
 mkdir -p "$DIST/web" "$DIST/fixtures"
 
-cp "$ROOT/index.html" "$DIST/index.html"
+sed "s#__VERSION__#${VERSION}#g" "$ROOT/index.html" > "$DIST/index.html"
 cp -R "$ROOT/web/pkg" "$DIST/web/pkg"
 mkdir -p "$DIST/web/pkg/$VERSION"
 cp -R "$ROOT/web/pkg/." "$DIST/web/pkg/$VERSION/"

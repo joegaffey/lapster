@@ -17,7 +17,7 @@ async function waitForGarage(page: import("@playwright/test").Page) {
 }
 
 test("drive launcher lists the solo tracks", async ({ page }) => {
-  await page.goto("/web/");
+  await page.goto("/");
   const driveTrack = page.locator("#drive-track");
   await expect(driveTrack).toBeVisible();
 
@@ -47,7 +47,7 @@ test("drive launcher lists the solo tracks", async ({ page }) => {
 test("race launcher offers only the loop and flags it under development", async ({
   page,
 }) => {
-  await page.goto("/web/");
+  await page.goto("/");
   const raceForm = page.locator("#race-form");
   await expect(raceForm.locator(".panel-badge")).toHaveText(/Under development/i);
 
@@ -69,7 +69,7 @@ test("drive launcher starts a solo drive on the drift tracks", async ({ page }) 
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/web/");
+  await page.goto("/");
   await page.locator("#drive-track").selectOption("drift-sketchfab");
   await page.locator("#drive-form button[type=submit]").click();
   await page.waitForURL(/\/web\/drive\//);
@@ -99,7 +99,7 @@ test("race launcher starts a three-AI race on the loop", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/web/");
+  await page.goto("/");
   await page.locator("#race-track").selectOption("loop-spline-point-terrain");
   await page.locator("#race-form button[type=submit]").click();
   await page.waitForURL(/\/web\/drive\//);
@@ -138,7 +138,7 @@ test("race launcher starts a three-AI race on the loop", async ({ page }) => {
 test("launcher shows the stored car and opens the garage with it selected", async ({
   page,
 }) => {
-  await page.goto("/web/");
+  await page.goto("/");
   await page.evaluate(() =>
     localStorage.setItem("lapster.car.v1", "sc-deckard-conejo"),
   );
@@ -152,7 +152,7 @@ test("launcher shows the stored car and opens the garage with it selected", asyn
   ).toHaveText("Deckard Conejo");
   await expect(page.locator("#drive-form .car-summary")).toHaveAttribute(
     "href",
-    "./garage/",
+    "./web/garage/",
   );
 
   await page.locator("#drive-form .car-summary").click();
@@ -168,19 +168,13 @@ test("launcher shows the stored car and opens the garage with it selected", asyn
   expect(garage.selected.carId).toBe("sc-deckard-conejo");
 });
 
-test("public launcher exposes the drift track", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.locator('[data-car-id="sc-deckard-conejo"]')).toBeVisible();
-  await expect(page.locator('[data-track-id="skidpad05"]')).toHaveAttribute(
-    "aria-current",
-    "true",
-  );
-  await page.click('[data-track-id="drift-sketchfab"]');
-  await page.waitForURL(/\/web\/drive\//);
-  expect(new URL(page.url()).searchParams.get("track")).toContain("drift-sketchfab");
-  expect(await page.evaluate(() => localStorage.getItem("lapster.track.v1"))).toBe(
-    "drift-sketchfab",
-  );
+test("/web/ redirects to the root launcher with the new forms", async ({ page }) => {
+  await page.goto("/web/");
+  await page.waitForURL((url) => url.pathname === "/");
+  await expect(page.locator("#drive-form")).toBeVisible();
+  await expect(page.locator("#race-form")).toBeVisible();
+  await expect(page.locator("#drive-track")).toBeVisible();
+  await expect(page.locator("#race-track")).toBeVisible();
 });
 
 test("garage mixes catalog cars across bays", async ({ page }) => {

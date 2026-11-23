@@ -53,6 +53,10 @@ Deployment:
 
 ## Current focus
 
+- The root page is now both the public landing and launcher. It carries the
+  Drive/Race panels, selected car, separate track selections, Track Editor and
+  Tools. `/web/` is a compatibility redirect to the root. The Pages build
+  substitutes the root version marker. Tests target `/` for the launcher.
 - Start-menu cleanup is merged to `dev` as `6f5baa4` (PR #59): Drive and Race launch
   panels replace the car/track link wall, the selected car opens the Garage,
   Drive uses `race=0` solo mode, Race is limited to Loop Spline Point Terrain
