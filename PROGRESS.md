@@ -53,6 +53,13 @@ Deployment:
 
 ## Current focus
 
+- Start-menu cleanup is on `feat/start-menu-cleanup`: Drive and Race launch
+  panels replace the car/track link wall, the selected car opens the Garage,
+  Drive uses `race=0` solo mode, Race is limited to Loop Spline Point Terrain
+  and marked under development, Track Editor is a main panel, and developer
+  views sit under Tools. Drive and Race track selections persist separately.
+  Full gate: 245 Rust tests, 76 web tests, 117 viewer passed / 4 skipped, and
+  WebGL2 2/2.
 - AI motion smoothing is ready for deployment on `feat/ai-motion-smoothing`
   (PR #54), created from `dev` at `0754a7c`: 62.5 Hz AI frames, 40 ms
   interpolation, 20 Hz race state, AI steering rate 3/s, and a configurable

@@ -115,6 +115,7 @@ function resolveCarPaint(): number | null {
   return loadCarPaint(selectedCar.id);
 }
 const mpMode = params.get("mp") === "1";
+const soloMode = params.get("race") === "0";
 const REMOTE_SLOTS = 3;
 const AI_FIELD_MAX = 3;
 const DEFAULT_AI_PACE = 1;
@@ -126,7 +127,7 @@ const AI_PACE_INDICES: Record<string, number> = {
 const MULTIPLAYER_SEND_HZ = 30;
 
 function resolveAiCount(raceAvailable: boolean): number {
-  if (mpMode || !raceAvailable) {
+  if (mpMode || soloMode || !raceAvailable) {
     return 0;
   }
   const raw = params.get("ai");
@@ -344,6 +345,10 @@ function formatRaceTime(seconds: number | null | undefined): string {
 }
 
 function updateRaceHud(telemetry: any) {
+  if (soloMode) {
+    racePanel.hidden = true;
+    return;
+  }
   const race = telemetry?.raceState;
   if (!isRaceStateView(race) || !race.available) {
     racePanel.hidden = true;
@@ -1310,7 +1315,7 @@ async function boot() {
     ? resolveRaceLaps()
     : DEFAULT_RACE_LAPS;
   const configuredRaceDirector =
-    hasRace && !mpMode && raceView.available
+    hasRace && !mpMode && !soloMode && raceView.available
       ? new RaceDirector({
           totalLaps: configuredRaceLaps,
           layoutLength: raceLayoutLength(raceView.layout),
@@ -1595,6 +1600,12 @@ async function boot() {
     }
   });
   observer.observe(canvas);
+
+  if (soloMode) {
+    racePanel.hidden = true;
+    raceResults.hidden = true;
+    raceCountdown.hidden = true;
+  }
 
   if (localRace) {
     await startLocalRaceCountdown();

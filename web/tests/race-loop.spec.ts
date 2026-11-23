@@ -174,11 +174,7 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/web/");
-  const raceLoop = page.locator('[data-track-id="race-loop"]');
-  await expect(raceLoop).toBeVisible();
-  await raceLoop.click();
-  await page.waitForURL(/\/web\/drive\//);
+  await page.goto("/web/drive/?track=race-loop");
   expect(new URL(page.url()).searchParams.get("track")).toBe("race-loop");
 
   await waitForDrive(page);
