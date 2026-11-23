@@ -315,10 +315,39 @@ const CONCRETE_SPOT_INNER_COS: f32 = 0.96;
 const CONCRETE_SPOT_OUTER_COS: f32 = 0.888;
 const CONCRETE_SPOT_INTENSITY: f32 = 5.0;
 const CONCRETE_SPOT_LIGHT_HEIGHT: f32 = CONCRETE_LAMP_HEIGHT - 0.15;
+pub(crate) const CONCRETE_LAMP_HOUSING_EMISSIVE: [f32; 3] = [0.05, 0.045, 0.035];
+pub(crate) const CONCRETE_LAMP_LENS_EMISSIVE: [f32; 3] = [1.8, 1.5, 1.05];
+/// Loaded bays flicker on for this long before settling at full output.
+pub(crate) const CONCRETE_FLICKER_DURATION: f32 = 0.9;
+const CONCRETE_FLICKER_PATTERN: [f32; 12] = [
+    0.0, 1.0, 0.15, 0.95, 0.0, 1.0, 0.3, 0.8, 0.05, 1.0, 0.55, 1.0,
+];
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ConcreteLamp {
+    pub(crate) housing_mesh: usize,
+    pub(crate) lens_mesh: usize,
+}
 
 pub(crate) struct ConcreteGarageBuild {
     pub(crate) scene: Scene,
     pub(crate) lights: Vec<GarageLight>,
+    pub(crate) lamps: Vec<ConcreteLamp>,
+}
+
+/// Deterministic per-bay lamp brightness. Negative elapsed is before the
+/// flicker starts; values after the duration settle at full output.
+pub(crate) fn concrete_lamp_flicker(elapsed: f32, bay: usize) -> f32 {
+    if elapsed.is_nan() || elapsed < 0.0 {
+        return 0.0;
+    }
+    if elapsed >= CONCRETE_FLICKER_DURATION {
+        return 1.0;
+    }
+    let pattern_len = CONCRETE_FLICKER_PATTERN.len();
+    let step = ((elapsed / CONCRETE_FLICKER_DURATION) * pattern_len as f32) as usize;
+    let step = step.min(pattern_len - 1);
+    CONCRETE_FLICKER_PATTERN[(step + bay % pattern_len) % pattern_len]
 }
 
 fn empty_concrete_scene(textures: Vec<SceneTexture>) -> Scene {
@@ -586,10 +615,11 @@ pub(crate) fn build_concrete_garage(
     scene.garage_bays = bays;
 
     let mut lights = Vec::with_capacity(bay_count);
+    let mut lamps = Vec::with_capacity(bay_count);
     for index in 0..bay_count {
         let x = line_bay_x(index, bay_count);
         let center = Vec3::new(x, CONCRETE_LAMP_HEIGHT, 0.0);
-        add_lamp_mesh(&mut scene, index, center);
+        lamps.push(add_lamp_mesh(&mut scene, index, center));
         lights.push(GarageLight {
             position: [x, CONCRETE_SPOT_LIGHT_HEIGHT, 0.0],
             direction: [0.0, -1.0, 0.0],
@@ -688,7 +718,11 @@ pub(crate) fn build_concrete_garage(
     })
     .to_string();
 
-    Ok(ConcreteGarageBuild { scene, lights })
+    Ok(ConcreteGarageBuild {
+        scene,
+        lights,
+        lamps,
+    })
 }
 
 fn line_bay_x(index: usize, bay_count: usize) -> f32 {
@@ -1009,21 +1043,27 @@ fn build_lamp_meshes(index: usize, center: Vec3) -> (MeshData, MeshData) {
             format!("garage_lamp_{index}"),
             housing,
             housing_color,
-            [0.05, 0.045, 0.035],
+            CONCRETE_LAMP_HOUSING_EMISSIVE,
         ),
         lamp_mesh_data(
             format!("garage_lamp_{index}_lens"),
             lens,
             lens_color,
-            [1.8, 1.5, 1.05],
+            CONCRETE_LAMP_LENS_EMISSIVE,
         ),
     )
 }
 
-fn add_lamp_mesh(scene: &mut Scene, index: usize, center: Vec3) {
+fn add_lamp_mesh(scene: &mut Scene, index: usize, center: Vec3) -> ConcreteLamp {
     let (housing, lens) = build_lamp_meshes(index, center);
+    let housing_mesh = scene.meshes.len();
     scene.meshes.push(housing);
+    let lens_mesh = scene.meshes.len();
     scene.meshes.push(lens);
+    ConcreteLamp {
+        housing_mesh,
+        lens_mesh,
+    }
 }
 
 struct CarSilhouette {
@@ -3129,6 +3169,35 @@ mod tests {
         assert_eq!(debug["car"]["id"], serde_json::json!("pack-car"));
         assert_eq!(debug["cars"].as_array().map(Vec::len), Some(1));
         assert_eq!(debug["garage"]["bayCount"], serde_json::json!(ids.len()));
+        assert_eq!(build.lamps.len(), ids.len());
+        for (index, lamp) in build.lamps.iter().enumerate() {
+            assert_eq!(
+                build.scene.meshes[lamp.housing_mesh].name,
+                format!("garage_lamp_{index}")
+            );
+            assert_eq!(
+                build.scene.meshes[lamp.lens_mesh].name,
+                format!("garage_lamp_{index}_lens")
+            );
+        }
+    }
+
+    #[test]
+    fn concrete_lamp_flicker_is_bounded_and_deterministic() {
+        assert_eq!(concrete_lamp_flicker(-0.01, 0), 0.0);
+        assert_eq!(concrete_lamp_flicker(-1.0, 3), 0.0);
+        for bay in 0..8 {
+            for step in 0..40 {
+                let value = concrete_lamp_flicker(step as f32 * 0.03, bay);
+                assert!((0.0..=1.0).contains(&value), "flicker {value} at {step}");
+            }
+            assert_eq!(concrete_lamp_flicker(CONCRETE_FLICKER_DURATION, bay), 1.0);
+            assert_eq!(concrete_lamp_flicker(5.0, bay), 1.0);
+        }
+        assert_ne!(
+            concrete_lamp_flicker(0.01, 0),
+            concrete_lamp_flicker(0.01, 1)
+        );
     }
 
     #[test]

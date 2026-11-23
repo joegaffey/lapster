@@ -1761,6 +1761,24 @@ impl Renderer {
         self.write_camera();
     }
 
+    /// Set one garage spot light's intensity and refresh the camera uniform.
+    pub fn set_garage_light_intensity(&mut self, index: usize, intensity: f32) {
+        let intensity = intensity.max(0.0);
+        let changed = if let Some(light) = self.garage_lights.get_mut(index) {
+            if light.intensity != intensity {
+                light.intensity = intensity;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if changed {
+            self.write_camera();
+        }
+    }
+
     fn garage_uniforms(&self) -> ([f32; 4], [f32; 4], [SpotLightUniform; MAX_GARAGE_LIGHTS]) {
         let mut spot_lights = [SpotLightUniform::default(); MAX_GARAGE_LIGHTS];
         let count = if self.garage_mode {
