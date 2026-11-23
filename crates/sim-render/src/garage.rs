@@ -424,6 +424,11 @@ fn add_concrete_car(
         true,
         car.physics.mass < 900.0,
     )?;
+    for wheel in &built.wheels {
+        if let Some(mesh) = scene.meshes.get(wheel.mesh_index) {
+            add_wheel_wireframe_lines(&mut scene.lines, mesh, wheel.base_model);
+        }
+    }
     let decal_mesh_index = match (silhouette.as_ref(), decal_texture) {
         (Some(silhouette), Some(texture)) => Some(add_car_decal(
             scene,
@@ -2748,6 +2753,34 @@ fn add_wheel_marker(lines: &mut Vec<LineVertex>, model: Mat4, color: [f32; 3]) {
         [center.x, center.y, center.z + size],
         color,
     );
+}
+
+/// Wireframe tint for concrete-garage wheel meshes, distinct from the axis
+/// markers added by [`add_wheel_marker`].
+const WHEEL_WIREFRAME_COLOR: [f32; 3] = [0.10, 0.85, 1.0];
+
+fn add_wheel_wireframe_lines(lines: &mut Vec<LineVertex>, mesh: &MeshData, model: Mat4) {
+    let mut edges: HashSet<(u32, u32)> = HashSet::with_capacity(mesh.indices.len());
+    for triangle in mesh.indices.as_chunks::<3>().0 {
+        for (a, b) in [
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ] {
+            let key = if a < b { (a, b) } else { (b, a) };
+            if !edges.insert(key) {
+                continue;
+            }
+            let (Some(from), Some(to)) =
+                (mesh.vertices.get(a as usize), mesh.vertices.get(b as usize))
+            else {
+                continue;
+            };
+            let from = model.transform_point3(Vec3::from_array(from.position));
+            let to = model.transform_point3(Vec3::from_array(to.position));
+            push_line(lines, from.to_array(), to.to_array(), WHEEL_WIREFRAME_COLOR);
+        }
+    }
 }
 
 #[cfg(test)]

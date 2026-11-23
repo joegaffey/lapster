@@ -35,10 +35,11 @@ cp "$ROOT/web/worker/physics-worker.js" "$DIST/web/worker/physics-worker.js"
 mkdir -p "$DIST/web/audio"
 cp "$ROOT/web/audio/combustion-worklet.js" "$DIST/web/audio/combustion-worklet.js"
 
-for viewer in drive garage track-viewer track-editor track-import style-spike debug-viewer multiplayer; do
+for viewer in drive garage track-viewer track-editor track-import style-spike debug-viewer multiplayer wheel-lab; do
   mkdir -p "$DIST/web/$viewer"
   sed \
     -e "s#\./main\.js#./main.js?v=${VERSION}#g" \
+    -e "s#\./main\.ts#./main.js?v=${VERSION}#g" \
     -e "s#\./viewer\.js#./viewer.js?v=${VERSION}#g" \
     "$ROOT/web/$viewer/index.html" > "$DIST/web/$viewer/index.html"
   for file in main.js viewer.js; do

@@ -148,6 +148,27 @@ Integration findings:
   loading strategy before they are added.
 - Full detail: `docs/features/67gp-guthrie-eagle-mvp.md`.
 
+## GenkiGrip wheel normal repair
+
+The four 309-vertex GenkiGrip wheels (`67gp-guthrie-eagle`,
+`67gp-kuiper-t81`, `67gp-mango-ms7`, `67gp-upping-ut19`) were baked with
+Assimp normals that included zero-length vertex normals and reversed-winding
+duplicate/zero-area triangles. The flat wheel-shading path then showed dark
+rim wedges and facets.
+
+`tools/speed-dreams/assemble.mjs` now restores the AC3D source normals and
+drops the reversed-winding duplicate and zero-area triangles before joining the
+wheel mesh. Rebuild the four packs with `tools/speed-dreams/build-car.sh` and
+validate them with `asset-compiler validate`. The normal audit after the repair
+is 0 flipped / 0 zero-length normals per wheel, down from 254 flipped and 480
+zero-normal triangles across 850 triangles. The repaired wheel is inspectable
+in the **Wheel Lab** under the launcher Tools section.
+
+The 500-vertex Legspin wheel (`67gp-cavallo-123`, `67gp-murasama-37a`) has
+correct normals in the current packs, but its source GLBs also export zero
+normals from Assimp. Extend the same source-normal repair before rebuilding
+those packs.
+
 ## Conversion stages
 
 The commands below show the original Deckard-specific invocation. The current

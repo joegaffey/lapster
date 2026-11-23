@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta name="theme-color" content="#080a0d" />
+    <title>Wheel Lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #080a0d;
+        color: #e6e8eb;
+      }
+      #stage {
+        position: fixed;
+        inset: 0;
+      }
+      .view {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      .view.dragging {
+        cursor: grabbing;
+      }
+      #lab {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        z-index: 10;
+        width: min(370px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        padding: 14px 16px 16px;
+        border: 1px solid #2a303a;
+        background: rgba(10, 13, 17, 0.9);
+        backdrop-filter: blur(8px);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      #lab.collapsed {
+        display: none;
+      }
+      #lab-toggle {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 11;
+        border: 1px solid #2a303a;
+        border-radius: 3px;
+        background: rgba(10, 13, 17, 0.9);
+        backdrop-filter: blur(8px);
+        color: #e6e8eb;
+        padding: 6px 10px;
+        font: inherit;
+        font-size: 11px;
+        box-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+      }
+      #lab-toggle[hidden] {
+        display: none;
+      }
+      .lab-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .lab-header button {
+        padding: 3px 7px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: 0.03em;
+      }
+      h2 {
+        margin: 14px 0 5px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: #8f9bab;
+      }
+      p {
+        margin: 0;
+      }
+      .muted {
+        color: #8f9bab;
+      }
+      .status {
+        margin-top: 7px;
+        color: #fbbf24;
+        overflow-wrap: anywhere;
+      }
+      .status.ready {
+        color: #34d399;
+      }
+      .status.error {
+        color: #f87171;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 9px;
+      }
+      .row select {
+        flex: 1;
+        min-width: 0;
+      }
+      select,
+      button {
+        border: 1px solid #3a4350;
+        border-radius: 3px;
+        background: #151a21;
+        color: #cbd5e1;
+        padding: 5px 8px;
+        font: inherit;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      select:hover,
+      button:hover {
+        background: #1c2430;
+      }
+      button {
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      button:focus-visible,
+      select:focus-visible,
+      input:focus-visible {
+        outline: 2px solid #38bdf8;
+        outline-offset: 1px;
+      }
+      .wheel-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .wheel-buttons button[aria-pressed="true"] {
+        border-color: #38bdf8;
+        background: #0b2b3a;
+        color: #e0f2fe;
+      }
+      .control-row {
+        display: grid;
+        grid-template-columns: 54px 1fr 48px;
+        gap: 8px;
+        align-items: center;
+        margin-top: 6px;
+      }
+      .control-row label {
+        color: #9aa4b2;
+      }
+      .control-row output {
+        text-align: right;
+        color: #cbd5e1;
+        font-variant-numeric: tabular-nums;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: #38bdf8;
+      }
+      input[type="checkbox"] {
+        accent-color: #38bdf8;
+      }
+      input[type="range"]:disabled,
+      .toggle:has(input:disabled) {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .toggle {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 8px;
+        color: #9aa4b2;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 2px 12px;
+        margin: 0;
+      }
+      dt {
+        color: #8f9bab;
+      }
+      dd {
+        margin: 0;
+        text-align: right;
+        overflow-wrap: anywhere;
+        font-variant-numeric: tabular-nums;
+      }
+      .error {
+        margin-top: 8px;
+        padding: 6px 8px;
+        border: 1px solid #7f1d1d;
+        background: rgba(127, 29, 29, 0.24);
+        color: #fca5a5;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .atlas {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 10;
+        display: none;
+        width: min(310px, calc(100vw - 32px));
+        margin: 0;
+        padding: 8px;
+        border: 1px solid #2a303a;
+        background: rgba(10, 13, 17, 0.9);
+        backdrop-filter: blur(8px);
+      }
+      .atlas.visible {
+        display: block;
+      }
+      .atlas img {
+        display: block;
+        width: 100%;
+        height: auto;
+        background: #05070a;
+        image-rendering: pixelated;
+      }
+      .atlas figcaption {
+        margin-top: 6px;
+        color: #9aa4b2;
+        font-size: 10px;
+        line-height: 1.4;
+      }
+      @media (max-width: 720px) {
+        #lab {
+          top: 10px;
+          left: 10px;
+          width: calc(100vw - 20px);
+          max-height: 54vh;
+        }
+        #lab-toggle {
+          top: 10px;
+          right: 10px;
+        }
+        .atlas {
+          right: 10px;
+          bottom: 10px;
+          width: min(190px, calc(100vw - 20px));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="view" class="view" aria-label="Interactive wheel model view"></canvas>
+    </div>
+
+    <button id="lab-toggle" type="button" aria-expanded="true" aria-controls="lab" hidden>
+      Controls
+    </button>
+
+    <main id="lab">
+      <div class="lab-header">
+        <h1>Wheel Lab</h1>
+        <button id="lab-collapse" type="button">Hide UI</button>
+      </div>
+      <p class="muted">GP67 wheel iteration · one click rebuild</p>
+      <div id="status" class="status">Starting…</div>
+
+      <div class="row">
+        <select id="car-select" aria-label="Car"></select>
+        <button id="reload" type="button">Reload</button>
+      </div>
+
+      <h2>Focus</h2>
+      <div class="wheel-buttons">
+        <button type="button" data-wheel="whole" aria-pressed="true">Whole car</button>
+        <button type="button" data-wheel="FL" aria-pressed="false">FL</button>
+        <button type="button" data-wheel="FR" aria-pressed="false">FR</button>
+        <button type="button" data-wheel="RL" aria-pressed="false">RL</button>
+        <button type="button" data-wheel="RR" aria-pressed="false">RR</button>
+      </div>
+
+      <h2>Wheels</h2>
+      <div class="control-row">
+        <label for="steer">Steer</label>
+        <input id="steer" type="range" min="-0.65" max="0.65" step="0.01" value="0.30" />
+        <output id="steer-value" for="steer">0.30</output>
+      </div>
+      <div class="control-row">
+        <label for="spin">Spin</label>
+        <input id="spin" type="range" min="0" max="6.2832" step="0.01" value="0" />
+        <output id="spin-value" for="spin">0.00</output>
+      </div>
+      <label class="toggle">
+        <input id="auto-spin" type="checkbox" />
+        Auto-spin
+      </label>
+      <label class="toggle">
+        <input id="wireframe" type="checkbox" />
+        Wireframe
+      </label>
+
+      <h2>Readout</h2>
+      <dl>
+        <dt>Car</dt>
+        <dd id="read-car">—</dd>
+        <dt>Wheel model</dt>
+        <dd id="read-wheel">—</dd>
+        <dt>Camera target</dt>
+        <dd id="read-target">—</dd>
+        <dt>View</dt>
+        <dd id="read-view">—</dd>
+      </dl>
+      <div id="error" class="error" role="alert" hidden></div>
+    </main>
+
+    <figure id="atlas" class="atlas" aria-live="polite">
+      <img id="atlas-image" alt="" />
+      <figcaption id="atlas-caption"></figcaption>
+    </figure>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
