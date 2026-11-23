@@ -116,41 +116,38 @@
       #paint-panel {
         position: fixed;
         left: 50%;
-        bottom: max(16px, env(safe-area-inset-bottom));
-        transform: translateX(-50%);
+        bottom: max(12px, env(safe-area-inset-bottom));
         z-index: 9;
-        width: min(420px, calc(100vw - 160px));
-        padding: 10px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        max-width: calc(100vw - 24px);
+        padding: 5px 9px;
         border: 1px solid #2a303a;
+        border-radius: 999px;
         background: rgba(10, 13, 17, 0.9);
         backdrop-filter: blur(8px);
-        font-size: 12px;
-        line-height: 1.5;
-        text-align: center;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, 8px);
+        transition:
+          opacity 180ms ease,
+          transform 200ms ease;
       }
-      #paint-panel h2 {
-        margin: 0 0 2px;
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #8f9bab;
-      }
-      #paint-panel .paint-label {
-        margin: 0;
+      #paint-panel.paint-panel-visible {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translate(-50%, 0);
       }
       .paint-options {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         justify-content: center;
-        gap: 8px;
-        margin-top: 6px;
-      }
-      .paint-options[hidden] {
-        display: none;
+        gap: 6px;
       }
       .paint-swatch {
-        width: 26px;
-        height: 26px;
+        width: 22px;
+        height: 22px;
         padding: 0;
         border: 2px solid transparent;
         border-radius: 999px;
@@ -298,15 +295,61 @@
           max-height: calc(100vh - 116px);
         }
         #paint-panel {
-          bottom: max(12px, env(safe-area-inset-bottom));
-          width: min(420px, calc(100vw - 140px));
-          padding: 8px 12px;
+          bottom: max(10px, env(safe-area-inset-bottom));
+          padding: 4px 8px;
+        }
+        .paint-swatch {
+          width: 20px;
+          height: 20px;
         }
       }
       @media (prefers-reduced-motion: reduce) {
-        #car-nav button {
+        #car-nav button,
+        #paint-panel,
+        #car-loading {
           transition: none;
         }
+      }
+      #car-loading {
+        position: fixed;
+        top: auto;
+        bottom: max(56px, calc(env(safe-area-inset-bottom) + 56px));
+        left: 50%;
+        z-index: 7;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100vw - 24px);
+        padding: 5px 10px;
+        border: 1px solid #2a303a;
+        border-radius: 999px;
+        background: rgba(10, 13, 17, 0.82);
+        backdrop-filter: blur(8px);
+        color: #9aa4b2;
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, 6px);
+        transition:
+          opacity 200ms ease,
+          transform 220ms ease;
+      }
+      #car-loading.car-loading-visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+      #car-loading .loading-spinner {
+        width: 12px;
+        height: 12px;
+      }
+      #car-loading[data-state="error"] {
+        color: #f87171;
+      }
+      #car-loading[data-state="error"] .loading-spinner {
+        display: none;
       }
       #viewer-loading {
         position: fixed;
@@ -357,6 +400,10 @@
     <div id="viewer-loading" role="status" aria-live="polite">
       <span class="loading-spinner" aria-hidden="true"></span>
       <span data-loading-label>Loading…</span>
+    </div>
+    <div id="car-loading" role="status" aria-live="polite" aria-hidden="true">
+      <span class="loading-spinner" aria-hidden="true"></span>
+      <span data-car-loading-label>Loading cars</span>
     </div>
 
     <canvas id="view"></canvas>
@@ -416,15 +463,12 @@
       <h2>Surfaces</h2>
       <ul id="surfaces"></ul>
     </aside>
-    <section id="paint-panel" aria-label="Car paint">
-      <h2>Paint</h2>
-      <p class="muted paint-label" id="paint-label">Factory livery</p>
+    <section id="paint-panel" aria-label="Car paint" aria-hidden="true" inert>
       <div
         id="paint-options"
         class="paint-options"
         role="radiogroup"
         aria-label="Car paint"
-        hidden
       ></div>
     </section>
     <script type="module" src="./main.js"></script>

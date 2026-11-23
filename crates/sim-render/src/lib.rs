@@ -975,6 +975,24 @@ impl TrackViewer {
     }
 }
 
+struct GaragePack {
+    physics: sim_types::CarPhysics,
+    visual: sim_types::CarVisual,
+    manifest: sim_types::AssetManifest,
+}
+
+fn parse_garage_pack(car_bytes: &[u8]) -> Result<GaragePack, JsValue> {
+    let car_pack = sim_asset::Pack::from_bytes(car_bytes).map_err(js_error)?;
+    if car_pack.kind() != sim_types::AssetKind::Car {
+        return Err(JsValue::from_str("expected car packs"));
+    }
+    Ok(GaragePack {
+        physics: car_pack.car_physics_owned().map_err(js_error)?,
+        visual: car_pack.car_visual_owned().map_err(js_error)?,
+        manifest: car_pack.manifest().clone(),
+    })
+}
+
 #[wasm_bindgen]
 pub struct GarageViewer {
     renderer: renderer::Renderer,
@@ -993,41 +1011,54 @@ pub struct GarageViewer {
 impl GarageViewer {
     pub async fn create_concrete(
         canvas: web_sys::HtmlCanvasElement,
+        bay_ids: js_sys::Array,
         car_packs: js_sys::Array,
     ) -> Result<GarageViewer, JsValue> {
-        if car_packs.length() == 0 {
-            return Err(JsValue::from_str("expected at least one car pack"));
+        let bay_count = bay_ids.length() as usize;
+        if bay_count == 0 {
+            return Err(JsValue::from_str("expected at least one bay id"));
         }
-        let mut car_data = Vec::with_capacity(car_packs.length() as usize);
-        for value in car_packs.iter() {
-            let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
-            let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-            if car_pack.kind() != sim_types::AssetKind::Car {
-                return Err(JsValue::from_str("expected car packs"));
+        let mut ids = Vec::with_capacity(bay_count);
+        for value in bay_ids.iter() {
+            let id = value
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("bay id must be a string"))?;
+            ids.push(id);
+        }
+        let mut packs = Vec::with_capacity(bay_count);
+        for index in 0..bay_count {
+            let value = car_packs.get(index as u32);
+            if value.is_null() || value.is_undefined() {
+                packs.push(None);
+            } else {
+                let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
+                packs.push(Some(parse_garage_pack(&car_bytes)?));
             }
-            let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-            let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
-            let car_manifest = car_pack.manifest().clone();
-            car_data.push((car_physics, car_visual, car_manifest));
         }
-        let cars = car_data
+        let cars = packs
             .iter()
-            .map(|(physics, visual, manifest)| garage::GarageCar {
-                physics,
-                visual,
-                manifest,
+            .map(|pack| {
+                pack.as_ref().map(|pack| garage::GarageCar {
+                    physics: &pack.physics,
+                    visual: &pack.visual,
+                    manifest: &pack.manifest,
+                })
             })
             .collect::<Vec<_>>();
 
         let garage::ConcreteGarageBuild {
             mut scene, lights, ..
-        } = garage::build_concrete_garage(&cars, cars.len(), 0)
+        } = garage::build_concrete_garage(&ids, &cars, 0)
             .map_err(|error| JsValue::from_str(&error))?;
         let bays = std::mem::take(&mut scene.garage_bays);
         let debug_info = scene.debug_info.clone();
         let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
         let shadow_focus = camera.target;
-        let ground_y = bays.first().map(|bay| bay.decal_ground_y).unwrap_or(0.0);
+        let ground_y = bays
+            .iter()
+            .find(|bay| bay.loaded)
+            .map(|bay| bay.decal_ground_y)
+            .unwrap_or(0.0);
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for bay in &bays {
@@ -1063,6 +1094,71 @@ impl GarageViewer {
         };
         viewer.update_decals();
         Ok(viewer)
+    }
+
+    /// Load a car pack into an existing empty bay. The bay camera and light do
+    /// not move; only the car meshes, textures and decal are appended.
+    pub fn load_bay(
+        &mut self,
+        index: usize,
+        car_pack: js_sys::Uint8Array,
+    ) -> Result<String, JsValue> {
+        let Some(existing) = self.bays.get(index) else {
+            return Err(JsValue::from_str("bay index out of range"));
+        };
+        if existing.loaded {
+            return Err(JsValue::from_str("bay is already loaded"));
+        }
+        let camera = existing.camera;
+        let paint_index = existing.paint;
+        let car_bytes = car_pack.to_vec();
+        let pack = parse_garage_pack(&car_bytes)?;
+        let car = garage::GarageCar {
+            physics: &pack.physics,
+            visual: &pack.visual,
+            manifest: &pack.manifest,
+        };
+        let (scene, mut bay) =
+            garage::build_concrete_car_scene(&car, index, self.bays.len(), paint_index, camera)
+                .map_err(|error| JsValue::from_str(&error))?;
+        let mesh_offset = self.renderer.append_scene(&scene).start;
+        bay.body_mesh_index += mesh_offset;
+        for wheel in &mut bay.wheels {
+            wheel.mesh_index += mesh_offset;
+        }
+        if let Some(decal) = bay.decal_mesh_index.as_mut() {
+            *decal += mesh_offset;
+        }
+        if let Some(slot) = self.bays.get_mut(index) {
+            *slot = bay;
+        }
+        self.update_decals();
+        self.refresh_debug_info();
+        Ok(self.bay_info())
+    }
+
+    fn refresh_debug_info(&mut self) {
+        let Some(bay) = self.bays.iter().find(|bay| bay.loaded) else {
+            return;
+        };
+        let cars = self
+            .bays
+            .iter()
+            .filter(|bay| bay.loaded)
+            .map(|bay| {
+                serde_json::json!({
+                    "id": bay.car_id,
+                    "meshCount": bay.car.get("meshCount").cloned().unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&self.debug_info).unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(object) = value.as_object_mut() {
+            object.insert("car".to_string(), bay.car.clone());
+            object.insert("cars".to_string(), serde_json::Value::Array(cars));
+        }
+        self.debug_info = value.to_string();
     }
 
     fn update_decals(&mut self) {
@@ -1130,9 +1226,10 @@ impl GarageViewer {
             "selected": self.selected_bay,
             "count": self.bays.len(),
             "layout": self.layout,
+            "loaded": bay.map(|bay| bay.loaded).unwrap_or(false),
             "name": bay.map(|bay| bay.name.clone()).unwrap_or_default(),
             "carId": bay.map(|bay| bay.car_id.clone()).unwrap_or_default(),
-            "car": bay.map(|bay| bay.car.clone()),
+            "car": bay.map(|bay| bay.car.clone()).unwrap_or(serde_json::Value::Null),
             "color": bay.map(|bay| bay.color),
             "colorName": bay.map(|bay| bay.color_name).unwrap_or_default(),
             "paint": bay.map(|bay| bay.paint),
@@ -1151,6 +1248,7 @@ impl GarageViewer {
                 .map(|(index, bay)| {
                     serde_json::json!({
                         "index": index,
+                        "loaded": bay.loaded,
                         "name": bay.name,
                         "carId": bay.car_id,
                         "color": bay.color,

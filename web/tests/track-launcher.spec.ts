@@ -95,6 +95,18 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
     undefined,
     { timeout: 30_000 },
   );
+  await page.waitForFunction(
+    () => {
+      const state = window as any;
+      return (
+        typeof state.__garageCarsTotal === "number" &&
+        state.__garageCarsTotal > 0 &&
+        state.__garageCarsLoaded === state.__garageCarsTotal
+      );
+    },
+    undefined,
+    { timeout: 30_000 },
+  );
 
   const initial = await page.evaluate(() => {
     const viewer = (window as any).__garageViewer;
