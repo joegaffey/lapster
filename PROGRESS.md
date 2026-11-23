@@ -57,7 +57,8 @@ Deployment:
   garage picker now works for the Deckard via an opt-in catalog flag and a
   renderer texture path that repaints only red body-paint texels. The other
   textured cars stay factory livery, the default Deckard colour is Red, and
-  the selected index follows the Garage -> Drive `paint` link. See ADR-0018.
+  the selected index follows the Garage -> Drive `paint` link. The Deckard now
+  occupies bay 2, immediately after the Mazda RX-7. See ADR-0018.
 - The root page is now both the public landing and launcher. It carries the
   Drive/Race panels, selected car, separate track selections, Track Editor and
   Tools. `/web/` is a compatibility redirect to the root. The Pages build
