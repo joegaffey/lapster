@@ -2370,8 +2370,8 @@ fn create_surface(
 /// Upload non-uniform geometry with a normal allocation and `write_buffer`.
 ///
 /// `create_buffer_init` maps at creation, and some WebGPU implementations reject
-/// large mapped-at-creation buffers. Geometry goes through the copy path
-/// instead; small uniform/model buffers still use `create_buffer_init`.
+/// mapped-at-creation buffers once rendering has started. Geometry goes through
+/// the copy path instead; renderer-setup uniforms still use `create_buffer_init`.
 fn create_geometry_buffer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -2451,11 +2451,13 @@ fn create_mesh(
         emissive: [mesh.emissive[0], mesh.emissive[1], mesh.emissive[2], 0.0],
         flags: [if flat_shade { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
     };
-    let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let model_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("{} model", mesh.name)),
-        contents: bytemuck::bytes_of(&model_uniform),
+        size: std::mem::size_of::<ModelUniform>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
+    queue.write_buffer(&model_buffer, 0, bytemuck::bytes_of(&model_uniform));
     let model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(&format!("{} model bind group", mesh.name)),
         layout: model_bind_group_layout,
