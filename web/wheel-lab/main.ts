@@ -519,6 +519,7 @@ async function loadCar(id = carSelect.value) {
       canvas,
       [car.id],
       [bytes],
+      [false],
     );
     if (token !== generation) {
       try {

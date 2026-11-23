@@ -1020,6 +1020,7 @@ impl GarageViewer {
         canvas: web_sys::HtmlCanvasElement,
         bay_ids: js_sys::Array,
         car_packs: js_sys::Array,
+        paintable: js_sys::Array,
     ) -> Result<GarageViewer, JsValue> {
         let bay_count = bay_ids.length() as usize;
         if bay_count == 0 {
@@ -1031,6 +1032,10 @@ impl GarageViewer {
                 .as_string()
                 .ok_or_else(|| JsValue::from_str("bay id must be a string"))?;
             ids.push(id);
+        }
+        let mut paintable_flags = Vec::with_capacity(bay_count);
+        for index in 0..bay_count {
+            paintable_flags.push(paintable.get(index as u32).as_bool().unwrap_or(false));
         }
         let mut packs = Vec::with_capacity(bay_count);
         for index in 0..bay_count {
@@ -1057,7 +1062,7 @@ impl GarageViewer {
             mut scene,
             mut lights,
             lamps,
-        } = garage::build_concrete_garage(&ids, &cars, 0)
+        } = garage::build_concrete_garage(&ids, &cars, 0, &paintable_flags)
             .map_err(|error| JsValue::from_str(&error))?;
         let base_spot_intensity = lights.first().map(|light| light.intensity).unwrap_or(0.0);
         for light in &mut lights {
@@ -1123,6 +1128,7 @@ impl GarageViewer {
         &mut self,
         index: usize,
         car_pack: js_sys::Uint8Array,
+        paintable: bool,
     ) -> Result<String, JsValue> {
         let Some(existing) = self.bays.get(index) else {
             return Err(JsValue::from_str("bay index out of range"));
@@ -1139,9 +1145,15 @@ impl GarageViewer {
             visual: &pack.visual,
             manifest: &pack.manifest,
         };
-        let (scene, mut bay) =
-            garage::build_concrete_car_scene(&car, index, self.bays.len(), paint_index, camera)
-                .map_err(|error| JsValue::from_str(&error))?;
+        let (scene, mut bay) = garage::build_concrete_car_scene(
+            &car,
+            index,
+            self.bays.len(),
+            paint_index,
+            camera,
+            paintable,
+        )
+        .map_err(|error| JsValue::from_str(&error))?;
         let mesh_offset = self.renderer.append_scene(&scene).start;
         bay.body_mesh_index += mesh_offset;
         for wheel in &mut bay.wheels {
@@ -1312,6 +1324,10 @@ impl GarageViewer {
                 if let Some(vertices) = garage::recolored_body_vertices(bay_state, paint) {
                     self.renderer
                         .set_mesh_vertex_colors(bay_state.body_mesh_index, &vertices);
+                }
+                if let Some(texture) = garage::recolored_body_texture(bay_state, paint) {
+                    self.renderer
+                        .set_mesh_texture(bay_state.body_mesh_index, &texture);
                 }
             }
         }
@@ -2007,6 +2023,23 @@ impl CameraMode {
     }
 }
 
+/// Only the local Drive slot may take a textured body paint, and only when the
+/// driver selected an explicit paint; AI/remote slots reuse the same car
+/// visual but keep its factory livery.
+fn drive_paint_hints(
+    car_paintable: bool,
+    car_paint: Option<usize>,
+    slot_count: usize,
+) -> Vec<bool> {
+    let mut hints = vec![false; slot_count];
+    if car_paintable && car_paint.is_some() {
+        if let Some(first) = hints.first_mut() {
+            *first = true;
+        }
+    }
+    hints
+}
+
 #[wasm_bindgen]
 pub struct DriveViewer {
     renderer: renderer::Renderer,
@@ -2027,6 +2060,7 @@ pub struct DriveViewer {
     track_source_hash: [u8; 32],
     car_bay: usize,
     color_offset: usize,
+    texture_paint: bool,
     camera_mode: CameraMode,
     brake_lights_on: bool,
     reverse_lights_on: bool,
@@ -2052,6 +2086,7 @@ pub struct DriveViewer {
 
 #[wasm_bindgen]
 impl DriveViewer {
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         track_pack_bytes: js_sys::Uint8Array,
@@ -2060,6 +2095,7 @@ impl DriveViewer {
         tuning_json: Option<String>,
         remote_slots: Option<usize>,
         car_paint: Option<usize>,
+        car_paintable: bool,
     ) -> Result<DriveViewer, JsValue> {
         let mut tuning = tuning_json
             .and_then(|json| serde_json::from_str::<TuningConfig>(&json).ok())
@@ -2126,6 +2162,7 @@ impl DriveViewer {
         let color_offset = car_paint
             .map(|paint| paint % garage::BAY_COLOR_NAMES.len())
             .unwrap_or(if remote_slots == 0 { car_bay } else { 0 });
+        let paint_hints = drive_paint_hints(car_paintable, car_paint, 1 + remote_slots);
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
@@ -2136,6 +2173,7 @@ impl DriveViewer {
             color_offset,
             false,
             true,
+            &paint_hints,
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let mut rigs = std::mem::take(&mut scene.car_rigs);
@@ -2195,6 +2233,10 @@ impl DriveViewer {
         };
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
+        let texture_paint = scene
+            .garage_bays
+            .first()
+            .is_some_and(|bay| bay.original_body_texture.is_some());
         let racing_line_mesh = mesh_index_by_name(&scene, "racing_line");
         let mut renderer =
             renderer::Renderer::new(canvas, width, height, scene, &tuning.gpu).await?;
@@ -2228,6 +2270,7 @@ impl DriveViewer {
             track_source_hash,
             car_bay,
             color_offset,
+            texture_paint,
             camera_mode: CameraMode::Chase,
             brake_lights_on: false,
             reverse_lights_on: false,
@@ -2638,6 +2681,7 @@ impl DriveViewer {
             }).collect::<Vec<_>>(),
             "carColor": garage::BAY_COLOR_NAMES
                 [(self.color_offset + self.local_slot) % garage::BAY_COLOR_NAMES.len()],
+            "texturePaint": self.texture_paint,
             "shadowMapSize": self.renderer.shadow_map_size(),
             "carShadowMapSize": self.renderer.car_shadow_map_size(),
             "shadowFocus": self.renderer.shadow_focus(),
@@ -3872,5 +3916,22 @@ mod tests {
             assert!((decal * Vec3::NEG_Z - forward).length() < 1e-5);
             assert!((decal * Vec3::X - car * Vec3::X).length() < 1e-5);
         }
+    }
+
+    #[test]
+    fn drive_paint_hint_only_enables_the_local_slot_with_selected_paint() {
+        assert_eq!(drive_paint_hints(false, None, 4), vec![false; 4]);
+        assert_eq!(drive_paint_hints(false, Some(3), 4), vec![false; 4]);
+        assert_eq!(
+            drive_paint_hints(true, None, 4),
+            vec![false; 4],
+            "paintable but no explicit paint keeps the factory livery"
+        );
+        assert_eq!(
+            drive_paint_hints(true, Some(3), 4),
+            vec![true, false, false, false]
+        );
+        assert_eq!(drive_paint_hints(true, Some(3), 1), vec![true]);
+        assert!(drive_paint_hints(true, Some(3), 0).is_empty());
     }
 }

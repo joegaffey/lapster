@@ -273,9 +273,11 @@ the XML height is not forced onto the mesh.
   hardcoded Camaro dial layout. The Deckard pack is the only car using this path.
 - Lighting: textured rear-lamp triangles are split by lateral position into
   outer brake and inner reverse lenses. Plain-white body triangles are skipped.
-- Bay paint: textured cars keep their baked livery; the garage bay colour does
-  not tint them. Catalog models alternate by bay, with the bay colour index
-  carried into Drive as the paint choice.
+- Bay paint: vertex-painted cars and the opt-in Deckard use the ten-colour
+  garage palette. The Deckard's textured body repaints only red body-paint
+  texels, keeping decals, lights, and other materials; other textured cars keep
+  their baked livery. Catalog models alternate by bay, with the bay colour
+  index carried into Drive as the paint choice. See ADR-0018.
 
 ## Pack summary
 

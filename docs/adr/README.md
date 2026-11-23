@@ -49,3 +49,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0015](0015-ai-race-start-standings-and-results.md) | AI race start, standings, and results | Accepted |
 | [0016](0016-concrete-garage-scene.md) | Dedicated concrete garage scene with overhead spotlights | Superseded by ADR-0017 |
 | [0017](0017-replace-garage-showroom.md) | Replace the garage showroom with the concrete studio | Accepted |
+| [0018](0018-opt-in-textured-body-paint.md) | Opt-in textured-body paint for minimal-livery cars | Accepted |

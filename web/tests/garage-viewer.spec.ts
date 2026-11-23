@@ -65,13 +65,13 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
   expect(state.stats).toContain("car tris");
   expect(state.bays.map((bay: any) => bay.carId)).toEqual([
     "mazda-rx7",
+    "sc-deckard-conejo",
     "67gp-cavallo-123",
     "67gp-guthrie-eagle",
     "67gp-kuiper-t81",
     "67gp-mango-ms7",
     "67gp-murasama-37a",
     "67gp-upping-ut19",
-    "sc-deckard-conejo",
   ]);
   expect(state.debug.car.id).toBe("mazda-rx7");
   expect(pageErrors).toEqual([]);
@@ -134,10 +134,11 @@ test("garage paint picker updates the selected car and drive link", async ({ pag
 
   await page.mouse.move(640, 360);
   await page.click("#bay-next");
+  await page.click("#bay-next");
   const cavallo = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(cavallo.selected).toBe(1);
+  expect(cavallo.selected).toBe(2);
   expect(cavallo.carId).toBe("67gp-cavallo-123");
   expect(cavallo.recolorable).toBe(false);
   expect(cavallo.paintName).toBe("Factory livery");
@@ -148,6 +149,52 @@ test("garage paint picker updates the selected car and drive link", async ({ pag
   await expect(
     page.locator('#paint-options .paint-swatch[aria-checked="true"]'),
   ).toHaveCount(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("garage enables textured paint for the Deckard only", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    localStorage.setItem("lapster.car.v1", "sc-deckard-conejo");
+  });
+
+  await page.goto("/web/garage/?v=cp6&bay=2");
+  await waitForGarage(page);
+  await waitForSelectedBay(page);
+
+  const initial = await page.evaluate(() =>
+    JSON.parse((window as any).__garageViewer.bay_info()),
+  );
+  expect(initial.carId).toBe("sc-deckard-conejo");
+  expect(initial.recolorable).toBe(true);
+  expect(initial.paint).toBe(0);
+  expect(initial.paintName).toBe("Red");
+
+  const panel = page.locator("#paint-panel");
+  await expect(panel).toHaveClass(/paint-panel-visible/);
+  await expect(panel).not.toHaveAttribute("aria-hidden", "true");
+  await expect(page.locator("#paint-options .paint-swatch")).toHaveCount(10);
+  await expect(
+    page.locator('#paint-options .paint-swatch[aria-checked="true"]'),
+  ).toHaveAttribute("aria-label", "Red");
+
+  await page.locator('#paint-options .paint-swatch[aria-label="Blue"]').click();
+
+  const blue = await page.evaluate(() => ({
+    bay: JSON.parse((window as any).__garageViewer.bay_info()),
+    paint: localStorage.getItem("lapster.garage.paint.v1"),
+  }));
+  expect(blue.bay.paint).toBe(1);
+  expect(blue.bay.paintName).toBe("Blue");
+  expect(blue.paint).toBe('{"sc-deckard-conejo":1}');
+  await expect(
+    page.locator('#paint-options .paint-swatch[aria-checked="true"]'),
+  ).toHaveAttribute("aria-label", "Blue");
+
+  const driveHref = await page.locator("#drive-car").getAttribute("href");
+  expect(new URL(driveHref!).searchParams.get("paint")).toBe("1");
 
   expect(pageErrors).toEqual([]);
 });
@@ -187,6 +234,7 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
   const panel = page.locator("#paint-panel");
   await page.mouse.move(640, 360);
   await page.click("#bay-next");
+  await page.click("#bay-next");
 
   try {
     const pending = await page.evaluate(() => ({
@@ -194,7 +242,7 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
       loaded: (window as any).__garageCarsLoaded,
       total: (window as any).__garageCarsTotal,
     }));
-    expect(pending.bay.selected).toBe(1);
+    expect(pending.bay.selected).toBe(2);
     expect(pending.bay.loaded).toBe(false);
     expect(pending.loaded).toBeLessThan(pending.total);
 
