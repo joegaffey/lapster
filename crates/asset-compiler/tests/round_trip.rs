@@ -82,8 +82,14 @@ fn glb_track_bake_is_deterministic_and_round_trips() {
     let metadata = pack.track_metadata_owned().expect("metadata load failed");
     assert_eq!(metadata.name, "Drift Tracks");
     assert_eq!(metadata.spawns.len(), 1);
-    assert_eq!(metadata.surfaces.len(), 4);
+    assert_eq!(metadata.surfaces.len(), 5);
     assert_eq!(metadata.surfaces[0].name, "asphalt");
+    let wall = metadata
+        .surfaces
+        .iter()
+        .find(|surface| surface.name == "wall")
+        .expect("wall surface");
+    assert_eq!(wall.id, 4);
 
     let collision = pack.track_collision_owned().expect("collision load failed");
     assert_eq!(collision.surface_ids.len(), collision.indices.len() / 3);
