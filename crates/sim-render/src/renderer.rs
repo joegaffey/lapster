@@ -788,7 +788,7 @@ impl Renderer {
         let particle_pipeline =
             create_particle_pipeline(&device, &camera_bind_group_layout, format, sample_count);
         let (particle_vertex_buffer, particle_index_buffer, particle_index_count) =
-            create_particle_mesh(&device);
+            create_particle_mesh(&device, &queue);
         let particle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particle instances"),
             size: (MAX_PARTICLES * std::mem::size_of::<ParticleInstance>()) as u64,
@@ -842,17 +842,19 @@ impl Renderer {
             .collect::<Vec<_>>();
 
         let (grass_vertex_buffer, grass_index_buffer, grass_index_count) =
-            create_grass_mesh(&device);
+            create_grass_mesh(&device, &queue);
         let grass_field = scene.grass;
 
         let (line_buffer, line_count) = if scene.lines.is_empty() {
             (None, 0)
         } else {
-            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("debug lines"),
-                contents: bytemuck::cast_slice(&scene.lines),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+            let buffer = create_geometry_buffer(
+                &device,
+                &queue,
+                "debug lines",
+                bytemuck::cast_slice(&scene.lines),
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            );
             (Some(buffer), scene.lines.len() as u32)
         };
 
@@ -2365,6 +2367,45 @@ fn create_surface(
     ))
 }
 
+/// Upload non-uniform geometry with a normal allocation and `write_buffer`.
+///
+/// `create_buffer_init` maps at creation, and some WebGPU implementations reject
+/// large mapped-at-creation buffers. Geometry goes through the copy path
+/// instead; small uniform/model buffers still use `create_buffer_init`.
+fn create_geometry_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: (contents.len() as u64).max(1),
+        usage,
+        mapped_at_creation: false,
+    });
+    if !contents.is_empty() {
+        queue.write_buffer(&buffer, 0, contents);
+    }
+    buffer
+}
+
+fn create_optional_geometry_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> Option<wgpu::Buffer> {
+    if contents.is_empty() {
+        return None;
+    }
+    Some(create_geometry_buffer(
+        device, queue, label, contents, usage,
+    ))
+}
+
 fn create_mesh(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -2372,16 +2413,20 @@ fn create_mesh(
     model_bind_group_layout: &wgpu::BindGroupLayout,
     texture_resources: &MeshTextureResources<'_>,
 ) -> GpuMesh {
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{} vertices", mesh.name)),
-        contents: bytemuck::cast_slice(&mesh.vertices),
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{} indices", mesh.name)),
-        contents: bytemuck::cast_slice(&mesh.indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        &format!("{} vertices", mesh.name),
+        bytemuck::cast_slice(&mesh.vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        &format!("{} indices", mesh.name),
+        bytemuck::cast_slice(&mesh.indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
     let grass_texture_enabled = if mesh.grass_texture.is_some() {
         1.0
     } else {
@@ -2440,22 +2485,26 @@ fn create_mesh(
     let outline = if flat_shade {
         None
     } else {
-        mesh.outline.as_ref().map(|outline| {
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("{} outline vertices", mesh.name)),
-                contents: bytemuck::cast_slice(&outline.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("{} outline indices", mesh.name)),
-                contents: bytemuck::cast_slice(&outline.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-            GpuOutline {
+        mesh.outline.as_ref().and_then(|outline| {
+            let vertex_buffer = create_optional_geometry_buffer(
+                device,
+                queue,
+                &format!("{} outline vertices", mesh.name),
+                bytemuck::cast_slice(&outline.vertices),
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            )?;
+            let index_buffer = create_optional_geometry_buffer(
+                device,
+                queue,
+                &format!("{} outline indices", mesh.name),
+                bytemuck::cast_slice(&outline.indices),
+                wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            )?;
+            Some(GpuOutline {
                 vertex_buffer,
                 index_buffer,
                 index_count: outline.indices.len() as u32,
-            }
+            })
         })
     };
 
@@ -3012,7 +3061,10 @@ struct ParticleVertex {
     uv: [f32; 2],
 }
 
-fn create_particle_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+fn create_particle_mesh(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Buffer, wgpu::Buffer, u32) {
     let vertices = [
         ParticleVertex {
             position: [-1.0, -1.0, 0.0],
@@ -3032,16 +3084,20 @@ fn create_particle_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u
         },
     ];
     let indices = [0u32, 1, 2, 0, 2, 3];
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("particle puff vertices"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("particle puff indices"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "particle puff vertices",
+        bytemuck::cast_slice(&vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "particle puff indices",
+        bytemuck::cast_slice(&indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
     (vertex_buffer, index_buffer, indices.len() as u32)
 }
 
@@ -3143,20 +3199,32 @@ fn create_mass_foliage(
         },
     ];
     let indices = [0u32, 1, 2, 0, 2, 3];
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mass foliage vertices"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mass foliage indices"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-    let tree_instance_buffer =
-        create_mass_instance_buffer(device, "mass foliage tree instances", &mass.tree_instances);
-    let bush_instance_buffer =
-        create_mass_instance_buffer(device, "mass foliage bush instances", &mass.bush_instances);
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "mass foliage vertices",
+        bytemuck::cast_slice(&vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "mass foliage indices",
+        bytemuck::cast_slice(&indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let tree_instance_buffer = create_mass_instance_buffer(
+        device,
+        queue,
+        "mass foliage tree instances",
+        &mass.tree_instances,
+    );
+    let bush_instance_buffer = create_mass_instance_buffer(
+        device,
+        queue,
+        "mass foliage bush instances",
+        &mass.bush_instances,
+    );
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("mass foliage uniform"),
         contents: bytemuck::bytes_of(&MassUniform {
@@ -3232,18 +3300,16 @@ fn create_mass_foliage(
 
 fn create_mass_instance_buffer(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     label: &str,
     instances: &[MassFoliageInstance],
 ) -> Option<wgpu::Buffer> {
-    if instances.is_empty() {
-        return None;
-    }
-    Some(
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(instances),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }),
+    create_optional_geometry_buffer(
+        device,
+        queue,
+        label,
+        bytemuck::cast_slice(instances),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     )
 }
 
@@ -3306,7 +3372,10 @@ fn create_mass_foliage_pipeline(
     })
 }
 
-fn create_grass_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+fn create_grass_mesh(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Buffer, wgpu::Buffer, u32) {
     const SEGMENTS: usize = 3;
     let mut vertices = Vec::with_capacity(SEGMENTS * 2 + 1);
     for segment in 0..SEGMENTS {
@@ -3334,16 +3403,20 @@ fn create_grass_mesh(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32)
     let last_left = ((SEGMENTS - 1) * 2) as u32;
     indices.extend_from_slice(&[last_left, (SEGMENTS * 2) as u32, last_left + 1]);
 
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grass blade vertices"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grass blade indices"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let vertex_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "grass blade vertices",
+        bytemuck::cast_slice(&vertices),
+        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    );
+    let index_buffer = create_geometry_buffer(
+        device,
+        queue,
+        "grass blade indices",
+        bytemuck::cast_slice(&indices),
+        wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+    );
     (vertex_buffer, index_buffer, indices.len() as u32)
 }
 
