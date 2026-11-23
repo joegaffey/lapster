@@ -284,8 +284,10 @@ pub struct Renderer {
     grass_start_ms: f64,
     mass_foliage: Option<MassFoliageGpu>,
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    model_bind_group_layout: wgpu::BindGroupLayout,
     mesh_texture_layout: wgpu::BindGroupLayout,
     mesh_sampler: wgpu::Sampler,
+    white_view: wgpu::TextureView,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     bake_camera_buffer: wgpu::Buffer,
@@ -893,8 +895,10 @@ impl Renderer {
             grass_start_ms: performance_now(),
             mass_foliage,
             camera_bind_group_layout: camera_bind_group_layout.clone(),
+            model_bind_group_layout: model_bind_group_layout.clone(),
             mesh_texture_layout: texture_bind_group_layout,
             mesh_sampler: sampler,
+            white_view,
             camera_buffer,
             camera_bind_group,
             bake_camera_buffer,
@@ -2248,6 +2252,33 @@ impl Renderer {
         if let Some(mesh) = self.meshes.get_mut(index) {
             mesh.texture_bind_group = bind_group;
         }
+    }
+
+    /// Append a detached scene's meshes to this renderer. Mesh texture indices
+    /// are local to the detached scene and used directly to create GPU bind
+    /// groups; the CPU texture bytes can be dropped by the caller afterwards.
+    pub fn append_scene(&mut self, scene: &Scene) -> Range<usize> {
+        let start = self.meshes.len();
+        let resources = MeshTextureResources {
+            layout: &self.mesh_texture_layout,
+            textures: &scene.textures,
+            white_view: &self.white_view,
+            sampler: &self.mesh_sampler,
+        };
+        let mut appended = Vec::with_capacity(scene.meshes.len());
+        for mesh in &scene.meshes {
+            appended.push(create_mesh(
+                &self.device,
+                &self.queue,
+                mesh,
+                &self.model_bind_group_layout,
+                &resources,
+            ));
+        }
+        self.meshes.extend(appended);
+        self.shadow_dirty = true;
+        self.baked_valid = false;
+        start..self.meshes.len()
     }
 
     pub fn set_mesh_alpha(&mut self, index: usize, alpha: f32) {

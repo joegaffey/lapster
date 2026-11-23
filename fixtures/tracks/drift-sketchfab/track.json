@@ -60,7 +60,14 @@
       "name": "concrete",
       "friction": 0.9,
       "roughness": 0.05,
-      "materials": ["Centre_Ground", "Concrete", "Fence"]
+      "materials": ["Centre_Ground", "Concrete"]
+    },
+    {
+      "id": 4,
+      "name": "wall",
+      "friction": 0.8,
+      "roughness": 0.05,
+      "materials": ["Fence"]
     }
   ],
   "default_surface": 0

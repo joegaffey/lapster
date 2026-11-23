@@ -27,7 +27,21 @@ declare global {
     __garageViewerReady?: boolean;
     __garageViewerError?: string;
     __garageViewer?: GarageViewer;
+    __garageCarsLoaded?: number;
+    __garageCarsTotal?: number;
   }
+}
+
+interface GarageBayMeta {
+  index: number;
+  loaded: boolean;
+  name: string;
+  carId: string;
+  color: [number, number, number];
+  colorName: string;
+  paint: number;
+  paintName: string;
+  recolorable: boolean;
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
@@ -46,8 +60,12 @@ const steerValue = document.querySelector<HTMLElement>("#steer-value")!;
 const spinValue = document.querySelector<HTMLElement>("#spin-value")!;
 const animateInput = document.querySelector<HTMLInputElement>("#animate")!;
 const bayLabel = document.querySelector<HTMLElement>("#bay-label")!;
-const paintLabel = document.querySelector<HTMLElement>("#paint-label")!;
+const paintPanel = document.querySelector<HTMLElement>("#paint-panel")!;
 const paintOptions = document.querySelector<HTMLElement>("#paint-options")!;
+const carLoading = document.querySelector<HTMLElement>("#car-loading")!;
+const carLoadingLabel = document.querySelector<HTMLElement>(
+  "[data-car-loading-label]",
+)!;
 const bayPrev = document.querySelector<HTMLButtonElement>("#bay-prev")!;
 const bayNext = document.querySelector<HTMLButtonElement>("#bay-next")!;
 const driveCar = document.querySelector<HTMLAnchorElement>("#drive-car")!;
@@ -191,15 +209,27 @@ async function boot() {
   status.textContent = "loading wasm";
   await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
+  const carIds = CAR_OPTIONS.map((car) => car.id);
+  const savedBay = getSelectedBay();
+  const requestedIndex = carIds.indexOf(requestedCar.id);
+  const initialBay =
+    carIds[savedBay] === requestedCar.id ? savedBay : Math.max(0, requestedIndex);
+
   status.textContent = "loading packs";
-  const carPacks = await Promise.all(CAR_URLS.map((url) => loadPack(url)));
+  const initialPack = await loadPack(CAR_URLS[initialBay]);
   resizeCanvas();
   status.textContent = "creating renderer";
-  const viewer = await GarageViewer.create_concrete(
-    canvas,
-    carPacks.map((pack) => pack.bytes),
-  );
+  const packs: Array<Uint8Array | null> = carIds.map(() => null);
+  packs[initialBay] = initialPack.bytes;
+  const viewer = await GarageViewer.create_concrete(canvas, carIds, packs);
   window.__garageViewer = viewer;
+
+  const loadedBays = new Set<number>([initialBay]);
+  const failedBays = new Map<number, unknown>();
+  const inFlight = new Map<number, Promise<void>>();
+  window.__garageCarsTotal = carIds.length;
+  window.__garageCarsLoaded = loadedBays.size;
+
   setupAssistsDialog(viewer, {
     gameplay: false,
     timeOfDay: false,
@@ -214,30 +244,39 @@ async function boot() {
   const debug = JSON.parse(viewer.debug_info());
   renderDebug(debug);
   const orbitCamera = setupTrackCamera(canvas, viewer, { allowPan: false });
-  const bays = JSON.parse(viewer.bay_list()) as Array<{
-    index: number;
-    carId: string;
-    colorName: string;
-    paint: number;
-    paintName: string;
-    recolorable: boolean;
-  }>;
+  const bays = JSON.parse(viewer.bay_list()) as GarageBayMeta[];
   const palette = JSON.parse(viewer.paint_options()) as Array<{
     index: number;
     name: string;
     color: [number, number, number];
   }>;
-  let selectedBay = 0;
+  let selectedBay = initialBay;
 
-  for (const bay of bays) {
-    if (!bay.recolorable) {
-      continue;
+  const carName = (id: string) => findCar(id)?.name ?? id;
+
+  const setPaintPanelVisible = (visible: boolean) => {
+    paintPanel.classList.toggle("paint-panel-visible", visible);
+    if (visible) {
+      paintPanel.removeAttribute("aria-hidden");
+      paintPanel.removeAttribute("inert");
+    } else {
+      paintPanel.setAttribute("aria-hidden", "true");
+      paintPanel.setAttribute("inert", "");
     }
-    const savedPaint = loadCarPaint(bay.carId);
-    if (savedPaint !== null) {
-      viewer.set_bay_paint(bay.index, savedPaint);
+  };
+
+  const applySavedPaint = (index: number) => {
+    const car = findCar(bays[index]?.carId ?? carIds[index]);
+    const savedPaint = car ? loadCarPaint(car.id) : null;
+    if (savedPaint === null) {
+      return;
     }
-  }
+    const bay = (JSON.parse(viewer.bay_list()) as GarageBayMeta[])[index];
+    if (bay?.recolorable) {
+      viewer.set_bay_paint(index, savedPaint);
+    }
+  };
+  applySavedPaint(initialBay);
 
   let steer = 0.3;
   let spin = 0;
@@ -287,9 +326,8 @@ async function boot() {
   }
 
   const renderPaintPicker = (info: any) => {
-    const recolorable = info.recolorable === true;
-    paintLabel.textContent = recolorable ? info.paintName : "Factory livery";
-    paintOptions.hidden = !recolorable;
+    const recolorable = info.loaded === true && info.recolorable === true;
+    setPaintPanelVisible(recolorable);
     for (const swatch of swatches) {
       const index = Number(swatch.dataset.paint);
       swatch.setAttribute(
@@ -299,16 +337,105 @@ async function boot() {
     }
   };
 
+  const showCarLoading = (text: string, state: "loading" | "error" = "loading") => {
+    carLoading.dataset.state = state;
+    carLoadingLabel.textContent = text;
+    carLoading.classList.add("car-loading-visible");
+    carLoading.removeAttribute("aria-hidden");
+  };
+
+  const hideCarLoading = () => {
+    carLoading.classList.remove("car-loading-visible");
+    carLoading.setAttribute("aria-hidden", "true");
+    carLoadingLabel.textContent = "";
+  };
+
+  const updateCarLoading = () => {
+    if (loadedBays.size >= carIds.length) {
+      hideCarLoading();
+      return;
+    }
+    let info: any = null;
+    try {
+      info = JSON.parse(viewer.bay_info());
+    } catch {
+      info = null;
+    }
+    if (info && info.loaded === false) {
+      if (failedBays.has(info.selected)) {
+        showCarLoading(
+          `Couldn't load ${carName(info.carId)} · reselect to retry`,
+          "error",
+        );
+      } else {
+        showCarLoading(`Loading ${carName(info.carId)}…`);
+      }
+      return;
+    }
+    const failedIndex = failedBays.keys().next().value;
+    if (failedIndex !== undefined) {
+      showCarLoading(
+        `Loading cars ${loadedBays.size}/${carIds.length} · ${carName(carIds[failedIndex])} failed`,
+        "error",
+      );
+      return;
+    }
+    showCarLoading(`Loading cars ${loadedBays.size}/${carIds.length}`);
+  };
+
+  const frameYield = () =>
+    new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+  const ensureBay = async (index: number): Promise<void> => {
+    if (loadedBays.has(index)) {
+      return;
+    }
+    const existing = inFlight.get(index);
+    if (existing) {
+      return existing;
+    }
+    failedBays.delete(index);
+    const task = (async () => {
+      try {
+        const pack = await loadPack(CAR_URLS[index]);
+        await frameYield();
+        viewer.load_bay(index, pack.bytes);
+        loadedBays.add(index);
+        window.__garageCarsLoaded = loadedBays.size;
+        applySavedPaint(index);
+        const info = JSON.parse(viewer.bay_info());
+        if (info.selected === index) {
+          applySelectedBay(info);
+        }
+      } catch (error) {
+        failedBays.set(index, error);
+        console.error(`garage could not load ${carIds[index]}`, error);
+      } finally {
+        inFlight.delete(index);
+        updateCarLoading();
+      }
+    })();
+    inFlight.set(index, task);
+    updateCarLoading();
+    return task;
+  };
+
   const applySelectedBay = (info: any) => {
     selectedBay = info.selected;
     const car = findCar(info.carId) ?? CAR_OPTIONS[0];
     saveSelectedBay(selectedBay);
     saveSelectedCar(car.id);
     asset.textContent = `${debug.asset.id} + ${car.id}`;
-    renderCar(info.car ?? debug.car);
-    const paintName = info.paintName || "Factory livery";
+    if (info.car) {
+      renderCar(info.car);
+    }
+    const paintName = info.loaded
+      ? info.paintName || "Factory livery"
+      : "Loading…";
     bayLabel.textContent = `${info.name} (${selectedBay + 1}/${info.count}) · ${car.name} · ${paintName}`;
-    driveCar.title = `Drive the ${paintName} ${car.name}`;
+    driveCar.title = info.loaded
+      ? `Drive the ${paintName} ${car.name}`
+      : `Drive the ${car.name}`;
     const driveUrl = new URL("../drive/", window.location.href);
     const driveParams = new URLSearchParams(params);
     if (!driveParams.has("track")) {
@@ -316,8 +443,15 @@ async function boot() {
     }
     driveParams.set("car", car.url);
     driveParams.set("bay", String(selectedBay + 1));
-    if (info.recolorable === true) {
+    if (info.loaded && info.recolorable === true) {
       driveParams.set("paint", String(info.paint));
+    } else if (!info.loaded) {
+      const storedPaint = loadCarPaint(car.id);
+      if (storedPaint !== null) {
+        driveParams.set("paint", String(storedPaint));
+      } else {
+        driveParams.delete("paint");
+      }
     } else {
       driveParams.delete("paint");
     }
@@ -325,6 +459,11 @@ async function boot() {
     driveCar.href = driveUrl.href;
     renderPaintPicker(info);
     applyAngles();
+    if (info.loaded === false) {
+      void ensureBay(info.selected);
+    } else {
+      updateCarLoading();
+    }
   };
 
   const selectBay = (index: number, animate = true) => {
@@ -347,12 +486,24 @@ async function boot() {
     selectBay(next);
   };
 
-  const savedBay = getSelectedBay();
-  const initialBay =
-    bays[savedBay]?.carId === requestedCar.id
-      ? savedBay
-      : (bays.find((bay) => bay.carId === requestedCar.id)?.index ?? 0);
+  const loadRemainingCars = async () => {
+    const order = carIds
+      .map((_, index) => index)
+      .filter((index) => !loadedBays.has(index))
+      .sort((a, b) => Math.abs(a - initialBay) - Math.abs(b - initialBay));
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < order.length) {
+        const index = order[cursor];
+        cursor += 1;
+        await ensureBay(index);
+      }
+    };
+    await Promise.all([worker(), worker()]);
+  };
+
   selectBay(initialBay, false);
+  updateCarLoading();
   bayPrev.addEventListener("click", () => {
     stepBay(-1);
     showCarNav();
@@ -422,6 +573,7 @@ async function boot() {
   window.__garageViewerReady = true;
   requestAnimationFrame(frame);
   requestAnimationFrame(hideLoading);
+  void loadRemainingCars();
 }
 
 function fail(error: unknown) {

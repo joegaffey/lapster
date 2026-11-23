@@ -140,8 +140,11 @@ pub struct GarageBay {
     pub wheels: Vec<SceneWheel>,
     pub camera: Camera,
     pub name: String,
+    /// Catalog id for the bay. Loaded bays carry the car manifest id.
     pub car_id: String,
+    /// `None` for configured bays whose car pack has not loaded yet.
     pub car: serde_json::Value,
+    pub loaded: bool,
     pub color: [f32; 3],
     pub color_name: &'static str,
     /// Palette index for the bay paint.
