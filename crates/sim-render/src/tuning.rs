@@ -45,7 +45,7 @@ pub struct IsometricTuning {
     pub fit_max: f32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChaseTuning {
     pub aspect_near: f32,
@@ -59,6 +59,19 @@ pub struct ChaseTuning {
     pub target_height: f32,
     pub fov_y: f32,
     pub min_eye_y: f32,
+    pub animation_strength: f32,
+    pub position_lag: f32,
+    pub yaw_lag: f32,
+    pub max_yaw_offset: f32,
+    pub max_position_offset: f32,
+    pub snap_distance: f32,
+    pub shake_amplitude: f32,
+    pub shake_decay: f32,
+    pub shake_frequency: f32,
+    pub shake_impulse_scale: f32,
+    pub shake_max_impulse: f32,
+    pub shake_threshold_vertical: f32,
+    pub shake_threshold_horizontal: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -250,6 +263,19 @@ impl Default for ChaseTuning {
             target_height: 0.65,
             fov_y: 0.95,
             min_eye_y: 0.8,
+            animation_strength: 1.0,
+            position_lag: 0.10,
+            yaw_lag: 0.20,
+            max_yaw_offset: std::f32::consts::PI / 18.0,
+            max_position_offset: 2.0,
+            snap_distance: 10.0,
+            shake_amplitude: 0.05,
+            shake_decay: 6.0,
+            shake_frequency: 20.0,
+            shake_impulse_scale: 0.01,
+            shake_max_impulse: 0.02,
+            shake_threshold_vertical: 2.5,
+            shake_threshold_horizontal: 4.0,
         }
     }
 }
@@ -486,6 +512,30 @@ impl TuningConfig {
             .fit_max
             .max(self.camera.isometric.fit_min);
         self.camera.chase.fov_y = self.camera.chase.fov_y.clamp(0.1, 3.0);
+        self.camera.chase.animation_strength = self.camera.chase.animation_strength.clamp(0.0, 1.0);
+        self.camera.chase.position_lag = self.camera.chase.position_lag.clamp(0.0, 2.0);
+        self.camera.chase.yaw_lag = self.camera.chase.yaw_lag.clamp(0.0, 2.0);
+        self.camera.chase.max_yaw_offset = self
+            .camera
+            .chase
+            .max_yaw_offset
+            .clamp(0.0, std::f32::consts::PI);
+        self.camera.chase.max_position_offset =
+            self.camera.chase.max_position_offset.clamp(0.0, 10.0);
+        self.camera.chase.snap_distance = self.camera.chase.snap_distance.clamp(1.0, 1_000.0);
+        self.camera.chase.shake_amplitude = self.camera.chase.shake_amplitude.clamp(0.0, 0.3);
+        self.camera.chase.shake_decay = self.camera.chase.shake_decay.clamp(0.0, 40.0);
+        self.camera.chase.shake_frequency = self.camera.chase.shake_frequency.clamp(0.0, 80.0);
+        self.camera.chase.shake_impulse_scale =
+            self.camera.chase.shake_impulse_scale.clamp(0.0, 1.0);
+        self.camera.chase.shake_max_impulse = self.camera.chase.shake_max_impulse.clamp(0.0, 0.5);
+        self.camera.chase.shake_threshold_vertical =
+            self.camera.chase.shake_threshold_vertical.clamp(0.0, 100.0);
+        self.camera.chase.shake_threshold_horizontal = self
+            .camera
+            .chase
+            .shake_threshold_horizontal
+            .clamp(0.0, 100.0);
         self.shadows.drive_extent = self.shadows.drive_extent.clamp(1.0, 1_000.0);
         self.shadows.strength = self.shadows.strength.clamp(0.0, 1.0);
         self.shadows.depth_bias = self.shadows.depth_bias.clamp(0.0, 0.02);
@@ -1017,6 +1067,136 @@ fn schema_fields() -> Vec<Value> {
             5.0,
             0.01,
             "m",
+        ),
+        field(
+            "camera.chase.animationStrength",
+            "Animation strength",
+            "Camera / Chase",
+            "float",
+            0.0,
+            1.0,
+            0.01,
+            "",
+        ),
+        field(
+            "camera.chase.positionLag",
+            "Position lag",
+            "Camera / Chase",
+            "float",
+            0.0,
+            2.0,
+            0.01,
+            "s",
+        ),
+        field(
+            "camera.chase.yawLag",
+            "Yaw lag",
+            "Camera / Chase",
+            "float",
+            0.0,
+            2.0,
+            0.01,
+            "s",
+        ),
+        field(
+            "camera.chase.maxYawOffset",
+            "Max yaw offset",
+            "Camera / Chase",
+            "float",
+            0.0,
+            1.0,
+            0.01,
+            "rad",
+        ),
+        field(
+            "camera.chase.maxPositionOffset",
+            "Max position offset",
+            "Camera / Chase",
+            "float",
+            0.0,
+            10.0,
+            0.05,
+            "m",
+        ),
+        field(
+            "camera.chase.snapDistance",
+            "Snap distance",
+            "Camera / Chase",
+            "float",
+            1.0,
+            100.0,
+            0.5,
+            "m",
+        ),
+        field(
+            "camera.chase.shakeAmplitude",
+            "Shake amplitude",
+            "Camera / Chase",
+            "float",
+            0.0,
+            0.3,
+            0.005,
+            "m",
+        ),
+        field(
+            "camera.chase.shakeDecay",
+            "Shake decay",
+            "Camera / Chase",
+            "float",
+            0.0,
+            40.0,
+            0.1,
+            "1/s",
+        ),
+        field(
+            "camera.chase.shakeFrequency",
+            "Shake frequency",
+            "Camera / Chase",
+            "float",
+            0.0,
+            80.0,
+            0.5,
+            "Hz",
+        ),
+        field(
+            "camera.chase.shakeImpulseScale",
+            "Shake impulse scale",
+            "Camera / Chase",
+            "float",
+            0.0,
+            0.2,
+            0.001,
+            "m/(m/s)",
+        ),
+        field(
+            "camera.chase.shakeMaxImpulse",
+            "Shake max impulse",
+            "Camera / Chase",
+            "float",
+            0.0,
+            0.1,
+            0.001,
+            "m",
+        ),
+        field(
+            "camera.chase.shakeThresholdVertical",
+            "Shake vertical threshold",
+            "Camera / Chase",
+            "float",
+            0.0,
+            30.0,
+            0.1,
+            "m/s",
+        ),
+        field(
+            "camera.chase.shakeThresholdHorizontal",
+            "Shake horizontal threshold",
+            "Camera / Chase",
+            "float",
+            0.0,
+            30.0,
+            0.1,
+            "m/s",
         ),
     ]);
     fields.extend([

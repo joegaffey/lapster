@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 mod camera;
+mod chase;
 mod garage;
 mod grass;
 mod particles;
@@ -13,6 +14,7 @@ mod vegetation;
 use wasm_bindgen::prelude::*;
 
 use crate::camera::Camera;
+use crate::chase::ChaseAnimation;
 use crate::particles::{ParticleInstance, ParticleSystem};
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
@@ -2062,6 +2064,7 @@ pub struct DriveViewer {
     color_offset: usize,
     texture_paint: bool,
     camera_mode: CameraMode,
+    chase: ChaseAnimation,
     brake_lights_on: bool,
     reverse_lights_on: bool,
     surface_names: Vec<String>,
@@ -2272,6 +2275,7 @@ impl DriveViewer {
             color_offset,
             texture_paint,
             camera_mode: CameraMode::Chase,
+            chase: ChaseAnimation::default(),
             brake_lights_on: false,
             reverse_lights_on: false,
             surface_names,
@@ -2375,7 +2379,7 @@ impl DriveViewer {
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
     }
 
@@ -2420,10 +2424,17 @@ impl DriveViewer {
         };
 
         let mut steps = 0;
+        let chase_tuning = self.tuning.camera.chase;
         while self.accumulator >= FIXED_DT && steps < 25 {
             let start = performance_now();
             self.previous_state = self.vehicle.state;
             self.vehicle.step(controls);
+            if self.camera_mode == CameraMode::Chase {
+                self.chase.push_impulse(
+                    self.vehicle.state.velocity - self.previous_state.velocity,
+                    &chase_tuning,
+                );
+            }
             self.update_race_tracker();
             let elapsed = (performance_now() - start) as f32;
             if self.step_times.len() >= 250 {
@@ -2438,7 +2449,7 @@ impl DriveViewer {
         }
 
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(Some(dt));
         self.renderer.render()
     }
 
@@ -2481,7 +2492,7 @@ impl DriveViewer {
         }
         self.previous_state = self.vehicle.state;
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
         self.vehicle.state.tick as u32
     }
@@ -2496,7 +2507,7 @@ impl DriveViewer {
         self.set_brake_lights(frame[snapshot::BRAKE]);
         self.set_reverse_lights(remote.gear == -1);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -2555,7 +2566,7 @@ impl DriveViewer {
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -2588,7 +2599,7 @@ impl DriveViewer {
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
     }
 
@@ -2612,7 +2623,7 @@ impl DriveViewer {
         set_rig_cockpit_visible(&mut self.renderer, &self.rigs[slot], true);
         self.previous_state = self.vehicle.state;
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -2754,7 +2765,7 @@ impl DriveViewer {
     pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
         let bake_ms = self.renderer.set_time_of_day(hours);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         bake_ms
     }
 
@@ -2780,9 +2791,10 @@ impl DriveViewer {
         } else {
             CameraMode::Chase
         };
+        self.chase.clear_shake();
         self.apply_cockpit_glass_alpha();
         self.update_dashboard_visibility();
-        self.update_camera();
+        self.update_camera(None);
     }
 
     fn update_dashboard_visibility(&mut self) {
@@ -2907,14 +2919,14 @@ impl DriveViewer {
         let tuning: CarTuning = serde_json::from_str(json).map_err(js_error)?;
         self.vehicle.apply_setup(&tuning);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
     pub fn reset_car_setup(&mut self) -> Result<(), JsValue> {
         self.vehicle.reset_setup();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3057,7 +3069,7 @@ impl DriveViewer {
         self.apply_cockpit_glass_alpha();
         self.refresh_particle_tuning();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3076,7 +3088,7 @@ impl DriveViewer {
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3088,7 +3100,7 @@ impl DriveViewer {
         self.apply_cockpit_glass_alpha();
         self.refresh_particle_tuning();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3111,7 +3123,7 @@ impl DriveViewer {
 
     fn write_initial_pose(&mut self) -> Result<(), JsValue> {
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3330,7 +3342,7 @@ impl DriveViewer {
         }
     }
 
-    fn update_camera(&mut self) {
+    fn update_camera(&mut self, dt: Option<f32>) {
         let (position, rotation) = self.visual_pose();
         if self.camera_mode == CameraMode::Bonnet {
             let shot = &self.tuning.camera.bonnet;
@@ -3374,14 +3386,22 @@ impl DriveViewer {
             return;
         }
 
-        let tuning = &self.tuning.camera.chase;
+        let tuning = self.tuning.camera.chase;
+        let pose = match dt {
+            Some(dt) if dt > 0.0 => self.chase.update(position, rotation, dt, &tuning),
+            _ => {
+                self.chase.snap(position, rotation);
+                self.chase.pose(position, rotation, &tuning)
+            }
+        };
         let aspect = self.renderer.aspect();
         let range = (tuning.aspect_far - tuning.aspect_near).max(0.0001);
         let landscape = ((aspect - tuning.aspect_near) / range).clamp(0.0, 1.0);
         let back = tuning.back_near + (tuning.back_far - tuning.back_near) * landscape;
         let height = tuning.height_near + (tuning.height_far - tuning.height_near) * landscape;
         let look_ahead = tuning.look_near + (tuning.look_far - tuning.look_near) * landscape;
-        let eye = position + rotation * Vec3::new(0.0, height, back);
+        let eye =
+            pose.anchor + pose.eye_rotation * Vec3::new(0.0, height, back) + pose.shake_offset;
         let target = position + rotation * Vec3::new(0.0, tuning.target_height, look_ahead);
         self.renderer.set_camera(Camera {
             eye: [eye.x, eye.y.max(tuning.min_eye_y), eye.z],
