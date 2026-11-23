@@ -1,36 +1,171 @@
 import { expect, test } from "@playwright/test";
 
-test("launcher track selection persists into drive and garage", async ({ page }) => {
-  await page.goto("/web/");
-  await expect(page.locator('a[href="./drive/"]')).toBeVisible();
-  await expect(page.locator('[data-track-id="drift-sketchfab"]')).toBeVisible();
-  await expect(page.locator('[data-track-id="skidpad05"]')).toHaveAttribute(
-    "aria-current",
-    "true",
+async function waitForDrive(page: import("@playwright/test").Page) {
+  await page.waitForFunction(
+    () => (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
+    undefined,
+    { timeout: 30_000 },
   );
+}
 
-  await page.click('[data-track-id="drift-sketchfab"]');
-  await page.waitForURL(/\/web\/drive\//);
-  expect(new URL(page.url()).searchParams.get("track")).toContain("drift-sketchfab");
-  expect(await page.evaluate(() => localStorage.getItem("lapster.track.v1"))).toBe(
-    "drift-sketchfab",
-  );
-
-  await page.goto("/web/garage/");
+async function waitForGarage(page: import("@playwright/test").Page) {
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
     { timeout: 30_000 },
   );
+}
+
+test("drive launcher lists the solo tracks", async ({ page }) => {
+  await page.goto("/web/");
+  const driveTrack = page.locator("#drive-track");
+  await expect(driveTrack).toBeVisible();
+
+  const values = await driveTrack
+    .locator("option")
+    .evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
+  expect(values).toEqual([
+    "skidpad05",
+    "drift-sketchfab",
+    "loop-spline-point-terrain",
+  ]);
+
+  await expect(driveTrack.locator('option[value="skidpad05"]')).toHaveText(
+    "Skidpad 0.5",
+  );
+  await expect(driveTrack.locator('option[value="drift-sketchfab"]')).toHaveText(
+    "Drift Tracks",
+  );
+  await expect(
+    driveTrack.locator('option[value="loop-spline-point-terrain"]'),
+  ).toContainText("Loop Spline");
+  await expect(driveTrack.locator('option[value="race-loop"]')).toHaveCount(0);
+});
+
+test("race launcher offers only the loop and flags it under development", async ({
+  page,
+}) => {
+  await page.goto("/web/");
+  const raceForm = page.locator("#race-form");
+  await expect(raceForm.locator(".panel-badge")).toHaveText(/Under development/i);
+
+  const raceTrack = page.locator("#race-track");
+  await expect(raceTrack).toBeVisible();
+  const values = await raceTrack
+    .locator("option")
+    .evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
+  expect(values).toEqual(["loop-spline-point-terrain"]);
+  await expect(
+    raceTrack.locator('option[value="loop-spline-point-terrain"]'),
+  ).toContainText("Loop Spline");
+  await expect(raceTrack).toHaveValue("loop-spline-point-terrain");
+});
+
+test("drive launcher starts a solo drive on the drift tracks", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/");
+  await page.locator("#drive-track").selectOption("drift-sketchfab");
+  await page.locator("#drive-form button[type=submit]").click();
+  await page.waitForURL(/\/web\/drive\//);
+
+  const url = new URL(page.url());
+  expect(url.searchParams.get("track")).toBe("drift-sketchfab");
+  expect(url.searchParams.get("race")).toBe("0");
+  expect(await page.evaluate(() => localStorage.getItem("lapster.track.v1"))).toBe(
+    "drift-sketchfab",
+  );
+
+  await waitForDrive(page);
+  const drive = await page.evaluate(() => ({
+    error: (window as any).__driveViewerError,
+    telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
+  }));
+  expect(drive.error).toBeUndefined();
+  expect(drive.telemetry.track).toBe("drift-sketchfab");
+  expect(drive.telemetry.aiCount).toBe(0);
+  await expect(page.locator("#race-panel")).toBeHidden();
+  await expect(page.locator("#race-countdown")).toBeHidden();
+  await expect(page.locator("#race-results")).toBeHidden();
+  expect(pageErrors).toEqual([]);
+});
+
+test("race launcher starts a three-AI race on the loop", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/");
+  await page.locator("#race-track").selectOption("loop-spline-point-terrain");
+  await page.locator("#race-form button[type=submit]").click();
+  await page.waitForURL(/\/web\/drive\//);
+
+  const url = new URL(page.url());
+  expect(url.searchParams.get("track")).toBe("loop-spline-point-terrain");
+  expect(url.searchParams.get("race")).toBe("1");
+  expect(
+    await page.evaluate(() => localStorage.getItem("lapster.race.track.v1")),
+  ).toBe("loop-spline-point-terrain");
+
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await page.waitForFunction(
+    () => {
+      const label = document.querySelector("#race-countdown");
+      return label !== null && !label.hasAttribute("hidden");
+    },
+    undefined,
+    { timeout: 10_000 },
+  );
+
+  const drive = await page.evaluate(() => ({
+    error: (window as any).__driveViewerError,
+    telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
+  }));
+  expect(drive.error).toBeUndefined();
+  expect(drive.telemetry.track).toBe("loop-spline-point-terrain");
+  expect(drive.telemetry.raceAvailable).toBe(true);
+  expect(drive.telemetry.aiCount).toBe(3);
+  await expect(page.locator("#race-panel")).toBeVisible();
+  await expect(page.locator("#race-countdown")).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});
+
+test("launcher shows the stored car and opens the garage with it selected", async ({
+  page,
+}) => {
+  await page.goto("/web/");
+  await page.evaluate(() =>
+    localStorage.setItem("lapster.car.v1", "sc-deckard-conejo"),
+  );
+  await page.reload();
+
+  await expect(
+    page.locator("#drive-form [data-selected-car-name]"),
+  ).toHaveText("Deckard Conejo");
+  await expect(
+    page.locator("#race-form [data-selected-car-name]"),
+  ).toHaveText("Deckard Conejo");
+  await expect(page.locator("#drive-form .car-summary")).toHaveAttribute(
+    "href",
+    "./garage/",
+  );
+
+  await page.locator("#drive-form .car-summary").click();
+  await page.waitForURL(/\/web\/garage\//);
+  await waitForGarage(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+
   const garage = await page.evaluate(() => ({
     error: (window as any).__garageViewerError,
-    asset: document.querySelector("#asset")?.textContent,
+    selected: JSON.parse((window as any).__garageViewer.bay_info()),
   }));
   expect(garage.error).toBeUndefined();
-  expect(garage.asset).toContain("concrete-garage + mazda-rx7");
-
-  const driveHref = await page.locator("#drive-car").getAttribute("href");
-  expect(new URL(driveHref!).searchParams.get("track")).toContain("drift-sketchfab");
+  expect(garage.selected.carId).toBe("sc-deckard-conejo");
 });
 
 test("public launcher exposes the drift track", async ({ page }) => {
@@ -48,53 +183,9 @@ test("public launcher exposes the drift track", async ({ page }) => {
   );
 });
 
-test("launcher car selection persists into drive and garage", async ({ page }) => {
-  await page.goto("/web/");
-  const deckard = page.locator('[data-car-id="sc-deckard-conejo"]');
-  await expect(deckard).toBeVisible();
-  await deckard.click();
-  await page.waitForURL(/\/web\/drive\//);
-
-  expect(new URL(page.url()).searchParams.get("car")).toContain("sc-deckard-conejo");
-  expect(await page.evaluate(() => localStorage.getItem("lapster.car.v1"))).toBe(
-    "sc-deckard-conejo",
-  );
-
-  await page.waitForFunction(
-    () => (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
-    undefined,
-    { timeout: 30_000 },
-  );
-  const drive = await page.evaluate(() => ({
-    error: (window as any).__driveViewerError,
-    car: JSON.parse((window as any).__driveViewer.telemetry()).car,
-    audio: (window as any).__driveAudio?.engineId,
-  }));
-  expect(drive.error).toBeUndefined();
-  expect(drive.car).toBe("sc-deckard-conejo");
-  expect(drive.audio).toBe("v8cross");
-
-  await page.goto("/web/garage/");
-  await page.waitForFunction(
-    () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
-    undefined,
-    { timeout: 30_000 },
-  );
-  const garage = await page.evaluate(() => ({
-    error: (window as any).__garageViewerError,
-    asset: document.querySelector("#asset")?.textContent,
-  }));
-  expect(garage.error).toBeUndefined();
-  expect(garage.asset).toContain("sc-deckard-conejo");
-});
-
 test("garage mixes catalog cars across bays", async ({ page }) => {
   await page.goto("/web/garage/");
-  await page.waitForFunction(
-    () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
-    undefined,
-    { timeout: 30_000 },
-  );
+  await waitForGarage(page);
   await page.waitForFunction(
     () => {
       const state = window as any;
@@ -162,37 +253,4 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
   expect(after.asset).toContain("67gp-guthrie-eagle");
   expect(after.drive).toContain("67gp-guthrie-eagle");
   expect(after.stored).toBe("67gp-guthrie-eagle");
-});
-
-test("launcher opens loop-spline-point-terrain with race available", async ({ page }) => {
-  const pageErrors: string[] = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
-
-  await page.goto("/web/");
-  const entry = page.locator('[data-track-id="loop-spline-point-terrain"]');
-  await expect(entry).toBeVisible();
-  await expect(entry).toHaveAttribute(
-    "href",
-    "./drive/?track=loop-spline-point-terrain",
-  );
-  await entry.click();
-  await page.waitForURL(/\/web\/drive\//);
-  expect(new URL(page.url()).searchParams.get("track")).toBe(
-    "loop-spline-point-terrain",
-  );
-
-  await page.waitForFunction(
-    () =>
-      (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
-    undefined,
-    { timeout: 60_000 },
-  );
-  const drive = await page.evaluate(() => ({
-    error: (window as any).__driveViewerError,
-    telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
-  }));
-  expect(drive.error).toBeUndefined();
-  expect(drive.telemetry.track).toBe("loop-spline-point-terrain");
-  expect(drive.telemetry.raceAvailable).toBe(true);
-  expect(pageErrors).toEqual([]);
 });

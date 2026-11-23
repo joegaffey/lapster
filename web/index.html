@@ -37,7 +37,7 @@
           #080a0d;
       }
       main {
-        width: min(720px, 100%);
+        width: min(860px, 100%);
       }
       .eyebrow {
         color: #38bdf8;
@@ -51,91 +51,268 @@
         line-height: 1;
         letter-spacing: -0.03em;
       }
-      p {
+      p.intro {
         margin: 0 0 22px;
         color: #8f9bab;
         line-height: 1.6;
         max-width: 58ch;
       }
-      nav {
+      .launch-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
         gap: 12px;
       }
-      a.card {
-        display: block;
-        padding: 16px;
-        border: 1px solid #2a303a;
-        background: rgba(15, 19, 25, 0.9);
-        color: #e6e8eb;
-        text-decoration: none;
-        transition: border-color 120ms ease, background 120ms ease;
-      }
-      a.card:hover {
-        border-color: #38bdf8;
-        background: #111821;
-      }
-      a.card strong {
-        display: block;
-        margin-bottom: 6px;
-        font-size: 15px;
-      }
-      a.card span {
-        color: #8f9bab;
-        font-size: 12px;
-        line-height: 1.5;
-      }
-      .drive-card {
-        display: block;
-        padding: 16px;
-        border: 1px solid #2a303a;
-        background: rgba(15, 19, 25, 0.9);
-        color: #e6e8eb;
-      }
-      .drive-card strong {
-        display: block;
-        margin-bottom: 6px;
-        font-size: 15px;
-      }
-      .drive-card > span {
-        color: #8f9bab;
-        font-size: 12px;
-        line-height: 1.5;
-      }
-      .track-links {
+      .launch-panel {
         display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 12px;
+        flex-direction: column;
+        gap: 12px;
+        height: 100%;
+        padding: 16px;
+        border: 1px solid #2a303a;
+        background: rgba(15, 19, 25, 0.9);
       }
-      .picker-label {
-        display: block;
-        margin-top: 12px;
+      .panel-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 24px;
+      }
+      .launch-panel h2 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+      }
+      .panel-note {
+        margin: 0;
+        color: #8f9bab;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .panel-badge {
+        padding: 2px 7px;
+        border: 1px solid rgba(251, 191, 36, 0.5);
+        border-radius: 999px;
+        background: rgba(251, 191, 36, 0.12);
+        color: #fbbf24;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .field {
+        display: grid;
+        gap: 5px;
+      }
+      .field label {
         color: #8f9bab;
         font-size: 10px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
-      .picker-label + .track-links {
-        margin-top: 6px;
+      .select-wrap {
+        position: relative;
       }
-      .track-link {
-        padding: 6px 9px;
+      .select-wrap::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: 13px;
+        width: 7px;
+        height: 7px;
+        border-right: 2px solid #8f9bab;
+        border-bottom: 2px solid #8f9bab;
+        transform: translateY(-65%) rotate(45deg);
+        pointer-events: none;
+        transition: border-color 120ms ease;
+      }
+      .select-wrap select {
+        width: 100%;
+        padding: 9px 34px 9px 10px;
         border: 1px solid #3a4350;
-        border-radius: 3px;
-        background: #151a21;
-        color: #cbd5e1;
-        font-size: 11px;
-        text-decoration: none;
+        border-radius: 4px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: linear-gradient(180deg, #141a21, #0c1015);
+        color: #e6e8eb;
+        color-scheme: dark;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        transition: border-color 120ms ease, background 120ms ease;
       }
-      .track-link:hover {
+      .select-wrap select option,
+      .select-wrap select optgroup {
+        background-color: #0c1015;
+        color: #e6e8eb;
+      }
+      .select-wrap:hover select {
+        border-color: #4a5566;
+        background: linear-gradient(180deg, #18202a, #0e131a);
+      }
+      .select-wrap:focus-within select {
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+      }
+      .select-wrap:hover::after,
+      .select-wrap:focus-within::after {
+        border-color: #38bdf8;
+      }
+      select:focus-visible,
+      .car-summary:focus-visible,
+      button.primary:focus-visible,
+      .secondary-card:focus-visible,
+      .tool-card:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid #38bdf8;
+        outline-offset: 2px;
+      }
+      .car-summary {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border: 1px solid #3a4350;
+        border-radius: 4px;
+        background: #151a21;
+        color: #e6e8eb;
+        text-decoration: none;
+        transition: border-color 120ms ease, background 120ms ease;
+      }
+      .car-summary:hover {
         border-color: #38bdf8;
         background: #111821;
       }
-      .track-link[aria-current="true"] {
-        border-color: #38bdf8;
+      .car-summary .car-label {
+        color: #8f9bab;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .car-summary strong {
+        font-size: 14px;
+      }
+      .car-summary .car-action {
+        margin-left: auto;
+        color: #38bdf8;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      button.primary {
+        margin-top: auto;
+        padding: 11px 14px;
+        border: 1px solid #38bdf8;
+        border-radius: 4px;
         background: #38bdf8;
         color: #081018;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: background 120ms ease, border-color 120ms ease;
+      }
+      button.primary:hover:not(:disabled) {
+        border-color: #7dd3fc;
+        background: #7dd3fc;
+      }
+      button.primary:disabled {
+        border-color: #2a303a;
+        background: #1a2028;
+        color: #667080;
+        cursor: not-allowed;
+      }
+      .secondary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .secondary-card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        height: 100%;
+        padding: 14px 16px;
+        border: 1px solid #3a4350;
+        background:
+          linear-gradient(135deg, rgba(56, 189, 248, 0.14), transparent 60%),
+          rgba(15, 19, 25, 0.95);
+        color: #e6e8eb;
+        text-decoration: none;
+        transition: border-color 120ms ease, background 120ms ease;
+      }
+      .secondary-card:hover {
+        border-color: #38bdf8;
+        background:
+          linear-gradient(135deg, rgba(56, 189, 248, 0.2), transparent 60%),
+          #111821;
+      }
+      .secondary-copy {
+        display: grid;
+        gap: 4px;
+      }
+      .secondary-copy strong {
+        font-size: 15px;
+      }
+      .secondary-copy span,
+      .card-action {
+        color: #8f9bab;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .card-action {
+        margin-left: auto;
+        color: #38bdf8;
+        white-space: nowrap;
+      }
+      .tools {
+        margin-top: 12px;
+        border: 1px solid #2a303a;
+        background: rgba(15, 19, 25, 0.6);
+      }
+      .tools summary {
+        padding: 11px 14px;
+        color: #9aa4b2;
+        cursor: pointer;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        list-style-position: inside;
+      }
+      .tool-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+        padding: 0 12px 12px;
+      }
+      .tool-card {
+        display: block;
+        padding: 10px 12px;
+        border: 1px solid #252b34;
+        background: #10141a;
+        color: #cbd5e1;
+        text-decoration: none;
+        transition: border-color 120ms ease, background 120ms ease;
+      }
+      .tool-card:hover {
+        border-color: #3a4350;
+        background: #141a22;
+      }
+      .tool-card strong {
+        display: block;
+        margin-bottom: 3px;
+        color: #e6e8eb;
+        font-size: 12px;
+      }
+      .tool-card span {
+        color: #7b8797;
+        font-size: 11px;
+        line-height: 1.4;
       }
       footer {
         margin-top: 22px;
@@ -146,117 +323,114 @@
       footer a {
         color: #9aa4b2;
       }
+      @media (max-width: 620px) {
+        body {
+          padding: 16px;
+        }
+        .launch-grid,
+        .secondary-grid {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
     <main>
       <div class="eyebrow">Rust / Wasm / wgpu</div>
       <h1>Lapster</h1>
-      <p>Choose a car and track, then drive.</p>
-      <nav>
-        <div class="drive-card">
-          <strong>Drive</strong>
-          <span>500 Hz physics, chase camera, touch controls, auto reverse.</span>
-          <div class="picker-label">Car</div>
-          <div class="track-links" role="group" aria-label="Choose a car">
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/mazda-rx7/mazda-rx7.sima"
-              data-car-id="mazda-rx7"
-              >Mazda RX-7</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/67gp-cavallo-123/67gp-cavallo-123.sima"
-              data-car-id="67gp-cavallo-123"
-              >Cavallo 123</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/67gp-guthrie-eagle/67gp-guthrie-eagle.sima"
-              data-car-id="67gp-guthrie-eagle"
-              >Guthrie Eagle</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/67gp-kuiper-t81/67gp-kuiper-t81.sima"
-              data-car-id="67gp-kuiper-t81"
-              >Kuiper T81</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/67gp-mango-ms7/67gp-mango-ms7.sima"
-              data-car-id="67gp-mango-ms7"
-              >Mango MS7</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/67gp-murasama-37a/67gp-murasama-37a.sima"
-              data-car-id="67gp-murasama-37a"
-              >Murasama 37A</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/67gp-upping-ut19/67gp-upping-ut19.sima"
-              data-car-id="67gp-upping-ut19"
-              >Upping UT19</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?car=../../fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima"
-              data-car-id="sc-deckard-conejo"
-              >Deckard Conejo</a
-            >
+      <p class="intro">Choose a car and track, then drive or race.</p>
+      <section class="launch-grid" aria-label="Launch">
+        <form class="launch-panel" id="drive-form" action="./drive/" aria-labelledby="drive-heading">
+          <div class="panel-head">
+            <h2 id="drive-heading">Drive</h2>
           </div>
-          <div class="picker-label">Track</div>
-          <div class="track-links" role="group" aria-label="Choose a track">
-            <a class="track-link" href="./drive/" data-track-id="skidpad05">Skidpad 0.5</a>
-            <a
-              class="track-link"
-              href="./drive/?track=../../fixtures/tracks/drift-sketchfab/pack.sima"
-              data-track-id="drift-sketchfab"
-              >Drift Tracks</a
-            >
-            <a class="track-link" href="./drive/?track=race-loop" data-track-id="race-loop"
-              >Race Loop</a
-            >
-            <a
-              class="track-link"
-              href="./drive/?track=loop-spline-point-terrain"
-              data-track-id="loop-spline-point-terrain"
-              >Loop Spline Point Terrain</a
-            >
+          <p class="panel-note">All tracks · no AI</p>
+          <a
+            class="car-summary"
+            href="./garage/"
+            data-car-summary
+            aria-label="Change car"
+          >
+            <span class="car-label">Car</span>
+            <strong data-selected-car-name>Mazda RX-7</strong>
+            <span class="car-action">Change car →</span>
+          </a>
+          <div class="field">
+            <label for="drive-track">Track</label>
+            <div class="select-wrap">
+              <select id="drive-track" name="track">
+                <option value="skidpad05">Skidpad 0.5</option>
+                <option value="drift-sketchfab">Drift Tracks</option>
+                <option value="loop-spline-point-terrain" data-race-ready="true">
+                  Loop Spline Point Terrain
+                </option>
+              </select>
+            </div>
           </div>
-        </div>
-        <a class="card" href="./garage/">
-          <strong>Garage</strong>
-          <span>Choose the car you drive; wheel controls and orbit camera.</span>
+          <button class="primary" type="submit">Drive</button>
+        </form>
+        <form class="launch-panel" id="race-form" action="./drive/" aria-labelledby="race-heading">
+          <div class="panel-head">
+            <h2 id="race-heading">Race</h2>
+            <span class="panel-badge">Under development</span>
+          </div>
+          <p class="panel-note">3 AI · 3 laps</p>
+          <a
+            class="car-summary"
+            href="./garage/"
+            data-car-summary
+            aria-label="Change car"
+          >
+            <span class="car-label">Car</span>
+            <strong data-selected-car-name>Mazda RX-7</strong>
+            <span class="car-action">Change car →</span>
+          </a>
+          <div class="field">
+            <label for="race-track">Track</label>
+            <div class="select-wrap">
+              <select id="race-track" name="track"></select>
+            </div>
+          </div>
+          <button class="primary" id="race-submit" type="submit">Race</button>
+        </form>
+      </section>
+      <div class="secondary-grid">
+        <a class="secondary-card" id="multiplayer-link" href="./multiplayer/">
+          <span class="secondary-copy">
+            <strong>Multiplayer</strong>
+            <span>Join a room and drive together; requires the relay server.</span>
+          </span>
+          <span class="card-action">Join →</span>
         </a>
-        <a class="card" id="multiplayer-link" href="./multiplayer/">
-          <strong>Multiplayer</strong>
-          <span>Join a room and drive together; requires the relay server.</span>
+        <a class="secondary-card" href="./track-ed/">
+          <span class="secondary-copy">
+            <strong>Track Editor</strong>
+            <span>Build venue tracks and Test drive the current track locally.</span>
+          </span>
+          <span class="card-action">Open →</span>
         </a>
-        <a class="card" href="./track-viewer/">
-          <strong>Track Viewer</strong>
-          <span>Orbit, pan, and zoom around the skidpad.</span>
-        </a>
-        <a class="card" href="./track-ed/">
-          <strong>Track Editor</strong>
-          <span>Build venue tracks and Test drive the current track locally.</span>
-        </a>
-        <a class="card" href="./track-import/">
-          <strong>Import track-ed Track</strong>
-          <span>Compile track.glb + track.json in the browser and drive it.</span>
-        </a>
-        <a class="card" href="./style-spike/">
-          <strong>Style Spike</strong>
-          <span>Painterly toon track section with procedural leaf-card vegetation.</span>
-        </a>
-        <a class="card" href="./debug-viewer/">
-          <strong>Debug Viewer</strong>
-          <span>Coordinate-frame sanity check.</span>
-        </a>
-      </nav>
+      </div>
+      <details class="tools">
+        <summary>Tools</summary>
+        <nav class="tool-grid" aria-label="Tools">
+          <a class="tool-card" href="./track-viewer/">
+            <strong>Track Viewer</strong>
+            <span>Orbit, pan, and zoom around the skidpad.</span>
+          </a>
+          <a class="tool-card" href="./track-import/">
+            <strong>Import track-ed Track</strong>
+            <span>Compile track.glb + track.json in the browser and drive it.</span>
+          </a>
+          <a class="tool-card" href="./style-spike/">
+            <strong>Style Spike</strong>
+            <span>Painterly toon track section with procedural leaf-card vegetation.</span>
+          </a>
+          <a class="tool-card" href="./debug-viewer/">
+            <strong>Debug Viewer</strong>
+            <span>Coordinate-frame sanity check.</span>
+          </a>
+        </nav>
+      </details>
       <footer>
         Cars: Mazda RX-7 by IvOfficial, CC BY 3.0, via Poly Pizza; Deckard Conejo RR
         by Tom_D3, W.E.C, Chad Phillips, and June Ravenmoon, Free Art License 1.3,
@@ -269,28 +443,116 @@
     <script>
       (() => {
         const CAR_STORAGE_KEY = "lapster.car.v1";
-        const carLinks = Array.from(document.querySelectorAll("[data-car-id]"));
-        const carIds = new Set(carLinks.map((link) => link.dataset.carId));
-        let selectedCar = "mazda-rx7";
-        try {
-          const stored = localStorage.getItem(CAR_STORAGE_KEY);
-          if (stored && carIds.has(stored)) selectedCar = stored;
-        } catch {
-          // Keep the default car when storage is unavailable.
+        const DRIVE_TRACK_STORAGE_KEY = "lapster.track.v1";
+        const RACE_TRACK_STORAGE_KEY = "lapster.race.track.v1";
+        const DEFAULT_CAR_ID = "mazda-rx7";
+        const DEFAULT_DRIVE_TRACK = "skidpad05";
+        const DEFAULT_RACE_TRACK = "loop-spline-point-terrain";
+        const CAR_NAMES = {
+          "mazda-rx7": "Mazda RX-7",
+          "67gp-cavallo-123": "Cavallo 123",
+          "67gp-guthrie-eagle": "Guthrie Eagle",
+          "67gp-kuiper-t81": "Kuiper T81",
+          "67gp-mango-ms7": "Mango MS7",
+          "67gp-murasama-37a": "Murasama 37A",
+          "67gp-upping-ut19": "Upping UT19",
+          "sc-deckard-conejo": "Deckard Conejo",
+        };
+
+        const readStored = (key) => {
+          try {
+            return localStorage.getItem(key);
+          } catch {
+            return null;
+          }
+        };
+        const writeStored = (key, value) => {
+          try {
+            localStorage.setItem(key, value);
+          } catch {
+            // Navigation still works without storage.
+          }
+        };
+
+        let selectedCar = DEFAULT_CAR_ID;
+        const storedCar = readStored(CAR_STORAGE_KEY);
+        if (storedCar && Object.prototype.hasOwnProperty.call(CAR_NAMES, storedCar)) {
+          selectedCar = storedCar;
         }
-        for (const link of carLinks) {
-          link.setAttribute("aria-current", String(link.dataset.carId === selectedCar));
-          link.addEventListener("click", () => {
-            try {
-              localStorage.setItem(CAR_STORAGE_KEY, link.dataset.carId);
-            } catch {
-              // Navigation still works without storage.
-            }
-            for (const other of carLinks) {
-              other.setAttribute("aria-current", String(other === link));
-            }
+        const selectedCarName = CAR_NAMES[selectedCar];
+        for (const label of document.querySelectorAll("[data-selected-car-name]")) {
+          label.textContent = selectedCarName;
+        }
+        for (const card of document.querySelectorAll("[data-car-summary]")) {
+          card.setAttribute("href", "./garage/");
+          card.setAttribute("aria-label", `Change car (currently ${selectedCarName})`);
+        }
+
+        const driveTrack = document.querySelector("#drive-track");
+        const raceTrack = document.querySelector("#race-track");
+        const raceButton = document.querySelector("#race-submit");
+        for (const option of Array.from(driveTrack.options)) {
+          if (option.dataset.raceReady === "true") {
+            raceTrack.append(option.cloneNode(true));
+          }
+        }
+
+        const driveTrackIds = new Set(
+          Array.from(driveTrack.options).map((option) => option.value),
+        );
+        const storedDriveTrack = readStored(DRIVE_TRACK_STORAGE_KEY);
+        driveTrack.value =
+          storedDriveTrack && driveTrackIds.has(storedDriveTrack)
+            ? storedDriveTrack
+            : DEFAULT_DRIVE_TRACK;
+
+        const raceTrackIds = new Set(
+          Array.from(raceTrack.options).map((option) => option.value),
+        );
+        const storedRaceTrack = readStored(RACE_TRACK_STORAGE_KEY);
+        if (storedRaceTrack && raceTrackIds.has(storedRaceTrack)) {
+          raceTrack.value = storedRaceTrack;
+        } else if (raceTrackIds.has(DEFAULT_RACE_TRACK)) {
+          raceTrack.value = DEFAULT_RACE_TRACK;
+        } else if (raceTrack.options.length > 0) {
+          raceTrack.value = raceTrack.options[0].value;
+        }
+        if (raceButton && raceTrack.options.length === 0) {
+          raceButton.disabled = true;
+        }
+
+        driveTrack.addEventListener("change", () => {
+          writeStored(DRIVE_TRACK_STORAGE_KEY, driveTrack.value);
+        });
+        raceTrack.addEventListener("change", () => {
+          writeStored(RACE_TRACK_STORAGE_KEY, raceTrack.value);
+        });
+
+        const setupLaunch = (form, trackSelect, storageKey, raceFlag) => {
+          if (!form) return;
+          form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const track = trackSelect.value;
+            if (!track) return;
+            writeStored(storageKey, track);
+            const url = new URL("./drive/", window.location.href);
+            url.searchParams.set("track", track);
+            url.searchParams.set("race", raceFlag);
+            window.location.assign(url.toString());
           });
-        }
+        };
+        setupLaunch(
+          document.querySelector("#drive-form"),
+          driveTrack,
+          DRIVE_TRACK_STORAGE_KEY,
+          "0",
+        );
+        setupLaunch(
+          document.querySelector("#race-form"),
+          raceTrack,
+          RACE_TRACK_STORAGE_KEY,
+          "1",
+        );
 
         const RELAY_STORAGE_KEY = "lapster.net.relay.v1";
         const multiplayerLink = document.querySelector("#multiplayer-link");
@@ -306,30 +568,6 @@
           }
         } catch {
           // Keep the plain lobby link when storage is unavailable.
-        }
-
-        const TRACK_STORAGE_KEY = "lapster.track.v1";
-        const trackLinks = Array.from(document.querySelectorAll("[data-track-id]"));
-        const trackIds = new Set(trackLinks.map((link) => link.dataset.trackId));
-        let selectedTrack = "skidpad05";
-        try {
-          const stored = localStorage.getItem(TRACK_STORAGE_KEY);
-          if (stored && trackIds.has(stored)) selectedTrack = stored;
-        } catch {
-          // Keep the default track when storage is unavailable.
-        }
-        for (const link of trackLinks) {
-          link.setAttribute("aria-current", String(link.dataset.trackId === selectedTrack));
-          link.addEventListener("click", () => {
-            try {
-              localStorage.setItem(TRACK_STORAGE_KEY, link.dataset.trackId);
-            } catch {
-              // Navigation still works without storage.
-            }
-            for (const other of trackLinks) {
-              other.setAttribute("aria-current", String(other === link));
-            }
-          });
         }
 
         const current = document.querySelector('meta[name="lapster-version"]')?.content;
