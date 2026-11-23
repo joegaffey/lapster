@@ -7,16 +7,9 @@ const waitForGarage = (page: import("@playwright/test").Page) =>
     { timeout: 30_000 },
   );
 
-const waitForAllCars = (page: import("@playwright/test").Page) =>
+const waitForSelectedBay = (page: import("@playwright/test").Page) =>
   page.waitForFunction(
-    () => {
-      const state = window as any;
-      return (
-        typeof state.__garageCarsTotal === "number" &&
-        state.__garageCarsTotal > 0 &&
-        state.__garageCarsLoaded === state.__garageCarsTotal
-      );
-    },
+    () => JSON.parse((window as any).__garageViewer.bay_info()).loaded === true,
     undefined,
     { timeout: 30_000 },
   );
@@ -27,7 +20,7 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
 
   await page.goto("/web/garage/?v=cp6");
   await waitForGarage(page);
-  await waitForAllCars(page);
+  await waitForSelectedBay(page);
   await page.waitForTimeout(750);
   await expect(page.locator("#hud")).toHaveClass(/hud-collapsed/);
   await expect(page.locator("#car-loading")).toHaveAttribute("aria-hidden", "true");
@@ -42,6 +35,7 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
     stats: document.querySelector("#stats")?.textContent ?? "",
     meshes: document.querySelector("#stats")?.textContent ?? "",
     bay: JSON.parse((window as any).__garageViewer.bay_info()),
+    bays: JSON.parse((window as any).__garageViewer.bay_list()),
     debug: JSON.parse((window as any).__garageViewer.debug_info()),
   }));
 
@@ -62,9 +56,11 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
   expect(state.debug.garage.spotLights).toBe(8);
   expect(state.debug.garage.floorTriangles).toBeGreaterThan(0);
   expect(state.bay.layout).toBe("line");
+  expect(state.bay.loaded).toBe(true);
+  expect(state.bay.carId).toBe("mazda-rx7");
   expect(state.stats).toContain("track tris0");
   expect(state.stats).toContain("car tris");
-  expect(state.debug.cars.map((car: any) => car.id)).toEqual([
+  expect(state.bays.map((bay: any) => bay.carId)).toEqual([
     "mazda-rx7",
     "67gp-cavallo-123",
     "67gp-guthrie-eagle",
@@ -74,7 +70,7 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
     "67gp-upping-ut19",
     "sc-deckard-conejo",
   ]);
-  expect(state.debug.cars.every((car: any) => car.meshCount > 0)).toBe(true);
+  expect(state.debug.car.id).toBe("mazda-rx7");
   expect(pageErrors).toEqual([]);
 
   if (!process.env.CI) {
@@ -99,7 +95,7 @@ test("garage paint picker updates the selected car and drive link", async ({ pag
 
   await page.goto("/web/garage/?v=cp6");
   await waitForGarage(page);
-  await waitForAllCars(page);
+  await waitForSelectedBay(page);
 
   const initial = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
@@ -218,7 +214,6 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
   await expect(panel).toHaveAttribute("aria-hidden", "true");
   await expect(panel).not.toHaveClass(/paint-panel-visible/);
 
-  await waitForAllCars(page);
   await expect(page.locator("#car-loading")).toHaveAttribute("aria-hidden", "true");
 
   expect(pageErrors).toEqual([]);

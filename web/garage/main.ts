@@ -351,10 +351,6 @@ async function boot() {
   };
 
   const updateCarLoading = () => {
-    if (loadedBays.size >= carIds.length) {
-      hideCarLoading();
-      return;
-    }
     let info: any = null;
     try {
       info = JSON.parse(viewer.bay_info());
@@ -372,15 +368,7 @@ async function boot() {
       }
       return;
     }
-    const failedIndex = failedBays.keys().next().value;
-    if (failedIndex !== undefined) {
-      showCarLoading(
-        `Loading cars ${loadedBays.size}/${carIds.length} · ${carName(carIds[failedIndex])} failed`,
-        "error",
-      );
-      return;
-    }
-    showCarLoading(`Loading cars ${loadedBays.size}/${carIds.length}`);
+    hideCarLoading();
   };
 
   const frameYield = () =>
@@ -418,6 +406,19 @@ async function boot() {
     inFlight.set(index, task);
     updateCarLoading();
     return task;
+  };
+
+  const prefetchNeighbors = (index: number) => {
+    const count = Math.max(1, JSON.parse(viewer.bay_info()).count);
+    for (const neighbor of [index - 1, index + 1]) {
+      if (
+        neighbor >= 0 &&
+        neighbor < count &&
+        !failedBays.has(neighbor)
+      ) {
+        void ensureBay(neighbor);
+      }
+    }
   };
 
   const applySelectedBay = (info: any) => {
@@ -461,8 +462,10 @@ async function boot() {
     applyAngles();
     if (info.loaded === false) {
       void ensureBay(info.selected);
+      updateCarLoading();
     } else {
       updateCarLoading();
+      prefetchNeighbors(info.selected);
     }
   };
 
@@ -486,24 +489,7 @@ async function boot() {
     selectBay(next);
   };
 
-  const loadRemainingCars = async () => {
-    const order = carIds
-      .map((_, index) => index)
-      .filter((index) => !loadedBays.has(index))
-      .sort((a, b) => Math.abs(a - initialBay) - Math.abs(b - initialBay));
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < order.length) {
-        const index = order[cursor];
-        cursor += 1;
-        await ensureBay(index);
-      }
-    };
-    await Promise.all([worker(), worker()]);
-  };
-
   selectBay(initialBay, false);
-  updateCarLoading();
   bayPrev.addEventListener("click", () => {
     stepBay(-1);
     showCarNav();
@@ -573,7 +559,6 @@ async function boot() {
   window.__garageViewerReady = true;
   requestAnimationFrame(frame);
   requestAnimationFrame(hideLoading);
-  void loadRemainingCars();
 }
 
 function fail(error: unknown) {

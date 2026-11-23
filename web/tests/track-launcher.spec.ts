@@ -187,14 +187,7 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
   await page.goto("/web/garage/");
   await waitForGarage(page);
   await page.waitForFunction(
-    () => {
-      const state = window as any;
-      return (
-        typeof state.__garageCarsTotal === "number" &&
-        state.__garageCarsTotal > 0 &&
-        state.__garageCarsLoaded === state.__garageCarsTotal
-      );
-    },
+    () => JSON.parse((window as any).__garageViewer.bay_info()).loaded === true,
     undefined,
     { timeout: 30_000 },
   );
@@ -221,8 +214,14 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
   ]);
   expect(initial.menuButtons).toBe(0);
   expect(initial.selected.carId).toBe("mazda-rx7");
+  expect(initial.selected.loaded).toBe(true);
 
   await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__garageViewer.bay_info()).loaded === true,
+    undefined,
+    { timeout: 30_000 },
+  );
   const state = await page.evaluate(() => {
     const viewer = (window as any).__garageViewer;
     return {
@@ -239,6 +238,11 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
   expect(state.stored).toBe("67gp-cavallo-123");
 
   await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__garageViewer.bay_info()).loaded === true,
+    undefined,
+    { timeout: 30_000 },
+  );
   const after = await page.evaluate(() => {
     const viewer = (window as any).__garageViewer;
     return {
