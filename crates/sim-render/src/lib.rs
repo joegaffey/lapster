@@ -993,11 +993,18 @@ fn parse_garage_pack(car_bytes: &[u8]) -> Result<GaragePack, JsValue> {
     })
 }
 
+fn scale_emissive(color: [f32; 3], scale: f32) -> [f32; 3] {
+    [color[0] * scale, color[1] * scale, color[2] * scale]
+}
+
 #[wasm_bindgen]
 pub struct GarageViewer {
     renderer: renderer::Renderer,
     debug_info: String,
     bays: Vec<GarageBay>,
+    lamps: Vec<garage::ConcreteLamp>,
+    flicker_start: Vec<Option<f64>>,
+    base_spot_intensity: f32,
     selected_bay: usize,
     steer: f32,
     spin: f32,
@@ -1047,9 +1054,15 @@ impl GarageViewer {
             .collect::<Vec<_>>();
 
         let garage::ConcreteGarageBuild {
-            mut scene, lights, ..
+            mut scene,
+            mut lights,
+            lamps,
         } = garage::build_concrete_garage(&ids, &cars, 0)
             .map_err(|error| JsValue::from_str(&error))?;
+        let base_spot_intensity = lights.first().map(|light| light.intensity).unwrap_or(0.0);
+        for light in &mut lights {
+            light.intensity = 0.0;
+        }
         let bays = std::mem::take(&mut scene.garage_bays);
         let debug_info = scene.debug_info.clone();
         let camera = bays.first().map(|bay| bay.camera).unwrap_or(scene.camera);
@@ -1080,10 +1093,18 @@ impl GarageViewer {
         renderer.set_baked_region(center.to_array(), half_extent, ground_y);
         renderer.set_garage_lights(true, garage::CONCRETE_AMBIENT, &lights);
         renderer.set_shadow_focus(shadow_focus, GARAGE_SHADOW_EXTENT);
+        for lamp in &lamps {
+            renderer.set_mesh_emissive(lamp.housing_mesh, [0.0; 3]);
+            renderer.set_mesh_emissive(lamp.lens_mesh, [0.0; 3]);
+        }
+        let flicker_start = vec![None; bays.len()];
         let mut viewer = GarageViewer {
             renderer,
             debug_info,
             bays,
+            lamps,
+            flicker_start,
+            base_spot_intensity,
             selected_bay: 0,
             steer: 0.0,
             spin: 0.0,
@@ -1131,6 +1152,9 @@ impl GarageViewer {
         }
         if let Some(slot) = self.bays.get_mut(index) {
             *slot = bay;
+        }
+        if let Some(start) = self.flicker_start.get_mut(index) {
+            *start = None;
         }
         self.update_decals();
         self.refresh_debug_info();
@@ -1299,7 +1323,39 @@ impl GarageViewer {
         self.set_bay_paint(selected, paint)
     }
 
+    fn update_garage_lights(&mut self) {
+        let now = performance_now();
+        for index in 0..self.bays.len() {
+            let scale = if self.bays[index].loaded {
+                let start = match self.flicker_start[index] {
+                    Some(start) => start,
+                    None => {
+                        let start = now + index as f64 * 0.03;
+                        self.flicker_start[index] = Some(start);
+                        start
+                    }
+                };
+                garage::concrete_lamp_flicker((now - start) as f32, index)
+            } else {
+                0.0
+            };
+            self.renderer
+                .set_garage_light_intensity(index, self.base_spot_intensity * scale);
+            if let Some(lamp) = self.lamps.get(index) {
+                self.renderer.set_mesh_emissive(
+                    lamp.housing_mesh,
+                    scale_emissive(garage::CONCRETE_LAMP_HOUSING_EMISSIVE, scale),
+                );
+                self.renderer.set_mesh_emissive(
+                    lamp.lens_mesh,
+                    scale_emissive(garage::CONCRETE_LAMP_LENS_EMISSIVE, scale),
+                );
+            }
+        }
+    }
+
     pub fn render(&mut self) -> Result<(), JsValue> {
+        self.update_garage_lights();
         self.renderer.render()
     }
 

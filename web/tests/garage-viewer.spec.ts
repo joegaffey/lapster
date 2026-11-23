@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 
+// Let the selected bay's 0.9 s flicker finish before screenshotting.
+const GARAGE_SETTLE_MS = 1_500;
+
 const waitForGarage = (page: import("@playwright/test").Page) =>
   page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
@@ -21,7 +24,7 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
   await page.goto("/web/garage/?v=cp6");
   await waitForGarage(page);
   await waitForSelectedBay(page);
-  await page.waitForTimeout(750);
+  await page.waitForTimeout(GARAGE_SETTLE_MS);
   await expect(page.locator("#hud")).toHaveClass(/hud-collapsed/);
   await expect(page.locator("#car-loading")).toHaveAttribute("aria-hidden", "true");
   await expect(page.locator("#car-loading")).not.toHaveClass(/car-loading-visible/);

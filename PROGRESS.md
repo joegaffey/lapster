@@ -57,7 +57,7 @@ Deployment:
   Drive/Race panels, selected car, separate track selections, Track Editor and
   Tools. `/web/` is a compatibility redirect to the root. The Pages build
   substitutes the root version marker. Tests target `/` for the launcher.
-- Start-menu cleanup is on `feat/start-menu-cleanup`: Drive and Race launch
+- Start-menu cleanup is merged to `dev` as `6f5baa4` (PR #59): Drive and Race launch
   panels replace the car/track link wall, the selected car opens the Garage,
   Drive uses `race=0` solo mode, Race is limited to Loop Spline Point Terrain
   and marked under development, Track Editor is a main panel, and developer
@@ -80,6 +80,12 @@ Deployment:
   catalogue. The old `?garage=showroom` fallback and the showroom
   `GarageViewer::create` constructor are removed. ADR-0016 is superseded by
   ADR-0017. Full gate green; merged to `dev` as `6cb1f3a` (PR #55).
+- Garage follow-ups are merged to `dev`: selected-first on-demand car loading
+  with a centered loading indicator (`35cf2bb`, PR #60), WebGPU geometry and
+  per-mesh model uploads via `queue.write_buffer` (`67dec0f`/`36201bc`, PRs
+  #61/#62), and per-bay lights that stay off until a car loads and then flicker
+  on over 0.9 s (`0e4cfd1`, PR #63). The default smoke test was scoped to the
+  selected bay (`b7e45ae`, PR #58).
 - Loop Spline Point Terrain is added as a fixture and public track option on
   `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
   `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises
