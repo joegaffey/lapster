@@ -45,25 +45,22 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   );
   await expect(page.locator("#viewer-loading")).toBeHidden();
   await page.waitForFunction(
-    () => {
-      const state = window as any;
-      return (
-        typeof state.__garageCarsTotal === "number" &&
-        state.__garageCarsTotal > 0 &&
-        state.__garageCarsLoaded === state.__garageCarsTotal
-      );
-    },
+    () => JSON.parse((window as any).__garageViewer.bay_info()).loaded === true,
     undefined,
     { timeout: 30_000 },
   );
   const garage = await page.evaluate(() => ({
     error: (window as any).__garageViewerError,
     asset: document.querySelector("#asset")?.textContent,
+    bay: JSON.parse((window as any).__garageViewer.bay_info()),
+    bays: JSON.parse((window as any).__garageViewer.bay_list()),
     debug: JSON.parse((window as any).__garageViewer.debug_info()),
   }));
   expect(garage.error).toBeUndefined();
   expect(garage.asset).toContain("concrete-garage + mazda-rx7");
-  expect(garage.debug.cars.map((car: any) => car.id)).toEqual([
+  expect(garage.bay.carId).toBe("mazda-rx7");
+  expect(garage.bay.loaded).toBe(true);
+  expect(garage.bays.map((bay: any) => bay.carId)).toEqual([
     "mazda-rx7",
     "67gp-cavallo-123",
     "67gp-guthrie-eagle",
@@ -73,7 +70,7 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
     "67gp-upping-ut19",
     "sc-deckard-conejo",
   ]);
-  expect(garage.debug.cars.every((car: any) => car.meshCount > 0)).toBe(true);
+  expect(garage.debug.car.id).toBe("mazda-rx7");
 
   await page.goto("/web/track-viewer/");
   await page.waitForFunction(
