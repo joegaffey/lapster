@@ -65,13 +65,13 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
   expect(state.stats).toContain("car tris");
   expect(state.bays.map((bay: any) => bay.carId)).toEqual([
     "mazda-rx7",
+    "sc-deckard-conejo",
     "67gp-cavallo-123",
     "67gp-guthrie-eagle",
     "67gp-kuiper-t81",
     "67gp-mango-ms7",
     "67gp-murasama-37a",
     "67gp-upping-ut19",
-    "sc-deckard-conejo",
   ]);
   expect(state.debug.car.id).toBe("mazda-rx7");
   expect(pageErrors).toEqual([]);
@@ -134,10 +134,11 @@ test("garage paint picker updates the selected car and drive link", async ({ pag
 
   await page.mouse.move(640, 360);
   await page.click("#bay-next");
+  await page.click("#bay-next");
   const cavallo = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(cavallo.selected).toBe(1);
+  expect(cavallo.selected).toBe(2);
   expect(cavallo.carId).toBe("67gp-cavallo-123");
   expect(cavallo.recolorable).toBe(false);
   expect(cavallo.paintName).toBe("Factory livery");
@@ -159,7 +160,7 @@ test("garage enables textured paint for the Deckard only", async ({ page }) => {
     localStorage.setItem("lapster.car.v1", "sc-deckard-conejo");
   });
 
-  await page.goto("/web/garage/?v=cp6&bay=8");
+  await page.goto("/web/garage/?v=cp6&bay=2");
   await waitForGarage(page);
   await waitForSelectedBay(page);
 
@@ -233,6 +234,7 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
   const panel = page.locator("#paint-panel");
   await page.mouse.move(640, 360);
   await page.click("#bay-next");
+  await page.click("#bay-next");
 
   try {
     const pending = await page.evaluate(() => ({
@@ -240,7 +242,7 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
       loaded: (window as any).__garageCarsLoaded,
       total: (window as any).__garageCarsTotal,
     }));
-    expect(pending.bay.selected).toBe(1);
+    expect(pending.bay.selected).toBe(2);
     expect(pending.bay.loaded).toBe(false);
     expect(pending.loaded).toBeLessThan(pending.total);
 

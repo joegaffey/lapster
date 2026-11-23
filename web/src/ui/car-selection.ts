@@ -17,6 +17,15 @@ export const CAR_OPTIONS: CarOption[] = [
     vehicle: "sports",
   },
   {
+    id: "sc-deckard-conejo",
+    name: "Deckard Conejo",
+    url: "../../fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima",
+    engine: "v8cross",
+    vehicle: "sports",
+    paintable: true,
+    defaultPaint: 0,
+  },
+  {
     id: "67gp-cavallo-123",
     name: "Cavallo 123",
     url: "../../fixtures/cars/67gp-cavallo-123/67gp-cavallo-123.sima",
@@ -57,15 +66,6 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/67gp-upping-ut19/67gp-upping-ut19.sima",
     engine: "v8cross",
     vehicle: "sports",
-  },
-  {
-    id: "sc-deckard-conejo",
-    name: "Deckard Conejo",
-    url: "../../fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima",
-    engine: "v8cross",
-    vehicle: "sports",
-    paintable: true,
-    defaultPaint: 0,
   },
 ];
 

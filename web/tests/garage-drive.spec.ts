@@ -21,7 +21,7 @@ test("selected garage car becomes the driving car", async ({ page }) => {
   const driveHref = await page.locator("#drive-car").getAttribute("href");
   const driveUrl = new URL(driveHref!);
   expect(driveUrl.searchParams.get("bay")).toBe("3");
-  expect(driveUrl.searchParams.get("car")).toContain("67gp-guthrie-eagle");
+  expect(driveUrl.searchParams.get("car")).toContain("67gp-cavallo-123");
   expect(driveUrl.searchParams.has("paint")).toBe(false);
   expect(await page.evaluate(() => localStorage.getItem("lapster.garage.car.v1"))).toBe("2");
 
@@ -61,7 +61,7 @@ test("Deckard paint selected in the garage follows into Drive", async ({ page })
     localStorage.setItem("lapster.car.v1", "sc-deckard-conejo");
   });
 
-  await page.goto("/web/garage/?v=cp6&bay=8");
+  await page.goto("/web/garage/?v=cp6&bay=2");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
