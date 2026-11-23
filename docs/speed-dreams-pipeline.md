@@ -165,9 +165,12 @@ zero-normal triangles across 850 triangles. The repaired wheel is inspectable
 in the **Wheel Lab** under the launcher Tools section.
 
 The 500-vertex Legspin wheel (`67gp-cavallo-123`, `67gp-murasama-37a`) has
-correct normals in the current packs, but its source GLBs also export zero
-normals from Assimp. Extend the same source-normal repair before rebuilding
-those packs.
+correct normals in the current packs. The bake now also repairs missing or
+zero-length Assimp normals for this wheel, so future rebuilds do not bake zero
+normals. A dry-run rebuild of Cavallo and Murasama audits 0 flipped / 0 zero
+normals per wheel with matching geometry, wheel metadata, and texture hashes.
+The current packs are intentionally left unchanged until the Legspin inner-face
+work needs a rebuild.
 
 ## Conversion stages
 

@@ -50,6 +50,30 @@ function faceNormal(positions, a, b, c) {
   ];
 }
 
+// Assimp may keep the NORMAL accessor but fill it with zero-length vectors
+// (as it does for the Legspin wheel source), or drop the accessor entirely.
+// Both cases need the source-normal repair even when there are no duplicate
+// backfaces to remove.
+function hasInvalidNormals(primitive, vertexCount) {
+  const normal = primitive.getAttribute("NORMAL");
+  if (!normal) return true;
+  if (normal.getCount() !== vertexCount) return true;
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    const value = normal.getElement(vertex, []);
+    if (
+      !value ||
+      value.length < 3 ||
+      !Number.isFinite(value[0]) ||
+      !Number.isFinite(value[1]) ||
+      !Number.isFinite(value[2]) ||
+      Math.hypot(value[0], value[1], value[2]) <= 1e-6
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function repairWheelNormals(document, mesh, sourceNormals) {
   if (!sourceNormals) return;
   for (const primitive of mesh.listPrimitives()) {
@@ -76,12 +100,19 @@ function repairWheelNormals(document, mesh, sourceNormals) {
     });
 
     const triangles = [];
+    const allTriangles = [];
     const groups = new Map();
     for (let index = 0; index + 2 < indices.length; index += 3) {
       const ids = [indices[index], indices[index + 1], indices[index + 2]];
       const normal = faceNormal(positions, ids[0], ids[1], ids[2]);
       const length = Math.hypot(...normal);
-      if (length <= 1e-12) continue; // Drop zero-area triangles with no surface.
+      if (length <= 1e-12) {
+        // Zero-area triangles carry no surface. Keep them for normal-only
+        // repairs so the wheel geometry stays identical; the duplicate repair
+        // still drops them.
+        allTriangles.push({ ids, dot: null });
+        continue;
+      }
       let dot = null;
       const vertexNormals = ids.map((id) => source[id]);
       if (vertexNormals.every(Boolean)) {
@@ -98,28 +129,38 @@ function repairWheelNormals(document, mesh, sourceNormals) {
       }
       const triangle = { ids, dot };
       triangles.push(triangle);
+      allTriangles.push(triangle);
       const key = [...ids].sort((a, b) => a - b).join(",");
       const group = groups.get(key);
       if (group) group.push(triangle);
       else groups.set(key, [triangle]);
     }
 
-    // Only repair meshes that actually contain reverse-winding duplicates.
-    // This keeps the healthy wheel assets (single-sided, valid normals) on the
-    // existing bake path.
-    if (![...groups.values()].some((group) => group.length > 1)) continue;
+    // Repair meshes with reverse-winding duplicates (GenkiGrip) and meshes
+    // whose Assimp normals are missing or zero (Legspin). Healthy single-sided
+    // meshes with valid normals stay on the existing bake path.
+    const hasDuplicates = [...groups.values()].some((group) => group.length > 1);
+    if (!hasDuplicates && !hasInvalidNormals(primitive, vertexCount)) continue;
 
-    const kept = [];
-    for (const group of groups.values()) {
-      if (group.length === 1) {
+    // The duplicate repair removes reversed copies and zero-area triangles.
+    // The normal-only repair keeps the original triangles and just rebuilds
+    // the normals so the geometry (including triangle count) is unchanged.
+    let kept;
+    if (hasDuplicates) {
+      kept = [];
+      for (const group of groups.values()) {
+        if (group.length === 1) {
+          kept.push(group[0]);
+          continue;
+        }
+        // Reverse-winding duplicates share the same vertex set. Keep the copy
+        // that agrees with the source normals, or the first copy when the
+        // source normals are unavailable.
+        group.sort((a, b) => (b.dot ?? -1) - (a.dot ?? -1));
         kept.push(group[0]);
-        continue;
       }
-      // Reverse-winding duplicates share the same vertex set. Keep the copy
-      // that agrees with the source normals, or the first copy when the
-      // source normals are unavailable.
-      group.sort((a, b) => (b.dot ?? -1) - (a.dot ?? -1));
-      kept.push(group[0]);
+    } else {
+      kept = allTriangles;
     }
     if (kept.length === 0) continue;
 
