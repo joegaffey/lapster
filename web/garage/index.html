@@ -312,8 +312,7 @@
       }
       #car-loading {
         position: fixed;
-        top: auto;
-        bottom: max(56px, calc(env(safe-area-inset-bottom) + 56px));
+        top: 50%;
         left: 50%;
         z-index: 7;
         display: flex;
@@ -332,14 +331,14 @@
         text-overflow: ellipsis;
         opacity: 0;
         pointer-events: none;
-        transform: translate(-50%, 6px);
+        transform: translate(-50%, calc(-50% + 6px));
         transition:
           opacity 200ms ease,
           transform 220ms ease;
       }
       #car-loading.car-loading-visible {
         opacity: 1;
-        transform: translate(-50%, 0);
+        transform: translate(-50%, -50%);
       }
       #car-loading .loading-spinner {
         width: 12px;
