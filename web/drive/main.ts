@@ -22,6 +22,7 @@ import { setupDevMenu } from "../src/ui/dev-menu.ts";
 import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import {
+  CAR_OPTIONS,
   findCar,
   loadCarPaint,
   loadSelectedCar,
@@ -97,6 +98,41 @@ const TRACK_URL = withPackVersion(
 );
 const carParam = params.get("car");
 const selectedCar = findCar(carParam) ?? loadSelectedCar();
+
+function packUrlSegments(value: string): string[] {
+  let path = value;
+  try {
+    path = new URL(value, "http://lapster.invalid/").pathname;
+  } catch {
+    path = value.split(/[?#]/, 1)[0];
+  }
+  return path.split("/").filter(Boolean);
+}
+
+function isPathSuffix(shorter: string[], longer: string[]): boolean {
+  if (shorter.length === 0 || shorter.length > longer.length) {
+    return false;
+  }
+  const offset = longer.length - shorter.length;
+  return shorter.every((segment, index) => segment === longer[offset + index]);
+}
+
+function findCarByPackUrl(value: string) {
+  const target = packUrlSegments(value);
+  if (target.length === 0) {
+    return null;
+  }
+  for (const car of CAR_OPTIONS) {
+    const catalog = packUrlSegments(car.url);
+    if (isPathSuffix(catalog, target) || isPathSuffix(target, catalog)) {
+      return car;
+    }
+  }
+  return null;
+}
+
+const catalogCar =
+  findCar(carParam) ?? (carParam ? findCarByPackUrl(carParam) : selectedCar);
 const CAR_URL = withPackVersion(
   carParam && !findCar(carParam) ? carParam : selectedCar.url,
   APP_VERSION,
@@ -112,7 +148,7 @@ function resolveCarPaint(): number | null {
       return Math.trunc(value);
     }
   }
-  return loadCarPaint(selectedCar.id);
+  return catalogCar ? loadCarPaint(catalogCar.id) : null;
 }
 const mpMode = params.get("mp") === "1";
 const soloMode = params.get("race") === "0";
@@ -1297,6 +1333,7 @@ async function boot() {
     storedDevTuning ?? undefined,
     mpMode ? REMOTE_SLOTS : aiCount,
     carPaint,
+    catalogCar?.paintable === true,
   );
   const treeDetail = new URLSearchParams(window.location.search).get("trees");
   if (treeDetail === "high" || treeDetail === "low" || treeDetail === "cards") {

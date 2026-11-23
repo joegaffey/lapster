@@ -4,6 +4,8 @@ export interface CarOption {
   url: string;
   engine: string;
   vehicle: string;
+  paintable?: boolean;
+  defaultPaint?: number;
 }
 
 export const CAR_OPTIONS: CarOption[] = [
@@ -62,6 +64,8 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima",
     engine: "v8cross",
     vehicle: "sports",
+    paintable: true,
+    defaultPaint: 0,
   },
 ];
 
