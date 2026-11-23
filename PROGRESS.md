@@ -86,6 +86,13 @@ Deployment:
   #61/#62), and per-bay lights that stay off until a car loads and then flicker
   on over 0.9 s (`0e4cfd1`, PR #63). The default smoke test was scoped to the
   selected bay (`b7e45ae`, PR #58).
+- GenkiGrip wheel normal repair: the four 309-vertex GP67 packs lose Assimp's
+  zero-length and reversed-winding duplicate normals/triangles in the Speed
+  Dreams bake. Audit is now 0 flipped / 0 zero per wheel (was 254 / 480 across
+  850 triangles); the rebuilt packs retain the GENKIGRIP design and branding.
+  The Wheel Lab is under launcher Tools. The bake now repairs missing/zero
+  Legspin source normals too; the current 500 packs remain unchanged and a
+  dry-run rebuild audits clean.
 - Loop Spline Point Terrain is added as a fixture and public track option on
   `feat/loop-spline-point-terrain`: 27 MB baked pack, 8 grid slots, and the
   `section-1` race layout. Follow-up `feat/smooth-loop-spline-terrain` raises
