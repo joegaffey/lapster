@@ -2025,6 +2025,13 @@ impl CameraMode {
     }
 }
 
+/// Camera shots that let the local player's visual pose lag on the worker path.
+///
+/// Bonnet and cockpit stay rigid so they never add input-to-eyes latency.
+fn camera_smooths_player_visual(mode: CameraMode) -> bool {
+    matches!(mode, CameraMode::Chase | CameraMode::Isometric)
+}
+
 /// Only the local Drive slot may take a textured body paint, and only when the
 /// driver selected an explicit paint; AI/remote slots reuse the same car
 /// visual but keep its factory livery.
@@ -2375,6 +2382,7 @@ impl DriveViewer {
         self.reset_race_tracker();
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
@@ -2507,13 +2515,11 @@ impl DriveViewer {
         let prev_velocity = self.vehicle.state.velocity;
         let had_camera_time = self.last_camera_time.is_some();
         self.vehicle.state = remote;
-        self.previous_state = remote;
         self.update_race_tracker();
         self.last_time = None;
         self.accumulator = 0.0;
         self.set_brake_lights(frame[snapshot::BRAKE]);
         self.set_reverse_lights(remote.gear == -1);
-        self.update_visuals();
         let now = performance_now() / 1000.0;
         let dt = camera_step_dt(self.last_camera_time, now);
         self.last_camera_time = Some(now);
@@ -2522,6 +2528,27 @@ impl DriveViewer {
             self.chase
                 .push_impulse(remote.velocity - prev_velocity, &chase_tuning);
         }
+        // Race, telemetry and physics-derived values keep the raw remote state.
+        // Only lagging shots smooth the car body; visual_pose() reads
+        // previous_state while last_time is None.
+        if camera_smooths_player_visual(self.camera_mode) {
+            let (position, rotation) = smooth_player_visual_pose(
+                self.previous_state.position,
+                self.previous_state.rotation,
+                remote.position,
+                remote.rotation,
+                dt,
+                PLAYER_VISUAL_LAG,
+            );
+            self.previous_state = VehicleState {
+                position,
+                rotation,
+                ..remote
+            };
+        } else {
+            self.previous_state = remote;
+        }
+        self.update_visuals();
         if dt > 0.0 {
             self.update_camera(Some(dt));
         } else {
@@ -2579,6 +2606,7 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
@@ -2612,6 +2640,7 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
@@ -2812,6 +2841,9 @@ impl DriveViewer {
         };
         self.chase.clear_shake();
         self.last_camera_time = None;
+        // Drop any smoothed worker-path pose so the first frame in the new shot
+        // snaps to the current raw state instead of blending from stale state.
+        self.previous_state = self.vehicle.state;
         self.apply_cockpit_glass_alpha();
         self.update_dashboard_visibility();
         self.update_camera(None);
@@ -3103,6 +3135,7 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.particles.clear();
         self.set_brake_lights(0.0);
@@ -3432,11 +3465,13 @@ impl DriveViewer {
     }
 
     fn visual_pose(&self) -> (Vec3, Quat) {
-        let alpha = if self.last_time.is_some() {
-            (self.accumulator / FIXED_DT).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
+        // With no main-thread clock running, previous_state holds the pose to
+        // display: the raw remote pose for bonnet/cockpit, or the smoothed
+        // player pose for chase/isometric on the worker path.
+        if self.last_time.is_none() {
+            return (self.previous_state.position, self.previous_state.rotation);
+        }
+        let alpha = (self.accumulator / FIXED_DT).clamp(0.0, 1.0);
         let position = self
             .previous_state
             .position
@@ -3563,6 +3598,36 @@ fn performance_now() -> f64 {
 fn camera_step_dt(last: Option<f64>, now: f64) -> f32 {
     last.map(|last| ((now - last) as f32).clamp(0.0, 0.05))
         .unwrap_or(0.0)
+}
+
+/// Time constant for the local player's smoothed visual pose on the worker path.
+const PLAYER_VISUAL_LAG: f32 = 0.03;
+
+/// Exponential blend factor for the local player's visual pose.
+///
+/// A non-positive or non-finite `dt`, or a zero lag, snaps to the target so the
+/// first frame after reset/place/camera-mode switch never blends stale state.
+fn player_visual_alpha(dt: f32, lag: f32) -> f32 {
+    if !dt.is_finite() || dt <= 0.0 || !lag.is_finite() || lag <= 1e-4 {
+        1.0
+    } else {
+        (1.0 - (-dt / lag).exp()).clamp(0.0, 1.0)
+    }
+}
+
+/// Eases a previous visual pose toward the incoming remote pose.
+fn smooth_player_visual_pose(
+    previous_position: Vec3,
+    previous_rotation: Quat,
+    position: Vec3,
+    rotation: Quat,
+    dt: f32,
+    lag: f32,
+) -> (Vec3, Quat) {
+    let alpha = player_visual_alpha(dt, lag);
+    let position = previous_position.lerp(position, alpha);
+    let rotation = previous_rotation.slerp(rotation, alpha).normalize();
+    (position, rotation)
 }
 
 #[cfg(test)]
@@ -3973,6 +4038,62 @@ mod tests {
         assert!((camera_step_dt(Some(1.0), 1.016) - 0.016).abs() < 1e-6);
         assert_eq!(camera_step_dt(Some(1.0), 5.0), 0.05);
         assert_eq!(camera_step_dt(Some(2.0), 1.0), 0.0);
+    }
+
+    #[test]
+    fn player_visual_alpha_snaps_on_zero_dt_and_stays_finite() {
+        assert_eq!(player_visual_alpha(0.0, PLAYER_VISUAL_LAG), 1.0);
+        assert_eq!(player_visual_alpha(-0.01, PLAYER_VISUAL_LAG), 1.0);
+        assert_eq!(player_visual_alpha(0.016, 0.0), 1.0);
+        assert_eq!(player_visual_alpha(f32::NAN, PLAYER_VISUAL_LAG), 1.0);
+        assert_eq!(player_visual_alpha(f32::INFINITY, PLAYER_VISUAL_LAG), 1.0);
+
+        let alpha = player_visual_alpha(0.016, PLAYER_VISUAL_LAG);
+        assert!(alpha.is_finite());
+        assert!(alpha > 0.0 && alpha < 1.0);
+        let larger = player_visual_alpha(0.032, PLAYER_VISUAL_LAG);
+        assert!(larger > alpha && larger < 1.0);
+    }
+
+    #[test]
+    fn only_lagging_camera_shots_smooth_the_player_visual() {
+        assert!(camera_smooths_player_visual(CameraMode::Chase));
+        assert!(camera_smooths_player_visual(CameraMode::Isometric));
+        assert!(!camera_smooths_player_visual(CameraMode::Bonnet));
+        assert!(!camera_smooths_player_visual(CameraMode::Cockpit));
+    }
+
+    #[test]
+    fn player_visual_pose_snaps_on_zero_dt_and_slerps_rotation() {
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let target = Vec3::new(4.0, 5.0, 6.0);
+        let start_rotation = Quat::from_rotation_y(0.2);
+        let target_rotation = Quat::from_rotation_y(1.2);
+
+        let (snapped, snapped_rotation) = smooth_player_visual_pose(
+            start,
+            start_rotation,
+            target,
+            target_rotation,
+            0.0,
+            PLAYER_VISUAL_LAG,
+        );
+        assert!((snapped - target).length() < 1e-6);
+        assert!((snapped_rotation - target_rotation).length() < 1e-6);
+
+        let (blended, blended_rotation) = smooth_player_visual_pose(
+            start,
+            start_rotation,
+            target,
+            target_rotation,
+            0.016,
+            PLAYER_VISUAL_LAG,
+        );
+        assert!((blended - start).length() > 0.0);
+        assert!((blended - target).length() > 0.0);
+        assert!((blended_rotation.length() - 1.0).abs() < 1e-5);
+        assert!((blended_rotation - start_rotation).length() > 0.0);
+        assert!((blended_rotation - target_rotation).length() > 0.0);
     }
 
     #[test]
