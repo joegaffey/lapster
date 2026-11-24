@@ -2054,6 +2054,7 @@ pub struct DriveViewer {
     info: String,
     accumulator: f32,
     last_time: Option<f64>,
+    last_camera_time: Option<f64>,
     step_times: Vec<f32>,
     track_id: String,
     car_id: String,
@@ -2265,6 +2266,7 @@ impl DriveViewer {
             info,
             accumulator: 0.0,
             last_time: None,
+            last_camera_time: None,
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
             car_id: car_manifest.id,
@@ -2499,6 +2501,11 @@ impl DriveViewer {
 
     pub fn render_remote(&mut self, frame: &[f32]) -> Result<(), JsValue> {
         let remote = state_from_frame(frame)?;
+        // The worker/SAB path replaces the whole state each frame, so capture the
+        // previous velocity and clock state before the overwrite to drive the
+        // same chase animation used by the main-thread path.
+        let prev_velocity = self.vehicle.state.velocity;
+        let had_camera_time = self.last_camera_time.is_some();
         self.vehicle.state = remote;
         self.previous_state = remote;
         self.update_race_tracker();
@@ -2507,7 +2514,19 @@ impl DriveViewer {
         self.set_brake_lights(frame[snapshot::BRAKE]);
         self.set_reverse_lights(remote.gear == -1);
         self.update_visuals();
-        self.update_camera(None);
+        let now = performance_now() / 1000.0;
+        let dt = camera_step_dt(self.last_camera_time, now);
+        self.last_camera_time = Some(now);
+        if self.camera_mode == CameraMode::Chase && had_camera_time && dt > 0.0 {
+            let chase_tuning = self.tuning.camera.chase;
+            self.chase
+                .push_impulse(remote.velocity - prev_velocity, &chase_tuning);
+        }
+        if dt > 0.0 {
+            self.update_camera(Some(dt));
+        } else {
+            self.update_camera(None);
+        }
         self.renderer.render()
     }
 
@@ -2792,6 +2811,7 @@ impl DriveViewer {
             CameraMode::Chase
         };
         self.chase.clear_shake();
+        self.last_camera_time = None;
         self.apply_cockpit_glass_alpha();
         self.update_dashboard_visibility();
         self.update_camera(None);
@@ -3536,6 +3556,15 @@ fn performance_now() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Wall-clock delta between two camera frames, clamped to a sane step.
+///
+/// Returns `0.0` on the first frame so the camera snaps instead of lagging or
+/// shaking in response to an unknown elapsed time.
+fn camera_step_dt(last: Option<f64>, now: f64) -> f32 {
+    last.map(|last| ((now - last) as f32).clamp(0.0, 0.05))
+        .unwrap_or(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3936,6 +3965,14 @@ mod tests {
             assert!((decal * Vec3::NEG_Z - forward).length() < 1e-5);
             assert!((decal * Vec3::X - car * Vec3::X).length() < 1e-5);
         }
+    }
+
+    #[test]
+    fn camera_step_dt_snaps_first_frame_and_clamps_elapsed() {
+        assert_eq!(camera_step_dt(None, 12.5), 0.0);
+        assert!((camera_step_dt(Some(1.0), 1.016) - 0.016).abs() < 1e-6);
+        assert_eq!(camera_step_dt(Some(1.0), 5.0), 0.05);
+        assert_eq!(camera_step_dt(Some(2.0), 1.0), 0.0);
     }
 
     #[test]
