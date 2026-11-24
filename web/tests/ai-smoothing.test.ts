@@ -49,8 +49,9 @@ test("missing previous frame returns a copy of the incoming frame", () => {
 test("position moves toward the incoming frame and other fields pass through", () => {
   const previous = pose(0);
   const frame = pose(10);
-  // dt == tau gives a factor of 1 - exp(-1) ~= 0.632.
-  const smoothed = smoothAiPose(previous, frame, 0.05);
+  // Pass tau explicitly (dt == tau) so this asserts a fixed factor of
+  // 1 - exp(-1) ~= 0.632, independent of the production default.
+  const smoothed = smoothAiPose(previous, frame, 0.05, 0.05);
 
   assert.ok(smoothed[POSITION] > 0, "position did not advance");
   assert.ok(smoothed[POSITION] < 10, "position overshot");
@@ -61,6 +62,17 @@ test("position moves toward the incoming frame and other fields pass through", (
   // Non-pose fields are taken verbatim from the incoming frame.
   assert.equal(smoothed[SNAPSHOT_STATE.velocity], frame[SNAPSHOT_STATE.velocity]);
   assert.equal(smoothed[SNAPSHOT_STATE.engineRpm], frame[SNAPSHOT_STATE.engineRpm]);
+});
+
+test("default time constant applies the shorter 20 ms blend", () => {
+  const previous = pose(0);
+  const frame = pose(10);
+  // Production default tau is 0.02 s, so dt == tau gives ~0.632 again.
+  const smoothed = smoothAiPose(previous, frame, 0.02);
+
+  assert.ok(smoothed[POSITION] > 0, "position did not advance");
+  assert.ok(smoothed[POSITION] < 10, "position overshot");
+  assert.ok(Math.abs(smoothed[POSITION] - 6.321) < 0.01);
 });
 
 test("quaternion sign correction blends along the short arc", () => {

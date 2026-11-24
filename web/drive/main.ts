@@ -36,7 +36,7 @@ import {
   shouldPlayContactSound,
   type ContactEvent,
 } from "../src/sim/contacts.ts";
-import { SnapshotSmoother } from "../src/sim/interpolate.ts";
+import { PlayerStateBuffer } from "../src/sim/player-state.ts";
 import { freezeAiWheels } from "../src/sim/ai-smoothing.ts";
 import {
   aiRenderSource,
@@ -294,7 +294,7 @@ let lastFrame = performance.now() / 1000;
 let frames = 0;
 let accumulated = 0;
 let physics: PhysicsClient | null = null;
-let smoother: SnapshotSmoother | null = null;
+let playerState: PlayerStateBuffer | null = null;
 let physicsWorker = false;
 let driveContactEvents = 0;
 let lastPlayerPosition: [number, number, number] | null = null;
@@ -313,7 +313,7 @@ const aiSmoothedFrames = new Map<number, Float32Array>();
 // bounded to one frame per slot. Empty unless the flag is active.
 const aiRawFrames = new Map<number, Float32Array>();
 let aiLastRenderMs = 0;
-const AI_INTERPOLATION_MS = 60;
+const AI_INTERPOLATION_MS = 32;
 let aiIgnoreFrames = false;
 // Temporary `?aiDebug=1` capture of raw worker frames and rendered AI poses.
 // Null (and effectively inert) unless the flag is set.
@@ -805,6 +805,8 @@ async function setupMultiplayer(viewer: DriveViewer, info: any): Promise<void> {
     viewer.set_local_slot(welcome.slot);
     viewer.place_on_grid(welcome.slot);
     await physics?.placeOnGrid(welcome.slot);
+    // Grid placement keeps the tick; reset the player timeline around it.
+    playerState?.clear();
     for (const state of welcome.states) {
       handleRelayState({
         type: "state",
@@ -969,6 +971,7 @@ async function startLocalRaceCountdown(): Promise<void> {
   // Drop any frames from a previous run after the worker is paused, then let
   // the placement frames through so the AI are visible during the countdown.
   resetAiBuffers();
+  playerState?.clear();
   aiIgnoreFrames = false;
   viewer.place_on_race_grid(playerGridSlot);
   if (physics) {
@@ -977,6 +980,9 @@ async function startLocalRaceCountdown(): Promise<void> {
       if (generation !== raceGeneration) {
         return;
       }
+      // Placement keeps the tick, so drop history explicitly and let the next
+      // frame seed the new grid pose instead of interpolating from the old one.
+      playerState?.clear();
     } catch (error) {
       console.warn("race grid placement failed", error);
       aiIgnoreFrames = false;
@@ -995,6 +1001,7 @@ function reset() {
   if (!viewer) return;
   viewer.reset();
   resetAiBuffers();
+  playerState?.clear();
   steer = 0;
   gear = 1;
   lastSpeedMps = 0;
@@ -1015,7 +1022,7 @@ function reset() {
   if (localRace) {
     void startLocalRaceCountdown();
   } else if (relay && physics) {
-    void physics.placeOnGrid(relay.slot);
+    void physics.placeOnGrid(relay.slot).finally(() => playerState?.clear());
   }
 }
 
@@ -1091,7 +1098,7 @@ function syncCarSetup(setup: any): void {
 }
 
 function currentPlayerPosition(): [number, number, number] | null {
-  const state = smoother?.latest();
+  const state = playerState?.latest();
   if (!state || state.length < SNAPSHOT_STATE.position + 3) {
     return lastPlayerPosition;
   }
@@ -1134,11 +1141,20 @@ function createDriveFacade(target: DriveViewer, client: PhysicsClient): DriveVie
     });
   };
   const syncLatest = () => {
-    if (!smoother) {
+    if (!playerState) {
       return;
     }
-    smoother.update(performance.now());
-    const state = smoother.latest();
+    // A reset or one-shot simulate can teleport across the timeline. Drop the
+    // old history so the delayed frame cannot draw a stale pose, then seed the
+    // buffer with the newest raw sample.
+    playerState.clear();
+    const snapshot = client.reader.readLatest();
+    if (!snapshot) {
+      return;
+    }
+    const now = performance.now();
+    playerState.push(snapshot, now);
+    const state = playerState.latest();
     if (state) {
       target.render_remote(state);
     }
@@ -1571,7 +1587,7 @@ async function boot() {
         buffer.push(tick, tick, frame, nowMs);
       };
       client.onContact = (contact) => handleContact(contact, viewer);
-      smoother = new SnapshotSmoother(client.reader);
+      playerState = new PlayerStateBuffer();
       physicsWorker = true;
       workerAssists = {
         tc: initial.tractionControl,
@@ -1615,7 +1631,7 @@ async function boot() {
       physics?.dispose();
       physics = null;
       ffbSab = null;
-      smoother = null;
+      playerState = null;
       physicsWorker = false;
       driver = viewer;
     }
@@ -1989,7 +2005,7 @@ async function boot() {
     }
 
     try {
-      if (physicsWorker && physics && smoother) {
+      if (physicsWorker && physics && playerState) {
         physics.writeInput({
           steering: steer,
           throttle,
@@ -2000,8 +2016,11 @@ async function boot() {
           buttons: 0,
         });
         const renderNow = performance.now();
-        smoother.update(renderNow);
-        const remoteState = smoother.state(renderNow);
+        const snapshot = physics.reader.readLatest();
+        if (snapshot) {
+          playerState.push(snapshot, renderNow);
+        }
+        const remoteState = playerState.frame(renderNow);
         if (remoteState) {
           renderRemotePlayers(renderNow, remoteState, delta);
           renderAiFrames(renderNow);

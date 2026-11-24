@@ -1,6 +1,6 @@
 import { SNAPSHOT_STATE } from "../types/asset-layout.ts";
 
-const DEFAULT_TIME_CONSTANT_SECONDS = 0.05;
+const DEFAULT_TIME_CONSTANT_SECONDS = 0.02;
 // Clamp the render delta so a paused tab or a hitch does not blend a whole
 // frame's worth of motion at once. The low bound keeps the filter advancing on
 // zero/invalid deltas instead of freezing the AI pose.

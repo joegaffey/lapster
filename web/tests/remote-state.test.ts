@@ -67,10 +67,10 @@ test("history is bounded", () => {
   assert.ok(buffer.interpolationAlpha >= 0 && buffer.interpolationAlpha <= 1);
 });
 
-test("125 Hz AI frames interpolate with a 40 ms delay", () => {
-  const buffer = new RemoteStateBuffer(40);
+test("125 Hz AI frames interpolate with a 32 ms delay", () => {
+  const buffer = new RemoteStateBuffer(32);
   // AI frames land every 4 sim ticks (8 ms). Push enough history that the
-  // 40 ms target falls inside the window instead of clamping to an endpoint.
+  // 32 ms target falls inside the window instead of clamping to an endpoint.
   for (let index = 0; index < 12; index += 1) {
     const tick = index * 4;
     // Position mirrors elapsed AI-frame time so the sample is easy to read.
@@ -78,9 +78,9 @@ test("125 Hz AI frames interpolate with a 40 ms delay", () => {
   }
   assert.equal(buffer.depth, 12);
 
-  // now = 1084 => target = now - offset (1000) - 40 = 44 ms, halfway between
+  // now = 1076 => target = now - offset (1000) - 32 = 44 ms, halfway between
   // the 40 ms and 48 ms frames.
-  const frame = buffer.frame(1084);
+  const frame = buffer.frame(1076);
   assert.ok(frame);
   assert.ok(
     buffer.interpolationAlpha > 0 && buffer.interpolationAlpha < 1,

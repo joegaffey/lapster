@@ -4,11 +4,9 @@ import { NET_STATE_FLOATS } from "./protocol.ts";
 const TICKS_PER_SECOND = 500;
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
 // AI frames arrive every 4 sim ticks (8 ms at 500 Hz) and are drawn with a
-// 60 ms interpolation delay. Six frames only gave 48 ms of history, which left
-// almost no margin past the target and made the remote car hold/jump at frame
-// boundaries. Keep 24 frames (192 ms) so the 60 ms target sits comfortably
-// inside the window, while staying bounded relative to the ~250 ms clock-jump
-// reset.
+// 32 ms interpolation delay. Keep 24 frames (192 ms) so the target sits
+// comfortably inside the window with margin for jitter, while staying bounded
+// relative to the ~250 ms clock-jump reset.
 const MAX_HISTORY = 24;
 const CLOCK_SMOOTHING = 0.08;
 const JITTER_SMOOTHING = 0.1;
@@ -60,6 +58,14 @@ export class RemoteStateBuffer {
     return this.targetMs;
   }
 
+  clear(): void {
+    this.history = [];
+    this.hasClock = false;
+    this.jitterMs = 0;
+    this.alpha = 0;
+    this.targetMs = 0;
+  }
+
   push(seq: number, tick: number, state: ArrayLike<number>, now: number): boolean {
     if (state.length !== NET_STATE_FLOATS || !Number.isFinite(tick) || tick < 0) {
       return false;
@@ -67,9 +73,7 @@ export class RemoteStateBuffer {
     const latest = this.history[this.history.length - 1];
     if (latest) {
       if (tick < latest.tick) {
-        this.history = [];
-        this.hasClock = false;
-        this.jitterMs = 0;
+        this.clear();
       } else if (tick === latest.tick) {
         if (seq <= latest.seq) {
           return false;
