@@ -6,6 +6,10 @@ use crate::scene::CarRig;
 use crate::tuning::{ParticleSurface, ParticleTuning};
 
 pub const MAX_PARTICLES: usize = 2048;
+/// Hard cap on particles emitted by a single car-to-car contact event.
+pub const CONTACT_MAX_PARTICLES: usize = 16;
+/// Upper bound for contact speeds used to scale a contact effect.
+pub const CONTACT_MAX_SPEED: f32 = 40.0;
 const TAU: f32 = std::f32::consts::TAU;
 
 #[repr(C)]
@@ -272,6 +276,82 @@ impl ParticleSystem {
             shape_kind,
             shape_variant,
         });
+    }
+
+    /// Spawn a short-lived, bounded burst for a car-to-car contact.
+    ///
+    /// `budget` is clamped to [`CONTACT_MAX_PARTICLES`] and to any room left
+    /// under the active cap, so a call never grows the system beyond
+    /// [`MAX_PARTICLES`] or the configured `max_active`.
+    pub fn spawn_contact(
+        &mut self,
+        point: Vec3,
+        speed: f32,
+        budget: usize,
+        tuning: &ParticleTuning,
+    ) {
+        let max_active = tuning.max_active.min(MAX_PARTICLES);
+        let remaining = max_active.saturating_sub(self.particles.len());
+        let count = budget.min(CONTACT_MAX_PARTICLES).min(remaining);
+        if count == 0 {
+            return;
+        }
+        let speed = speed.clamp(0.0, CONTACT_MAX_SPEED);
+        let speed_factor = (speed / CONTACT_MAX_SPEED).clamp(0.0, 1.0);
+        let dust = &tuning.surfaces.asphalt;
+        for index in 0..count {
+            let spark = index % 3 == 0;
+            let angle = self.range(0.0, TAU);
+            let horizontal = self.range(0.15, 1.0);
+            let direction = Vec3::new(angle.cos() * horizontal, 0.0, angle.sin() * horizontal);
+            let jitter = Vec3::new(
+                self.range(-0.18, 0.18),
+                self.range(0.0, 0.12),
+                self.range(-0.18, 0.18),
+            );
+            let (color, start_size, end_size, life, alpha, rise, drag) = if spark {
+                (
+                    Vec3::new(1.0, 0.70, 0.28),
+                    self.range(0.03, 0.06),
+                    self.range(0.05, 0.10),
+                    self.range(0.16, 0.34),
+                    0.95,
+                    1.4,
+                    0.9,
+                )
+            } else {
+                (
+                    Vec3::from_array(dust.color),
+                    self.range(0.10, 0.18),
+                    self.range(0.45, 0.80),
+                    self.range(0.45, 0.85),
+                    dust.alpha.min(0.45),
+                    dust.rise,
+                    dust.drag,
+                )
+            };
+            let launch = (0.6 + speed_factor * 3.0) * self.range(0.5, 1.0);
+            let velocity = direction * launch + Vec3::Y * self.range(1.0, 1.6 + speed_factor * 2.0);
+            let rotation = Quat::from_rotation_z(self.range(0.0, TAU));
+            let angular_velocity = Vec3::new(0.0, 0.0, self.range(-3.0, 3.0));
+            let shape_variant = self.range(0.8, 1.2);
+            self.particles.push(Particle {
+                position: point + jitter,
+                velocity,
+                rotation,
+                angular_velocity,
+                age: 0.0,
+                life,
+                start_size,
+                end_size,
+                color,
+                alpha,
+                rise,
+                drag,
+                shape_kind: 0.0,
+                shape_variant,
+            });
+        }
     }
 
     fn rebuild_instances(&mut self, tuning: &ParticleTuning) {
@@ -557,6 +637,40 @@ mod tests {
         particles.clear();
         assert_eq!(particles.count(), 0);
         assert!(particles.instances().is_empty());
+    }
+
+    #[test]
+    fn contact_effect_respects_active_and_hard_caps() {
+        let mut particles = ParticleSystem::new();
+        let tuning = ParticleTuning {
+            max_active: 4,
+            ..Default::default()
+        };
+        particles.spawn_contact(Vec3::new(1.0, 0.5, -2.0), 30.0, 1_000, &tuning);
+        assert_eq!(particles.count(), 4);
+        assert!(particles.count() <= CONTACT_MAX_PARTICLES);
+    }
+
+    #[test]
+    fn contact_effect_never_exceeds_contact_cap() {
+        let mut particles = ParticleSystem::new();
+        let tuning = ParticleTuning::default();
+        particles.spawn_contact(Vec3::ZERO, 10.0, usize::MAX, &tuning);
+        assert_eq!(particles.count(), CONTACT_MAX_PARTICLES);
+        assert!(particles.count() <= MAX_PARTICLES);
+    }
+
+    #[test]
+    fn contact_effect_stays_bounded_when_already_full() {
+        let mut particles = ParticleSystem::new();
+        let tuning = ParticleTuning {
+            max_active: CONTACT_MAX_PARTICLES,
+            ..Default::default()
+        };
+        particles.spawn_contact(Vec3::ZERO, 10.0, CONTACT_MAX_PARTICLES, &tuning);
+        assert_eq!(particles.count(), CONTACT_MAX_PARTICLES);
+        particles.spawn_contact(Vec3::ZERO, 10.0, CONTACT_MAX_PARTICLES, &tuning);
+        assert_eq!(particles.count(), CONTACT_MAX_PARTICLES);
     }
 
     #[test]

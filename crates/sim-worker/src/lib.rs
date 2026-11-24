@@ -1,12 +1,25 @@
 use glam::{Quat, Vec3};
 use sim_core::{
-    AiDriver, AiPace, Controls, PhysicsTuning, RaceTracker, TrackCollider, Vehicle, FIXED_DT,
+    resolve_car_contact_with_slots, AiDriver, AiPace, Controls, PhysicsTuning, RaceTracker,
+    TrackCollider, Vehicle, FIXED_DT,
 };
 use sim_types::snapshot_state as state;
 use sim_types::{CarTuning, RaceData, SpawnPoint, SNAPSHOT_STATE_FLOATS};
 use wasm_bindgen::prelude::*;
 
 const MAX_AI: u32 = 3;
+/// At 500 Hz, one contact event per unordered pair per 100 ms.
+const CONTACT_COOLDOWN_TICKS: u64 = 50;
+
+#[derive(Debug, Clone, Copy)]
+struct ContactEvent {
+    a: u32,
+    b: u32,
+    point: [f32; 3],
+    normal: [f32; 3],
+    speed: f32,
+    tick: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RacePhase {
@@ -103,6 +116,8 @@ pub struct Simulation {
     race: Option<RaceData>,
     race_phase: RacePhase,
     race_laps: u32,
+    contacts: Vec<ContactEvent>,
+    contact_cooldowns: Vec<(u32, u32, u64)>,
 }
 
 #[wasm_bindgen]
@@ -179,6 +194,8 @@ impl Simulation {
             race,
             race_phase: RacePhase::Free,
             race_laps: 0,
+            contacts: Vec::new(),
+            contact_cooldowns: Vec::new(),
         };
         simulation.settle();
         Ok(simulation)
@@ -213,6 +230,7 @@ impl Simulation {
         for ai in &mut self.ai_cars {
             ai.step(phase, race_laps);
         }
+        self.resolve_contacts();
     }
 
     pub fn simulate(
@@ -245,6 +263,7 @@ impl Simulation {
             for ai in &mut self.ai_cars {
                 ai.step(phase, race_laps);
             }
+            self.resolve_contacts();
         }
         self.vehicle.state.tick as f64
     }
@@ -257,6 +276,7 @@ impl Simulation {
             ai.reset();
         }
         self.settle();
+        self.clear_contacts();
     }
 
     pub fn place_on_grid(&mut self, slot: usize) {
@@ -267,20 +287,25 @@ impl Simulation {
             ai.reset();
         }
         self.settle();
+        self.clear_contacts();
     }
 
     /// Places the player and AI on the race grid and holds them before the
     /// start.
     ///
-    /// The player uses `race.grid[slot]`; AI use `race.grid[1..]`. Both headings
-    /// come from the nearest layout tangent until track-ed grid rotations are
-    /// fixed (TD-0021). Grid starts are armed after settling, so the first
-    /// forward start/finish crossing begins lap 1 without incrementing.
+    /// The player uses `race.grid[slot]`; AI fill the lowest grid slots in
+    /// order, skipping the player's slot. Both headings come from the nearest
+    /// layout tangent until track-ed grid rotations are fixed (TD-0021). The
+    /// lateral offset is clamped toward the centreline by
+    /// [`RaceTracker::grid_spawn`]. Grid starts are armed after settling, so
+    /// the first forward start/finish crossing begins lap 1 without
+    /// incrementing.
     pub fn place_on_race_grid(&mut self, slot: u32) {
         let Some(race) = self.race.clone() else {
             return;
         };
-        let Some(player_grid) = race.grid.get(slot as usize).cloned() else {
+        let player_slot = slot as usize;
+        let Some(player_grid) = race.grid.get(player_slot).cloned() else {
             return;
         };
         let layout_tracker = RaceTracker::new(&race);
@@ -289,12 +314,17 @@ impl Simulation {
         self.last_throttle = 0.0;
         self.last_brake = 0.0;
 
-        for (index, ai) in self.ai_cars.iter_mut().enumerate() {
-            if let Some(grid) = race.grid.get(index + 1) {
+        let mut next_grid = 0usize;
+        for ai in &mut self.ai_cars {
+            while next_grid == player_slot {
+                next_grid += 1;
+            }
+            if let Some(grid) = race.grid.get(next_grid) {
                 ai.place_on_grid(grid);
             } else {
                 ai.reset();
             }
+            next_grid += 1;
         }
 
         self.race_phase = RacePhase::Held;
@@ -303,12 +333,38 @@ impl Simulation {
         for ai in &mut self.ai_cars {
             ai.arm_grid_start();
         }
+        self.clear_contacts();
     }
 
     /// Starts the race and stores the lap limit.
     pub fn start_race(&mut self, laps: u32) {
         self.race_laps = laps.max(1);
         self.race_phase = RacePhase::Running;
+        self.clear_contacts();
+    }
+
+    /// Drains pending car-to-car contact events as a JSON array.
+    ///
+    /// The array is empty (`[]`) when no contact occurred since the last drain.
+    pub fn drain_contacts(&mut self) -> String {
+        let contacts = std::mem::take(&mut self.contacts);
+        if contacts.is_empty() {
+            return String::from("[]");
+        }
+        let events = contacts
+            .iter()
+            .map(|contact| {
+                serde_json::json!({
+                    "a": contact.a,
+                    "b": contact.b,
+                    "point": contact.point,
+                    "normal": contact.normal,
+                    "speed": contact.speed,
+                    "tick": contact.tick,
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::to_string(&events).unwrap_or_else(|_| String::from("[]"))
     }
 
     /// Returns one AI car's [`sim_types::RaceState`] as JSON.
@@ -327,6 +383,79 @@ impl Simulation {
         match self.ai_cars.get(index as usize) {
             Some(ai) => snapshot_for(&ai.vehicle, ai.last_throttle, ai.last_brake),
             None => vec![0.0f32; SNAPSHOT_STATE_FLOATS],
+        }
+    }
+
+    fn clear_contacts(&mut self) {
+        self.contacts.clear();
+        self.contact_cooldowns.clear();
+    }
+
+    /// Resolves car-to-car contact for the player and every AI in slot order.
+    ///
+    /// Player slot `0` is paired with each AI slot `index + 1`, then AI pairs
+    /// are resolved in ascending order. The loop is `O(n^2)` and does not
+    /// hard-code the AI count. Events are rate limited per unordered pair.
+    fn resolve_contacts(&mut self) {
+        if self.ai_cars.is_empty() {
+            return;
+        }
+        let mut found = Vec::new();
+        {
+            let (player, ai_cars) = (&mut self.vehicle, &mut self.ai_cars);
+            for (index, ai) in ai_cars.iter_mut().enumerate() {
+                if let Some(contact) =
+                    resolve_car_contact_with_slots(player, &mut ai.vehicle, 0, index as u32 + 1)
+                {
+                    found.push(contact);
+                }
+            }
+            for first in 0..ai_cars.len() {
+                for second in (first + 1)..ai_cars.len() {
+                    let (left, right) = ai_cars.split_at_mut(second);
+                    if let Some(contact) = resolve_car_contact_with_slots(
+                        &mut left[first].vehicle,
+                        &mut right[0].vehicle,
+                        first as u32 + 1,
+                        second as u32 + 1,
+                    ) {
+                        found.push(contact);
+                    }
+                }
+            }
+        }
+
+        for contact in found {
+            let a = contact.a.min(contact.b);
+            let b = contact.a.max(contact.b);
+            let tick = contact.tick;
+            let last = self
+                .contact_cooldowns
+                .iter()
+                .find(|(ca, cb, _)| *ca == a && *cb == b)
+                .map(|(_, _, last)| *last);
+            if let Some(last) = last {
+                if tick.saturating_sub(last) < CONTACT_COOLDOWN_TICKS {
+                    continue;
+                }
+            }
+            self.contacts.push(ContactEvent {
+                a,
+                b,
+                point: contact.point.to_array(),
+                normal: contact.normal.to_array(),
+                speed: contact.relative_speed,
+                tick,
+            });
+            if let Some(entry) = self
+                .contact_cooldowns
+                .iter_mut()
+                .find(|(ca, cb, _)| *ca == a && *cb == b)
+            {
+                entry.2 = tick;
+            } else {
+                self.contact_cooldowns.push((a, b, tick));
+            }
         }
     }
 
@@ -442,9 +571,10 @@ fn race_controls(phase: RacePhase, lap: u32, race_laps: u32, driving: Controls) 
 
 fn oriented_spawn(tracker: &RaceTracker, base: &SpawnPoint) -> SpawnPoint {
     let mut spawn = base.clone();
-    match tracker.nearest_sample(Vec3::from_array(spawn.position)) {
-        Some(sample) => {
-            let yaw = (-sample.tangent.x).atan2(-sample.tangent.z);
+    match tracker.grid_spawn(base) {
+        Some((position, tangent)) => {
+            spawn.position = position.to_array();
+            let yaw = (-tangent.x).atan2(-tangent.z);
             spawn.rotation_xyzw = Quat::from_rotation_y(yaw).to_array();
         }
         None => {
@@ -745,6 +875,20 @@ mod tests {
         }
     }
 
+    fn grid_race() -> RaceData {
+        let mut race = race();
+        race.layout.points = vec![[0.0, 0.0, 0.0], [200.0, 0.0, 0.0]];
+        race.layout.closed = false;
+        race.layout.half_width = 10.0;
+        race.grid = vec![
+            grid("grid_0", [10.0, 0.0, 3.0]),
+            grid("grid_1", [18.0, 0.0, 2.0]),
+            grid("grid_2", [26.0, 0.0, 1.0]),
+            grid("grid_3", [34.0, 0.0, 0.0]),
+        ];
+        race
+    }
+
     fn square_point(progress: f32) -> Vec3 {
         let distance = progress * 40.0;
         if distance <= 10.0 {
@@ -759,21 +903,76 @@ mod tests {
     }
 
     fn simulation() -> Simulation {
-        let race = race();
+        simulation_with_ai(1)
+    }
+
+    fn simulation_with_ai(ai_count: usize) -> Simulation {
+        let mut race = race();
+        while race.grid.len() < ai_count + 1 {
+            let index = race.grid.len();
+            race.grid.push(grid(
+                &format!("grid_{index}"),
+                [index as f32, 0.0, 2.0 + index as f32],
+            ));
+        }
+        simulation_from_race(race, ai_count)
+    }
+
+    fn simulation_from_race(race: RaceData, ai_count: usize) -> Simulation {
         let physics = physics();
         let collider = collider();
         let vehicle = Vehicle::new(physics.clone(), collider.clone(), &race.grid[0]);
-        let driver = AiDriver::default();
-        let ai = AiCar::new(physics, collider, &race, 0, driver).expect("ai car");
+        let mut ai_cars = Vec::new();
+        for index in 0..ai_count {
+            let driver = AiDriver::default();
+            if let Some(ai) = AiCar::new(physics.clone(), collider.clone(), &race, index, driver) {
+                ai_cars.push(ai);
+            }
+        }
         Simulation {
             vehicle,
             last_throttle: 0.0,
             last_brake: 0.0,
-            ai_cars: vec![ai],
+            ai_cars,
             race: Some(race),
             race_phase: RacePhase::Free,
             race_laps: 0,
+            contacts: Vec::new(),
+            contact_cooldowns: Vec::new(),
         }
+    }
+
+    fn place_pairs(simulation: &mut Simulation, pairs: &[(usize, Vec3)]) {
+        for (slot, position) in pairs {
+            if *slot == 0 {
+                simulation.vehicle.state.position = *position;
+                simulation.vehicle.state.velocity = Vec3::ZERO;
+                simulation.vehicle.state.angular_velocity = Vec3::ZERO;
+            } else if let Some(ai) = simulation.ai_cars.get_mut(slot - 1) {
+                ai.vehicle.state.position = *position;
+                ai.vehicle.state.velocity = Vec3::ZERO;
+                ai.vehicle.state.angular_velocity = Vec3::ZERO;
+            }
+        }
+    }
+
+    fn contact_events(simulation: &mut Simulation) -> Vec<serde_json::Value> {
+        serde_json::from_str(&simulation.drain_contacts()).expect("contact JSON")
+    }
+
+    fn force_player_ai_contact(simulation: &mut Simulation) {
+        place_pairs(
+            simulation,
+            &[
+                (0, Vec3::new(0.0, 0.25, 0.0)),
+                (1, Vec3::new(0.0, 0.25, 3.4)),
+            ],
+        );
+        simulation.vehicle.state.tick += 1;
+        if let Some(ai) = simulation.ai_cars.first_mut() {
+            ai.vehicle.state.tick = simulation.vehicle.state.tick;
+        }
+        simulation.resolve_contacts();
     }
 
     #[test]
@@ -842,6 +1041,36 @@ mod tests {
         assert!(simulation.ai_cars[0].last_throttle > 0.0);
     }
 
+    fn assert_grid_x(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.5,
+            "expected x {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn player_slot_three_places_player_last_and_ai_ahead() {
+        let mut simulation = simulation_from_race(grid_race(), 3);
+        simulation.place_on_race_grid(3);
+        assert_eq!(simulation.race_phase, RacePhase::Held);
+
+        assert_grid_x(simulation.vehicle.state.position.x, 34.0);
+        for (ai, expected) in simulation.ai_cars.iter().zip([10.0, 18.0, 26.0]) {
+            assert_grid_x(ai.vehicle.state.position.x, expected);
+        }
+    }
+
+    #[test]
+    fn player_slot_zero_keeps_ai_on_later_grids() {
+        let mut simulation = simulation_from_race(grid_race(), 3);
+        simulation.place_on_race_grid(0);
+
+        assert_grid_x(simulation.vehicle.state.position.x, 10.0);
+        for (ai, expected) in simulation.ai_cars.iter().zip([18.0, 26.0, 34.0]) {
+            assert_grid_x(ai.vehicle.state.position.x, expected);
+        }
+    }
+
     #[test]
     fn ai_brakes_after_the_lap_limit() {
         let mut simulation = simulation();
@@ -883,5 +1112,138 @@ mod tests {
         let held = race_controls(RacePhase::Held, 1, 3, driving);
         assert_eq!(held.throttle, 0.0);
         assert_eq!(held.brake, 0.0);
+    }
+
+    #[test]
+    fn player_to_ai_contact_emits_bounded_event() {
+        let mut simulation = simulation_with_ai(1);
+        place_pairs(
+            &mut simulation,
+            &[
+                (0, Vec3::new(0.0, 0.25, 0.0)),
+                (1, Vec3::new(0.0, 0.25, 3.4)),
+            ],
+        );
+        simulation.vehicle.state.velocity = Vec3::new(0.0, 0.0, 4.0);
+        simulation.ai_cars[0].vehicle.state.velocity = Vec3::new(0.0, 0.0, -4.0);
+
+        simulation.resolve_contacts();
+        let events = contact_events(&mut simulation);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["a"], 0);
+        assert_eq!(events[0]["b"], 1);
+        assert!(events[0]["speed"].as_f64().unwrap_or(0.0) > 1.0);
+        assert_eq!(events[0]["point"].as_array().map(Vec::len), Some(3));
+        assert_eq!(events[0]["normal"].as_array().map(Vec::len), Some(3));
+        assert_eq!(simulation.drain_contacts(), "[]");
+    }
+
+    #[test]
+    fn ai_to_ai_contact_emits_bounded_event() {
+        let mut simulation = simulation_with_ai(2);
+        place_pairs(
+            &mut simulation,
+            &[
+                (0, Vec3::new(100.0, 0.25, 100.0)),
+                (1, Vec3::new(0.0, 0.25, 0.0)),
+                (2, Vec3::new(0.0, 0.25, 3.4)),
+            ],
+        );
+        simulation.ai_cars[0].vehicle.state.velocity = Vec3::new(0.0, 0.0, 4.0);
+        simulation.ai_cars[1].vehicle.state.velocity = Vec3::new(0.0, 0.0, -4.0);
+
+        simulation.resolve_contacts();
+        let events = contact_events(&mut simulation);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["a"], 1);
+        assert_eq!(events[0]["b"], 2);
+        assert!(events[0]["speed"].as_f64().unwrap_or(0.0) > 1.0);
+    }
+
+    #[test]
+    fn contact_events_respect_per_pair_cooldown() {
+        let mut simulation = simulation_with_ai(1);
+        let mut emitted = 0;
+        for tick in 0..=120u64 {
+            place_pairs(
+                &mut simulation,
+                &[
+                    (0, Vec3::new(0.0, 0.25, 0.0)),
+                    (1, Vec3::new(0.0, 0.25, 3.4)),
+                ],
+            );
+            simulation.vehicle.state.tick = tick;
+            simulation.ai_cars[0].vehicle.state.tick = tick;
+            simulation.resolve_contacts();
+            let events = contact_events(&mut simulation);
+            assert!(events.len() <= 1, "more than one event in a tick");
+            emitted += events.len();
+        }
+        assert_eq!(emitted, 3, "expected one event per 50-tick window");
+    }
+
+    #[test]
+    fn ai_count_zero_emits_no_contact_events() {
+        let mut simulation = simulation_with_ai(0);
+        simulation.vehicle.state.position = Vec3::new(0.0, 0.25, 0.0);
+        simulation.vehicle.state.velocity = Vec3::new(0.0, 0.0, 4.0);
+
+        simulation.resolve_contacts();
+
+        assert!(simulation.contacts.is_empty());
+        assert_eq!(simulation.drain_contacts(), "[]");
+    }
+
+    #[test]
+    fn lifecycle_actions_clear_contact_events_and_cooldowns() {
+        let mut simulation = simulation_with_ai(1);
+
+        force_player_ai_contact(&mut simulation);
+        assert_eq!(simulation.contacts.len(), 1);
+        simulation.reset();
+        assert!(simulation.contacts.is_empty());
+        assert!(simulation.contact_cooldowns.is_empty());
+        assert_eq!(simulation.drain_contacts(), "[]");
+
+        force_player_ai_contact(&mut simulation);
+        assert_eq!(simulation.contacts.len(), 1);
+        simulation.place_on_grid(0);
+        assert!(simulation.contacts.is_empty());
+        assert!(simulation.contact_cooldowns.is_empty());
+
+        force_player_ai_contact(&mut simulation);
+        assert_eq!(simulation.contacts.len(), 1);
+        simulation.place_on_race_grid(0);
+        assert!(simulation.contacts.is_empty());
+        assert!(simulation.contact_cooldowns.is_empty());
+
+        force_player_ai_contact(&mut simulation);
+        assert_eq!(simulation.contacts.len(), 1);
+        simulation.start_race(3);
+        assert!(simulation.contacts.is_empty());
+        assert!(simulation.contact_cooldowns.is_empty());
+        assert_eq!(simulation.drain_contacts(), "[]");
+    }
+
+    #[test]
+    fn simulate_path_emits_contact_events() {
+        let mut simulation = simulation_with_ai(1);
+        place_pairs(
+            &mut simulation,
+            &[
+                (0, Vec3::new(0.0, 0.25, 0.0)),
+                (1, Vec3::new(0.0, 0.25, 3.4)),
+            ],
+        );
+        simulation.vehicle.state.velocity = Vec3::new(0.0, 0.0, 6.0);
+        simulation.ai_cars[0].vehicle.state.velocity = Vec3::new(0.0, 0.0, -6.0);
+
+        simulation.simulate(0.02, 0.0, 0.0, 0.0, 1);
+        let events = contact_events(&mut simulation);
+
+        assert!(!events.is_empty(), "simulate did not emit a contact");
+        assert!(events.iter().all(|event| event["tick"].as_u64().is_some()));
     }
 }

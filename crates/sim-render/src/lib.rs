@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 mod camera;
+mod chase;
 mod garage;
 mod grass;
 mod particles;
@@ -13,6 +14,7 @@ mod vegetation;
 use wasm_bindgen::prelude::*;
 
 use crate::camera::Camera;
+use crate::chase::ChaseAnimation;
 use crate::particles::{ParticleInstance, ParticleSystem};
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
@@ -1592,6 +1594,47 @@ fn remote_particles_tuning(base: &ParticleTuning, quality: ParticleQuality) -> P
     tuning
 }
 
+/// Lowest contact speed that produces a visible effect.
+const CONTACT_MIN_SPEED: f32 = 0.5;
+/// Finite contact coordinates are clamped to this world-space magnitude.
+const CONTACT_MAX_COORD: f32 = 10_000.0;
+
+/// Clamp a contact sample and select a bounded particle budget.
+///
+/// Returns `None` for non-finite input, speeds below the visible threshold, or
+/// when Tyre effects are off. The returned budget never exceeds the per-quality
+/// cap or [`crate::particles::CONTACT_MAX_PARTICLES`].
+fn contact_effect_sample(
+    x: f32,
+    y: f32,
+    z: f32,
+    speed: f32,
+    quality: ParticleQuality,
+) -> Option<(Vec3, usize)> {
+    if !x.is_finite() || !y.is_finite() || !z.is_finite() || !speed.is_finite() {
+        return None;
+    }
+    let max_budget = match quality {
+        ParticleQuality::Off => return None,
+        ParticleQuality::Low => 5,
+        ParticleQuality::High => 14,
+    };
+    let speed = speed.clamp(0.0, crate::particles::CONTACT_MAX_SPEED);
+    if speed < CONTACT_MIN_SPEED {
+        return None;
+    }
+    let fraction = (speed / crate::particles::CONTACT_MAX_SPEED).sqrt();
+    let budget = ((fraction * max_budget as f32).ceil() as usize)
+        .clamp(1, max_budget)
+        .min(crate::particles::CONTACT_MAX_PARTICLES);
+    let point = Vec3::new(
+        x.clamp(-CONTACT_MAX_COORD, CONTACT_MAX_COORD),
+        y.clamp(-CONTACT_MAX_COORD, CONTACT_MAX_COORD),
+        z.clamp(-CONTACT_MAX_COORD, CONTACT_MAX_COORD),
+    );
+    Some((point, budget))
+}
+
 fn set_rig_cockpit_visible(renderer: &mut renderer::Renderer, rig: &CarRig, visible: bool) {
     if let Some(index) = rig.dashboard_mesh_index {
         renderer.set_mesh_visible(index, visible);
@@ -2049,9 +2092,11 @@ pub struct DriveViewer {
     local_slot: usize,
     remote_visible: Vec<bool>,
     remote_states: Vec<Option<VehicleState>>,
+    spectator_slot: Option<usize>,
     info: String,
     accumulator: f32,
     last_time: Option<f64>,
+    last_camera_time: Option<f64>,
     step_times: Vec<f32>,
     track_id: String,
     car_id: String,
@@ -2062,6 +2107,7 @@ pub struct DriveViewer {
     color_offset: usize,
     texture_paint: bool,
     camera_mode: CameraMode,
+    chase: ChaseAnimation,
     brake_lights_on: bool,
     reverse_lights_on: bool,
     surface_names: Vec<String>,
@@ -2259,9 +2305,11 @@ impl DriveViewer {
             local_slot: 0,
             remote_visible: vec![false; 1 + remote_slots],
             remote_states: vec![None; 1 + remote_slots],
+            spectator_slot: None,
             info,
             accumulator: 0.0,
             last_time: None,
+            last_camera_time: None,
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
             car_id: car_manifest.id,
@@ -2272,6 +2320,7 @@ impl DriveViewer {
             color_offset,
             texture_paint,
             camera_mode: CameraMode::Chase,
+            chase: ChaseAnimation::default(),
             brake_lights_on: false,
             reverse_lights_on: false,
             surface_names,
@@ -2369,13 +2418,14 @@ impl DriveViewer {
         self.reset_race_tracker();
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
     }
 
@@ -2420,10 +2470,17 @@ impl DriveViewer {
         };
 
         let mut steps = 0;
+        let chase_tuning = self.tuning.camera.chase;
         while self.accumulator >= FIXED_DT && steps < 25 {
             let start = performance_now();
             self.previous_state = self.vehicle.state;
             self.vehicle.step(controls);
+            if self.camera_mode == CameraMode::Chase {
+                self.chase.push_impulse(
+                    self.vehicle.state.velocity - self.previous_state.velocity,
+                    &chase_tuning,
+                );
+            }
             self.update_race_tracker();
             let elapsed = (performance_now() - start) as f32;
             if self.step_times.len() >= 250 {
@@ -2438,7 +2495,7 @@ impl DriveViewer {
         }
 
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(Some(dt));
         self.renderer.render()
     }
 
@@ -2481,22 +2538,42 @@ impl DriveViewer {
         }
         self.previous_state = self.vehicle.state;
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
         self.vehicle.state.tick as u32
     }
 
     pub fn render_remote(&mut self, frame: &[f32]) -> Result<(), JsValue> {
         let remote = state_from_frame(frame)?;
+        // The worker/SAB path replaces the whole state each frame, so capture the
+        // previous velocity and clock state before the overwrite to drive the
+        // same chase animation used by the main-thread path.
+        let prev_velocity = self.vehicle.state.velocity;
+        let had_camera_time = self.last_camera_time.is_some();
         self.vehicle.state = remote;
-        self.previous_state = remote;
         self.update_race_tracker();
         self.last_time = None;
         self.accumulator = 0.0;
         self.set_brake_lights(frame[snapshot::BRAKE]);
         self.set_reverse_lights(remote.gear == -1);
+        let now = performance_now() / 1000.0;
+        let dt = camera_step_dt(self.last_camera_time, now);
+        self.last_camera_time = Some(now);
+        if self.camera_mode == CameraMode::Chase && had_camera_time && dt > 0.0 {
+            let chase_tuning = self.tuning.camera.chase;
+            self.chase
+                .push_impulse(remote.velocity - prev_velocity, &chase_tuning);
+        }
+        // The worker path already applies one tick-timeline interpolation delay
+        // upstream, so all camera shots draw the incoming remote pose directly.
+        // visual_pose() reads previous_state while last_time is None.
+        self.previous_state = remote;
         self.update_visuals();
-        self.update_camera();
+        if dt > 0.0 {
+            self.update_camera(Some(dt));
+        } else {
+            self.update_camera(None);
+        }
         self.renderer.render()
     }
 
@@ -2541,6 +2618,26 @@ impl DriveViewer {
         Ok(())
     }
 
+    /// Points the debug camera at a remote rig, or clears spectator mode.
+    ///
+    /// A negative slot returns the camera to the local car. Other slots are
+    /// validated against the available remote rigs; an invalid or local slot
+    /// leaves the viewer unchanged. The camera is updated immediately so the
+    /// next render uses the new pose.
+    pub fn set_spectator_slot(&mut self, slot: i32) {
+        if slot < 0 {
+            self.spectator_slot = None;
+            self.update_camera(None);
+            return;
+        }
+        let slot = slot as usize;
+        if slot == self.local_slot || slot >= self.rigs.len() {
+            return;
+        }
+        self.spectator_slot = Some(slot);
+        self.update_camera(None);
+    }
+
     pub fn place_on_grid(&mut self, slot: usize) -> Result<(), JsValue> {
         self.vehicle.place_on_grid(slot);
         for _ in 0..500 {
@@ -2549,23 +2646,25 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
     /// Places the local car on the race grid and arms a grid start.
     ///
-    /// The car uses `race.grid[slot]`, oriented to the nearest layout tangent
-    /// until track-ed grid rotations are fixed (TD-0021). An invalid slot or a
-    /// track without race data leaves the viewer unchanged. The local tracker is
-    /// armed and updated at the grid position, so its state reports lap 1, the
-    /// grid progress, and `started = false`.
+    /// The car uses `race.grid[slot]`, projected onto the layout with its
+    /// lateral offset clamped and oriented to the layout tangent until track-ed
+    /// grid rotations are fixed (TD-0021). An invalid slot or a track without
+    /// race data leaves the viewer unchanged. The local tracker is armed and
+    /// updated at the grid position, so its state reports lap 1, the grid
+    /// progress, and `started = false`.
     pub fn place_on_race_grid(&mut self, slot: u32) {
         let Some(race) = self.race.clone() else {
             return;
@@ -2582,13 +2681,14 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
     }
 
@@ -2612,7 +2712,7 @@ impl DriveViewer {
         set_rig_cockpit_visible(&mut self.renderer, &self.rigs[slot], true);
         self.previous_state = self.vehicle.state;
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -2754,7 +2854,7 @@ impl DriveViewer {
     pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
         let bake_ms = self.renderer.set_time_of_day(hours);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         bake_ms
     }
 
@@ -2780,9 +2880,14 @@ impl DriveViewer {
         } else {
             CameraMode::Chase
         };
+        self.chase.clear_shake();
+        self.last_camera_time = None;
+        // Drop any smoothed worker-path pose so the first frame in the new shot
+        // snaps to the current raw state instead of blending from stale state.
+        self.previous_state = self.vehicle.state;
         self.apply_cockpit_glass_alpha();
         self.update_dashboard_visibility();
-        self.update_camera();
+        self.update_camera(None);
     }
 
     fn update_dashboard_visibility(&mut self) {
@@ -2907,14 +3012,14 @@ impl DriveViewer {
         let tuning: CarTuning = serde_json::from_str(json).map_err(js_error)?;
         self.vehicle.apply_setup(&tuning);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
     pub fn reset_car_setup(&mut self) -> Result<(), JsValue> {
         self.vehicle.reset_setup();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3037,6 +3142,23 @@ impl DriveViewer {
         self.renderer.render()
     }
 
+    /// Spawn a cheap, bounded car-to-car contact effect at a world point.
+    ///
+    /// A no-op when Tyre effects are off, the sample is not finite, the speed is
+    /// negligible, or the active particle budget is exhausted. Reuses the
+    /// existing particle system; no per-call system or unbounded allocation.
+    pub fn contact_effect(&mut self, x: f32, y: f32, z: f32, speed: f32) {
+        if self.particle_quality == ParticleQuality::Off || self.particle_tuning.max_active == 0 {
+            return;
+        }
+        let Some((point, budget)) = contact_effect_sample(x, y, z, speed, self.particle_quality)
+        else {
+            return;
+        };
+        self.particles
+            .spawn_contact(point, speed, budget, &self.particle_tuning);
+    }
+
     pub fn tuning(&self) -> String {
         let values = serde_json::to_value(&self.tuning).unwrap_or(serde_json::Value::Null);
         let schema = serde_json::from_str(&TuningConfig::schema_json())
@@ -3057,7 +3179,7 @@ impl DriveViewer {
         self.apply_cockpit_glass_alpha();
         self.refresh_particle_tuning();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3071,12 +3193,13 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3088,7 +3211,7 @@ impl DriveViewer {
         self.apply_cockpit_glass_alpha();
         self.refresh_particle_tuning();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3111,7 +3234,7 @@ impl DriveViewer {
 
     fn write_initial_pose(&mut self) -> Result<(), JsValue> {
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3330,8 +3453,8 @@ impl DriveViewer {
         }
     }
 
-    fn update_camera(&mut self) {
-        let (position, rotation) = self.visual_pose();
+    fn update_camera(&mut self, dt: Option<f32>) {
+        let (position, rotation) = self.camera_pose();
         if self.camera_mode == CameraMode::Bonnet {
             let shot = &self.tuning.camera.bonnet;
             let eye = position + rotation * Vec3::from_array(shot.eye);
@@ -3374,14 +3497,22 @@ impl DriveViewer {
             return;
         }
 
-        let tuning = &self.tuning.camera.chase;
+        let tuning = self.tuning.camera.chase;
+        let pose = match dt {
+            Some(dt) if dt > 0.0 => self.chase.update(position, rotation, dt, &tuning),
+            _ => {
+                self.chase.snap(position, rotation);
+                self.chase.pose(position, rotation, &tuning)
+            }
+        };
         let aspect = self.renderer.aspect();
         let range = (tuning.aspect_far - tuning.aspect_near).max(0.0001);
         let landscape = ((aspect - tuning.aspect_near) / range).clamp(0.0, 1.0);
         let back = tuning.back_near + (tuning.back_far - tuning.back_near) * landscape;
         let height = tuning.height_near + (tuning.height_far - tuning.height_near) * landscape;
         let look_ahead = tuning.look_near + (tuning.look_far - tuning.look_near) * landscape;
-        let eye = position + rotation * Vec3::new(0.0, height, back);
+        let eye =
+            pose.anchor + pose.eye_rotation * Vec3::new(0.0, height, back) + pose.shake_offset;
         let target = position + rotation * Vec3::new(0.0, tuning.target_height, look_ahead);
         self.renderer.set_camera(Camera {
             eye: [eye.x, eye.y.max(tuning.min_eye_y), eye.z],
@@ -3391,12 +3522,23 @@ impl DriveViewer {
         self.renderer.set_grass_center_xz(eye.x, eye.z);
     }
 
+    fn camera_pose(&self) -> (Vec3, Quat) {
+        resolve_camera_pose(
+            self.visual_pose(),
+            self.spectator_slot,
+            self.local_slot,
+            &self.remote_states,
+        )
+    }
+
     fn visual_pose(&self) -> (Vec3, Quat) {
-        let alpha = if self.last_time.is_some() {
-            (self.accumulator / FIXED_DT).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
+        // With no main-thread clock running, previous_state holds the pose to
+        // display: the raw remote pose for bonnet/cockpit, or the smoothed
+        // player pose for chase/isometric on the worker path.
+        if self.last_time.is_none() {
+            return (self.previous_state.position, self.previous_state.rotation);
+        }
+        let alpha = (self.accumulator / FIXED_DT).clamp(0.0, 1.0);
         let position = self
             .previous_state
             .position
@@ -3408,6 +3550,34 @@ impl DriveViewer {
             .normalize();
         (position, rotation)
     }
+}
+
+/// Picks the camera pose, preferring a valid spectator remote rig.
+fn resolve_camera_pose(
+    local: (Vec3, Quat),
+    spectator_slot: Option<usize>,
+    local_slot: usize,
+    remote_states: &[Option<VehicleState>],
+) -> (Vec3, Quat) {
+    spectator_pose(spectator_slot, local_slot, remote_states).unwrap_or(local)
+}
+
+fn spectator_pose(
+    spectator_slot: Option<usize>,
+    local_slot: usize,
+    remote_states: &[Option<VehicleState>],
+) -> Option<(Vec3, Quat)> {
+    let slot = spectator_slot?;
+    if slot == local_slot {
+        return None;
+    }
+    let state = remote_states.get(slot).copied().flatten()?;
+    let rotation = if state.rotation.length_squared() > 1e-8 {
+        state.rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+    Some((state.position, rotation))
 }
 
 fn spawn_rotation(spawn: &SpawnPoint) -> Quat {
@@ -3424,12 +3594,18 @@ fn spawn_rotation(spawn: &SpawnPoint) -> Quat {
     }
 }
 
-/// Orients a grid spawn to the nearest layout tangent (TD-0021 workaround).
+/// Projects a grid spawn onto the clamped race grid, oriented to the layout
+/// tangent (TD-0021 workaround).
+///
+/// Uses [`RaceTracker::grid_spawn`] so the local car shares the worker's
+/// lateral clamp and heading. Falls back to the reversed slot rotation when the
+/// layout has no usable sample.
 fn oriented_race_spawn(tracker: &RaceTracker, base: &SpawnPoint) -> SpawnPoint {
     let mut spawn = base.clone();
-    match tracker.nearest_sample(Vec3::from_array(spawn.position)) {
-        Some(sample) => {
-            let yaw = (-sample.tangent.x).atan2(-sample.tangent.z);
+    match tracker.grid_spawn(&spawn) {
+        Some((position, tangent)) => {
+            spawn.position = position.to_array();
+            let yaw = (-tangent.x).atan2(-tangent.z);
             spawn.rotation_xyzw = Quat::from_rotation_y(yaw).to_array();
         }
         None => {
@@ -3513,6 +3689,15 @@ fn performance_now() -> f64 {
     web_sys::window()
         .and_then(|window| window.performance())
         .map(|performance| performance.now())
+        .unwrap_or(0.0)
+}
+
+/// Wall-clock delta between two camera frames, clamped to a sane step.
+///
+/// Returns `0.0` on the first frame so the camera snaps instead of lagging or
+/// shaking in response to an unknown elapsed time.
+fn camera_step_dt(last: Option<f64>, now: f64) -> f32 {
+    last.map(|last| ((now - last) as f32).clamp(0.0, 0.05))
         .unwrap_or(0.0)
 }
 
@@ -3658,6 +3843,41 @@ mod tests {
 
         assert!(value["last_lap_time"].is_null());
         assert!(value["best_lap_time"].is_null());
+    }
+
+    #[test]
+    fn contact_effect_sample_rejects_non_finite_off_and_negligible() {
+        assert!(contact_effect_sample(f32::NAN, 0.0, 0.0, 5.0, ParticleQuality::High).is_none());
+        assert!(
+            contact_effect_sample(0.0, f32::INFINITY, 0.0, 5.0, ParticleQuality::High).is_none()
+        );
+        assert!(contact_effect_sample(0.0, 0.0, f32::NAN, 5.0, ParticleQuality::High).is_none());
+        assert!(contact_effect_sample(0.0, 0.0, 0.0, f32::NAN, ParticleQuality::High).is_none());
+        assert!(contact_effect_sample(0.0, 0.0, 0.0, 5.0, ParticleQuality::Off).is_none());
+        assert!(contact_effect_sample(0.0, 0.0, 0.0, 0.0, ParticleQuality::High).is_none());
+    }
+
+    #[test]
+    fn contact_effect_sample_clamps_coordinates() {
+        let (point, _) = contact_effect_sample(1.0e9, -1.0e9, 300.0, 5.0, ParticleQuality::High)
+            .expect("finite sample");
+        assert_eq!(point.x, CONTACT_MAX_COORD);
+        assert_eq!(point.y, -CONTACT_MAX_COORD);
+        assert_eq!(point.z, 300.0);
+    }
+
+    #[test]
+    fn contact_effect_sample_respects_quality_budget() {
+        let (_, high) =
+            contact_effect_sample(0.0, 0.0, 0.0, 40.0, ParticleQuality::High).expect("high");
+        let (_, low) =
+            contact_effect_sample(0.0, 0.0, 0.0, 40.0, ParticleQuality::Low).expect("low");
+        assert!(low <= high);
+        assert!(low <= 5);
+        assert!(high <= 14);
+        let (_, capped) = contact_effect_sample(0.0, 0.0, 0.0, 1.0e9, ParticleQuality::High)
+            .expect("large finite speed");
+        assert!(capped <= crate::particles::CONTACT_MAX_PARTICLES);
     }
 
     #[test]
@@ -3884,6 +4104,28 @@ mod tests {
     }
 
     #[test]
+    fn oriented_race_spawn_clamps_wide_slot_and_follows_layout_tangent() {
+        let race = grid_race();
+        let tracker = RaceTracker::new(&race);
+        let wide = grid_spawn("wide", [5.0, 1.0, 4.5]);
+        let spawn = oriented_race_spawn(&tracker, &wide);
+
+        assert!((spawn.position[0] - 5.0).abs() < 1e-4);
+        assert!((spawn.position[1] - 1.0).abs() < 1e-4, "y is preserved");
+        assert!(
+            (spawn.position[2] - sim_core::GRID_MAX_LATERAL).abs() < 1e-4,
+            "lateral offset is clamped: {:?}",
+            spawn.position
+        );
+
+        let forward = spawn_rotation(&spawn) * Vec3::NEG_Z;
+        assert!(
+            (forward - Vec3::X).length() < 1e-4,
+            "heading follows the layout tangent: {forward:?}"
+        );
+    }
+
+    #[test]
     fn race_grid_placement_arms_first_forward_crossing() {
         let race = grid_race();
         let mut tracker = RaceTracker::new(&race);
@@ -3919,6 +4161,14 @@ mod tests {
     }
 
     #[test]
+    fn camera_step_dt_snaps_first_frame_and_clamps_elapsed() {
+        assert_eq!(camera_step_dt(None, 12.5), 0.0);
+        assert!((camera_step_dt(Some(1.0), 1.016) - 0.016).abs() < 1e-6);
+        assert_eq!(camera_step_dt(Some(1.0), 5.0), 0.05);
+        assert_eq!(camera_step_dt(Some(2.0), 1.0), 0.0);
+    }
+
+    #[test]
     fn drive_paint_hint_only_enables_the_local_slot_with_selected_paint() {
         assert_eq!(drive_paint_hints(false, None, 4), vec![false; 4]);
         assert_eq!(drive_paint_hints(false, Some(3), 4), vec![false; 4]);
@@ -3933,5 +4183,43 @@ mod tests {
         );
         assert_eq!(drive_paint_hints(true, Some(3), 1), vec![true]);
         assert!(drive_paint_hints(true, Some(3), 0).is_empty());
+    }
+
+    fn test_vehicle_state(position: Vec3, rotation: Quat) -> VehicleState {
+        VehicleState {
+            position,
+            rotation,
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            wheels: [WheelState::default(); 4],
+            engine_rpm: 0.0,
+            gear: 1,
+            steering_rack_torque: 0.0,
+            tick: 0,
+        }
+    }
+
+    #[test]
+    fn spectator_camera_uses_remote_pose_until_cleared() {
+        let local = (Vec3::new(1.0, 0.0, 2.0), Quat::from_rotation_y(0.25));
+        let remote_position = Vec3::new(30.0, 1.0, -12.0);
+        let remote_rotation = Quat::from_rotation_y(std::f32::consts::PI);
+        let remote_states = [
+            None,
+            Some(test_vehicle_state(remote_position, remote_rotation)),
+        ];
+
+        // Setting the spectator slot selects the remote pose once available.
+        let (position, rotation) = resolve_camera_pose(local, Some(1), 0, &remote_states);
+        assert_eq!(position, remote_position);
+        assert!((rotation * Vec3::NEG_Z - remote_rotation * Vec3::NEG_Z).length() < 1e-5);
+
+        // A slot without a remote state falls back to the local pose.
+        let (position, _) = resolve_camera_pose(local, Some(2), 0, &remote_states);
+        assert_eq!(position, local.0);
+
+        // Clearing the spectator slot returns to the local pose.
+        let (position, _) = resolve_camera_pose(local, None, 0, &remote_states);
+        assert_eq!(position, local.0);
     }
 }

@@ -6,6 +6,41 @@ use crate::collider::TrackCollider;
 
 pub const FIXED_DT: f32 = 1.0 / 500.0;
 
+/// Front/rear body overhang past the wheelbase used for car contact.
+const CONTACT_LENGTH_OVERHANG: f32 = 0.9;
+/// Tire and mirror margin past the half track used for car contact.
+const CONTACT_WIDTH_MARGIN: f32 = 0.25;
+/// Small contact skin that keeps resolved boxes just clear of each other.
+const CONTACT_SKIN: f32 = 0.02;
+const CONTACT_MIN_HALF_LENGTH: f32 = 1.9;
+const CONTACT_MAX_HALF_LENGTH: f32 = 2.3;
+const CONTACT_MIN_HALF_WIDTH: f32 = 0.9;
+const CONTACT_MAX_HALF_WIDTH: f32 = 1.1;
+
+/// Radius of each horizontal wall/environment probe around the car body.
+const WALL_PROBE_RADIUS: f32 = 0.45;
+const WALL_PROBE_HEIGHT: f32 = 0.4;
+const WALL_HALF_WIDTH: f32 = 0.45;
+const WALL_HALF_LENGTH: f32 = 1.65;
+/// Eight perimeter probes plus interior points, including the footprint
+/// centre. The centre probe catches a thin post under the body instead of
+/// letting it slip between the perimeter samples.
+const WALL_PERIMETER_PROBES: [Vec3; 8] = [
+    Vec3::new(-WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, -WALL_HALF_LENGTH),
+    Vec3::new(0.0, WALL_PROBE_HEIGHT, -WALL_HALF_LENGTH),
+    Vec3::new(WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, -WALL_HALF_LENGTH),
+    Vec3::new(-WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, 0.0),
+    Vec3::new(WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, 0.0),
+    Vec3::new(-WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, WALL_HALF_LENGTH),
+    Vec3::new(0.0, WALL_PROBE_HEIGHT, WALL_HALF_LENGTH),
+    Vec3::new(WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, WALL_HALF_LENGTH),
+];
+const WALL_INTERIOR_PROBES: [Vec3; 3] = [
+    Vec3::new(0.0, WALL_PROBE_HEIGHT, 0.0),
+    Vec3::new(0.0, WALL_PROBE_HEIGHT, -0.825),
+    Vec3::new(0.0, WALL_PROBE_HEIGHT, 0.825),
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PhysicsTuning {
@@ -286,6 +321,45 @@ impl Vehicle {
 
     pub fn esc_activity(&self) -> f32 {
         self.esc_activity
+    }
+
+    /// World-space centre of gravity used as the lever origin for contact
+    /// impulses. Crate-internal so car-to-car contact can reuse the same body
+    /// mass properties without exposing them as public API.
+    pub(crate) fn center_of_gravity_world(&self) -> Vec3 {
+        self.state.position + self.state.rotation * Vec3::from_array(self.physics.center_of_gravity)
+    }
+
+    pub(crate) fn inverse_mass(&self) -> f32 {
+        1.0 / self.physics.mass.max(1.0)
+    }
+
+    /// Half extents `(length, width)` of this car's XZ contact box in metres.
+    ///
+    /// Derived from the car's own [`CarPhysics`] so different models separate at
+    /// their own body size rather than a shared hard-coded footprint.
+    pub(crate) fn contact_half_extents(&self) -> (f32, f32) {
+        let half_length =
+            (self.physics.wheelbase.max(0.0) * 0.5 + CONTACT_LENGTH_OVERHANG + CONTACT_SKIN)
+                .clamp(CONTACT_MIN_HALF_LENGTH, CONTACT_MAX_HALF_LENGTH);
+        let half_track = self
+            .physics
+            .track_width
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max)
+            * 0.5;
+        let half_width = (half_track + CONTACT_WIDTH_MARGIN + CONTACT_SKIN)
+            .clamp(CONTACT_MIN_HALF_WIDTH, CONTACT_MAX_HALF_WIDTH);
+        (half_length, half_width)
+    }
+
+    /// Applies the inverse body inertia to a world-space angular vector.
+    pub(crate) fn inv_inertia_apply(&self, vector: Vec3) -> Vec3 {
+        let inertia = Vec3::from_array(self.physics.inertia).max(Vec3::splat(1.0));
+        let inverse = Vec3::new(1.0 / inertia.x, 1.0 / inertia.y, 1.0 / inertia.z);
+        let local = self.state.rotation.inverse() * vector;
+        self.state.rotation * (local * inverse)
     }
 
     pub fn setup(&self) -> CarTuning {
@@ -821,36 +895,92 @@ impl Vehicle {
     }
 
     fn resolve_wall_collisions(&mut self) {
-        const RADIUS: f32 = 0.45;
-        const HALF_WIDTH: f32 = 0.45;
-        const HALF_LENGTH: f32 = 1.65;
         let rotation = self.state.rotation;
         let cg_world =
             self.state.position + rotation * Vec3::from_array(self.physics.center_of_gravity);
-        let offsets = [
-            Vec3::new(0.0, 0.4, -HALF_LENGTH),
-            Vec3::new(-HALF_WIDTH, 0.4, -HALF_LENGTH),
-            Vec3::new(HALF_WIDTH, 0.4, -HALF_LENGTH),
-            Vec3::new(-HALF_WIDTH, 0.4, 0.0),
-            Vec3::new(HALF_WIDTH, 0.4, 0.0),
-            Vec3::new(-HALF_WIDTH, 0.4, HALF_LENGTH),
-            Vec3::new(HALF_WIDTH, 0.4, HALF_LENGTH),
-            Vec3::new(0.0, 0.4, HALF_LENGTH),
-        ];
+        // Adjacent probes can report the same wall contact. Keep a small fixed
+        // list of contacts already resolved so the common path stays
+        // allocation-free while avoiding duplicate impulses.
+        let mut applied: [(Vec3, Vec3); 16] = [(Vec3::ZERO, Vec3::ZERO); 16];
+        let mut applied_len = 0usize;
         let mut correction = Vec3::ZERO;
-        for offset in offsets {
-            let center = self.state.position + rotation * offset;
-            for contact in self.collider.wall_contacts(center, RADIUS) {
-                let normal = Vec3::new(contact.normal.x, 0.0, contact.normal.z).normalize_or_zero();
-                if normal.length_squared() < 0.5 {
-                    continue;
+        let mut interior_correction = Vec3::ZERO;
+        let mut contact_sum = Vec3::ZERO;
+        let mut contact_count = 0u32;
+        let mut first_normal = Vec3::ZERO;
+        let mut opposing = false;
+        let mut max_penetration = 0.0f32;
+        for pass in 0..2 {
+            let probes: &[Vec3] = if pass == 0 {
+                &WALL_PERIMETER_PROBES
+            } else {
+                &WALL_INTERIOR_PROBES
+            };
+            for &offset in probes {
+                let center = self.state.position + rotation * offset;
+                for contact in self.collider.wall_contacts(center, WALL_PROBE_RADIUS) {
+                    let normal =
+                        Vec3::new(contact.normal.x, 0.0, contact.normal.z).normalize_or_zero();
+                    if normal.length_squared() < 0.5 {
+                        continue;
+                    }
+                    let duplicate = applied[..applied_len]
+                        .iter()
+                        .any(|(point, applied_normal)| {
+                            point.distance_squared(contact.point) < 1e-6
+                                && applied_normal.dot(normal) > 0.999
+                        });
+                    if !duplicate {
+                        if applied_len < applied.len() {
+                            applied[applied_len] = (contact.point, normal);
+                            applied_len += 1;
+                        }
+                        let point = Vec3::new(contact.point.x, cg_world.y, contact.point.z);
+                        self.apply_contact_impulse(point, normal);
+                    }
+                    if contact_count == 0 {
+                        first_normal = normal;
+                    } else if first_normal.dot(normal) < -0.5 {
+                        opposing = true;
+                    }
+                    contact_count += 1;
+                    contact_sum += contact.point;
+                    max_penetration = max_penetration.max(contact.penetration);
+                    let candidate = normal * contact.penetration;
+                    if candidate.length_squared() > correction.length_squared() {
+                        correction = candidate;
+                    }
+                    if pass == 1
+                        && candidate.length_squared() > interior_correction.length_squared()
+                    {
+                        interior_correction = candidate;
+                    }
                 }
-                let point = Vec3::new(contact.point.x, cg_world.y, contact.point.z);
-                self.apply_contact_impulse(point, normal);
-                let candidate = normal * contact.penetration;
-                if candidate.length_squared() > correction.length_squared() {
-                    correction = candidate;
-                }
+            }
+        }
+        // Interior probes can straddle a thin post while perimeter probes push
+        // the other way. Follow the interior escape direction so the post does
+        // not trap the car in a positional oscillation.
+        let mut correction = if interior_correction.length_squared() > 0.0
+            && correction.dot(interior_correction) < 0.0
+        {
+            interior_correction
+        } else {
+            correction
+        };
+        // Opposing contacts from the interior probes mean the body straddles a
+        // compact obstacle such as a post. Push away from the average contact
+        // point (the obstacle) so the car slides clear instead of oscillating
+        // between the two sides.
+        if opposing && interior_correction.length_squared() > 0.0 && contact_count > 0 {
+            let average = contact_sum / contact_count as f32;
+            let escape = Vec3::new(
+                self.state.position.x - average.x,
+                0.0,
+                self.state.position.z - average.z,
+            );
+            if escape.length_squared() > 1e-4 {
+                correction = escape.normalize() * max_penetration;
             }
         }
         self.state.position += correction;
@@ -1013,7 +1143,7 @@ fn clamp_length(vector: Vec3, max_length: f32) -> Vec3 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::collider::TrackCollider;
     use sim_types::{
@@ -1022,7 +1152,7 @@ mod tests {
         WheelPhysics,
     };
 
-    fn physics() -> CarPhysics {
+    pub(crate) fn physics() -> CarPhysics {
         let suspension = SuspensionSpec {
             travel: 0.15,
             spring_rate: 55_000.0,
@@ -1134,7 +1264,7 @@ mod tests {
         }
     }
 
-    fn collider() -> TrackCollider {
+    pub(crate) fn collider() -> TrackCollider {
         let collision = TrackCollision {
             vertices: vec![
                 [-500.0, 0.0, -500.0],
@@ -1210,6 +1340,61 @@ mod tests {
         TrackCollider::from_collision(&collision, &metadata)
     }
 
+    fn post_collider(post_x: f32, post_z: f32, post_radius: f32) -> TrackCollider {
+        let r = post_radius;
+        let collision = TrackCollision {
+            vertices: vec![
+                [-500.0, 0.0, -500.0],
+                [-500.0, 0.0, 500.0],
+                [500.0, 0.0, 500.0],
+                [500.0, 0.0, -500.0],
+                [post_x - r, 0.0, post_z - r],
+                [post_x + r, 0.0, post_z - r],
+                [post_x + r, 0.0, post_z + r],
+                [post_x - r, 0.0, post_z + r],
+                [post_x - r, 2.0, post_z - r],
+                [post_x + r, 2.0, post_z - r],
+                [post_x + r, 2.0, post_z + r],
+                [post_x - r, 2.0, post_z + r],
+            ],
+            indices: vec![
+                0, 1, 2, 0, 2, 3, // ground
+                4, 5, 9, 4, 9, 8, // post -z face
+                5, 6, 10, 5, 10, 9, // post +x face
+                6, 7, 11, 6, 11, 10, // post +z face
+                7, 4, 8, 7, 8, 11, // post -x face
+            ],
+            surface_ids: vec![0, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+            bounds: Aabb {
+                min: [-500.0, 0.0, -500.0],
+                max: [500.0, 2.0, 500.0],
+            },
+        };
+        let metadata = TrackMetadata {
+            name: String::from("post"),
+            length: 100.0,
+            spawns: Vec::new(),
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+            surfaces: vec![
+                SurfaceSpec {
+                    id: 0,
+                    name: String::from("asphalt"),
+                    friction: 1.0,
+                    roughness: 0.0,
+                },
+                SurfaceSpec {
+                    id: 1,
+                    name: String::from("wall"),
+                    friction: 0.45,
+                    roughness: 0.5,
+                },
+            ],
+        };
+        TrackCollider::from_collision(&collision, &metadata)
+    }
+
     fn slope_collider() -> TrackCollider {
         let slope = 0.3;
         let vertices = vec![
@@ -1244,7 +1429,7 @@ mod tests {
         TrackCollider::from_collision(&collision, &metadata)
     }
 
-    fn spawn() -> SpawnPoint {
+    pub(crate) fn spawn() -> SpawnPoint {
         SpawnPoint {
             name: String::from("start"),
             position: [0.0, 0.0, 0.0],
@@ -1440,6 +1625,68 @@ mod tests {
             rear < front * 0.5,
             "rear {rear} should be much slower than front {front}"
         );
+    }
+
+    fn wall_contact_summary(vehicle: &Vehicle) -> (usize, f32) {
+        let mut count = 0usize;
+        let mut max_penetration = 0.0f32;
+        for probes in [&WALL_PERIMETER_PROBES[..], &WALL_INTERIOR_PROBES[..]] {
+            for &offset in probes {
+                let center = vehicle.state.position + vehicle.state.rotation * offset;
+                for contact in vehicle.collider.wall_contacts(center, WALL_PROBE_RADIUS) {
+                    count += 1;
+                    max_penetration = max_penetration.max(contact.penetration);
+                }
+            }
+        }
+        (count, max_penetration)
+    }
+
+    #[test]
+    fn thin_post_under_body_pushes_car_clear() {
+        for post_radius in [0.13, 0.24] {
+            let mut vehicle =
+                Vehicle::new(physics(), post_collider(0.0, 0.0, post_radius), &spawn());
+            let start = vehicle.state.position;
+
+            let (initial_contacts, initial_penetration) = wall_contact_summary(&vehicle);
+            assert!(
+                initial_contacts > 0,
+                "post under the body should produce wall contacts (r={post_radius})"
+            );
+            assert!(
+                initial_penetration > 0.1,
+                "post should initially overlap the body probes (r={post_radius}): {initial_penetration}"
+            );
+
+            for _ in 0..600 {
+                vehicle.step(Controls::default());
+                assert!(vehicle.state.position.is_finite());
+                assert!(vehicle.state.velocity.is_finite());
+                let (_, penetration) = wall_contact_summary(&vehicle);
+                assert!(
+                    penetration <= WALL_PROBE_RADIUS + 1e-3,
+                    "post penetrated the body probes too deeply (r={post_radius}): {penetration}"
+                );
+            }
+
+            let travelled = (vehicle.state.position - start).length();
+            assert!(
+                travelled > 0.9,
+                "car did not move clear of the post (r={post_radius}): pos={:?}",
+                vehicle.state.position
+            );
+            let (_, penetration) = wall_contact_summary(&vehicle);
+            assert!(
+                penetration < 0.02,
+                "car still interpenetrates the post after the run (r={post_radius}): {penetration}"
+            );
+            let up = vehicle.state.rotation * Vec3::Y;
+            assert!(
+                up.y > 0.9,
+                "car tipped off the post (r={post_radius}): up={up:?}"
+            );
+        }
     }
 
     #[test]

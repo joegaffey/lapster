@@ -1,6 +1,6 @@
 # AI Opponents — Race-Grid Path Following
 
-- **Status:** complete; full gate passed; PR pending
+- **Status:** complete; merged to `dev` as PR #49
 - **Date:** 2026-11-22
 - **Owner:** architect
 - **Domains:** architect, physics, web

@@ -1,6 +1,6 @@
 # AI Field — Three Opponents, Pace, and Performance
 
-- **Status:** complete; full gate passed; PR pending
+- **Status:** complete; merged to `dev` as PR #50
 - **Date:** 2026-11-22
 - **Owner:** architect
 - **Domains:** architect, physics, web

@@ -1,6 +1,6 @@
 # AI Motion Smoothing and Player Steering Rate
 
-- **Status:** implementation complete; full gate passed; PR #54 pending merge
+- **Status:** complete; merged to `dev` as PR #54; released via PR #65
 - **Date:** 2026-11-22
 - **Owner:** architect
 - **Domains:** architect, physics, web
@@ -132,3 +132,21 @@ Added in the same batch after local rig testing:
   manual render-scale floor. There is no automatic scaling.
 - Local rig check: `?ai=3` publishes three batched AI states, Tyre effects
   `Off` reports zero particles, and 50% scale maps 1280x720 to 640x360.
+
+## 10. Follow-up: AI throttle/brake smoothing
+
+The original batch deferred throttle/brake hysteresis. It is still needed:
+with one or three AI, the controller alternates throttle and brake around the
+target speed, producing a constant ±1 m/s surge even when the cars are not
+touching.
+
+Follow-up fix:
+
+- add a throttle/brake mode with hysteresis outside the target-speed band;
+- rate-limit throttle and brake commands;
+- smooth the target speed between controller ticks;
+- keep the existing steering-rate limit, gear cooldowns, determinism, and both
+  the 125 Hz AI frame cadence and the remote clock reset.
+
+Tests must assert the AI does not chatter between throttle and brake on a
+steady target and keeps existing corner/straight behavior.

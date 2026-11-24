@@ -87,6 +87,37 @@ test("grid states rank by slot before movement", () => {
   );
 });
 
+test("start order breaks equal-distance grid ties", () => {
+  const race = new RaceDirector({
+    totalLaps: 3,
+    layoutLength: 100,
+    aiSlots: [1, 2, 3],
+    startOrder: [1, 2, 3, 0],
+    now: () => 0,
+  });
+  placeOnGrid(race);
+
+  const view = race.view();
+  assert.deepEqual(
+    view.cars.map((car) => car.slot),
+    [1, 2, 3, 0],
+  );
+  assert.deepEqual(
+    view.cars.map((car) => car.totalDistanceM),
+    [0, 0, 0, 0],
+  );
+  assert.equal(view.playerPosition, 4);
+
+  const defaultRace = director();
+  placeOnGrid(defaultRace);
+  const defaultView = defaultRace.view();
+  assert.deepEqual(
+    defaultView.cars.map((car) => car.slot),
+    [0, 1, 2, 3],
+  );
+  assert.equal(defaultView.playerPosition, 1);
+});
+
 test("a car behind the line gains distance after the start crossing", () => {
   const race = director();
   race.updatePlayer({

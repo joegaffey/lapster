@@ -3,9 +3,18 @@ import { NET_STATE_FLOATS } from "./protocol.ts";
 
 const TICKS_PER_SECOND = 500;
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
-const MAX_HISTORY = 6;
+// AI frames arrive every 4 sim ticks (8 ms at 500 Hz) and are drawn with a
+// 32 ms interpolation delay. Keep 24 frames (192 ms) so the target sits
+// comfortably inside the window with margin for jitter, while staying bounded
+// relative to the ~250 ms clock-jump reset.
+const MAX_HISTORY = 24;
 const CLOCK_SMOOTHING = 0.08;
 const JITTER_SMOOTHING = 0.1;
+// A pause (for example the race countdown) leaves the remote tick clock stale
+// while local time keeps moving. Smoothing across that gap freezes the remote
+// car and then makes it lurch to catch up, so snap instead once the sample
+// offset error is this large.
+const MAX_CLOCK_ERROR_MS = 250;
 
 interface TimedState {
   seq: number;
@@ -49,6 +58,14 @@ export class RemoteStateBuffer {
     return this.targetMs;
   }
 
+  clear(): void {
+    this.history = [];
+    this.hasClock = false;
+    this.jitterMs = 0;
+    this.alpha = 0;
+    this.targetMs = 0;
+  }
+
   push(seq: number, tick: number, state: ArrayLike<number>, now: number): boolean {
     if (state.length !== NET_STATE_FLOATS || !Number.isFinite(tick) || tick < 0) {
       return false;
@@ -56,9 +73,7 @@ export class RemoteStateBuffer {
     const latest = this.history[this.history.length - 1];
     if (latest) {
       if (tick < latest.tick) {
-        this.history = [];
-        this.hasClock = false;
-        this.jitterMs = 0;
+        this.clear();
       } else if (tick === latest.tick) {
         if (seq <= latest.seq) {
           return false;
@@ -77,8 +92,16 @@ export class RemoteStateBuffer {
       this.hasClock = true;
     } else {
       const error = sampleOffset - this.clockOffsetMs;
-      this.jitterMs += (Math.abs(error) - this.jitterMs) * JITTER_SMOOTHING;
-      this.clockOffsetMs += error * CLOCK_SMOOTHING;
+      if (Math.abs(error) > MAX_CLOCK_ERROR_MS) {
+        // Timeline discontinuity: adopt the new sample offset immediately and
+        // drop the stale jitter estimate. Keep the frame history so the next
+        // frame() can still interpolate across the boundary.
+        this.clockOffsetMs = sampleOffset;
+        this.jitterMs = 0;
+      } else {
+        this.jitterMs += (Math.abs(error) - this.jitterMs) * JITTER_SMOOTHING;
+        this.clockOffsetMs += error * CLOCK_SMOOTHING;
+      }
     }
 
     this.history.push({
