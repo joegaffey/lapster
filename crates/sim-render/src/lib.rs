@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 mod camera;
+mod chase;
 mod garage;
 mod grass;
 mod particles;
@@ -13,6 +14,7 @@ mod vegetation;
 use wasm_bindgen::prelude::*;
 
 use crate::camera::Camera;
+use crate::chase::ChaseAnimation;
 use crate::particles::{ParticleInstance, ParticleSystem};
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
 use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
@@ -2064,6 +2066,13 @@ impl CameraMode {
     }
 }
 
+/// Camera shots that let the local player's visual pose lag on the worker path.
+///
+/// Bonnet and cockpit stay rigid so they never add input-to-eyes latency.
+fn camera_smooths_player_visual(mode: CameraMode) -> bool {
+    matches!(mode, CameraMode::Chase | CameraMode::Isometric)
+}
+
 /// Only the local Drive slot may take a textured body paint, and only when the
 /// driver selected an explicit paint; AI/remote slots reuse the same car
 /// visual but keep its factory livery.
@@ -2094,6 +2103,7 @@ pub struct DriveViewer {
     info: String,
     accumulator: f32,
     last_time: Option<f64>,
+    last_camera_time: Option<f64>,
     step_times: Vec<f32>,
     track_id: String,
     car_id: String,
@@ -2104,6 +2114,7 @@ pub struct DriveViewer {
     color_offset: usize,
     texture_paint: bool,
     camera_mode: CameraMode,
+    chase: ChaseAnimation,
     brake_lights_on: bool,
     reverse_lights_on: bool,
     surface_names: Vec<String>,
@@ -2305,6 +2316,7 @@ impl DriveViewer {
             info,
             accumulator: 0.0,
             last_time: None,
+            last_camera_time: None,
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
             car_id: car_manifest.id,
@@ -2315,6 +2327,7 @@ impl DriveViewer {
             color_offset,
             texture_paint,
             camera_mode: CameraMode::Chase,
+            chase: ChaseAnimation::default(),
             brake_lights_on: false,
             reverse_lights_on: false,
             surface_names,
@@ -2412,13 +2425,14 @@ impl DriveViewer {
         self.reset_race_tracker();
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
     }
 
@@ -2463,10 +2477,17 @@ impl DriveViewer {
         };
 
         let mut steps = 0;
+        let chase_tuning = self.tuning.camera.chase;
         while self.accumulator >= FIXED_DT && steps < 25 {
             let start = performance_now();
             self.previous_state = self.vehicle.state;
             self.vehicle.step(controls);
+            if self.camera_mode == CameraMode::Chase {
+                self.chase.push_impulse(
+                    self.vehicle.state.velocity - self.previous_state.velocity,
+                    &chase_tuning,
+                );
+            }
             self.update_race_tracker();
             let elapsed = (performance_now() - start) as f32;
             if self.step_times.len() >= 250 {
@@ -2481,7 +2502,7 @@ impl DriveViewer {
         }
 
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(Some(dt));
         self.renderer.render()
     }
 
@@ -2524,22 +2545,58 @@ impl DriveViewer {
         }
         self.previous_state = self.vehicle.state;
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
         self.vehicle.state.tick as u32
     }
 
     pub fn render_remote(&mut self, frame: &[f32]) -> Result<(), JsValue> {
         let remote = state_from_frame(frame)?;
+        // The worker/SAB path replaces the whole state each frame, so capture the
+        // previous velocity and clock state before the overwrite to drive the
+        // same chase animation used by the main-thread path.
+        let prev_velocity = self.vehicle.state.velocity;
+        let had_camera_time = self.last_camera_time.is_some();
         self.vehicle.state = remote;
-        self.previous_state = remote;
         self.update_race_tracker();
         self.last_time = None;
         self.accumulator = 0.0;
         self.set_brake_lights(frame[snapshot::BRAKE]);
         self.set_reverse_lights(remote.gear == -1);
+        let now = performance_now() / 1000.0;
+        let dt = camera_step_dt(self.last_camera_time, now);
+        self.last_camera_time = Some(now);
+        if self.camera_mode == CameraMode::Chase && had_camera_time && dt > 0.0 {
+            let chase_tuning = self.tuning.camera.chase;
+            self.chase
+                .push_impulse(remote.velocity - prev_velocity, &chase_tuning);
+        }
+        // Race, telemetry and physics-derived values keep the raw remote state.
+        // Only lagging shots smooth the car body; visual_pose() reads
+        // previous_state while last_time is None.
+        if camera_smooths_player_visual(self.camera_mode) {
+            let (position, rotation) = smooth_player_visual_pose(
+                self.previous_state.position,
+                self.previous_state.rotation,
+                remote.position,
+                remote.rotation,
+                dt,
+                PLAYER_VISUAL_LAG,
+            );
+            self.previous_state = VehicleState {
+                position,
+                rotation,
+                ..remote
+            };
+        } else {
+            self.previous_state = remote;
+        }
         self.update_visuals();
-        self.update_camera();
+        if dt > 0.0 {
+            self.update_camera(Some(dt));
+        } else {
+            self.update_camera(None);
+        }
         self.renderer.render()
     }
 
@@ -2593,7 +2650,7 @@ impl DriveViewer {
     pub fn set_spectator_slot(&mut self, slot: i32) {
         if slot < 0 {
             self.spectator_slot = None;
-            self.update_camera();
+            self.update_camera(None);
             return;
         }
         let slot = slot as usize;
@@ -2601,7 +2658,7 @@ impl DriveViewer {
             return;
         }
         self.spectator_slot = Some(slot);
-        self.update_camera();
+        self.update_camera(None);
     }
 
     pub fn place_on_grid(&mut self, slot: usize) -> Result<(), JsValue> {
@@ -2612,13 +2669,14 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -2646,13 +2704,14 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.step_times.clear();
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         let _ = self.renderer.render();
     }
 
@@ -2676,7 +2735,7 @@ impl DriveViewer {
         set_rig_cockpit_visible(&mut self.renderer, &self.rigs[slot], true);
         self.previous_state = self.vehicle.state;
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -2818,7 +2877,7 @@ impl DriveViewer {
     pub fn set_time_of_day(&mut self, hours: f32) -> f64 {
         let bake_ms = self.renderer.set_time_of_day(hours);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         bake_ms
     }
 
@@ -2844,9 +2903,14 @@ impl DriveViewer {
         } else {
             CameraMode::Chase
         };
+        self.chase.clear_shake();
+        self.last_camera_time = None;
+        // Drop any smoothed worker-path pose so the first frame in the new shot
+        // snaps to the current raw state instead of blending from stale state.
+        self.previous_state = self.vehicle.state;
         self.apply_cockpit_glass_alpha();
         self.update_dashboard_visibility();
-        self.update_camera();
+        self.update_camera(None);
     }
 
     fn update_dashboard_visibility(&mut self) {
@@ -2971,14 +3035,14 @@ impl DriveViewer {
         let tuning: CarTuning = serde_json::from_str(json).map_err(js_error)?;
         self.vehicle.apply_setup(&tuning);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
     pub fn reset_car_setup(&mut self) -> Result<(), JsValue> {
         self.vehicle.reset_setup();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3138,7 +3202,7 @@ impl DriveViewer {
         self.apply_cockpit_glass_alpha();
         self.refresh_particle_tuning();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3152,12 +3216,13 @@ impl DriveViewer {
         self.previous_state = self.vehicle.state;
         self.accumulator = 0.0;
         self.last_time = None;
+        self.last_camera_time = None;
         self.last_particle_time = None;
         self.particles.clear();
         self.set_brake_lights(0.0);
         self.set_reverse_lights(false);
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3169,7 +3234,7 @@ impl DriveViewer {
         self.apply_cockpit_glass_alpha();
         self.refresh_particle_tuning();
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3192,7 +3257,7 @@ impl DriveViewer {
 
     fn write_initial_pose(&mut self) -> Result<(), JsValue> {
         self.update_visuals();
-        self.update_camera();
+        self.update_camera(None);
         self.renderer.render()
     }
 
@@ -3411,7 +3476,7 @@ impl DriveViewer {
         }
     }
 
-    fn update_camera(&mut self) {
+    fn update_camera(&mut self, dt: Option<f32>) {
         let (position, rotation) = self.camera_pose();
         if self.camera_mode == CameraMode::Bonnet {
             let shot = &self.tuning.camera.bonnet;
@@ -3455,14 +3520,22 @@ impl DriveViewer {
             return;
         }
 
-        let tuning = &self.tuning.camera.chase;
+        let tuning = self.tuning.camera.chase;
+        let pose = match dt {
+            Some(dt) if dt > 0.0 => self.chase.update(position, rotation, dt, &tuning),
+            _ => {
+                self.chase.snap(position, rotation);
+                self.chase.pose(position, rotation, &tuning)
+            }
+        };
         let aspect = self.renderer.aspect();
         let range = (tuning.aspect_far - tuning.aspect_near).max(0.0001);
         let landscape = ((aspect - tuning.aspect_near) / range).clamp(0.0, 1.0);
         let back = tuning.back_near + (tuning.back_far - tuning.back_near) * landscape;
         let height = tuning.height_near + (tuning.height_far - tuning.height_near) * landscape;
         let look_ahead = tuning.look_near + (tuning.look_far - tuning.look_near) * landscape;
-        let eye = position + rotation * Vec3::new(0.0, height, back);
+        let eye =
+            pose.anchor + pose.eye_rotation * Vec3::new(0.0, height, back) + pose.shake_offset;
         let target = position + rotation * Vec3::new(0.0, tuning.target_height, look_ahead);
         self.renderer.set_camera(Camera {
             eye: [eye.x, eye.y.max(tuning.min_eye_y), eye.z],
@@ -3482,11 +3555,13 @@ impl DriveViewer {
     }
 
     fn visual_pose(&self) -> (Vec3, Quat) {
-        let alpha = if self.last_time.is_some() {
-            (self.accumulator / FIXED_DT).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
+        // With no main-thread clock running, previous_state holds the pose to
+        // display: the raw remote pose for bonnet/cockpit, or the smoothed
+        // player pose for chase/isometric on the worker path.
+        if self.last_time.is_none() {
+            return (self.previous_state.position, self.previous_state.rotation);
+        }
+        let alpha = (self.accumulator / FIXED_DT).clamp(0.0, 1.0);
         let position = self
             .previous_state
             .position
@@ -3638,6 +3713,45 @@ fn performance_now() -> f64 {
         .and_then(|window| window.performance())
         .map(|performance| performance.now())
         .unwrap_or(0.0)
+}
+
+/// Wall-clock delta between two camera frames, clamped to a sane step.
+///
+/// Returns `0.0` on the first frame so the camera snaps instead of lagging or
+/// shaking in response to an unknown elapsed time.
+fn camera_step_dt(last: Option<f64>, now: f64) -> f32 {
+    last.map(|last| ((now - last) as f32).clamp(0.0, 0.05))
+        .unwrap_or(0.0)
+}
+
+/// Time constant for the local player's smoothed visual pose on the worker path.
+const PLAYER_VISUAL_LAG: f32 = 0.03;
+
+/// Exponential blend factor for the local player's visual pose.
+///
+/// A non-positive or non-finite `dt`, or a zero lag, snaps to the target so the
+/// first frame after reset/place/camera-mode switch never blends stale state.
+fn player_visual_alpha(dt: f32, lag: f32) -> f32 {
+    if !dt.is_finite() || dt <= 0.0 || !lag.is_finite() || lag <= 1e-4 {
+        1.0
+    } else {
+        (1.0 - (-dt / lag).exp()).clamp(0.0, 1.0)
+    }
+}
+
+/// Eases a previous visual pose toward the incoming remote pose.
+fn smooth_player_visual_pose(
+    previous_position: Vec3,
+    previous_rotation: Quat,
+    position: Vec3,
+    rotation: Quat,
+    dt: f32,
+    lag: f32,
+) -> (Vec3, Quat) {
+    let alpha = player_visual_alpha(dt, lag);
+    let position = previous_position.lerp(position, alpha);
+    let rotation = previous_rotation.slerp(rotation, alpha).normalize();
+    (position, rotation)
 }
 
 #[cfg(test)]
@@ -4097,6 +4211,70 @@ mod tests {
             assert!((decal * Vec3::NEG_Z - forward).length() < 1e-5);
             assert!((decal * Vec3::X - car * Vec3::X).length() < 1e-5);
         }
+    }
+
+    #[test]
+    fn camera_step_dt_snaps_first_frame_and_clamps_elapsed() {
+        assert_eq!(camera_step_dt(None, 12.5), 0.0);
+        assert!((camera_step_dt(Some(1.0), 1.016) - 0.016).abs() < 1e-6);
+        assert_eq!(camera_step_dt(Some(1.0), 5.0), 0.05);
+        assert_eq!(camera_step_dt(Some(2.0), 1.0), 0.0);
+    }
+
+    #[test]
+    fn player_visual_alpha_snaps_on_zero_dt_and_stays_finite() {
+        assert_eq!(player_visual_alpha(0.0, PLAYER_VISUAL_LAG), 1.0);
+        assert_eq!(player_visual_alpha(-0.01, PLAYER_VISUAL_LAG), 1.0);
+        assert_eq!(player_visual_alpha(0.016, 0.0), 1.0);
+        assert_eq!(player_visual_alpha(f32::NAN, PLAYER_VISUAL_LAG), 1.0);
+        assert_eq!(player_visual_alpha(f32::INFINITY, PLAYER_VISUAL_LAG), 1.0);
+
+        let alpha = player_visual_alpha(0.016, PLAYER_VISUAL_LAG);
+        assert!(alpha.is_finite());
+        assert!(alpha > 0.0 && alpha < 1.0);
+        let larger = player_visual_alpha(0.032, PLAYER_VISUAL_LAG);
+        assert!(larger > alpha && larger < 1.0);
+    }
+
+    #[test]
+    fn only_lagging_camera_shots_smooth_the_player_visual() {
+        assert!(camera_smooths_player_visual(CameraMode::Chase));
+        assert!(camera_smooths_player_visual(CameraMode::Isometric));
+        assert!(!camera_smooths_player_visual(CameraMode::Bonnet));
+        assert!(!camera_smooths_player_visual(CameraMode::Cockpit));
+    }
+
+    #[test]
+    fn player_visual_pose_snaps_on_zero_dt_and_slerps_rotation() {
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let target = Vec3::new(4.0, 5.0, 6.0);
+        let start_rotation = Quat::from_rotation_y(0.2);
+        let target_rotation = Quat::from_rotation_y(1.2);
+
+        let (snapped, snapped_rotation) = smooth_player_visual_pose(
+            start,
+            start_rotation,
+            target,
+            target_rotation,
+            0.0,
+            PLAYER_VISUAL_LAG,
+        );
+        assert!((snapped - target).length() < 1e-6);
+        assert!((snapped_rotation - target_rotation).length() < 1e-6);
+
+        let (blended, blended_rotation) = smooth_player_visual_pose(
+            start,
+            start_rotation,
+            target,
+            target_rotation,
+            0.016,
+            PLAYER_VISUAL_LAG,
+        );
+        assert!((blended - start).length() > 0.0);
+        assert!((blended - target).length() > 0.0);
+        assert!((blended_rotation.length() - 1.0).abs() < 1e-5);
+        assert!((blended_rotation - start_rotation).length() > 0.0);
+        assert!((blended_rotation - target_rotation).length() > 0.0);
     }
 
     #[test]
