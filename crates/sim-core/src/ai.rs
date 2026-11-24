@@ -76,6 +76,36 @@ const DEFAULT_MAX_GEAR: i32 = 6;
 const DEFAULT_STEERING_RATE: f32 = 3.0;
 /// Largest accepted steering rate in normalized units per second.
 const MAX_STEERING_RATE: f32 = 20.0;
+/// Speed above the target at which the controller starts braking.
+///
+/// The enter margin is deliberately wide so a small overspeed coasts instead of
+/// touching the brake, which used to start a throttle/brake limit cycle.
+const BRAKE_ENTER_MARGIN: f32 = 2.0;
+/// Speed below the target at which the controller releases the brake.
+///
+/// Together with [`BRAKE_ENTER_MARGIN`] this gives a 3 m/s hysteresis band.
+const BRAKE_RELEASE_MARGIN: f32 = 1.0;
+/// Speed band below the target where Drive mode coasts instead of applying a
+/// tiny throttle, preventing a low-amplitude throttle/brake oscillation.
+const THROTTLE_DEADBAND: f32 = 0.5;
+/// Fraction of the remaining target-speed error removed per physics tick.
+const TARGET_SPEED_BLEND: f32 = 0.02;
+/// Maximum throttle command change in normalized units per second.
+const THROTTLE_RATE: f32 = 8.0;
+/// Maximum brake command change in normalized units per second.
+const BRAKE_RATE: f32 = 12.0;
+/// Largest throttle and brake value allowed to overlap.
+const CONTROL_OVERLAP_LIMIT: f32 = 0.1;
+
+/// Throttle/brake mode with hysteresis around the target speed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum DriveMode {
+    /// Accelerate or coast toward the target speed.
+    #[default]
+    Drive,
+    /// Brake down toward the target speed.
+    Brake,
+}
 
 /// A deterministic AI driver that follows a race layout centreline.
 ///
@@ -91,6 +121,11 @@ pub struct AiDriver {
     pace: AiPace,
     steering_rate: f32,
     last_steering: f32,
+    mode: DriveMode,
+    last_throttle: f32,
+    last_brake: f32,
+    smoothed_target: Option<f32>,
+    controls_initialized: bool,
 }
 
 impl Default for AiDriver {
@@ -128,6 +163,11 @@ impl AiDriver {
             pace,
             steering_rate: DEFAULT_STEERING_RATE,
             last_steering: 0.0,
+            mode: DriveMode::Drive,
+            last_throttle: 0.0,
+            last_brake: 0.0,
+            smoothed_target: None,
+            controls_initialized: false,
         }
     }
 
@@ -147,11 +187,16 @@ impl AiDriver {
         self
     }
 
-    /// Clears the shift cooldown and stored steering command, for example after
-    /// a car reset.
+    /// Clears the shift cooldown, stored steering command, drive mode, and
+    /// throttle/brake state, for example after a car reset.
     pub fn reset(&mut self) {
         self.shift_cooldown = 0;
         self.last_steering = 0.0;
+        self.mode = DriveMode::Drive;
+        self.last_throttle = 0.0;
+        self.last_brake = 0.0;
+        self.smoothed_target = None;
+        self.controls_initialized = false;
     }
 
     /// Returns deterministic controls for the next physics tick.
@@ -197,17 +242,85 @@ impl AiDriver {
         }
         controls.steering = self.rate_limit_steering(desired_steering);
 
-        let target_speed = target_speed(tracker, distance, lookahead, self.pace);
-        if speed < target_speed - 0.5 {
-            controls.throttle = ((target_speed - speed) / 6.0).clamp(0.25, 1.0);
-        } else if speed > target_speed + 1.0 {
-            controls.brake = ((speed - target_speed) / 6.0).clamp(0.15, 1.0);
-        } else {
-            controls.throttle = 0.3;
-        }
+        let raw_target = target_speed(tracker, distance, lookahead, self.pace);
+        let target = self.smooth_target(raw_target);
+        self.update_mode(speed, target);
+
+        let (desired_throttle, desired_brake) = self.desired_controls(speed, target);
+        self.apply_controls(desired_throttle, desired_brake);
+        controls.throttle = self.last_throttle;
+        controls.brake = self.last_brake;
 
         self.shift_gears(state, &mut controls);
         controls
+    }
+
+    fn smooth_target(&mut self, raw_target: f32) -> f32 {
+        let target = match self.smoothed_target {
+            Some(previous) => previous + (raw_target - previous) * TARGET_SPEED_BLEND,
+            None => raw_target,
+        };
+        self.smoothed_target = Some(target);
+        target
+    }
+
+    fn update_mode(&mut self, speed: f32, target: f32) {
+        match self.mode {
+            DriveMode::Drive => {
+                if speed > target + BRAKE_ENTER_MARGIN {
+                    self.mode = DriveMode::Brake;
+                }
+            }
+            DriveMode::Brake => {
+                if speed < target - BRAKE_RELEASE_MARGIN {
+                    self.mode = DriveMode::Drive;
+                }
+            }
+        }
+    }
+
+    fn desired_controls(&self, speed: f32, target: f32) -> (f32, f32) {
+        match self.mode {
+            DriveMode::Drive => {
+                // Coast inside a small deadband around the target instead of
+                // dosing in a tiny throttle that would trigger a brake shortly
+                // after. Throttle only resumes below `target - deadband`.
+                let throttle = ((target - THROTTLE_DEADBAND - speed) / 6.0).clamp(0.0, 1.0);
+                (throttle, 0.0)
+            }
+            DriveMode::Brake => {
+                let brake = ((speed - target) / 6.0).clamp(0.15, 1.0);
+                (0.0, brake)
+            }
+        }
+    }
+
+    fn apply_controls(&mut self, desired_throttle: f32, desired_brake: f32) {
+        if !self.controls_initialized {
+            // The first command after reset is applied directly so the car
+            // does not hesitate at launch.
+            self.last_throttle = desired_throttle;
+            self.last_brake = desired_brake;
+            self.controls_initialized = true;
+        } else {
+            let throttle_delta = THROTTLE_RATE * FIXED_DT;
+            let brake_delta = BRAKE_RATE * FIXED_DT;
+            self.last_throttle +=
+                (desired_throttle - self.last_throttle).clamp(-throttle_delta, throttle_delta);
+            self.last_brake += (desired_brake - self.last_brake).clamp(-brake_delta, brake_delta);
+        }
+
+        // Never command throttle and brake together above a small threshold.
+        if self.last_throttle > CONTROL_OVERLAP_LIMIT && self.last_brake > CONTROL_OVERLAP_LIMIT {
+            if self.mode == DriveMode::Brake {
+                self.last_throttle = 0.0;
+            } else {
+                self.last_brake = 0.0;
+            }
+        }
+
+        self.last_throttle = self.last_throttle.clamp(0.0, 1.0);
+        self.last_brake = self.last_brake.clamp(0.0, 1.0);
     }
 
     fn rate_limit_steering(&mut self, desired: f32) -> f32 {
@@ -289,7 +402,10 @@ fn target_speed(tracker: &RaceTracker, distance: f32, lookahead: f32, pace: AiPa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vehicle::WheelState;
+    use crate::vehicle::tests::{
+        collider as vehicle_collider, physics as vehicle_physics, spawn as vehicle_spawn,
+    };
+    use crate::vehicle::{Vehicle, WheelState};
     use glam::Quat;
     use sim_types::{
         Layout, LayoutDirection, RaceData, SectorSpec, SpawnPoint, StartFinish, RACE_DATA_VERSION,
@@ -640,6 +756,280 @@ mod tests {
             (after_reset.abs() - first.abs()).abs() < 1e-6,
             "reset should restart the ramp: {first} then {after_reset}"
         );
+    }
+
+    fn straight_speed_state(speed: f32) -> (VehicleState, RaceTracker) {
+        let position = Vec3::new(0.0, 0.0, -5.0);
+        let tracker = straight_tracker(position);
+        let state = vehicle_state(
+            position,
+            Quat::IDENTITY,
+            Vec3::new(0.0, 0.0, -speed),
+            3_000.0,
+            3,
+        );
+        (state, tracker)
+    }
+
+    #[test]
+    fn steady_target_does_not_chatter_between_throttle_and_brake() {
+        let target = MAX_TARGET_SPEED * AiPace::Club.target_speed_scale();
+        let (state, tracker) = straight_speed_state(target + BRAKE_ENTER_MARGIN + 0.1);
+        let mut driver = AiDriver::default();
+        let mut transitions = 0;
+        let mut previous = driver.mode;
+
+        for _ in 0..200 {
+            let controls = driver.controls(&state, &tracker);
+            if driver.mode != previous {
+                transitions += 1;
+                previous = driver.mode;
+            }
+            assert!(
+                controls.throttle <= CONTROL_OVERLAP_LIMIT
+                    || controls.brake <= CONTROL_OVERLAP_LIMIT,
+                "throttle {} and brake {} applied together",
+                controls.throttle,
+                controls.brake
+            );
+            assert_finite(&controls);
+        }
+
+        assert_eq!(driver.mode, DriveMode::Brake);
+        assert!(transitions <= 2, "mode chattered {transitions} times");
+    }
+
+    /// Runs the AI controller against the real vehicle on a long straight.
+    ///
+    /// The old controller cycled throttle and brake around the target speed,
+    /// producing a visible forward/back surge even with a single AI. This test
+    /// drives a genuine [`Vehicle`] at 500 Hz and measures the settled ripple,
+    /// so it fails on a limit cycle instead of only checking fixed states.
+    #[test]
+    fn closed_loop_vehicle_settles_without_speed_ripple_or_chatter() {
+        // Long straight along -Z, matching the identity spawn facing.
+        let mut tracker = tracker(
+            vec![[0.0, 0.0, 0.0], [0.0, 0.0, -1000.0]],
+            false,
+            Vec3::ZERO,
+        );
+        let mut vehicle = Vehicle::new(vehicle_physics(), vehicle_collider(), &vehicle_spawn());
+        let mut driver = AiDriver::default();
+
+        // The proportional throttle has a long tail, so give it 14 s to
+        // accelerate through the gears and settle, then measure the last 6 s.
+        const TOTAL_TICKS: usize = 10_000;
+        const WARMUP_TICKS: usize = 7_000;
+        const SETTLED_SPEED_FLOOR: f32 = 20.0;
+        const MAX_RIPPLE: f32 = 0.5;
+        const MAX_MODE_TRANSITIONS: u32 = 2;
+
+        let mut min_speed = f32::INFINITY;
+        let mut max_speed = f32::NEG_INFINITY;
+        let mut max_brake = 0.0f32;
+        let mut mode_transitions = 0u32;
+        let mut previous_mode = driver.mode;
+
+        for tick in 0..TOTAL_TICKS {
+            tracker.update(vehicle.state.position, tick as u64);
+            let controls = driver.controls(&vehicle.state, &tracker);
+            let speed = Vec3::new(vehicle.state.velocity.x, 0.0, vehicle.state.velocity.z).length();
+
+            if tick >= WARMUP_TICKS {
+                min_speed = min_speed.min(speed);
+                max_speed = max_speed.max(speed);
+                max_brake = max_brake.max(controls.brake);
+                if driver.mode != previous_mode {
+                    mode_transitions += 1;
+                }
+            }
+
+            previous_mode = driver.mode;
+            vehicle.step(controls);
+        }
+
+        let ripple = max_speed - min_speed;
+        assert!(
+            max_speed > SETTLED_SPEED_FLOOR,
+            "closed-loop AI never accelerated: max speed {max_speed:.2} m/s"
+        );
+        assert!(
+            ripple <= MAX_RIPPLE,
+            "closed-loop AI speed ripple {ripple:.3} m/s (min {min_speed:.2}, max {max_speed:.2})"
+        );
+        assert!(
+            mode_transitions <= MAX_MODE_TRANSITIONS,
+            "closed-loop AI chattered between throttle and brake {mode_transitions} times"
+        );
+        assert!(
+            max_brake <= CONTROL_OVERLAP_LIMIT,
+            "closed-loop AI braked at cruise: max brake {max_brake:.3}"
+        );
+    }
+
+    /// A small overspeed over the target must coast instead of braking.
+    ///
+    /// The old `+0.8 m/s` brake-enter margin braked inside this band and could
+    /// start a throttle/brake cycle. The widened margin keeps the car in Drive
+    /// so it coasts back toward the target.
+    #[test]
+    fn closed_loop_small_overspeed_coasts_instead_of_braking() {
+        let mut tracker = tracker(
+            vec![[0.0, 0.0, 0.0], [0.0, 0.0, -1000.0]],
+            false,
+            Vec3::ZERO,
+        );
+        let mut vehicle = Vehicle::new(vehicle_physics(), vehicle_collider(), &vehicle_spawn());
+        let mut driver = AiDriver::default();
+        let target = MAX_TARGET_SPEED * AiPace::Club.target_speed_scale();
+
+        // Accelerate from rest so the tyres, engine, and gear are consistent
+        // before the overspeed nudge.
+        for tick in 0..3_000u64 {
+            tracker.update(vehicle.state.position, tick);
+            let controls = driver.controls(&vehicle.state, &tracker);
+            vehicle.step(controls);
+        }
+
+        // Emulate a small crest: 1 m/s above the target, inside the old brake
+        // entry margin but comfortably inside the new coast band.
+        let velocity = Vec3::new(vehicle.state.velocity.x, 0.0, vehicle.state.velocity.z);
+        let speed = velocity.length();
+        let overspeed = target + 1.0;
+        let scale = overspeed / speed.max(1e-3);
+        vehicle.state.velocity.x *= scale;
+        vehicle.state.velocity.z *= scale;
+        let wheel_delta = (overspeed - speed) / 0.33;
+        for wheel in &mut vehicle.state.wheels {
+            wheel.angular_velocity += wheel_delta;
+        }
+
+        let mut max_brake = 0.0f32;
+        let mut mode_transitions = 0u32;
+        let mut previous_mode = driver.mode;
+        for tick in 3_001..4_500u64 {
+            tracker.update(vehicle.state.position, tick);
+            let controls = driver.controls(&vehicle.state, &tracker);
+            max_brake = max_brake.max(controls.brake);
+            if driver.mode != previous_mode {
+                mode_transitions += 1;
+            }
+            previous_mode = driver.mode;
+            vehicle.step(controls);
+        }
+
+        assert!(
+            max_brake <= CONTROL_OVERLAP_LIMIT,
+            "a {:.1} m/s overspeed braked at {:.3}",
+            overspeed - target,
+            max_brake
+        );
+        assert_eq!(
+            mode_transitions, 0,
+            "a small overspeed changed the drive mode"
+        );
+    }
+
+    #[test]
+    fn throttle_and_brake_never_overlap_or_go_non_finite() {
+        let target = MAX_TARGET_SPEED * AiPace::Club.target_speed_scale();
+        let speeds = [
+            0.0,
+            target - 3.0,
+            target - 0.5,
+            target,
+            target + 0.5,
+            target + BRAKE_ENTER_MARGIN + 0.1,
+            target + 3.0,
+            target - 1.0,
+        ];
+        let mut driver = AiDriver::default();
+
+        for _ in 0..8 {
+            for speed in speeds {
+                let (state, tracker) = straight_speed_state(speed);
+                let controls = driver.controls(&state, &tracker);
+                assert!(
+                    controls.throttle <= CONTROL_OVERLAP_LIMIT
+                        || controls.brake <= CONTROL_OVERLAP_LIMIT,
+                    "speed {speed}: throttle {} and brake {} applied together",
+                    controls.throttle,
+                    controls.brake
+                );
+                assert_finite(&controls);
+            }
+        }
+    }
+
+    #[test]
+    fn controls_are_rate_limited_after_the_first_call() {
+        let target = MAX_TARGET_SPEED * AiPace::Club.target_speed_scale();
+        let max_throttle_step = THROTTLE_RATE * FIXED_DT;
+        let max_brake_step = BRAKE_RATE * FIXED_DT;
+
+        let mut driver = AiDriver::default();
+        let (state, tracker) = straight_speed_state(0.0);
+        let first = driver.controls(&state, &tracker);
+        assert!(
+            (first.throttle - 1.0).abs() < 1e-6,
+            "first throttle {} was not applied directly",
+            first.throttle
+        );
+
+        let (state, tracker) = straight_speed_state(target);
+        let second = driver.controls(&state, &tracker);
+        assert!(second.throttle < first.throttle);
+        assert!(
+            (first.throttle - second.throttle) <= max_throttle_step + 1e-6,
+            "throttle step {} exceeded {}",
+            first.throttle - second.throttle,
+            max_throttle_step
+        );
+
+        let mut driver = AiDriver::default();
+        let (state, tracker) = straight_speed_state(target + 6.0);
+        let first = driver.controls(&state, &tracker);
+        assert!(
+            first.brake > 0.9,
+            "first brake {} was not direct",
+            first.brake
+        );
+
+        let (state, tracker) = straight_speed_state(target + 3.0);
+        let second = driver.controls(&state, &tracker);
+        assert!(second.brake < first.brake);
+        assert!(
+            (first.brake - second.brake) <= max_brake_step + 1e-6,
+            "brake step {} exceeded {}",
+            first.brake - second.brake,
+            max_brake_step
+        );
+    }
+
+    #[test]
+    fn reset_clears_drive_state_and_restarts_direct_controls() {
+        let target = MAX_TARGET_SPEED * AiPace::Club.target_speed_scale();
+        let mut driver = AiDriver::default();
+        let (state, tracker) = straight_speed_state(target + 6.0);
+        let braking = driver.controls(&state, &tracker);
+        assert_eq!(driver.mode, DriveMode::Brake);
+        assert!(braking.brake > 0.9);
+        assert!(driver.smoothed_target.is_some());
+
+        driver.reset();
+        assert_eq!(driver.mode, DriveMode::Drive);
+        assert_eq!(driver.last_throttle, 0.0);
+        assert_eq!(driver.last_brake, 0.0);
+        assert!(driver.smoothed_target.is_none());
+
+        let (state, tracker) = straight_speed_state(0.0);
+        let launched = driver.controls(&state, &tracker);
+        assert!(
+            (launched.throttle - 1.0).abs() < 1e-6,
+            "launch throttle {} was not applied directly",
+            launched.throttle
+        );
+        assert!(launched.brake < 0.01);
     }
 
     #[test]

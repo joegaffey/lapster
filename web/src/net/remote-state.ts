@@ -3,9 +3,20 @@ import { NET_STATE_FLOATS } from "./protocol.ts";
 
 const TICKS_PER_SECOND = 500;
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
-const MAX_HISTORY = 6;
+// AI frames arrive every 4 sim ticks (8 ms at 500 Hz) and are drawn with a
+// 60 ms interpolation delay. Six frames only gave 48 ms of history, which left
+// almost no margin past the target and made the remote car hold/jump at frame
+// boundaries. Keep 24 frames (192 ms) so the 60 ms target sits comfortably
+// inside the window, while staying bounded relative to the ~250 ms clock-jump
+// reset.
+const MAX_HISTORY = 24;
 const CLOCK_SMOOTHING = 0.08;
 const JITTER_SMOOTHING = 0.1;
+// A pause (for example the race countdown) leaves the remote tick clock stale
+// while local time keeps moving. Smoothing across that gap freezes the remote
+// car and then makes it lurch to catch up, so snap instead once the sample
+// offset error is this large.
+const MAX_CLOCK_ERROR_MS = 250;
 
 interface TimedState {
   seq: number;
@@ -77,8 +88,16 @@ export class RemoteStateBuffer {
       this.hasClock = true;
     } else {
       const error = sampleOffset - this.clockOffsetMs;
-      this.jitterMs += (Math.abs(error) - this.jitterMs) * JITTER_SMOOTHING;
-      this.clockOffsetMs += error * CLOCK_SMOOTHING;
+      if (Math.abs(error) > MAX_CLOCK_ERROR_MS) {
+        // Timeline discontinuity: adopt the new sample offset immediately and
+        // drop the stale jitter estimate. Keep the frame history so the next
+        // frame() can still interpolate across the boundary.
+        this.clockOffsetMs = sampleOffset;
+        this.jitterMs = 0;
+      } else {
+        this.jitterMs += (Math.abs(error) - this.jitterMs) * JITTER_SMOOTHING;
+        this.clockOffsetMs += error * CLOCK_SMOOTHING;
+      }
     }
 
     this.history.push({

@@ -31,6 +31,13 @@ export interface RaceDirectorOptions {
   totalLaps: number;
   layoutLength: number;
   aiSlots?: number[];
+  /**
+   * Car slots in grid order. Used only to break ties between unfinished cars
+   * with equal distance (and finished cars with equal time), so a car starting
+   * further back shows its true grid position before movement. Defaults to
+   * `[player, ...aiSlots]`.
+   */
+  startOrder?: number[];
   now?: () => number;
 }
 
@@ -91,6 +98,7 @@ export class RaceDirector {
 
   private readonly now: () => number;
   private readonly aiSlots: number[];
+  private readonly startOrder: number[];
   private readonly cars = new Map<number, InternalCar>();
   private startTime: number | null = null;
 
@@ -99,6 +107,12 @@ export class RaceDirector {
     this.layoutLength = Math.max(0, options.layoutLength);
     this.now = options.now ?? (() => performance.now());
     this.aiSlots = [...(options.aiSlots ?? [1, 2, 3])];
+    this.startOrder = options.startOrder
+      ? [...options.startOrder]
+      : [
+          PLAYER_SLOT,
+          ...this.aiSlots.filter((slot) => slot !== PLAYER_SLOT),
+        ];
     this.reset();
   }
 
@@ -148,7 +162,7 @@ export class RaceDirector {
     const standings = [...this.cars.values()].map((car) =>
       this.standing(car),
     );
-    standings.sort(compareStandings);
+    standings.sort((a, b) => this.compareStandings(a, b));
     standings.forEach((car, index) => {
       car.position = index + 1;
     });
@@ -199,6 +213,32 @@ export class RaceDirector {
     };
   }
 
+  /** Rank of a car in the configured grid order; unknown slots sort last. */
+  private startRank(slot: number): number {
+    const index = this.startOrder.indexOf(slot);
+    return index >= 0 ? index : this.startOrder.length + slot;
+  }
+
+  private compareStandings(a: RaceStanding, b: RaceStanding): number {
+    if (a.finished && b.finished) {
+      const timeA = a.finishTime ?? Number.POSITIVE_INFINITY;
+      const timeB = b.finishTime ?? Number.POSITIVE_INFINITY;
+      return (
+        timeA - timeB || this.startRank(a.slot) - this.startRank(b.slot)
+      );
+    }
+    if (a.finished) {
+      return -1;
+    }
+    if (b.finished) {
+      return 1;
+    }
+    return (
+      b.totalDistanceM - a.totalDistanceM ||
+      this.startRank(a.slot) - this.startRank(b.slot)
+    );
+  }
+
   private totalDistance(car: InternalCar): number {
     const completedLaps = Math.max(0, car.lap - 1);
     const offset = car.gridOffset ?? 0;
@@ -219,19 +259,4 @@ export class RaceDirector {
     }
     return Math.max(0, total);
   }
-}
-
-function compareStandings(a: RaceStanding, b: RaceStanding): number {
-  if (a.finished && b.finished) {
-    const timeA = a.finishTime ?? Number.POSITIVE_INFINITY;
-    const timeB = b.finishTime ?? Number.POSITIVE_INFINITY;
-    return timeA - timeB || a.slot - b.slot;
-  }
-  if (a.finished) {
-    return -1;
-  }
-  if (b.finished) {
-    return 1;
-  }
-  return b.totalDistanceM - a.totalDistanceM || a.slot - b.slot;
 }

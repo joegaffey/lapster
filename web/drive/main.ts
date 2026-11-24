@@ -11,6 +11,7 @@ import { setupHud } from "../src/ui/hud.ts";
 import { isRaceStateView, type RaceStateView } from "../src/contracts/race-state.ts";
 import { RaceDirector, raceLayoutLength, type RaceView } from "../src/race/race-director.ts";
 import { buildRaceResultRows } from "../src/race/race-results.ts";
+import { resolveSpectatorSlot } from "../src/race/spectator.ts";
 import { APP_VERSION, BUILD_CHANNEL } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
@@ -31,7 +32,23 @@ import {
 } from "../src/ui/car-selection.ts";
 import { findTrack, loadSelectedTrack } from "../src/ui/track-selection.ts";
 import { PhysicsClient } from "../src/sim/physics.ts";
+import {
+  shouldPlayContactSound,
+  type ContactEvent,
+} from "../src/sim/contacts.ts";
 import { SnapshotSmoother } from "../src/sim/interpolate.ts";
+import { freezeAiWheels } from "../src/sim/ai-smoothing.ts";
+import {
+  aiRenderSource,
+  resolveAiRenderFrame,
+} from "../src/sim/ai-render.ts";
+import {
+  createAiDebugHistory,
+  pushBounded,
+  sampleRawAiFrame,
+  sampleRenderedAiPose,
+  type AiDebugHistory,
+} from "../src/sim/ai-debug.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
@@ -60,6 +77,8 @@ declare global {
     __remoteAudio?: RemoteEngineAudio;
     __wheelFfb?: WheelFfb;
     __relay?: RelayClient;
+    __driveContactEvents?: number;
+    __aiDebug?: AiDebugHistory;
   }
 }
 
@@ -70,6 +89,15 @@ checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
 const devMode = params.has("dev") && params.get("dev") !== "0";
+const aiDebug = params.get("aiDebug") === "1";
+// Temporary `?aiNoWheels=1` diagnostic: freeze AI suspension travel and wheel
+// steer/spin before rendering to isolate the AI-only visual stutter.
+const aiNoWheels = params.get("aiNoWheels") === "1";
+// Temporary AI stutter diagnostics: `?aiNoSmooth=1` skips the pose filter and
+// `?aiRaw=1` skips the interpolation buffer and pose filter entirely.
+const aiNoSmooth = params.get("aiNoSmooth") === "1";
+const aiRaw = params.get("aiRaw") === "1";
+const aiRenderMode = aiRenderSource(aiNoSmooth, aiRaw);
 const DEV_TUNING_KEY = "lapster.tuning.dev.v1";
 let storedDevTuning: string | null = null;
 let storedTuning: any = null;
@@ -268,14 +296,33 @@ let accumulated = 0;
 let physics: PhysicsClient | null = null;
 let smoother: SnapshotSmoother | null = null;
 let physicsWorker = false;
+let driveContactEvents = 0;
+let lastPlayerPosition: [number, number, number] | null = null;
+window.__driveContactEvents = driveContactEvents;
 let relay: RelayClient | null = null;
 let relaySeq = 1;
 let relayUploadTimer: ReturnType<typeof setInterval> | null = null;
 let lastRelayTick = -1;
 const remotePlayers = new Map<number, RemotePlayer>();
 const aiBuffers = new Map<number, RemoteStateBuffer>();
-const AI_INTERPOLATION_MS = 40;
+// AI-only render smoothing: one filtered pose per slot plus the last render
+// time used to derive the filter delta. Never applied to the player or remote
+// multiplayer cars.
+const aiSmoothedFrames = new Map<number, Float32Array>();
+// Temporary `?aiRaw=1` diagnostic: the most recent worker frame per slot,
+// bounded to one frame per slot. Empty unless the flag is active.
+const aiRawFrames = new Map<number, Float32Array>();
+let aiLastRenderMs = 0;
+const AI_INTERPOLATION_MS = 60;
 let aiIgnoreFrames = false;
+// Temporary `?aiDebug=1` capture of raw worker frames and rendered AI poses.
+// Null (and effectively inert) unless the flag is set.
+const aiDebugHistory: AiDebugHistory | null = aiDebug
+  ? createAiDebugHistory()
+  : null;
+if (aiDebugHistory) {
+  window.__aiDebug = aiDebugHistory;
+}
 let playerSteeringRate = 6;
 let audio: EngineSimAudio | null = null;
 let remoteAudio: RemoteEngineAudio | null = null;
@@ -290,9 +337,12 @@ let redlineRpm = 8_000;
 let raceSectorCount = 0;
 let raceDirector: RaceDirector | null = null;
 let localRace = false;
+let playerGridSlot = 0;
 let raceLaps = DEFAULT_RACE_LAPS;
 let raceGeneration = 0;
 let inputLocked = false;
+// `?spectate=1..3` follows an AI car with a locked, neutral player input.
+let spectatorMode = false;
 let countdownTimers: ReturnType<typeof setTimeout>[] = [];
 let resultsShown = false;
 let gearRatios: number[] = [3.48, 2.02, 1.39, 1.0, 0.72, 0.6];
@@ -627,6 +677,9 @@ function renderRemotePlayers(
 
 function resetAiBuffers(): void {
   aiBuffers.clear();
+  aiSmoothedFrames.clear();
+  aiRawFrames.clear();
+  aiLastRenderMs = 0;
 }
 
 function renderAiFrames(now: number): void {
@@ -634,13 +687,55 @@ function renderAiFrames(now: number): void {
   if (!viewer) {
     return;
   }
+  const dtSeconds =
+    aiLastRenderMs > 0
+      ? Math.min(0.25, Math.max(0, (now - aiLastRenderMs) / 1000))
+      : 0;
+  aiLastRenderMs = now;
   for (const [slot, buffer] of aiBuffers) {
-    const frame = buffer.frame(now);
-    if (!frame) {
+    const bufferFrame = aiRenderMode === "raw" ? null : buffer.frame(now);
+    const rawFrame =
+      aiRenderMode === "raw" ? (aiRawFrames.get(slot) ?? null) : null;
+    const render = resolveAiRenderFrame(
+      aiRenderMode,
+      bufferFrame,
+      rawFrame,
+      aiSmoothedFrames.get(slot) ?? null,
+      dtSeconds,
+    );
+    if (!render) {
       continue;
     }
+    const { source, drawn } = render;
+    if (aiRenderMode === "smooth") {
+      aiSmoothedFrames.set(slot, drawn);
+    }
+    if (aiNoWheels) {
+      // Freeze after the pose filter so position and rotation stay smoothed.
+      // The debug sample below reads `drawn`, so it records the drawn frame.
+      freezeAiWheels(drawn);
+    }
+    if (aiDebugHistory) {
+      const tick =
+        source.length > SNAPSHOT_STATE.tick
+          ? Math.round(source[SNAPSHOT_STATE.tick])
+          : Number.NaN;
+      pushBounded(
+        aiDebugHistory.rendered,
+        sampleRenderedAiPose(slot, source, drawn, now, tick, {
+          // The raw diagnostic does not call buffer.frame(), so report the
+          // newest frame as fully applied and reuse the buffer's clock metrics.
+          alpha: aiRenderMode === "raw" ? 1 : buffer.interpolationAlpha,
+          depth: buffer.depth,
+          jitter: buffer.jitter,
+          offsetMs: buffer.offsetMs,
+          age: buffer.age(now),
+        }),
+        aiDebugHistory.limit,
+      );
+    }
     try {
-      viewer.set_remote_state(slot, frame);
+      viewer.set_remote_state(slot, drawn);
     } catch (error) {
       console.warn("AI car update failed", error);
     }
@@ -819,7 +914,9 @@ function runRaceCountdown(generation: number): void {
 }
 
 async function startRace(generation: number): Promise<void> {
-  inputLocked = false;
+  if (!spectatorMode) {
+    inputLocked = false;
+  }
   if (!physics) {
     if (generation === raceGeneration) {
       raceDirector?.start();
@@ -849,24 +946,37 @@ async function startLocalRaceCountdown(): Promise<void> {
   raceCountdown.textContent = "";
   inputLocked = true;
   clearRaceResults();
-  aiIgnoreFrames = true;
-  resetAiBuffers();
-  raceDirector?.reset();
   const viewer = window.__driveViewer;
   if (!viewer) {
-    aiIgnoreFrames = false;
     inputLocked = false;
     return;
   }
-  viewer.place_on_race_grid(0);
   if (physics) {
     try {
-      await physics.placeOnRaceGrid(0);
+      // Pause before re-gridding so the placement frames are the only fresh AI
+      // frames published before GO.
+      await physics.pause();
       if (generation !== raceGeneration) {
-        aiIgnoreFrames = false;
         return;
       }
-      await physics.pause();
+    } catch (error) {
+      console.warn("race grid placement failed", error);
+      inputLocked = false;
+      return;
+    }
+  }
+  raceDirector?.reset();
+  // Drop any frames from a previous run after the worker is paused, then let
+  // the placement frames through so the AI are visible during the countdown.
+  resetAiBuffers();
+  aiIgnoreFrames = false;
+  viewer.place_on_race_grid(playerGridSlot);
+  if (physics) {
+    try {
+      await physics.placeOnRaceGrid(playerGridSlot);
+      if (generation !== raceGeneration) {
+        return;
+      }
     } catch (error) {
       console.warn("race grid placement failed", error);
       aiIgnoreFrames = false;
@@ -874,7 +984,6 @@ async function startLocalRaceCountdown(): Promise<void> {
       return;
     }
   }
-  aiIgnoreFrames = false;
   if (generation !== raceGeneration) {
     return;
   }
@@ -978,6 +1087,37 @@ function syncCarSetup(setup: any): void {
   if (Array.isArray(setup.drivetrain?.gearRatios) && setup.drivetrain.gearRatios.length > 1) {
     gearRatios = setup.drivetrain.gearRatios;
     maxGear = gearRatios.length;
+  }
+}
+
+function currentPlayerPosition(): [number, number, number] | null {
+  const state = smoother?.latest();
+  if (!state || state.length < SNAPSHOT_STATE.position + 3) {
+    return lastPlayerPosition;
+  }
+  const x = state[SNAPSHOT_STATE.position];
+  const y = state[SNAPSHOT_STATE.position + 1];
+  const z = state[SNAPSHOT_STATE.position + 2];
+  if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+    lastPlayerPosition = [x, y, z];
+  }
+  return lastPlayerPosition;
+}
+
+function handleContact(contact: ContactEvent, viewer: DriveViewer): void {
+  driveContactEvents += 1;
+  window.__driveContactEvents = driveContactEvents;
+  const [x, y, z] = contact.point;
+  try {
+    const effect = viewer as unknown as {
+      contact_effect?: (x: number, y: number, z: number, speed: number) => void;
+    };
+    effect.contact_effect?.(x, y, z, contact.speed);
+  } catch (error) {
+    // Visual contact feedback is best-effort and must not break the frame loop.
+  }
+  if (shouldPlayContactSound(contact, currentPlayerPosition())) {
+    audio?.playImpact(contact.speed);
   }
 }
 
@@ -1325,6 +1465,13 @@ async function boot() {
   const hasRace = trackPack.manifest.entrypoints.race != null;
   const aiCount = resolveAiCount(hasRace);
   const aiPace = resolveAiPace();
+  const spectatorSlot = resolveSpectatorSlot(
+    params.get("spectate"),
+    aiCount,
+    mpMode,
+    soloMode,
+  );
+  spectatorMode = spectatorSlot !== null;
   const viewer = await DriveViewer.create(
     canvas,
     trackPack.bytes,
@@ -1348,6 +1495,12 @@ async function boot() {
     raceView.available && Array.isArray(raceView.sectors)
       ? raceView.sectors.length
       : 0;
+  const gridCount =
+    raceView.available && Array.isArray(raceView.grid)
+      ? raceView.grid.length
+      : 0;
+  playerGridSlot = gridCount > 0 ? Math.min(aiCount, gridCount - 1) : 0;
+  const aiSlots = Array.from({ length: aiCount }, (_, index) => index + 1);
   const configuredRaceLaps = hasRace && raceView.available
     ? resolveRaceLaps()
     : DEFAULT_RACE_LAPS;
@@ -1356,7 +1509,8 @@ async function boot() {
       ? new RaceDirector({
           totalLaps: configuredRaceLaps,
           layoutLength: raceLayoutLength(raceView.layout),
-          aiSlots: Array.from({ length: aiCount }, (_, index) => index + 1),
+          aiSlots,
+          startOrder: [...aiSlots, 0],
         })
       : null;
   const setup = JSON.parse(viewer.car_setup());
@@ -1394,13 +1548,29 @@ async function boot() {
         if (!Number.isFinite(tick) || tick < 0) {
           return;
         }
+        const nowMs = performance.now();
+        if (aiDebugHistory) {
+          pushBounded(
+            aiDebugHistory.raw,
+            sampleRawAiFrame(slot, frame, nowMs, tick),
+            aiDebugHistory.limit,
+          );
+        }
         let buffer = aiBuffers.get(slot);
         if (!buffer) {
           buffer = new RemoteStateBuffer(AI_INTERPOLATION_MS);
           aiBuffers.set(slot, buffer);
+          // A fresh slot must not inherit a stale smoothed pose.
+          aiSmoothedFrames.delete(slot);
         }
-        buffer.push(tick, tick, frame, performance.now());
+        if (aiRenderMode === "raw") {
+          // Keep only the newest raw frame per slot; the raw diagnostic draws
+          // it directly without touching the interpolation buffer.
+          aiRawFrames.set(slot, Float32Array.from(frame));
+        }
+        buffer.push(tick, tick, frame, nowMs);
       };
+      client.onContact = (contact) => handleContact(contact, viewer);
       smoother = new SnapshotSmoother(client.reader);
       physicsWorker = true;
       workerAssists = {
@@ -1460,6 +1630,13 @@ async function boot() {
     localRace = true;
   }
   window.__driveViewer = driver;
+
+  if (spectatorSlot !== null) {
+    // Follow an AI car and hide the local body; input stays locked neutral so
+    // the player cannot steer the race from the spectator camera.
+    driver.set_spectator_slot(spectatorSlot);
+    setBodyVisible(false);
+  }
 
   const rpmOffset = cockpitRpmOffset(info.car.id);
   if (rpmOffset) {

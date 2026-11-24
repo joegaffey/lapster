@@ -104,6 +104,8 @@ export class EngineSimAudio {
   private shiftTimer = 0;
   private hasRpm = false;
   private hasLoad = false;
+  private impactNoise: AudioBuffer | null = null;
+  private lastImpactTime = Number.NEGATIVE_INFINITY;
 
   constructor(options: EngineSimAudioOptions = {}) {
     this.engineId = options.engine ?? "rotary2";
@@ -534,6 +536,75 @@ export class EngineSimAudio {
     return { ...this.roadSurface };
   }
 
+  /**
+   * Play a short, bounded car-to-car impact burst.
+   *
+   * No-op while audio is off, muted, or not running. The noise buffer is built
+   * once and shared; only small per-impact nodes are allocated, and a short
+   * global cooldown keeps simultaneous contacts bounded.
+   */
+  playImpact(speed: number): void {
+    if (
+      this.muted ||
+      !this.started ||
+      !this.context ||
+      !this.gain ||
+      !Number.isFinite(speed)
+    ) {
+      return;
+    }
+    const intensity = Math.max(0, Math.min(1, speed / 20));
+    if (intensity < 0.04) {
+      return;
+    }
+    const context = this.context;
+    const now = context.currentTime;
+    if (now - this.lastImpactTime < 0.05) {
+      return;
+    }
+    this.lastImpactTime = now;
+    try {
+      if (!this.impactNoise) {
+        const length = Math.max(1, Math.floor(context.sampleRate * 0.2));
+        const buffer = context.createBuffer(1, length, context.sampleRate);
+        const data = buffer.getChannelData(0);
+        let low = 0;
+        for (let index = 0; index < length; index += 1) {
+          const white = Math.random() * 2 - 1;
+          low += 0.35 * (white - low);
+          const decay = 1 - index / length;
+          data[index] = low * decay * decay;
+        }
+        this.impactNoise = buffer;
+      }
+      const source = context.createBufferSource();
+      source.buffer = this.impactNoise;
+      source.playbackRate.value = 0.7 + intensity * 0.6;
+      const filter = context.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 500 + 1_500 * intensity;
+      filter.Q.value = 0.7;
+      const gain = context.createGain();
+      const peak = 0.18 + 0.5 * intensity;
+      const duration = 0.08 + 0.12 * intensity;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(peak, now + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.gain);
+      source.onended = () => {
+        source.disconnect();
+        filter.disconnect();
+        gain.disconnect();
+      };
+      source.start(now);
+      source.stop(now + duration + 0.02);
+    } catch {
+      // Impact audio is best-effort and must never break Drive.
+    }
+  }
+
   state(): {
     rpm: number;
     speedKph: number;
@@ -621,6 +692,8 @@ export class EngineSimAudio {
   dispose(): void {
     this.started = false;
     this.status = "off";
+    this.impactNoise = null;
+    this.lastImpactTime = Number.NEGATIVE_INFINITY;
     this.sim?.dispose();
     this.sim = null;
     this.tireSource?.stop();

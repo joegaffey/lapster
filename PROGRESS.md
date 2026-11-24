@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-23
-Current phase: **AI race — motion smoothing and performance controls**
+Current phase: **Online contact 3A — co-simulated car contact**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,7 +53,17 @@ Deployment:
 
 ## Current focus
 
-- Deckard textured paint is on `feat/deckard-paint`: the existing ten-colour
+- Online contact is staged on `feat/online-contact`, created from `dev` at
+  `a4b82a7`. 3A (this batch) adds deterministic player/AI contact in the
+  physics worker under ADR-0019. 3B (later) adds non-authoritative online
+  observation under ADR-0020, which is still proposed. The field stays at three
+  AI for 3A; a 20+ car grid is a later product direction and a separate
+  profiling/limits batch. See `docs/features/online-contact.md`.
+- Race-grid polish is now in the same batch: clamp grid columns toward the
+  centreline, start the player last, and show all AI cars during the countdown.
+  See `docs/features/race-grid-and-countdown.md`.
+- Deckard textured paint is merged to `dev` as PR #68, and the follow-up bay
+  order is PR #69: the existing ten-colour
   garage picker now works for the Deckard via an opt-in catalog flag and a
   renderer texture path that repaints only red body-paint texels. The other
   textured cars stay factory livery, the default Deckard colour is Red, and
@@ -70,8 +80,8 @@ Deployment:
   views sit under Tools. Drive and Race track selections persist separately.
   Full gate: 245 Rust tests, 76 web tests, 117 viewer passed / 4 skipped, and
   WebGL2 2/2.
-- AI motion smoothing is ready for deployment on `feat/ai-motion-smoothing`
-  (PR #54), created from `dev` at `0754a7c`: 62.5 Hz AI frames, 40 ms
+- AI motion smoothing is merged to `dev` (PR #54) and released to `main` via
+  PR #65: 62.5 Hz AI frames, 40 ms
   interpolation, 20 Hz race state, AI steering rate 3/s, and a configurable
   player steering rate (default 6/s, wheel direct). AI frames are batched into
   one `ai_states` worker message. Graphics adds Tyre effects High/Low/Off, an
@@ -385,7 +395,94 @@ Branch: `feat/ai-motion-smoothing`, created from `dev` at `0754a7c`.
   input stays direct.
 - Gate: cargo fmt, workspace clippy, 233 workspace tests, wasm check; 76 web
   tests; 116 viewer tests passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
-- Status: complete; full gate passed; PR pending.
+- Status: complete; merged to `dev` as PR #54; released via PR #65.
+
+## Online contact resume checkpoint
+
+Branch: `feat/online-contact`, created from `dev` at `a4b82a7`.
+
+- Plan: `docs/features/online-contact.md`.
+- ADR-0019 (accepted) covers 3A: deterministic co-simulated contact in the
+  worker, bounded events, and local feedback. ADR-0020 (proposed) covers 3B:
+  non-authoritative online contact observation.
+- 3A has no contract change. The solver is field-size-agnostic; the current
+  four-car field has six pairs.
+- 3B later adds the additive `contact` message to
+  `crates/relay-server/src/protocol.rs` and `web/src/net/protocol.ts`.
+- The field stays at three AI for 3A. A 20+ car grid is a later product
+  direction; it needs worker cap, web field-size, renderer remote-slot, grid
+  export, and profiling work.
+- Follow-up 3A polish in the same batch: clamp grid lateral offsets to 1.8 m,
+  place the player last on the grid, and show the AI cars before/while the
+  countdown runs. Plan: `docs/features/race-grid-and-countdown.md`.
+- The contact box now derives its size from each car's wheelbase and track
+  width; the terrain-track probe moved the closest AI pair from ~3.3 m to
+  ~5.4 m centre spacing.
+- Car-to-car contact now reuses the environment wall pattern: eight body
+  probes per car against the other car's box, a bounded deepest-first manifold
+  (up to 4 contacts), per-contact impulses, and capped positional correction.
+  Targeted checks pass; the full viewer gate after the footprint/probe changes
+  is still pending.
+- Race-grid polish verified in the local probe: player grid shift 2.7 m
+  (raw 4.5 m slot clamped to 1.8 m), HUD `P4/4` at the grid, AI visible with
+  the placement frames, and no deep AI overlap (side-by-side ~2.28 m lateral,
+  nose-to-tail ~4.57 m longitudinal).
+- AI jerk diagnosis/fix: AI frames are now 125 Hz (race state stays 20 Hz), and
+  `RemoteStateBuffer` snaps its clock on jumps above 250 ms instead of
+  smoothing through the 3 s countdown pause. Race-loop probe: 500 Hz physics,
+  step p50 0.055 ms, p99 0.16 ms, 0 dropped ticks, 0 catch-up events.
+- Tree-trunk diagnosis/fix: wall collision now has 11 probes including the
+  footprint centre and interior points, with duplicate suppression and a
+  straddle escape for thin posts. A fixed-step test covers 0.13 m and 0.24 m
+  posts under the body.
+- AI jerk root cause/fix: the AI throttle/brake loop was bang-bang, and the
+  125 Hz frame buffer had only 48 ms of history for a 40 ms interpolation
+  target. Added throttle/brake hysteresis, rate-limited controls, smoothed
+  target speed, and raised `RemoteStateBuffer` history to 16 frames (128 ms).
+  Measured one-AI speed ripple: reversals 108 -> 52 and max frame-to-frame
+  speed step ~1.2 -> ~0.5 m/s; the remaining variation is mostly corner
+  braking.
+- Tree-trunk fix: wall collision has 11 probes including the centre/interior,
+  with a fixed-step test for 0.13 m and 0.24 m posts under the body.
+- AI jerk root cause/fix: widened the brake hysteresis to +2.0/-1.0 m/s with a
+  0.5 m/s throttle deadband so small overspeed coasts. Added a closed-loop
+  Vehicle+RaceTracker+AiDriver test: a settled 20 s straight run keeps speed
+  ripple <=0.5 m/s with no brake/chatter. The AI and player share the same
+  500 Hz worker step; there is no AI/user rate conflict and no single-player
+  multiplayer interpolation.
+- If the rig still shows stutter, the next isolation step is a spectator
+  (`?aiOnly=1`) camera following an AI, plus an AI speed/alpha debug overlay.
+- Render smoothing remains: AI interpolation 60 ms, 24-frame history, 50 ms
+  pose filter.
+- User ruled out player input as the cause of the AI stutter. Next isolation:
+  add an `?aiDebug=1` hook recording raw AI worker frames (tick, speed,
+  position) and the interpolated/smoothed render pose (alpha, depth, jitter,
+  age), then compare on the terrain track to decide whether the stutter is AI
+  physics/terrain or render/timebase.
+- If raw speed is smooth and only the rendered pose stutters, the next step is
+  a spectator/timebase fix; if raw speed stutters, focus on terrain collision
+  and AI control on the real track.
+- Isolation result (headless, terrain track, one AI): raw AI speed was smooth
+  (22.9 -> 24.0 m/s monotonic, no reversals) and the rendered pose was smooth
+  (alpha 0.38-0.63, depth 24, jitter <1 ms). The AI physics/render path is not
+  stuttering in this environment; next check the user's browser for a stale
+  service-worker build or local frame pacing. Added an `?sw=0` bypass.
+- Isolation result: the user's trees/world are smooth while the AI car alone
+  stutters, and the AI body position/raw speed are smooth. Spectator camera is
+  not the fix. Next: log AI yaw/angular velocity and suspension/wheel fields;
+  the pose filter currently smooths only position and rotation, not suspension
+  travel or wheel angles.
+- Spectate camera added (`?spectate=1..3`): follows an AI, hides the local car,
+  and keeps input neutral. Verified locally (AI centered, no errors). This is
+  the isolation test for the remaining AI-only stutter: smooth when
+  screen-static means 60 Hz screen-space judder/camera-relative motion; still
+  stutter when centered means the AI mesh/rig.
+- Full viewer gate after the contact-footprint change was interrupted; re-run
+  the full gate before commit.
+- Open product decision for 3B: confirm observation-only online contact, or
+  require a follow-up ADR for kinematic remote proxies and local physical
+  response.
+- Status: 3A in progress; 3B not started.
 
 ## Completed checkpoints
 
@@ -605,11 +702,12 @@ Resume in this order:
 
 ## Next steps
 
-**Race manager MVP (done):** the Race chunk foundation is merged to `dev`
-(PR #44). The local lap/sector/progress tracker and HUD are merged to `dev` as
-`45fa03d` (PR #47); track-ed PR #7 is merged and the parent pin is `1b22f5a`.
-See the resume checkpoint above and `docs/features/race-manager.md`. AI
-opponents are the next batch; online contact follows (ADR-0013).
+**AI racing (done):** race manager, AI opponents, AI field, AI race, and motion
+smoothing are merged to `dev` and released to `main` via PR #65. The next AI
+direction is online contact (ADR-0013). 3A (player/AI contact) is in progress
+on `feat/online-contact` under ADR-0019; 3B (online observation) is proposed
+under ADR-0020. The field stays at three AI for now; a 20+ grid is a later
+profiling and limits batch.
 
 1. **Editor consolidation (next)**: continue
    `docs/features/editor-consolidation-plan.md`. A1, A2/A3, B1, B3, C1–C3 and
@@ -669,6 +767,11 @@ opponents are the next batch; online contact follows (ADR-0013).
   contract ownership and mirror roots.
 - `docs/adr/0013-ai-racing-and-online-contact.md` — AI racing and online-contact
   direction.
+- `docs/adr/0019-co-simulated-car-contact.md` — co-simulated car contact.
+- `docs/adr/0020-online-contact-observation.md` — proposed online observation.
+- `docs/features/online-contact.md` — active online-contact plan.
+- `docs/features/race-grid-and-countdown.md` — grid placement and countdown
+  visibility plan.
 - `agents/` — multi-agent role cards, contracts, and protocol.
 - `crates/sim-core` — custom vehicle physics and collider.
 - `crates/sim-asset` — runtime pack validation and access.

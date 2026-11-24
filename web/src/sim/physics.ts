@@ -5,6 +5,9 @@ import {
   type RaceStateView,
 } from "../contracts/race-state.ts";
 import { createSnapshotReader, writeInput, type InputState, type SnapshotReader } from "./sab.ts";
+import { parseContacts, type ContactEvent } from "./contacts.ts";
+
+export type { ContactEvent } from "./contacts.ts";
 
 export interface PhysicsDiagnostics {
   tick: number;
@@ -53,6 +56,7 @@ export class PhysicsClient {
   onDiagnostics: ((diagnostics: PhysicsDiagnostics) => void) | null = null;
   onFatalError: ((message: string) => void) | null = null;
   onAiFrame: ((slot: number, frame: Float32Array, race: RaceStateView) => void) | null = null;
+  onContact: ((contact: ContactEvent) => void) | null = null;
 
   private readonly worker: Worker;
   private readonly sab: SharedArrayBuffer;
@@ -242,6 +246,12 @@ export class PhysicsClient {
         frame,
         parseAiRaceState(data.race),
       );
+      return;
+    }
+    if (data?.type === "contacts") {
+      for (const contact of parseContacts(data.contacts)) {
+        this.onContact?.(contact);
+      }
       return;
     }
     if (data?.type === "diagnostics") {
