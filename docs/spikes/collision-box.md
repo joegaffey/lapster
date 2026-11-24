@@ -81,12 +81,20 @@ Serve the worktree (the architect serves it; this spike does not start a
 server) and open:
 
 ```text
-/drive/?track=race-loop&ai=3&collisionDebug=1
+/web/drive/?track=race-loop&ai=3&collisionDebug=1
+/web/drive/?track=race-loop&ai=3&car=sc-deckard-conejo&collisionDebug=1
+/web/drive/?track=race-loop&ai=3&car=67gp-guthrie-eagle&collisionDebug=1
+/web/drive/?track=race-loop&ai=3&spectate=1&collisionDebug=1
 ```
 
+Dev-preview equivalents are the same paths under
+`https://joegaffey.com/lapster-dev/`, for example
+`https://joegaffey.com/lapster-dev/drive/?track=race-loop&ai=3&collisionDebug=1`.
+
 The overlay draws bright-green 3D wireframes for the local player and all three
-AI cars. `track=race-loop` is the intended baseline; add `&car=<pack>` or use
-the existing car selection to compare RX-7, Deckard, and Eagle.
+AI cars. `track=race-loop` is the intended baseline; use the `car=` queries
+above to compare RX-7, Deckard, and Eagle, and the `spectate=1` query to follow
+an AI car.
 
 Suggested checks:
 
@@ -129,6 +137,10 @@ Suggested checks:
   extents, so future tuning only has to happen in one place.
 - The debug buffer is reused across frames and only uploaded when enabled, so
   the overlay is cheap and does not rebuild scene meshes.
+- Wall probes remain the wall-contact mechanism; the box only places/insets
+  them. Probe count is unchanged (8 perimeter + 3 interior = 11 per car per
+  tick), so runtime cost is unchanged; the debug overlay costs only when
+  enabled.
 - The fallback box preserves the old car-to-car heuristic for tests and any
   caller that never installs a box.
 
@@ -170,6 +182,11 @@ boxes for multiplayer.
   hard-coded footprint to the manifest AABB?
 - Should the overlay become a dev-menu toggle (and persist) after promotion?
 
-## Sign-off
+## Architect sign-off
 
-Pending architect review and product-owner visual validation.
+- Architect reviewed `28fbbbc` (AABB derivation, worker/main-thread wiring, shared car/wall box, debug overlay).
+- `npm --prefix web run build:viewer` re-run by the architect: clean.
+- `cargo fmt --check` and `git diff --check` pass.
+- Product owner accepted the prototype direction after local RX-7/Deckard visual checks.
+- Wall probes stay: they are the wall-contact mechanism; the box only places/insets them. Same 11 probes per car per tick, so cost is unchanged.
+- Recommendation: `test` — push `spike/collision-box` and deploy the dev preview with `ref=spike/collision-box`.
