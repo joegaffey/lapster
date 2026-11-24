@@ -89,7 +89,7 @@ server) and open:
 
 Dev-preview equivalents are the same paths under
 `https://joegaffey.com/lapster-dev/`, for example
-`https://joegaffey.com/lapster-dev/drive/?track=race-loop&ai=3&collisionDebug=1`.
+`https://joegaffey.com/lapster-dev/web/drive/?track=race-loop&ai=3&collisionDebug=1`.
 
 The overlay draws bright-green 3D wireframes for the local player and all three
 AI cars. `track=race-loop` is the intended baseline; use the `car=` queries
