@@ -1,3 +1,5 @@
+import { isServiceWorkerBypass } from "./pwa-bypass.ts";
+
 const SW_URL = new URL("../sw.js", window.location.href);
 const SW_SCOPE = new URL("../", window.location.href).pathname;
 const RELOAD_KEY = "lapster.coi.reload";
@@ -6,6 +8,23 @@ const timeout = (milliseconds: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 
 export async function setupPwa(): Promise<boolean> {
+  if (isServiceWorkerBypass(window.location.search)) {
+    if ("serviceWorker" in navigator) {
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((registration) => registration.unregister()));
+      } catch (error) {
+        console.warn("PWA bypass could not unregister service workers", error);
+      }
+    }
+    try {
+      sessionStorage.removeItem(RELOAD_KEY);
+    } catch {
+      // Private browsing may reject sessionStorage; nothing to clear.
+    }
+    return false;
+  }
+
   if (!("serviceWorker" in navigator)) {
     return false;
   }

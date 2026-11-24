@@ -1594,6 +1594,47 @@ fn remote_particles_tuning(base: &ParticleTuning, quality: ParticleQuality) -> P
     tuning
 }
 
+/// Lowest contact speed that produces a visible effect.
+const CONTACT_MIN_SPEED: f32 = 0.5;
+/// Finite contact coordinates are clamped to this world-space magnitude.
+const CONTACT_MAX_COORD: f32 = 10_000.0;
+
+/// Clamp a contact sample and select a bounded particle budget.
+///
+/// Returns `None` for non-finite input, speeds below the visible threshold, or
+/// when Tyre effects are off. The returned budget never exceeds the per-quality
+/// cap or [`crate::particles::CONTACT_MAX_PARTICLES`].
+fn contact_effect_sample(
+    x: f32,
+    y: f32,
+    z: f32,
+    speed: f32,
+    quality: ParticleQuality,
+) -> Option<(Vec3, usize)> {
+    if !x.is_finite() || !y.is_finite() || !z.is_finite() || !speed.is_finite() {
+        return None;
+    }
+    let max_budget = match quality {
+        ParticleQuality::Off => return None,
+        ParticleQuality::Low => 5,
+        ParticleQuality::High => 14,
+    };
+    let speed = speed.clamp(0.0, crate::particles::CONTACT_MAX_SPEED);
+    if speed < CONTACT_MIN_SPEED {
+        return None;
+    }
+    let fraction = (speed / crate::particles::CONTACT_MAX_SPEED).sqrt();
+    let budget = ((fraction * max_budget as f32).ceil() as usize)
+        .clamp(1, max_budget)
+        .min(crate::particles::CONTACT_MAX_PARTICLES);
+    let point = Vec3::new(
+        x.clamp(-CONTACT_MAX_COORD, CONTACT_MAX_COORD),
+        y.clamp(-CONTACT_MAX_COORD, CONTACT_MAX_COORD),
+        z.clamp(-CONTACT_MAX_COORD, CONTACT_MAX_COORD),
+    );
+    Some((point, budget))
+}
+
 fn set_rig_cockpit_visible(renderer: &mut renderer::Renderer, rig: &CarRig, visible: bool) {
     if let Some(index) = rig.dashboard_mesh_index {
         renderer.set_mesh_visible(index, visible);
@@ -2058,6 +2099,7 @@ pub struct DriveViewer {
     local_slot: usize,
     remote_visible: Vec<bool>,
     remote_states: Vec<Option<VehicleState>>,
+    spectator_slot: Option<usize>,
     info: String,
     accumulator: f32,
     last_time: Option<f64>,
@@ -2270,6 +2312,7 @@ impl DriveViewer {
             local_slot: 0,
             remote_visible: vec![false; 1 + remote_slots],
             remote_states: vec![None; 1 + remote_slots],
+            spectator_slot: None,
             info,
             accumulator: 0.0,
             last_time: None,
@@ -2598,6 +2641,26 @@ impl DriveViewer {
         Ok(())
     }
 
+    /// Points the debug camera at a remote rig, or clears spectator mode.
+    ///
+    /// A negative slot returns the camera to the local car. Other slots are
+    /// validated against the available remote rigs; an invalid or local slot
+    /// leaves the viewer unchanged. The camera is updated immediately so the
+    /// next render uses the new pose.
+    pub fn set_spectator_slot(&mut self, slot: i32) {
+        if slot < 0 {
+            self.spectator_slot = None;
+            self.update_camera(None);
+            return;
+        }
+        let slot = slot as usize;
+        if slot == self.local_slot || slot >= self.rigs.len() {
+            return;
+        }
+        self.spectator_slot = Some(slot);
+        self.update_camera(None);
+    }
+
     pub fn place_on_grid(&mut self, slot: usize) -> Result<(), JsValue> {
         self.vehicle.place_on_grid(slot);
         for _ in 0..500 {
@@ -2619,11 +2682,12 @@ impl DriveViewer {
 
     /// Places the local car on the race grid and arms a grid start.
     ///
-    /// The car uses `race.grid[slot]`, oriented to the nearest layout tangent
-    /// until track-ed grid rotations are fixed (TD-0021). An invalid slot or a
-    /// track without race data leaves the viewer unchanged. The local tracker is
-    /// armed and updated at the grid position, so its state reports lap 1, the
-    /// grid progress, and `started = false`.
+    /// The car uses `race.grid[slot]`, projected onto the layout with its
+    /// lateral offset clamped and oriented to the layout tangent until track-ed
+    /// grid rotations are fixed (TD-0021). An invalid slot or a track without
+    /// race data leaves the viewer unchanged. The local tracker is armed and
+    /// updated at the grid position, so its state reports lap 1, the grid
+    /// progress, and `started = false`.
     pub fn place_on_race_grid(&mut self, slot: u32) {
         let Some(race) = self.race.clone() else {
             return;
@@ -3101,6 +3165,23 @@ impl DriveViewer {
         self.renderer.render()
     }
 
+    /// Spawn a cheap, bounded car-to-car contact effect at a world point.
+    ///
+    /// A no-op when Tyre effects are off, the sample is not finite, the speed is
+    /// negligible, or the active particle budget is exhausted. Reuses the
+    /// existing particle system; no per-call system or unbounded allocation.
+    pub fn contact_effect(&mut self, x: f32, y: f32, z: f32, speed: f32) {
+        if self.particle_quality == ParticleQuality::Off || self.particle_tuning.max_active == 0 {
+            return;
+        }
+        let Some((point, budget)) = contact_effect_sample(x, y, z, speed, self.particle_quality)
+        else {
+            return;
+        };
+        self.particles
+            .spawn_contact(point, speed, budget, &self.particle_tuning);
+    }
+
     pub fn tuning(&self) -> String {
         let values = serde_json::to_value(&self.tuning).unwrap_or(serde_json::Value::Null);
         let schema = serde_json::from_str(&TuningConfig::schema_json())
@@ -3396,7 +3477,7 @@ impl DriveViewer {
     }
 
     fn update_camera(&mut self, dt: Option<f32>) {
-        let (position, rotation) = self.visual_pose();
+        let (position, rotation) = self.camera_pose();
         if self.camera_mode == CameraMode::Bonnet {
             let shot = &self.tuning.camera.bonnet;
             let eye = position + rotation * Vec3::from_array(shot.eye);
@@ -3464,6 +3545,15 @@ impl DriveViewer {
         self.renderer.set_grass_center_xz(eye.x, eye.z);
     }
 
+    fn camera_pose(&self) -> (Vec3, Quat) {
+        resolve_camera_pose(
+            self.visual_pose(),
+            self.spectator_slot,
+            self.local_slot,
+            &self.remote_states,
+        )
+    }
+
     fn visual_pose(&self) -> (Vec3, Quat) {
         // With no main-thread clock running, previous_state holds the pose to
         // display: the raw remote pose for bonnet/cockpit, or the smoothed
@@ -3485,6 +3575,34 @@ impl DriveViewer {
     }
 }
 
+/// Picks the camera pose, preferring a valid spectator remote rig.
+fn resolve_camera_pose(
+    local: (Vec3, Quat),
+    spectator_slot: Option<usize>,
+    local_slot: usize,
+    remote_states: &[Option<VehicleState>],
+) -> (Vec3, Quat) {
+    spectator_pose(spectator_slot, local_slot, remote_states).unwrap_or(local)
+}
+
+fn spectator_pose(
+    spectator_slot: Option<usize>,
+    local_slot: usize,
+    remote_states: &[Option<VehicleState>],
+) -> Option<(Vec3, Quat)> {
+    let slot = spectator_slot?;
+    if slot == local_slot {
+        return None;
+    }
+    let state = remote_states.get(slot).copied().flatten()?;
+    let rotation = if state.rotation.length_squared() > 1e-8 {
+        state.rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+    Some((state.position, rotation))
+}
+
 fn spawn_rotation(spawn: &SpawnPoint) -> Quat {
     let rotation = Quat::from_xyzw(
         spawn.rotation_xyzw[0],
@@ -3499,12 +3617,18 @@ fn spawn_rotation(spawn: &SpawnPoint) -> Quat {
     }
 }
 
-/// Orients a grid spawn to the nearest layout tangent (TD-0021 workaround).
+/// Projects a grid spawn onto the clamped race grid, oriented to the layout
+/// tangent (TD-0021 workaround).
+///
+/// Uses [`RaceTracker::grid_spawn`] so the local car shares the worker's
+/// lateral clamp and heading. Falls back to the reversed slot rotation when the
+/// layout has no usable sample.
 fn oriented_race_spawn(tracker: &RaceTracker, base: &SpawnPoint) -> SpawnPoint {
     let mut spawn = base.clone();
-    match tracker.nearest_sample(Vec3::from_array(spawn.position)) {
-        Some(sample) => {
-            let yaw = (-sample.tangent.x).atan2(-sample.tangent.z);
+    match tracker.grid_spawn(&spawn) {
+        Some((position, tangent)) => {
+            spawn.position = position.to_array();
+            let yaw = (-tangent.x).atan2(-tangent.z);
             spawn.rotation_xyzw = Quat::from_rotation_y(yaw).to_array();
         }
         None => {
@@ -3775,6 +3899,41 @@ mod tests {
     }
 
     #[test]
+    fn contact_effect_sample_rejects_non_finite_off_and_negligible() {
+        assert!(contact_effect_sample(f32::NAN, 0.0, 0.0, 5.0, ParticleQuality::High).is_none());
+        assert!(
+            contact_effect_sample(0.0, f32::INFINITY, 0.0, 5.0, ParticleQuality::High).is_none()
+        );
+        assert!(contact_effect_sample(0.0, 0.0, f32::NAN, 5.0, ParticleQuality::High).is_none());
+        assert!(contact_effect_sample(0.0, 0.0, 0.0, f32::NAN, ParticleQuality::High).is_none());
+        assert!(contact_effect_sample(0.0, 0.0, 0.0, 5.0, ParticleQuality::Off).is_none());
+        assert!(contact_effect_sample(0.0, 0.0, 0.0, 0.0, ParticleQuality::High).is_none());
+    }
+
+    #[test]
+    fn contact_effect_sample_clamps_coordinates() {
+        let (point, _) = contact_effect_sample(1.0e9, -1.0e9, 300.0, 5.0, ParticleQuality::High)
+            .expect("finite sample");
+        assert_eq!(point.x, CONTACT_MAX_COORD);
+        assert_eq!(point.y, -CONTACT_MAX_COORD);
+        assert_eq!(point.z, 300.0);
+    }
+
+    #[test]
+    fn contact_effect_sample_respects_quality_budget() {
+        let (_, high) =
+            contact_effect_sample(0.0, 0.0, 0.0, 40.0, ParticleQuality::High).expect("high");
+        let (_, low) =
+            contact_effect_sample(0.0, 0.0, 0.0, 40.0, ParticleQuality::Low).expect("low");
+        assert!(low <= high);
+        assert!(low <= 5);
+        assert!(high <= 14);
+        let (_, capped) = contact_effect_sample(0.0, 0.0, 0.0, 1.0e9, ParticleQuality::High)
+            .expect("large finite speed");
+        assert!(capped <= crate::particles::CONTACT_MAX_PARTICLES);
+    }
+
+    #[test]
     fn source_hash_hex_is_lowercase_two_digits_per_byte() {
         let mut hash = [0u8; 32];
         hash[0] = 0x00;
@@ -3998,6 +4157,28 @@ mod tests {
     }
 
     #[test]
+    fn oriented_race_spawn_clamps_wide_slot_and_follows_layout_tangent() {
+        let race = grid_race();
+        let tracker = RaceTracker::new(&race);
+        let wide = grid_spawn("wide", [5.0, 1.0, 4.5]);
+        let spawn = oriented_race_spawn(&tracker, &wide);
+
+        assert!((spawn.position[0] - 5.0).abs() < 1e-4);
+        assert!((spawn.position[1] - 1.0).abs() < 1e-4, "y is preserved");
+        assert!(
+            (spawn.position[2] - sim_core::GRID_MAX_LATERAL).abs() < 1e-4,
+            "lateral offset is clamped: {:?}",
+            spawn.position
+        );
+
+        let forward = spawn_rotation(&spawn) * Vec3::NEG_Z;
+        assert!(
+            (forward - Vec3::X).length() < 1e-4,
+            "heading follows the layout tangent: {forward:?}"
+        );
+    }
+
+    #[test]
     fn race_grid_placement_arms_first_forward_crossing() {
         let race = grid_race();
         let mut tracker = RaceTracker::new(&race);
@@ -4111,5 +4292,43 @@ mod tests {
         );
         assert_eq!(drive_paint_hints(true, Some(3), 1), vec![true]);
         assert!(drive_paint_hints(true, Some(3), 0).is_empty());
+    }
+
+    fn test_vehicle_state(position: Vec3, rotation: Quat) -> VehicleState {
+        VehicleState {
+            position,
+            rotation,
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            wheels: [WheelState::default(); 4],
+            engine_rpm: 0.0,
+            gear: 1,
+            steering_rack_torque: 0.0,
+            tick: 0,
+        }
+    }
+
+    #[test]
+    fn spectator_camera_uses_remote_pose_until_cleared() {
+        let local = (Vec3::new(1.0, 0.0, 2.0), Quat::from_rotation_y(0.25));
+        let remote_position = Vec3::new(30.0, 1.0, -12.0);
+        let remote_rotation = Quat::from_rotation_y(std::f32::consts::PI);
+        let remote_states = [
+            None,
+            Some(test_vehicle_state(remote_position, remote_rotation)),
+        ];
+
+        // Setting the spectator slot selects the remote pose once available.
+        let (position, rotation) = resolve_camera_pose(local, Some(1), 0, &remote_states);
+        assert_eq!(position, remote_position);
+        assert!((rotation * Vec3::NEG_Z - remote_rotation * Vec3::NEG_Z).length() < 1e-5);
+
+        // A slot without a remote state falls back to the local pose.
+        let (position, _) = resolve_camera_pose(local, Some(2), 0, &remote_states);
+        assert_eq!(position, local.0);
+
+        // Clearing the spectator slot returns to the local pose.
+        let (position, _) = resolve_camera_pose(local, None, 0, &remote_states);
+        assert_eq!(position, local.0);
     }
 }

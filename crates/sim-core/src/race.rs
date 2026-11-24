@@ -6,7 +6,7 @@
 //! detect start/finish crossings.
 
 use glam::Vec3;
-use sim_types::{RaceData, RaceState};
+use sim_types::{RaceData, RaceState, SpawnPoint};
 
 use crate::vehicle::FIXED_DT;
 
@@ -18,6 +18,8 @@ const MOVEMENT_EPSILON: f32 = 1e-7;
 const SECTOR_EPSILON: f32 = 1e-6;
 /// Distance either side of a sample used to estimate layout curvature.
 const CURVATURE_SAMPLE_SPAN: f32 = 2.0;
+/// Maximum lateral offset of a race grid slot from the layout centreline.
+pub const GRID_MAX_LATERAL: f32 = 1.8;
 
 /// A point on the race layout at a given distance along the centreline.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -273,6 +275,34 @@ impl RaceTracker {
         }
         let (distance, _) = self.project(position);
         self.sample(distance)
+    }
+
+    /// Projects a race grid slot onto the layout and clamps its lateral offset.
+    ///
+    /// `base.position` is projected with [`RaceTracker::nearest_sample`], and
+    /// its horizontal offset from the centreline is clamped to
+    /// +/-[`GRID_MAX_LATERAL`]. The returned position preserves the slot's y
+    /// and longitudinal projection; the returned vector is the layout tangent.
+    /// Returns `None` for an inactive layout or a non-finite slot position.
+    pub fn grid_spawn(&self, base: &SpawnPoint) -> Option<(Vec3, Vec3)> {
+        let base_position = Vec3::from_array(base.position);
+        let sample = self.nearest_sample(base_position)?;
+
+        let mut horizontal = sample.tangent;
+        horizontal.y = 0.0;
+        let horizontal = if horizontal.length_squared() > LENGTH_EPSILON * LENGTH_EPSILON {
+            horizontal.normalize()
+        } else {
+            Vec3::X
+        };
+        let right = Vec3::new(-horizontal.z, 0.0, horizontal.x);
+
+        let lateral = (base_position - sample.point)
+            .dot(right)
+            .clamp(-GRID_MAX_LATERAL, GRID_MAX_LATERAL);
+        let mut position = sample.point + right * lateral;
+        position.y = base_position.y;
+        Some((position, sample.tangent))
     }
 
     fn point_at(&self, distance_m: f32) -> Option<(Vec3, Vec3)> {
@@ -790,5 +820,37 @@ mod tests {
         assert!(tracker
             .nearest_sample(Vec3::new(f32::NAN, 0.0, 0.0))
             .is_none());
+    }
+
+    fn grid_spawn_point(position: [f32; 3]) -> SpawnPoint {
+        SpawnPoint {
+            name: String::from("grid"),
+            position,
+            rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn grid_spawn_clamps_wide_lateral_offsets_and_keeps_y() {
+        let tracker = RaceTracker::new(&straight());
+
+        for (offset, expected) in [(4.5f32, GRID_MAX_LATERAL), (-4.5, -GRID_MAX_LATERAL)] {
+            let base = grid_spawn_point([5.0, 1.0, offset]);
+            let (position, tangent) = tracker.grid_spawn(&base).expect("grid spawn");
+
+            assert_close(position.x, 5.0);
+            assert_close(position.y, 1.0);
+            assert_close(position.z, expected);
+            assert_close(tangent.x, 1.0);
+            assert_close(tangent.z, 0.0);
+        }
+    }
+
+    #[test]
+    fn grid_spawn_returns_none_for_inactive_layout() {
+        let tracker = RaceTracker::new(&race_data(Vec::new(), true, Vec::new()));
+        let base = grid_spawn_point([0.0, 0.0, 0.0]);
+
+        assert!(tracker.grid_spawn(&base).is_none());
     }
 }

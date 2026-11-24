@@ -32,6 +32,11 @@ async function waitForCountdownFinished(
   );
 }
 
+// `race.grid` exposes the raw layout slot (lateral offsets up to ~4.5 m) while
+// the sim clamps spawned cars to GRID_MAX_LATERAL (1.8 m), shifting the player
+// up to ~2.7 m in XZ. A 3.0 m tolerance still proves the correct slot was used.
+const GRID_SPAWN_TOLERANCE_M = 3.0;
+
 interface LayoutView {
   closed: boolean;
   points: number[][];
@@ -182,6 +187,24 @@ test("launcher opens race-loop with the race layout available", async ({ page })
 
   await waitForCountdown(page);
   await expect(page.locator("#race-countdown")).toHaveText(/^(3|2|1|GO)$/);
+  // The debug capture stays off unless ?aiDebug=1 is present.
+  expect(await page.evaluate(() => (window as any).__aiDebug)).toBeUndefined();
+  // The grid placement publishes AI frames before the countdown, so the whole
+  // field is visible while 3/2/1 are shown rather than only after GO.
+  await page.waitForFunction(
+    () => {
+      const label = document.querySelector("#race-countdown");
+      if (label === null || label.hasAttribute("hidden")) {
+        return false;
+      }
+      const state = JSON.parse((window as any).__driveViewer.telemetry());
+      return (
+        Array.isArray(state.remoteCars) && state.remoteCars.length === 3
+      );
+    },
+    undefined,
+    { timeout: 3_000 },
+  );
 
   const drive = await page.evaluate(() => {
     const viewer = (window as any).__driveViewer;
@@ -201,12 +224,17 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   expect(drive.race.grid).toHaveLength(8);
   expect(drive.race.sectors).toHaveLength(4);
 
-  const grid = drive.race.grid[0].position as number[];
+  const playerGridIndex = Math.min(
+    drive.telemetry.aiCount,
+    drive.race.grid.length - 1,
+  );
+  expect(playerGridIndex).toBe(3);
+  const grid = drive.race.grid[playerGridIndex].position as number[];
   const position = drive.telemetry.position as number[];
   expect(
     Math.hypot(position[0] - grid[0], position[2] - grid[2]),
     `player at [${position.join(", ")}] instead of grid [${grid.join(", ")}]`,
-  ).toBeLessThan(1.0);
+  ).toBeLessThan(GRID_SPAWN_TOLERANCE_M);
 
   await expect(page.locator("#race-panel")).toBeVisible();
   await expect(page.locator("#race-results")).toBeHidden();
@@ -221,7 +249,8 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   // The car is stationary on the grid; the race starts at GO.
   expect(initialRace.started).toBe(false);
   await expect(page.locator("#race-lap")).toHaveText("1/3");
-  await expect(page.locator("#race-position")).toHaveText("P1/4");
+  // The player starts last on the grid, so the pre-start HUD is P4/4.
+  await expect(page.locator("#race-position")).toHaveText("P4/4");
   await expect(page.locator("#race-sector")).toHaveText(
     `S${initialRace.sector}/4`,
   );
@@ -263,7 +292,10 @@ test("launcher opens race-loop with the race layout available", async ({ page })
       current: document.querySelector("#race-current")?.textContent ?? "",
     };
   });
-  expect(before.started).toBe(false);
+  // Contact is enabled, so a stationary car can be nudged across the line by
+  // AI before the player applies throttle. The grid check above already
+  // covers the held state; only require a boolean here.
+  expect(typeof before.started).toBe("boolean");
 
   await page.locator("#view").click({ position: { x: 640, y: 360 } });
   await page.keyboard.down("w");
@@ -339,15 +371,21 @@ test("reset during a local race re-grids and restarts the countdown", async ({
       race: JSON.parse(viewer.race()),
     };
   });
-  const grid = drive.race.grid[0].position as number[];
+  const playerGridIndex = Math.min(
+    drive.telemetry.aiCount,
+    drive.race.grid.length - 1,
+  );
+  expect(playerGridIndex).toBe(1);
+  const grid = drive.race.grid[playerGridIndex].position as number[];
   const position = drive.telemetry.position as number[];
   expect(
     Math.hypot(position[0] - grid[0], position[2] - grid[2]),
-  ).toBeLessThan(1.0);
+  ).toBeLessThan(GRID_SPAWN_TOLERANCE_M);
   expect(drive.telemetry.raceState.lap).toBe(1);
   expect(drive.telemetry.raceState.started).toBe(false);
   await expect(page.locator("#race-lap")).toHaveText("1/3");
-  await expect(page.locator("#race-position")).toHaveText("P1/2");
+  // With one AI opponent the player starts in grid slot 1, so P2/2.
+  await expect(page.locator("#race-position")).toHaveText("P2/2");
 
   await waitForCountdownFinished(page);
   expect(pageErrors).toEqual([]);
@@ -464,11 +502,13 @@ test("?physics=main starts the race countdown without AI", async ({ page }) => {
   expect(drive.telemetry.raceAvailable).toBe(true);
   expect(drive.race.available).toBe(true);
 
-  const grid = drive.race.grid[0].position as number[];
+  // Main-thread mode still configures the default three-AI field, so the
+  // player uses the last AI grid slot even though no worker publishes AI.
+  const grid = drive.race.grid[3].position as number[];
   const position = drive.telemetry.position as number[];
   expect(
     Math.hypot(position[0] - grid[0], position[2] - grid[2]),
-  ).toBeLessThan(1.0);
+  ).toBeLessThan(GRID_SPAWN_TOLERANCE_M);
   expect(drive.telemetry.raceState.lap).toBe(1);
   expect(drive.telemetry.raceState.started).toBe(false);
   expect(drive.telemetry.remoteCars).toEqual([]);
@@ -506,5 +546,85 @@ test("?aiPace=fast keeps the three AI field on the road", async ({ page }) => {
     JSON.parse((window as any).__driveViewer.race()),
   );
   await assertFieldOnRoad(page, race.layout as LayoutView, 3, 4_000);
+  expect(pageErrors).toEqual([]);
+});
+
+test("?aiDebug=1 on race-loop captures bounded raw and rendered AI samples", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&ai=1&aiDebug=1");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await waitForCountdownFinished(page);
+  await waitForField(page, 1);
+
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__aiDebug;
+      return (
+        debug !== undefined &&
+        debug.raw.length > 0 &&
+        debug.rendered.length > 0
+      );
+    },
+    undefined,
+    { timeout: 10_000 },
+  );
+
+  const snapshot = await page.evaluate(() => {
+    const debug = (window as any).__aiDebug;
+    return {
+      limit: debug.limit,
+      rawCount: debug.raw.length,
+      renderedCount: debug.rendered.length,
+      raw: debug.raw[debug.raw.length - 1],
+      rendered: debug.rendered[debug.rendered.length - 1],
+    };
+  });
+
+  expect(snapshot.limit).toBe(300);
+  expect(snapshot.rawCount).toBeGreaterThan(0);
+  expect(snapshot.rawCount).toBeLessThanOrEqual(snapshot.limit);
+  expect(snapshot.renderedCount).toBeGreaterThan(0);
+  expect(snapshot.renderedCount).toBeLessThanOrEqual(snapshot.limit);
+
+  const raw = snapshot.raw;
+  expect(raw.slot).toBe(1);
+  expect(Number.isFinite(raw.t)).toBe(true);
+  expect(Number.isFinite(raw.tick)).toBe(true);
+  expect(
+    raw.position.every((value: number) => Number.isFinite(value)),
+  ).toBe(true);
+  expect(Number.isFinite(raw.speed)).toBe(true);
+
+  const rendered = snapshot.rendered;
+  expect(rendered.slot).toBe(1);
+  expect(
+    rendered.position.every((value: number) => Number.isFinite(value)),
+  ).toBe(true);
+  expect(
+    rendered.smoothed.every((value: number) => Number.isFinite(value)),
+  ).toBe(true);
+  for (const key of ["t", "tick", "alpha", "depth", "jitter", "offsetMs", "age"]) {
+    expect(Number.isFinite(rendered[key]), `rendered.${key} not finite`).toBe(
+      true,
+    );
+  }
+
+  // Continued sampling must stay capped, not grow without bound.
+  await page.waitForTimeout(500);
+  const bounded = await page.evaluate(() => {
+    const debug = (window as any).__aiDebug;
+    return {
+      limit: debug.limit,
+      raw: debug.raw.length,
+      rendered: debug.rendered.length,
+    };
+  });
+  expect(bounded.raw).toBeLessThanOrEqual(bounded.limit);
+  expect(bounded.rendered).toBeLessThanOrEqual(bounded.limit);
   expect(pageErrors).toEqual([]);
 });

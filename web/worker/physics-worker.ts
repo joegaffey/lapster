@@ -15,7 +15,7 @@ const FIXED_STEP_MS = 1000 / 500;
 const MAX_CATCHUP_STEPS = 32;
 const MAX_LAG_MS = 250;
 const PAUSED_WAIT_MS = 20;
-const AI_FRAME_TICKS = 8;
+const AI_FRAME_TICKS = 4;
 const AI_RACE_TICKS = 25;
 
 let simulation: Simulation | null = null;
@@ -125,6 +125,28 @@ function publishAiFrames(forceRace = false): void {
   }
   if (states.length > 0) {
     post("ai_states", { states });
+  }
+  publishContacts();
+}
+
+function publishContacts(): void {
+  if (!simulation) {
+    return;
+  }
+  // Guard against a stale wasm bundle that predates the contact API.
+  const drain = (simulation as unknown as { drain_contacts?: () => string })
+    .drain_contacts;
+  if (typeof drain !== "function") {
+    return;
+  }
+  let contacts: unknown = null;
+  try {
+    contacts = JSON.parse(simulation.drain_contacts());
+  } catch {
+    return;
+  }
+  if (Array.isArray(contacts) && contacts.length > 0) {
+    post("contacts", { contacts });
   }
 }
 
