@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-23
-Current phase: **Online contact 3A — co-simulated car contact**
+Current phase: **Online contact 3A — PR #72 open**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -482,7 +482,15 @@ Branch: `feat/online-contact`, created from `dev` at `a4b82a7`.
 - Open product decision for 3B: confirm observation-only online contact, or
   require a follow-up ADR for kinematic remote proxies and local physical
   response.
-- Status: 3A in progress; 3B not started.
+- Status: 3A implementation complete; full gate passed; PR #72 open to `dev`.
+- Gate: cargo fmt/clippy/workspace tests/wasm; 111 web tests; 124 viewer
+  passed / 1 skipped; WebGL2 fallback 2/2; agent sync.
+- Dev camera hotfix (#71) merged before this branch. The AI-only stutter was
+  ultimately screen-space/camera, not AI physics; AI smoothing, spectator, and
+  debug diagnostics are retained in this PR.
+- Temporary `aiDebug`, `aiNoWheels`, `aiNoSmooth`, and `aiRaw` flags are inert
+  by default; remove them before merge if they are not wanted.
+- 3B is not started.
 
 ## Completed checkpoints
 
@@ -511,6 +519,7 @@ Branch: `feat/online-contact`, created from `dev` at `a4b82a7`.
 | AI opponents | Done; merged to `dev` (PR #49) |
 | AI field | Done; merged to `dev` (PR #50) |
 | AI race | Done; merged to `dev` (PR #52) |
+| Online contact 3A | Implemented; full gate passed; PR #72 open |
 
 ## Current capabilities
 
