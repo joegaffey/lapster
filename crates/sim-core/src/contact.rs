@@ -114,10 +114,16 @@ struct BodyBox {
 
 impl BodyBox {
     fn from_vehicle(vehicle: &Vehicle) -> Self {
+        let collision = vehicle.collision_box();
         let (half_length, half_width) = vehicle.contact_half_extents();
         let (forward, right) = planar_axes(vehicle);
+        // The visual AABB can be asymmetric front-to-back (for example a long
+        // rear overhang), so carry its local XZ centre into world space.
+        let local_offset = Vec3::new(collision.center_x, 0.0, collision.center_z);
+        let rotated_offset = vehicle.state.rotation * local_offset;
+        let center = planar_center(vehicle) + Vec3::new(rotated_offset.x, 0.0, rotated_offset.z);
         Self {
-            center: planar_center(vehicle),
+            center,
             forward,
             right,
             half_length,

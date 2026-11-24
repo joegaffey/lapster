@@ -17,12 +17,12 @@ use crate::camera::Camera;
 use crate::chase::ChaseAnimation;
 use crate::particles::{ParticleInstance, ParticleSystem};
 use crate::renderer::{CarShadowMode, EnvironmentShadowMode};
-use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, Scene, SceneTexture};
+use crate::scene::{CarRig, CockpitNeedleSource, GarageBay, LineVertex, Scene, SceneTexture};
 use crate::tuning::{GpuTuning, ParticleTuning, TuningConfig};
 use glam::{Mat4, Quat, Vec3};
 use sim_core::{
-    Controls, PhysicsTuning, RaceTracker, TrackCollider, Vehicle, VehicleState, WheelState,
-    FIXED_DT,
+    CollisionBox, Controls, PhysicsTuning, RaceTracker, TrackCollider, Vehicle, VehicleState,
+    WheelState, FIXED_DT,
 };
 use sim_types::snapshot_state as snapshot;
 use sim_types::{CarTuning, RaceData, SpawnPoint, SNAPSHOT_STATE_FLOATS};
@@ -1939,6 +1939,64 @@ fn merge_json(target: &mut serde_json::Value, patch: serde_json::Value) {
     }
 }
 
+/// Collision debug wireframe vertical extent in vehicle-local metres.
+const COLLISION_DEBUG_BOTTOM: f32 = 0.1;
+const COLLISION_DEBUG_TOP: f32 = 1.2;
+const COLLISION_DEBUG_COLOR: [f32; 3] = [0.15, 1.0, 0.35];
+const COLLISION_DEBUG_EDGES: usize = 12;
+
+/// Appends the 12 edges of one car's planar collision box as world-space lines.
+fn append_collision_debug_box(
+    lines: &mut Vec<LineVertex>,
+    state: &VehicleState,
+    collision: CollisionBox,
+) {
+    let corner = |x: f32, y: f32, z: f32| -> [f32; 3] {
+        (state.position + state.rotation * Vec3::new(x, y, z)).to_array()
+    };
+    let cx = collision.center_x;
+    let cz = collision.center_z;
+    let hw = collision.half_width;
+    let hl = collision.half_length;
+    let bottom = [
+        corner(cx - hw, COLLISION_DEBUG_BOTTOM, cz - hl),
+        corner(cx + hw, COLLISION_DEBUG_BOTTOM, cz - hl),
+        corner(cx + hw, COLLISION_DEBUG_BOTTOM, cz + hl),
+        corner(cx - hw, COLLISION_DEBUG_BOTTOM, cz + hl),
+    ];
+    let top = [
+        corner(cx - hw, COLLISION_DEBUG_TOP, cz - hl),
+        corner(cx + hw, COLLISION_DEBUG_TOP, cz - hl),
+        corner(cx + hw, COLLISION_DEBUG_TOP, cz + hl),
+        corner(cx - hw, COLLISION_DEBUG_TOP, cz + hl),
+    ];
+    let edges = [
+        (bottom[0], bottom[1]),
+        (bottom[1], bottom[2]),
+        (bottom[2], bottom[3]),
+        (bottom[3], bottom[0]),
+        (top[0], top[1]),
+        (top[1], top[2]),
+        (top[2], top[3]),
+        (top[3], top[0]),
+        (bottom[0], top[0]),
+        (bottom[1], top[1]),
+        (bottom[2], top[2]),
+        (bottom[3], top[3]),
+    ];
+    debug_assert_eq!(edges.len(), COLLISION_DEBUG_EDGES);
+    for (from, to) in edges {
+        lines.push(LineVertex {
+            position: from,
+            color: COLLISION_DEBUG_COLOR,
+        });
+        lines.push(LineVertex {
+            position: to,
+            color: COLLISION_DEBUG_COLOR,
+        });
+    }
+}
+
 fn track_region(
     collision: &sim_types::TrackCollision,
     metadata: &sim_types::TrackMetadata,
@@ -2128,6 +2186,8 @@ pub struct DriveViewer {
     tree_detail: TreeDetail,
     racing_line_mesh: Option<usize>,
     racing_line_visible: bool,
+    collision_box: CollisionBox,
+    collision_debug: bool,
 }
 
 #[wasm_bindgen]
@@ -2177,6 +2237,7 @@ impl DriveViewer {
         let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
         let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
         let car_manifest = car_pack.manifest().clone();
+        let collision_box = CollisionBox::from_aabb(&car_manifest.bounds);
         drop(car_pack);
 
         if car_visual
@@ -2249,6 +2310,7 @@ impl DriveViewer {
         spawn.rotation_xyzw =
             (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
         let mut vehicle = Vehicle::new(car_physics, collider, &spawn);
+        vehicle.set_collision_box(collision_box);
         vehicle.set_physics_tuning(&tuning.physics);
         for _ in 0..500 {
             vehicle.step(Controls::default());
@@ -2341,6 +2403,8 @@ impl DriveViewer {
             tree_detail: TreeDetail::High,
             racing_line_mesh,
             racing_line_visible: true,
+            collision_box,
+            collision_debug: false,
         };
         drive.renderer.set_shadow_tuning(&drive.tuning.shadows);
         drive
@@ -2393,6 +2457,40 @@ impl DriveViewer {
         if let Some(index) = self.racing_line_mesh {
             self.renderer.set_mesh_visible(index, visible);
         }
+    }
+
+    /// Toggles the collision-box wireframe overlay. Inert when disabled; it
+    /// only writes the dynamic debug-line buffer and never changes scene
+    /// meshes or normal rendering.
+    pub fn set_collision_debug(&mut self, enabled: bool) {
+        self.collision_debug = enabled;
+        self.renderer.set_debug_lines_visible(enabled);
+        if enabled {
+            self.update_collision_debug();
+        } else {
+            self.renderer.set_debug_lines(&[]);
+        }
+    }
+
+    fn update_collision_debug(&mut self) {
+        if !self.collision_debug {
+            return;
+        }
+        let mut lines =
+            Vec::with_capacity(COLLISION_DEBUG_EDGES * 2 * (1 + self.remote_states.len()));
+        append_collision_debug_box(&mut lines, &self.vehicle.state, self.collision_box);
+        for slot in 0..self.rigs.len() {
+            if slot == self.local_slot {
+                continue;
+            }
+            if !self.remote_visible.get(slot).copied().unwrap_or(false) {
+                continue;
+            }
+            if let Some(state) = self.remote_states[slot] {
+                append_collision_debug_box(&mut lines, &state, self.collision_box);
+            }
+        }
+        self.renderer.set_debug_lines(&lines);
     }
 
     fn update_race_tracker(&mut self) {
@@ -3451,6 +3549,7 @@ impl DriveViewer {
             }
             self.renderer.set_particles(&self.particle_instances);
         }
+        self.update_collision_debug();
     }
 
     fn update_camera(&mut self, dt: Option<f32>) {
