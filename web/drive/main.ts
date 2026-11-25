@@ -8,6 +8,7 @@ import {
 } from "../src/assets/editor-track.ts";
 import { loadPackFromBytes, loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { setupMenu } from "../src/ui/menu.ts";
 import { isRaceStateView, type RaceStateView } from "../src/contracts/race-state.ts";
 import { RaceDirector, raceLayoutLength, type RaceView } from "../src/race/race-director.ts";
 import { buildRaceResultRows } from "../src/race/race-results.ts";
@@ -85,6 +86,7 @@ declare global {
 const AUDIO_STORAGE_KEY =
   BUILD_CHANNEL === "dev" ? "lapster.audio.dev.v1" : "lapster.audio.v1";
 setupHud();
+setupMenu();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);

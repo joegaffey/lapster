@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 async function waitForReady(page: import("@playwright/test").Page) {
   await page.waitForFunction(
@@ -116,7 +117,7 @@ test("manual gearbox option keeps the selected gear", async ({ page }) => {
   await page.bringToFront();
   await waitForReady(page);
 
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   const autoGears = page.locator("#auto-gears-toggle");
   await expect(autoGears).toHaveText("Auto gears: On");
   await autoGears.click();
@@ -147,7 +148,7 @@ test("manual clutch disengages drive torque", async ({ page }) => {
   await page.bringToFront();
   await waitForReady(page);
 
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   await page.locator("#auto-gears-toggle").click();
   await page.locator("#auto-clutch-toggle").click();
   await page.locator("#assists-close").click();
@@ -179,7 +180,7 @@ test("neutral revs the engine to the limiter", async ({ page }) => {
   await page.bringToFront();
   await waitForReady(page);
 
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   await page.locator("#auto-gears-toggle").click();
   await page.locator("#assists-close").click();
   await page.locator("#view").click({ position: { x: 640, y: 360 } });
@@ -233,7 +234,7 @@ test("info starts hidden and can be opened", async ({ page }) => {
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator("#speed")).toBeHidden();
 
-  await toggle.click();
+  await clickMenuControl(page, "#hud-toggle");
   await expect(hud).not.toHaveClass(/hud-collapsed/);
   await expect(toggle).toHaveText("Hide info");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -251,7 +252,7 @@ test("settings tabs tune assists, graphics, and time of day", async ({ page }) =
   await page.reload();
   await waitForReady(page);
 
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   await expect(page.locator("#assists-dialog")).toHaveAttribute("open", "");
 
   const gameplayTab = page.locator("#tab-gameplay");
@@ -517,7 +518,7 @@ test("steering rate setting persists across reload", async ({ page }) => {
   await page.reload();
   await waitForReady(page);
 
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   const steeringRate = page.locator("#steering-rate");
   const steeringRateValue = page.locator("#steering-rate-value");
   await expect(steeringRate).toHaveValue("6");
@@ -537,7 +538,7 @@ test("steering rate setting persists across reload", async ({ page }) => {
 
   await page.reload();
   await waitForReady(page);
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   await expect(page.locator("#steering-rate")).toHaveValue("9");
   await expect(page.locator("#steering-rate-value")).toHaveText("9.0 units/s");
 });

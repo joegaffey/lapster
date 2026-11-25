@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 test("selected garage car becomes the driving car", async ({ page }) => {
   await page.goto("/web/garage/");
@@ -25,7 +26,7 @@ test("selected garage car becomes the driving car", async ({ page }) => {
   expect(driveUrl.searchParams.has("paint")).toBe(false);
   expect(await page.evaluate(() => localStorage.getItem("lapster.garage.car.v1"))).toBe("2");
 
-  await page.click("#drive-car");
+  await clickMenuControl(page, "#drive-car");
   await page.waitForFunction(
     () => (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
     undefined,
@@ -83,7 +84,7 @@ test("Deckard paint selected in the garage follows into Drive", async ({ page })
   const driveHref = await page.locator("#drive-car").getAttribute("href");
   expect(new URL(driveHref!).searchParams.get("paint")).toBe("1");
 
-  await page.click("#drive-car");
+  await clickMenuControl(page, "#drive-car");
   await page.waitForFunction(
     () => (window as any).__driveViewerReady === true || (window as any).__driveViewerError,
     undefined,
