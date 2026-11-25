@@ -2,6 +2,7 @@ import init, { TrackViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { setupMenu } from "../src/ui/menu.ts";
 import { setupTrackCamera } from "../src/ui/track-camera.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
@@ -34,6 +35,7 @@ const frameLabel = document.querySelector<HTMLElement>("#frame-ms")!;
 const drawsLabel = document.querySelector<HTMLElement>("#draws")!;
 
 setupHud();
+setupMenu();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);

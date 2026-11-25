@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 test("skidpad grows stylized grass blades", async ({ page }) => {
   const pageErrors: string[] = [];
@@ -111,7 +112,7 @@ test("grass texture and shader toggles are independent", async ({ page }) => {
     { timeout: 30_000 },
   );
 
-  await page.click("#assists-open");
+  await clickMenuControl(page, "#assists-open");
   await page.click("#tab-graphics");
   await expect(page.locator("#grass-texture-toggle")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#grass-shader-toggle")).toHaveAttribute("aria-pressed", "false");
