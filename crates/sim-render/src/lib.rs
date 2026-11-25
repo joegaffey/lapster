@@ -2124,6 +2124,18 @@ impl CameraMode {
     }
 }
 
+/// Total Drive rig budget: one local driver plus remote slots. The scene/garage
+/// path supports up to this many rigs.
+const MAX_DRIVE_RIGS: usize = 10;
+
+/// Maximum remote rigs in the Drive viewer, leaving room for the local driver
+/// within [`MAX_DRIVE_RIGS`].
+const MAX_REMOTE_SLOTS: usize = MAX_DRIVE_RIGS - 1;
+
+fn clamp_remote_slots(remote_slots: Option<usize>) -> usize {
+    remote_slots.unwrap_or(0).min(MAX_REMOTE_SLOTS)
+}
+
 /// Only the local Drive slot may take a textured body paint, and only when the
 /// driver selected an explicit paint; AI/remote slots reuse the same car
 /// visual but keep its factory livery.
@@ -2257,7 +2269,7 @@ impl DriveViewer {
         }
 
         let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
-        let remote_slots = remote_slots.unwrap_or(0).min(7);
+        let remote_slots = clamp_remote_slots(remote_slots);
         let cars = [garage::GarageCar {
             physics: &car_physics,
             visual: &car_visual,
@@ -4282,6 +4294,22 @@ mod tests {
         );
         assert_eq!(drive_paint_hints(true, Some(3), 1), vec![true]);
         assert!(drive_paint_hints(true, Some(3), 0).is_empty());
+    }
+
+    #[test]
+    fn drive_viewer_accepts_a_ten_car_field() {
+        assert_eq!(MAX_REMOTE_SLOTS, 9);
+        assert_eq!(MAX_DRIVE_RIGS, 10);
+        assert_eq!(clamp_remote_slots(None), 0);
+        assert_eq!(clamp_remote_slots(Some(0)), 0);
+        assert_eq!(clamp_remote_slots(Some(7)), 7);
+        assert_eq!(clamp_remote_slots(Some(9)), MAX_REMOTE_SLOTS);
+        assert_eq!(
+            clamp_remote_slots(Some(10)),
+            MAX_REMOTE_SLOTS,
+            "a 10-car field keeps 9 remote slots after the local driver"
+        );
+        assert_eq!(1 + clamp_remote_slots(Some(usize::MAX)), MAX_DRIVE_RIGS);
     }
 
     fn test_vehicle_state(position: Vec3, rotation: Quat) -> VehicleState {

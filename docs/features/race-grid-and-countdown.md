@@ -30,7 +30,7 @@ Out of scope:
 
 - changing the exported grid slots in track-ed (TD-0021 remains the long-term
   fix);
-- raising the AI field size (still 3);
+- raising the AI field size beyond the nine-AI maximum set by ADR-0021;
 - car-to-car avoidance;
 - multiplayer start behavior;
 - new contracts or schema changes.

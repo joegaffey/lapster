@@ -29,5 +29,5 @@ produces byte-identical output, so a stale checked-in pack fails the
 - Pack: kind `Track`, id `race-loop`, with a `Race` chunk entrypoint.
 - Layout: `main`, closed, forward, 180 centreline points, half-width 5 m.
 - Start/finish: section `main`, fraction 0, positioned at `layout.points[0]`.
-- Grid: 8 pole-first slots.
+- Grid: 10 pole-first slots.
 - Sectors: 4 equal sectors covering `[0, 1]`.

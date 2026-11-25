@@ -41,7 +41,7 @@ fn loop_spline_point_terrain_pack_carries_race_data() {
     assert_eq!(race.layout.half_width, 5.0);
     assert_eq!(race.start_finish.section_id, "section-1");
     assert!((race.start_finish.fraction - 0.123_154_98).abs() < 1e-6);
-    assert_eq!(race.grid.len(), 8);
+    assert_eq!(race.grid.len(), 10);
     assert_eq!(race.sectors.len(), 4);
     assert_eq!(race.start_finish.position, race.layout.points[0]);
 }
