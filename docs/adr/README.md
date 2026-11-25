@@ -53,3 +53,4 @@ Use `template.md`. Name files `NNNN-kebab-title.md` with a sequential number.
 | [0019](0019-co-simulated-car-contact.md) | Co-simulated car-to-car contact in the physics worker | Accepted |
 | [0020](0020-online-contact-observation.md) | Non-authoritative online contact observation | Proposed |
 | [0021](0021-ten-car-ai-grid.md) | Ten-car AI grid with nine AI opponents | Accepted |
+| [0022](0022-car-categories.md) | Car categories and same-category grids | Proposed |
