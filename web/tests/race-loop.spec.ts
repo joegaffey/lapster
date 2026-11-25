@@ -221,7 +221,7 @@ test("launcher opens race-loop with the race layout available", async ({ page })
   expect(drive.race.available).toBe(true);
   expect(drive.race.layout.layout_id).toBe("main");
   expect(drive.race.layout.closed).toBe(true);
-  expect(drive.race.grid).toHaveLength(8);
+  expect(drive.race.grid).toHaveLength(10);
   expect(drive.race.sectors).toHaveLength(4);
 
   const playerGridIndex = Math.min(
@@ -443,6 +443,65 @@ test("?ai=1 requests a single AI opponent", async ({ page }) => {
     field.cars[0].position.every((value: number) => Number.isFinite(value)),
   ).toBe(true);
   await expect(page.locator("#race-position")).toHaveText(/^P\d+\/2$/);
+  expect(pageErrors).toEqual([]);
+});
+
+test("?ai=9 fills the ten-slot race grid", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/web/drive/?track=race-loop&ai=9");
+  await waitForDrive(page);
+  await expect(page.locator("#viewer-loading")).toBeHidden();
+  await expect(page.locator("#race-panel")).toBeVisible();
+  await waitForCountdown(page);
+  await expect(page.getByTestId("race-ai")).toBeVisible();
+  await expect(page.locator("#race-ai")).toHaveText("9");
+  await waitForField(page, 9);
+
+  const drive = await page.evaluate(() => {
+    const viewer = (window as any).__driveViewer;
+    return {
+      telemetry: JSON.parse(viewer.telemetry()),
+      race: JSON.parse(viewer.race()),
+    };
+  });
+  expect(drive.race.grid).toHaveLength(10);
+  expect(drive.telemetry.aiCount).toBe(9);
+  expect(drive.telemetry.remoteSlots).toBe(9);
+
+  // Nine AI cars occupy slots 1..9, so the player starts last in slot 9.
+  const playerGridIndex = Math.min(
+    drive.telemetry.aiCount,
+    drive.race.grid.length - 1,
+  );
+  expect(playerGridIndex).toBe(9);
+  const grid = drive.race.grid[playerGridIndex].position as number[];
+  const position = drive.telemetry.position as number[];
+  expect(
+    Math.hypot(position[0] - grid[0], position[2] - grid[2]),
+    `player at [${position.join(", ")}] instead of grid [${grid.join(", ")}]`,
+  ).toBeLessThan(GRID_SPAWN_TOLERANCE_M);
+  await expect(page.locator("#race-position")).toHaveText("P10/10");
+
+  const field = await fieldState(page);
+  expect(field.slots).toBe(9);
+  expect(field.aiCount).toBe(9);
+  expect(field.cars).toHaveLength(9);
+  expect(field.cars.map((car) => car.slot).sort()).toEqual([
+    1, 2, 3, 4, 5, 6, 7, 8, 9,
+  ]);
+  const starts: Record<number, number[]> = {};
+  for (const car of field.cars) {
+    expect(
+      car.position.every((value: number) => Number.isFinite(value)),
+    ).toBe(true);
+    starts[car.slot] = car.position;
+  }
+
+  await waitForCountdownFinished(page);
+  await waitForFieldMovement(page, starts);
+  await assertFieldOnRoad(page, drive.race.layout as LayoutView, 9, 5_000);
   expect(pageErrors).toEqual([]);
 });
 

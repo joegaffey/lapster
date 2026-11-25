@@ -38,7 +38,7 @@ fn race_loop_pack_matches_source_and_carries_race_data() {
     assert_eq!(race.layout.layout_id, "main");
     assert!(race.layout.closed);
     assert_eq!(race.layout.points.len(), 180);
-    assert_eq!(race.grid.len(), 8);
+    assert_eq!(race.grid.len(), 10);
     assert_eq!(race.sectors.len(), 4);
     assert_eq!(race.start_finish.position, race.layout.points[0]);
 }

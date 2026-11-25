@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-23
-Current phase: **Online contact 3A — PR #72 open**
+Last updated: 2026-11-25
+Current phase: **Ten-car AI grid — verified, pushed, PR pending**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +53,16 @@ Deployment:
 
 ## Current focus
 
+- The ten-car AI grid batch is implemented on `feat/ten-car-grid`: nine AI is
+  the new maximum, the default stays three, track-ed and `track-pack` accept
+  ten grid slots, the renderer supports nine remote rigs, and both race
+  fixtures were re-exported and re-baked. See ADR-0021. The branch is now based
+  on `dev` after the collision-box physics merge (`2cfc010`), and the worker,
+  renderer, and web changes re-merged cleanly. Product-owner browser
+  verification passed for `?ai=9`. Full fmt/clippy/workspace tests/wasm, web
+  unit tests, track-ed tests/build, and viewer pass except one flaky
+  Deckard-physics viewer failure that passes when run in isolation; the full
+  viewer rerun was skipped by product-owner request.
 - Online contact is staged on `feat/online-contact`, created from `dev` at
   `a4b82a7`. 3A (this batch) adds deterministic player/AI contact in the
   physics worker under ADR-0019. 3B (later) adds non-authoritative online

@@ -1,5 +1,5 @@
 /**
- * Resolve the `?spectate=1..3` flag to a valid AI camera slot.
+ * Resolve the `?spectate=1..9` flag to a valid AI camera slot.
  *
  * Returns `null` when spectating is not requested or unavailable: the flag is
  * absent, there are no AI cars, or the session is multiplayer or solo. A

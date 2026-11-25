@@ -183,7 +183,8 @@ function resolveCarPaint(): number | null {
 const mpMode = params.get("mp") === "1";
 const soloMode = params.get("race") === "0";
 const REMOTE_SLOTS = 3;
-const AI_FIELD_MAX = 3;
+const AI_FIELD_MAX = 9;
+const DEFAULT_AI_COUNT = 3;
 const DEFAULT_AI_PACE = 1;
 const AI_PACE_INDICES: Record<string, number> = {
   chill: 0,
@@ -198,11 +199,11 @@ function resolveAiCount(raceAvailable: boolean): number {
   }
   const raw = params.get("ai");
   if (raw === null || raw.trim() === "") {
-    return AI_FIELD_MAX;
+    return DEFAULT_AI_COUNT;
   }
   const value = Number(raw);
   if (!Number.isFinite(value)) {
-    return AI_FIELD_MAX;
+    return DEFAULT_AI_COUNT;
   }
   return Math.min(AI_FIELD_MAX, Math.max(0, Math.trunc(value)));
 }
@@ -343,7 +344,7 @@ let playerGridSlot = 0;
 let raceLaps = DEFAULT_RACE_LAPS;
 let raceGeneration = 0;
 let inputLocked = false;
-// `?spectate=1..3` follows an AI car with a locked, neutral player input.
+// `?spectate=1..9` follows an AI car with a locked, neutral player input.
 let spectatorMode = false;
 let countdownTimers: ReturnType<typeof setTimeout>[] = [];
 let resultsShown = false;
@@ -1520,8 +1521,16 @@ async function boot() {
     raceView.available && Array.isArray(raceView.grid)
       ? raceView.grid.length
       : 0;
-  playerGridSlot = gridCount > 0 ? Math.min(aiCount, gridCount - 1) : 0;
-  const aiSlots = Array.from({ length: aiCount }, (_, index) => index + 1);
+  // Clamp the effective field to the race grid. The viewer and worker are
+  // created with the requested count, so a legacy 8-slot pack hides the extra
+  // AI slots instead of letting standings and the player grid overrun it.
+  const effectiveAiCount =
+    gridCount > 0 ? Math.min(aiCount, gridCount - 1) : 0;
+  playerGridSlot = effectiveAiCount;
+  const aiSlots = Array.from(
+    { length: effectiveAiCount },
+    (_, index) => index + 1,
+  );
   const configuredRaceLaps = hasRace && raceView.available
     ? resolveRaceLaps()
     : DEFAULT_RACE_LAPS;
