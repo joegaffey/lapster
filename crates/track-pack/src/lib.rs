@@ -561,9 +561,9 @@ fn validate_race(race: &RaceData) -> Result<()> {
         bail!("race start_finish position must match layout point 0");
     }
 
-    if race.grid.is_empty() || race.grid.len() > 8 {
+    if race.grid.is_empty() || race.grid.len() > 10 {
         bail!(
-            "race grid must contain 1..=8 slots, got {}",
+            "race grid must contain 1..=10 slots, got {}",
             race.grid.len()
         );
     }

@@ -36,5 +36,5 @@ The project uses `samplesPerSegment: 32` for a smoother visual road ribbon.
 - Layout: `section-1`, closed, forward, 471 centreline points, half-width 5 m.
 - Start/finish: section `section-1`, fraction ~0.12315, positioned at
   `layout.points[0]`.
-- Grid: 8 pole-first slots.
+- Grid: 10 pole-first slots.
 - Sectors: 4 equal sectors covering `[0, 1]`.

@@ -236,7 +236,7 @@ test("hosted track-ed boots, edits, creates a junction, exports and test drives"
   expect(drive.race.available).toBe(true);
   // The MVP layout_id is the spawn section id; the hosted default is "section-1".
   expect(drive.race.layout.layout_id).toBe(restored.centerlines[0]!.id);
-  expect(drive.race.grid.length).toBe(8);
+  expect(drive.race.grid.length).toBe(10);
   expect(drive.race.sectors.length).toBe(4);
   expect(pageErrors).toEqual([]);
 });

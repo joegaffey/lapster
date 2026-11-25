@@ -325,17 +325,18 @@ After 3B:
 
 - web contact detection cost per frame with three remote ghosts.
 
-## 12. Future grid size
+## 12. Grid size
 
-The product direction is a larger grid later (20+ cars). This batch keeps the
-solver count-agnostic but does not raise the current caps:
+ADR-0021 raised the single-player field to nine AI on a ten-slot grid. The
+solver remains count-agnostic. The product direction remains a larger grid
+later (20+ cars):
 
 | Limit | Current | Needed for 20+ |
 |---|---|---|
-| worker `MAX_AI` | 3 | derive from grid slots |
-| web AI field | `?ai=0..3` | widened URL/UI and count-agnostic results |
-| renderer remote rigs | `min(7)` | remote-slot and budget work |
-| track-ed grid export | 8 slots | larger grid authoring/export |
+| worker `MAX_AI` | 9 | derive from grid slots |
+| web AI field | `?ai=0..9` | widened URL/UI and count-agnostic results |
+| renderer remote rigs | `min(9)` | remote-slot and budget work |
+| track-ed grid export | 10 slots | larger grid authoring/export |
 | relay clients | 4 default | slot and bandwidth work |
 
 A future grid batch also needs profiling for physics catch-up, draw calls,

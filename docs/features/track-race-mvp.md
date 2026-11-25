@@ -193,9 +193,9 @@ Semantics:
 - `start_finish` is a baked copy/reference of a section feature. Its
   `section_id` and `fraction` preserve provenance. Its position must match
   `layout.points[0]` within tolerance. Its rotation is normalized.
-- `grid` is pole-first and contains up to 8 logical slots. Slots are derived
+- `grid` is pole-first and contains up to 10 logical slots. Slots are derived
   race setup, not track geometry. The renderer supports one local car plus
-  seven remote rigs.
+  nine remote rigs.
 - `sectors` uses the existing `SectorSpec` type and covers `[0, 1]` exactly
   once, in order.
 
@@ -363,7 +363,7 @@ If `project.spawn.centerline` is closed:
    inconsistent.
 6. Build the section-local start/finish anchor from the spawn centerline,
    fraction, and tangent. Do not use the spawn's lateral offset for the line.
-7. Build 8 staggered logical grid slots behind the line, clamped inside
+7. Build 10 staggered logical grid slots behind the line, clamped inside
    `road.halfWidth`.
 8. Build 4 equal sectors.
 9. Set `layout_id` to the spawn centerline ID.

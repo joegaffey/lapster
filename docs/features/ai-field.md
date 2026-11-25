@@ -14,7 +14,7 @@ Turn the single AI opponent into a small race field:
 
 > A race-ready track starts three AI opponents by default. AI pace is
 > selectable without changing the car or track contract. The Drive viewer can
-> request zero to three AI for testing, and worker timing remains visible.
+> request zero to nine AI for testing, and worker timing remains visible.
 
 This batch is about field size, pace, and performance. It does not add race
 standings, countdown, results, car-to-car contact, or netcode.
@@ -24,7 +24,7 @@ standings, countdown, results, car-to-car contact, or netcode.
 In scope:
 
 - three AI opponents by default on race-ready tracks;
-- `?ai=0..3` to request a field size for testing;
+- `?ai=0..9` to request a field size for testing;
 - `?aiPace=chill|club|fast` to select a pace preset, default `club`;
 - AI pace scaling for target speed and cornering budget;
 - worker diagnostics that report the active AI count;
@@ -76,7 +76,7 @@ PhysicsDiagnostics.aiCount: number
 ```
 
 Pace indices are `0 = chill`, `1 = club`, `2 = fast`. The worker clamps the AI
-count to `0..=min(3, grid.len() - 1)` and maps unknown pace indices to `club`.
+count to `0..=min(9, grid.len() - 1)` and maps unknown pace indices to `club`.
 
 ## 4. Pace behavior
 
@@ -95,7 +95,7 @@ the road for the tested Race Loop window.
 ## 5. Web behavior
 
 - Single-player race-ready tracks default to `ai=3` and `aiPace=club`.
-- `?ai=0..3` overrides the field size; invalid or out-of-range values clamp.
+- `?ai=0..9` overrides the field size; invalid or out-of-range values clamp.
 - `?aiPace=chill|club|fast` overrides pace; invalid values fall back to `club`.
 - Skidpad and other race-unavailable tracks always request zero AI.
 - Multiplayer keeps its existing three remote slots and requests zero AI.
@@ -168,7 +168,7 @@ catch-ups, not AI-induced drops.
 ## 11. Implementation notes
 
 - Three AI are the single-player default on race-ready tracks.
-- `?ai=0..3` and `?aiPace=chill|club|fast` are implemented; unknown pace values
+- `?ai=0..9` and `?aiPace=chill|club|fast` are implemented; unknown pace values
   fall back to Club.
 - The worker reports `aiCount` in diagnostics, and the facade telemetry carries
   it for the HUD and tests.
@@ -179,8 +179,19 @@ catch-ups, not AI-induced drops.
 
 ## 12. Risks
 
-- Three AI are measured and stay inside the 500 Hz budget in the local test;
-  keep the field at three until further profiling.
+- The default field remains three AI. Nine AI is the tested maximum and needs
+  its own profiling under ADR-0021.
 - Identical pace can keep the field bunched without contact; later race work
   should add per-AI pace/difficulty selection and standings.
 - The AI still uses the layout tangent workaround for TD-0021.
+
+## 13. Ten-car field update (ADR-0021)
+
+- track-ed and `track-pack` now support ten pole-first grid slots.
+- The worker accepts up to nine AI and still clamps to the available grid.
+- Drive still defaults to three AI and accepts `?ai=0..9`.
+- The renderer supports one local car plus nine remote rigs.
+- Race Loop and Loop Spline Point Terrain were re-exported and re-baked with
+  ten grid slots.
+- Nine-AI performance and browser validation are recorded with the ADR-0021
+  batch; no contract version changed.

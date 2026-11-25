@@ -24,7 +24,8 @@ does not add car-to-car contact, results, standings, or netcode.
 In scope:
 
 - one AI opponent by default on race-ready tracks;
-- up to three AI vehicles supported by the worker, with one selected in Drive;
+- up to nine AI vehicles supported by the worker, with three selected by
+  default in Drive;
 - AI start from race grid slots 1..N, leaving the player at the track spawn;
 - AI grid heading derived from the nearest layout tangent, because the Race
   Loop grid rotations do not currently match the layout direction (TD-0021);
@@ -215,7 +216,7 @@ Dependencies:
 ## 11. Implementation notes
 
 - One AI is requested by default on a race-ready track; the worker supports up
-  to three and clamps to the available grid slots. The player remains at the
+  to nine and clamps to the available grid slots. The player remains at the
   track spawn.
 - Race Loop grid-slot rotations do not match the layout direction, so AI heading
   comes from the nearest layout tangent (TD-0021). This is a workaround for the

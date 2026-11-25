@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-23
-Current phase: **Online contact 3A — PR #72 open**
+Last updated: 2026-11-25
+Current phase: **Ten-car AI grid — merged to dev (PR #77); track-ed pin on main**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +53,17 @@ Deployment:
 
 ## Current focus
 
+- The ten-car AI grid batch is merged to `dev` as PR #77 (`cb9dee7`): nine AI is
+  the new maximum, the default stays three, track-ed and `track-pack` accept
+  ten grid slots, the renderer supports nine remote rigs, and both race
+  fixtures were re-exported and re-baked. See ADR-0021. The branch merged the
+  collision-box and menu `dev` state; the combined gate passed (307 Rust, 117
+  web unit, 130 viewer / 1 skipped, WebGL2 2/2, track-ed 221 / 1 skipped, hosted
+  build and smoke). The hosted smoke assertion was the only failure and was
+  fixed to expect ten slots. The track-ed exporter is merged to track-ed `main`
+  as PR #8 (`a6f4db3`), and the parent pin is repointed from `2c459aa` to
+  `a6f4db3` in this change. Product-owner browser verification passed for
+  `?ai=9`; 3-vs-9 profiling remains the ADR-0021 follow-up.
 - Online contact is staged on `feat/online-contact`, created from `dev` at
   `a4b82a7`. 3A (this batch) adds deterministic player/AI contact in the
   physics worker under ADR-0019. 3B (later) adds non-authoritative online

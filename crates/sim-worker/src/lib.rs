@@ -7,7 +7,7 @@ use sim_types::snapshot_state as state;
 use sim_types::{CarTuning, RaceData, SpawnPoint, SNAPSHOT_STATE_FLOATS};
 use wasm_bindgen::prelude::*;
 
-const MAX_AI: u32 = 3;
+const MAX_AI: u32 = 9;
 /// At 500 Hz, one contact event per unordered pair per 100 ms.
 const CONTACT_COOLDOWN_TICKS: u64 = 50;
 
@@ -892,6 +892,22 @@ mod tests {
         race
     }
 
+    fn grid_race_with_slots(count: usize) -> RaceData {
+        let mut race = race();
+        race.layout.points = vec![[0.0, 0.0, 0.0], [400.0, 0.0, 0.0]];
+        race.layout.closed = false;
+        race.layout.half_width = 10.0;
+        race.grid = (0..count)
+            .map(|index| {
+                grid(
+                    &format!("grid_{index}"),
+                    [10.0 + 8.0 * index as f32, 0.0, 3.0],
+                )
+            })
+            .collect();
+        race
+    }
+
     fn square_point(progress: f32) -> Vec3 {
         let distance = progress * 40.0;
         if distance <= 10.0 {
@@ -1075,6 +1091,51 @@ mod tests {
     }
 
     #[test]
+    fn max_ai_builds_on_a_ten_slot_grid() {
+        assert_eq!(MAX_AI, 9);
+        let race = grid_race_with_slots(10);
+        let physics = physics();
+        let collider = collider();
+        for index in 0..MAX_AI as usize {
+            let ai = AiCar::new(
+                physics.clone(),
+                collider.clone(),
+                &race,
+                index,
+                AiDriver::default(),
+            );
+            assert!(ai.is_some(), "missing AI car at grid index {}", index + 1);
+        }
+        assert!(
+            AiCar::new(
+                physics.clone(),
+                collider.clone(),
+                &race,
+                MAX_AI as usize,
+                AiDriver::default(),
+            )
+            .is_none(),
+            "built an AI car beyond the ten-slot grid"
+        );
+
+        let simulation = simulation_from_race(race, MAX_AI as usize);
+        assert_eq!(simulation.ai_count(), MAX_AI);
+    }
+
+    #[test]
+    fn player_on_last_grid_fills_ai_on_remaining_slots() {
+        let mut simulation = simulation_from_race(grid_race_with_slots(10), MAX_AI as usize);
+        simulation.place_on_race_grid(9);
+        assert_eq!(simulation.race_phase, RacePhase::Held);
+
+        assert_grid_x(simulation.vehicle.state.position.x, 82.0);
+        assert_eq!(simulation.ai_count(), 9);
+        for (index, ai) in simulation.ai_cars.iter().enumerate() {
+            assert_grid_x(ai.vehicle.state.position.x, 10.0 + 8.0 * index as f32);
+        }
+    }
+
+    #[test]
     fn ai_brakes_after_the_lap_limit() {
         let mut simulation = simulation();
         simulation.start_race(2);
@@ -1162,6 +1223,61 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["a"], 1);
         assert_eq!(events[0]["b"], 2);
+        assert!(events[0]["speed"].as_f64().unwrap_or(0.0) > 1.0);
+    }
+
+    #[test]
+    fn contact_pass_pairs_player_with_last_ai_slot() {
+        let mut simulation = simulation_with_ai(9);
+        let mut pairs = vec![
+            (0, Vec3::new(0.0, 0.25, 0.0)),
+            (9, Vec3::new(0.0, 0.25, 3.4)),
+        ];
+        for slot in 1..9 {
+            pairs.push((slot, Vec3::new(1_000.0 + slot as f32 * 10.0, 0.25, 1_000.0)));
+        }
+        place_pairs(&mut simulation, &pairs);
+        simulation.vehicle.state.rotation = Quat::IDENTITY;
+        for ai in &mut simulation.ai_cars {
+            ai.vehicle.state.rotation = Quat::IDENTITY;
+        }
+        simulation.vehicle.state.velocity = Vec3::new(0.0, 0.0, 4.0);
+        simulation.ai_cars[8].vehicle.state.velocity = Vec3::new(0.0, 0.0, -4.0);
+
+        simulation.resolve_contacts();
+        let events = contact_events(&mut simulation);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["a"], 0);
+        assert_eq!(events[0]["b"], 9);
+        assert!(events[0]["speed"].as_f64().unwrap_or(0.0) > 1.0);
+    }
+
+    #[test]
+    fn contact_pass_pairs_last_two_ai_slots() {
+        let mut simulation = simulation_with_ai(9);
+        let mut pairs = vec![
+            (8, Vec3::new(0.0, 0.25, 0.0)),
+            (9, Vec3::new(0.0, 0.25, 3.4)),
+        ];
+        pairs.push((0, Vec3::new(-1_000.0, 0.25, -1_000.0)));
+        for slot in 1..8 {
+            pairs.push((slot, Vec3::new(1_000.0 + slot as f32 * 10.0, 0.25, 1_000.0)));
+        }
+        place_pairs(&mut simulation, &pairs);
+        simulation.vehicle.state.rotation = Quat::IDENTITY;
+        for ai in &mut simulation.ai_cars {
+            ai.vehicle.state.rotation = Quat::IDENTITY;
+        }
+        simulation.ai_cars[7].vehicle.state.velocity = Vec3::new(0.0, 0.0, 4.0);
+        simulation.ai_cars[8].vehicle.state.velocity = Vec3::new(0.0, 0.0, -4.0);
+
+        simulation.resolve_contacts();
+        let events = contact_events(&mut simulation);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["a"], 8);
+        assert_eq!(events[0]["b"], 9);
         assert!(events[0]["speed"].as_f64().unwrap_or(0.0) > 1.0);
     }
 

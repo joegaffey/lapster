@@ -47,6 +47,18 @@ fn valid_race() -> serde_json::Value {
     })
 }
 
+fn grid_slots(count: usize) -> Vec<serde_json::Value> {
+    (0..count)
+        .map(|index| {
+            json!({
+                "name": format!("grid_{index}"),
+                "position": [index as f32 * 0.5, 0.0, 2.0],
+                "rotation_xyzw": [0.0, 0.0, 0.0, 1.0]
+            })
+        })
+        .collect()
+}
+
 fn source_with_race(race: &serde_json::Value) -> Vec<u8> {
     let (track_json, _) = fixture();
     let mut source: serde_json::Value =
@@ -111,6 +123,26 @@ fn v2_source_with_valid_race_round_trips() {
     assert_eq!(race.layout.points.len(), 3);
     assert_eq!(race.grid.len(), 1);
     assert_eq!(race.sectors.len(), 2);
+}
+
+#[test]
+fn grid_accepts_ten_slots_and_rejects_eleven() {
+    let mut race = valid_race();
+    race["grid"] = json!(grid_slots(10));
+    let bytes = bake(&source_with_race(&race));
+    let pack = Pack::from_bytes(&bytes).expect("valid pack");
+    let race = pack
+        .track_race_owned()
+        .expect("race accessor")
+        .expect("race data");
+    assert_eq!(race.grid.len(), 10);
+
+    let mut too_many = valid_race();
+    too_many["grid"] = json!(grid_slots(11));
+    let source = source_with_race(&too_many);
+    let (_, glb) = fixture();
+    let result = track_pack::bake_glb_track_bytes(&source, &glb, "race-test");
+    assert!(result.is_err(), "expected 11 grid slots to be rejected");
 }
 
 #[test]
