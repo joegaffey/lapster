@@ -2,6 +2,7 @@ import init, { GarageViewer } from "../pkg/sim_render.js";
 import { IndexedDbPackCache } from "../src/assets/cache.ts";
 import { loadPackFromUrl, withPackVersion } from "../src/assets/loader.ts";
 import { setupHud } from "../src/ui/hud.ts";
+import { setupMenu } from "../src/ui/menu.ts";
 import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
@@ -102,6 +103,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 setupHud();
+setupMenu();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);

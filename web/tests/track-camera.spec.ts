@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 test("track viewer camera orbit, zoom, and reset", async ({ page }) => {
   await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
@@ -29,7 +30,7 @@ test("track viewer camera orbit, zoom, and reset", async ({ page }) => {
   );
   expect(zoomed.eye).not.toEqual(orbited.eye);
 
-  await page.click("#reset-camera");
+  await clickMenuControl(page, "#reset-camera");
   const reset = await page.evaluate(() =>
     JSON.parse((window as any).__trackViewer.camera_info()),
   );

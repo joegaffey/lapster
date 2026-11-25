@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 async function waitForReady(page: import("@playwright/test").Page) {
   await page.waitForFunction(
@@ -15,7 +16,7 @@ test("wheel controls use the shared config panel", async ({ page }) => {
   await waitForReady(page);
 
   await expect(page.locator("#wheel-open")).toHaveCount(0);
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
 
   const controlsTab = page.locator("#tab-controls");
   await expect(controlsTab).toBeVisible();

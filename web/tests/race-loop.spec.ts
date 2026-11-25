@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 async function waitForDrive(page: import("@playwright/test").Page) {
   await page.waitForFunction(
@@ -360,7 +361,7 @@ test("reset during a local race re-grids and restarts the countdown", async ({
   await waitForCountdown(page);
   await waitForCountdownFinished(page);
 
-  await page.getByTestId("reset").click();
+  await clickMenuControl(page, "[data-testid=reset]");
   await waitForCountdown(page);
   await expect(page.locator("#race-countdown")).toHaveText(/^(3|2|1|GO)$/);
 

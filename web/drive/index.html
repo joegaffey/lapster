@@ -190,13 +190,13 @@
       }
       #race-panel {
         position: fixed;
-        top: 16px;
+        top: 12px;
         left: 50%;
         z-index: 10;
         display: flex;
         align-items: center;
         gap: 14px;
-        max-width: calc(100vw - 32px);
+        max-width: calc(100vw - 160px);
         padding: 8px 12px;
         border: 1px solid #2a303a;
         border-radius: 3px;
@@ -583,12 +583,42 @@
           max-height: calc(100vh - 200px);
         }
         #race-panel {
-          top: 84px;
+          top: 12px;
           left: 12px;
+          right: 68px;
+          max-width: none;
           transform: none;
         }
         .setup-grid {
           grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 720px) and (orientation: portrait) {
+        #race-panel {
+          top: 12px;
+          left: 12px;
+          right: 68px;
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          align-items: start;
+          gap: 6px 10px;
+          max-width: none;
+          transform: none;
+        }
+        #race-wrong-way {
+          grid-column: 1 / -1;
+        }
+        #hud {
+          top: 120px;
+          max-height: calc(100vh - 152px);
+        }
+        #viewer-controls {
+          top: 12px;
+          right: 12px;
+          left: auto;
+          width: auto;
+          max-width: none;
+          justify-content: flex-end;
         }
       }
       #viewer-loading {

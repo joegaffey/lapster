@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 test("drive camera cycles through chase, bonnet, cockpit, and isometric", async ({ page }) => {
   await page.goto(
@@ -18,28 +19,28 @@ test("drive camera cycles through chase, bonnet, cockpit, and isometric", async 
     await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
   ).toBe("chase");
 
-  await camera.click();
+  await clickMenuControl(page, "#camera-mode");
   await expect(camera).toHaveText("Camera: Bonnet");
   await expect(body).toHaveText("Body: Visible");
   expect(
     await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
   ).toBe("bonnet");
 
-  await camera.click();
+  await clickMenuControl(page, "#camera-mode");
   await expect(camera).toHaveText("Camera: Cockpit");
   expect(
     await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
   ).toBe("cockpit");
 
-  await camera.click();
+  await clickMenuControl(page, "#camera-mode");
   await expect(camera).toHaveText("Camera: Isometric");
   expect(
     await page.evaluate(() => JSON.parse((window as any).__driveViewer.telemetry()).cameraMode),
   ).toBe("isometric");
 
-  await body.click();
+  await clickMenuControl(page, "#body-toggle");
   await expect(body).toHaveText("Body: Hidden");
-  await body.click();
+  await clickMenuControl(page, "#body-toggle");
   await expect(body).toHaveText("Body: Visible");
 
   await page.keyboard.press("c");
@@ -64,8 +65,8 @@ test("drive camera mode persists across reloads", async ({ page }) => {
   await waitForReady();
 
   const camera = page.locator("#camera-mode");
-  await camera.click();
-  await camera.click();
+  await clickMenuControl(page, "#camera-mode");
+  await clickMenuControl(page, "#camera-mode");
   await expect(camera).toHaveText("Camera: Cockpit");
 
   await page.reload();
