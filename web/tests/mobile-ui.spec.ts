@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl, closeMenu, openMenu } from "./menu-helpers";
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
@@ -22,21 +23,23 @@ test("mobile starts collapsed and exposes touch controls", async ({ page }) => {
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator("#speed")).toBeHidden();
 
-  await toggle.click();
+  await clickMenuControl(page, "#hud-toggle");
   await expect(hud).not.toHaveClass(/hud-collapsed/);
   await expect(toggle).toHaveText("Hide info");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#speed")).toBeVisible();
 
-  await toggle.click();
+  await clickMenuControl(page, "#hud-toggle");
   await expect(hud).toHaveClass(/hud-collapsed/);
 
   const throttle = page.locator('[data-key="w"]');
   await expect(page.locator("#touch-controls")).toBeVisible();
   await expect(page.locator("#touch-reset")).toHaveCount(0);
+  await openMenu(page);
   await expect(page.locator(".hud-exit")).toBeVisible();
   await expect(page.locator(".hud-exit")).toHaveText("Exit");
   await expect(page.locator(".hud-exit")).toHaveAttribute("href", "../");
+  await closeMenu(page);
   await expect(throttle).toBeVisible();
   const box = await throttle.boundingBox();
   expect(box).not.toBeNull();
@@ -86,7 +89,7 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
 
   await page.goto("/web/garage/");
   await waitFor(() => (window as any).__garageViewerReady === true || (window as any).__garageViewerError);
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   await expect(page.locator("#tab-gameplay")).toHaveCount(0);
   await expect(page.locator("#tab-controls")).toHaveCount(0);
   await expect(page.locator("#tab-graphics")).toHaveAttribute("aria-selected", "true");
@@ -107,7 +110,7 @@ test("garage and track expose graphics-only shadow settings", async ({ page }) =
 
   await page.goto("/web/track-viewer/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
   await waitFor(() => (window as any).__trackViewerReady === true || (window as any).__trackViewerError);
-  await page.locator("#assists-open").click();
+  await clickMenuControl(page, "#assists-open");
   await expect(page.locator("#tab-gameplay")).toHaveCount(0);
   await expect(page.locator("#tab-controls")).toHaveCount(0);
   await expect(page.locator("#settings-graphics")).toBeVisible();

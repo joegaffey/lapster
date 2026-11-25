@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 test("garage camera orbits, zooms, and resets", async ({ page }) => {
   await page.goto(
@@ -41,7 +42,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   );
   expect(low.eye[1]).toBeGreaterThan(initial.target[1]);
 
-  await page.click("#reset-camera");
+  await clickMenuControl(page, "#reset-camera");
   const reset = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.camera_info()),
   );

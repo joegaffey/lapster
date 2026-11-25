@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
@@ -23,8 +24,7 @@ test("tuning dialog applies, resets, persists, imports, and copies", async ({ pa
   await page.reload();
   await waitForReady(page);
 
-  const toggle = page.locator("#setup-open");
-  await toggle.click();
+  await clickMenuControl(page, "#setup-open");
   const dialog = page.locator("#car-setup-dialog");
   await expect(dialog).toHaveAttribute("open", "");
   expect(await page.evaluate(() => document.querySelector("#car-setup-dialog")?.matches(":modal"))).toBe(true);
@@ -42,7 +42,7 @@ test("tuning dialog applies, resets, persists, imports, and copies", async ({ pa
   await waitForReady(page);
   expect((await setup(page)).front.suspension.springRate).toBe(60000);
 
-  await page.locator("#setup-open").click();
+  await clickMenuControl(page, "#setup-open");
   await page.locator("#car-setup-copy").click();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   const payload = JSON.parse(copied);

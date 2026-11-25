@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickMenuControl } from "./menu-helpers";
 
 async function waitForReady(page: import("@playwright/test").Page) {
   await page.waitForFunction(
@@ -20,7 +21,7 @@ test("audio worklet starts and mutes from the toolbar", async ({ page }) => {
   const button = page.locator("#audio-toggle");
   await expect(button).toBeEnabled();
   await expect(button).toHaveText("Audio: Off");
-  await button.click();
+  await clickMenuControl(page, "#audio-toggle");
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -44,7 +45,7 @@ test("audio worklet starts and mutes from the toolbar", async ({ page }) => {
   await expect(button).toHaveText("Audio: On");
   await expect(button).toHaveAttribute("aria-pressed", "true");
 
-  await button.click();
+  await clickMenuControl(page, "#audio-toggle");
   await expect(button).toHaveText("Audio: Muted");
   await expect(button).toHaveAttribute("aria-pressed", "false");
   expect(pageErrors).toEqual([]);
@@ -55,7 +56,7 @@ test("audio follows the vehicle rpm and speed", async ({ page }) => {
     "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=audio-sync",
   );
   await waitForReady(page);
-  await page.locator("#audio-toggle").click();
+  await clickMenuControl(page, "#audio-toggle");
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -104,7 +105,7 @@ test("audio rpm is conditioned during launch", async ({ page }) => {
     "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=audio-judder",
   );
   await waitForReady(page);
-  await page.locator("#audio-toggle").click();
+  await clickMenuControl(page, "#audio-toggle");
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -150,7 +151,7 @@ test("audio rpm is conditioned during launch", async ({ page }) => {
 test("tire screech responds to lateral slip", async ({ page }) => {
   await page.goto("/web/drive/?v=audio-tyre");
   await waitForReady(page);
-  await page.locator("#audio-toggle").click();
+  await clickMenuControl(page, "#audio-toggle");
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -179,7 +180,7 @@ test("tire screech responds to lateral slip", async ({ page }) => {
 test("tire screech responds to straight-line wheelspin", async ({ page }) => {
   await page.goto("/web/drive/?v=audio-tyre-straight");
   await waitForReady(page);
-  await page.locator("#audio-toggle").click();
+  await clickMenuControl(page, "#audio-toggle");
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -209,7 +210,7 @@ test("audio preference survives reload and starts on the first gesture", async (
   await page.goto(url);
   await waitForReady(page);
   const button = page.locator("#audio-toggle");
-  await button.click();
+  await clickMenuControl(page, "#audio-toggle");
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -232,7 +233,7 @@ test("audio preference survives reload and starts on the first gesture", async (
   );
   await expect(button).toHaveText("Audio: On");
 
-  await button.click();
+  await clickMenuControl(page, "#audio-toggle");
   await expect(button).toHaveText("Audio: Muted");
   await page.reload();
   await waitForReady(page);
