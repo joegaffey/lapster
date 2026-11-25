@@ -2136,18 +2136,23 @@ fn clamp_remote_slots(remote_slots: Option<usize>) -> usize {
     remote_slots.unwrap_or(0).min(MAX_REMOTE_SLOTS)
 }
 
-/// Only the local Drive slot may take a textured body paint, and only when the
-/// driver selected an explicit paint; AI/remote slots reuse the same car
-/// visual but keep its factory livery.
+/// Every Drive slot takes the textured body paint when the car is paintable.
+/// With an explicit paint, bay `i` is already coloured with
+/// `BAY_COLORS[(car_paint + i) % 10]`, so a full grid uses every palette colour
+/// once. Without one, the local slot keeps its factory livery and AI/remote
+/// slots receive palette indices 1..9. Non-paintable cars keep factory livery.
 fn drive_paint_hints(
     car_paintable: bool,
     car_paint: Option<usize>,
     slot_count: usize,
 ) -> Vec<bool> {
-    let mut hints = vec![false; slot_count];
-    if car_paintable && car_paint.is_some() {
+    if !car_paintable {
+        return vec![false; slot_count];
+    }
+    let mut hints = vec![true; slot_count];
+    if car_paint.is_none() {
         if let Some(first) = hints.first_mut() {
-            *first = true;
+            *first = false;
         }
     }
     hints
@@ -4280,19 +4285,22 @@ mod tests {
     }
 
     #[test]
-    fn drive_paint_hint_only_enables_the_local_slot_with_selected_paint() {
+    fn drive_paint_hints_cover_the_paintable_slot_matrix() {
         assert_eq!(drive_paint_hints(false, None, 4), vec![false; 4]);
         assert_eq!(drive_paint_hints(false, Some(3), 4), vec![false; 4]);
         assert_eq!(
             drive_paint_hints(true, None, 4),
-            vec![false; 4],
-            "paintable but no explicit paint keeps the factory livery"
+            vec![false, true, true, true],
+            "paintable without explicit paint keeps the local factory livery but paints AI"
         );
         assert_eq!(
             drive_paint_hints(true, Some(3), 4),
-            vec![true, false, false, false]
+            vec![true; 4],
+            "paintable with explicit paint paints the local and every AI slot"
         );
+        assert_eq!(drive_paint_hints(true, None, 1), vec![false]);
         assert_eq!(drive_paint_hints(true, Some(3), 1), vec![true]);
+        assert!(drive_paint_hints(true, None, 0).is_empty());
         assert!(drive_paint_hints(true, Some(3), 0).is_empty());
     }
 

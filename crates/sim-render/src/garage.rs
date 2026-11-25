@@ -3528,6 +3528,56 @@ mod tests {
     }
 
     #[test]
+    fn drive_paint_hints_paint_all_ten_bays_with_distinct_palette_colours() {
+        let factory = paint_texture(70, 100);
+        let visual = textured_car_visual(factory);
+        let physics = test_car_physics();
+        let manifest = test_manifest("dekkard");
+        let ids = (0..10)
+            .map(|index| format!("drive-bay-{index}"))
+            .collect::<Vec<_>>();
+        let slots = (0..10)
+            .map(|_| {
+                Some(GarageCar {
+                    physics: &physics,
+                    visual: &visual,
+                    manifest: &manifest,
+                })
+            })
+            .collect::<Vec<_>>();
+        let explicit_paint = 3;
+        let hints = crate::drive_paint_hints(true, Some(explicit_paint), 1 + 9);
+        assert_eq!(hints, vec![true; 10]);
+
+        let build = build_concrete_garage(&ids, &slots, explicit_paint, &hints)
+            .expect("ten-bay textured drive grid");
+        let mut paints = std::collections::HashSet::new();
+        let mut body_textures = std::collections::HashSet::new();
+        for (index, bay) in build.scene.garage_bays.iter().enumerate() {
+            let expected = (explicit_paint + index) % BAY_COLORS.len();
+            assert_eq!(bay.paint, expected);
+            assert_eq!(bay.color, BAY_COLORS[expected]);
+            assert!(bay.recolorable);
+            assert!(bay.original_body_texture.is_some());
+            paints.insert(bay.paint);
+            let texture = build.scene.meshes[bay.body_mesh_index]
+                .texture
+                .expect("painted body mesh keeps its cloned texture");
+            body_textures.insert(texture);
+        }
+        assert_eq!(
+            paints.len(),
+            10,
+            "ten bays use ten distinct palette indices"
+        );
+        assert_eq!(
+            body_textures.len(),
+            10,
+            "each bay clones its own painted body texture"
+        );
+    }
+
+    #[test]
     fn vertex_painted_bay_ignores_texture_hint() {
         let physics = test_car_physics();
         let visual = test_car_visual();

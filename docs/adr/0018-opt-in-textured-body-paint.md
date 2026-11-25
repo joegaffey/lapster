@@ -96,3 +96,22 @@ identify body-paint texels.
   instead of widening the red-dominance heuristic.
 - Consider moving the opt-in flag into pack metadata if the catalog stops being
   the authoritative car list.
+
+## Amendment (2026-11-25): palette paint for AI and remote slots
+
+The ten-car grid made nine identical factory-red Deckard AI cars visible, and
+the product owner asked for the same palette variety the vertex-painted cars
+already have. This reverses the local-only part of decision 2.
+
+- A paintable textured car now applies the paint hint to every Drive slot, not
+  only the local slot.
+- `color_offset` remains the selected paint when one is supplied, otherwise 0.
+  Bay `i` therefore uses `BAY_COLORS[(color_offset + i) % 10]`: with an explicit
+  paint a ten-car field uses all ten palette colours exactly once; without one
+  the local slot stays factory livery and AI slots use palette indices 1..9.
+- The renderer reuses the existing per-slot cloned body texture. A full painted
+  ten-car Deckard field can retain ten body-texture copies (~40 MB at 1024²
+  RGBA) plus their uploads; this is accepted for the grid. TD-0024 tracks the
+  memory cost and the eventual authored or shader paint mask.
+- Non-paintable textured cars are unchanged and keep factory livery; they have
+  not been reviewed for the red-dominance heuristic.
