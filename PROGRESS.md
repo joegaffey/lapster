@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-25
-Current phase: **Ten-car AI grid — merged to dev (PR #77); track-ed pin on main**
+Current phase: **Ten-car AI grid — released to main (`a8dc7db`); ADR-0021 verified**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -62,8 +62,10 @@ Deployment:
   build and smoke). The hosted smoke assertion was the only failure and was
   fixed to expect ten slots. The track-ed exporter is merged to track-ed `main`
   as PR #8 (`a6f4db3`), and the parent pin is repointed from `2c459aa` to
-  `a6f4db3` in this change. Product-owner browser verification passed for
-  `?ai=9`; 3-vs-9 profiling remains the ADR-0021 follow-up.
+  `a6f4db3`. The batch is released to `main` as `a8dc7db` (PR #79), and `dev` is
+  synced to it. Product-owner browser verification passed for `?ai=9`; the
+  3-vs-9 probe held 500 Hz with 0 dropped ticks (p99 0.275 ms, ~2.4x draw
+  calls/triangles), so no physics debt was filed. See ADR-0021 Verification.
 - Online contact is staged on `feat/online-contact`, created from `dev` at
   `a4b82a7`. 3A (this batch) adds deterministic player/AI contact in the
   physics worker under ADR-0019. 3B (later) adds non-authoritative online

@@ -69,8 +69,34 @@ remains three AI; nine is the new maximum.
 
 ## Follow-up
 
-- Measure 3 vs 9 AI on Race Loop: step p50/p99, dropped ticks, catch-up, FPS,
-  and draw cost.
-- File debt if the larger field materially reduces the 500 Hz physics budget or
-  causes sustained catch-up.
+- Measured 3 vs 9 AI on Race Loop on 2026-11-25; see Verification below.
+- No physics-budget debt filed: the 500 Hz step holds and there is no sustained
+  catch-up. Render cost scales with the field and remains vsync-capped.
 - Keep TD-0021 open; grid heading remains a tangent workaround.
+
+## Verification: 3 vs 9 AI on Race Loop (2026-11-25)
+
+Measured on the released `dev` build (`a8dc7db`) in Chromium with the WebGL2
+backend (`rendererBackend: "Gl"`) at 1280x720, using the worker physics loop.
+Values are an 8 s window sampled after the countdown from `telemetry()` and
+`debug_info()`.
+
+| Metric | 3 AI | 9 AI |
+|---|---|---|
+| Physics rate | 500.98 Hz | 500.06 Hz |
+| Step p50 | 0.065 ms | 0.135 ms |
+| Step p99 | 0.125 ms | 0.275 ms |
+| Dropped ticks | 0 | 0 |
+| Catch-up events | 0 | 1 |
+| Frame rate | 60.1 FPS | 60.0 FPS |
+| Frame p99 | 16.67 ms | 16.67 ms |
+| Draw calls | 103 | 247 |
+| Triangles | 84,810 | 199,422 |
+| Vertices | 150,620 | 369,542 |
+
+The nine-AI field holds the 500 Hz fixed step with zero dropped ticks. Step
+cost roughly doubles (p99 0.275 ms, about 14% of the 2 ms tick), leaving ample
+headroom, so no physics debt is recorded. Render load grows as expected
+(~2.4x draw calls and triangles) while frame rate stays vsync-capped in both
+cases. This probe used WebGL2; a WebGPU frame-cost comparison remains useful if
+render load becomes a concern.
