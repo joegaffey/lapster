@@ -342,6 +342,12 @@ pub struct Renderer {
     line_buffer: Option<wgpu::Buffer>,
     line_count: u32,
     lines_visible: bool,
+    /// Dynamic per-frame debug lines (collision wireframes). Separate from the
+    /// static scene line buffer so it can be rewritten every frame.
+    debug_line_buffer: Option<wgpu::Buffer>,
+    debug_line_capacity: usize,
+    debug_line_count: u32,
+    debug_lines_visible: bool,
     camera: Camera,
     backend: String,
     surface_format: String,
@@ -970,6 +976,10 @@ impl Renderer {
             line_buffer,
             line_count,
             lines_visible: true,
+            debug_line_buffer: None,
+            debug_line_capacity: 0,
+            debug_line_count: 0,
+            debug_lines_visible: false,
             camera: scene.camera,
             backend,
             surface_format,
@@ -1152,6 +1162,37 @@ impl Renderer {
 
     pub fn lines_visible(&self) -> bool {
         self.lines_visible
+    }
+
+    /// Replaces the dynamic debug line set drawn on top of the scene.
+    ///
+    /// The buffer grows on demand and is reused between frames, so callers can
+    /// push a fresh wireframe set every frame without rebuilding the scene.
+    pub fn set_debug_lines(&mut self, lines: &[LineVertex]) {
+        if lines.is_empty() {
+            self.debug_line_count = 0;
+            return;
+        }
+        let bytes = bytemuck::cast_slice(lines);
+        if self.debug_line_buffer.is_none() || lines.len() > self.debug_line_capacity {
+            let capacity = lines.len().next_power_of_two().max(64);
+            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("debug line vertices"),
+                size: (capacity * std::mem::size_of::<LineVertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.debug_line_buffer = Some(buffer);
+            self.debug_line_capacity = capacity;
+        }
+        if let Some(buffer) = &self.debug_line_buffer {
+            self.queue.write_buffer(buffer, 0, bytes);
+        }
+        self.debug_line_count = lines.len() as u32;
+    }
+
+    pub fn set_debug_lines_visible(&mut self, visible: bool) {
+        self.debug_lines_visible = visible;
     }
 
     pub fn set_msaa_samples(&mut self, requested: u32) -> u32 {
@@ -1626,6 +1667,15 @@ impl Renderer {
                     pass.set_bind_group(0, &self.camera_bind_group, &[]);
                     pass.set_vertex_buffer(0, line_buffer.slice(..));
                     pass.draw(0..self.line_count, 0..1);
+                }
+            }
+
+            if self.debug_lines_visible && self.debug_line_count > 0 {
+                if let Some(debug_line_buffer) = &self.debug_line_buffer {
+                    pass.set_pipeline(&self.line_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, debug_line_buffer.slice(..));
+                    pass.draw(0..self.debug_line_count, 0..1);
                 }
             }
         }

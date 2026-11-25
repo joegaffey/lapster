@@ -99,6 +99,8 @@ const aiNoWheels = params.get("aiNoWheels") === "1";
 // `?aiRaw=1` skips the interpolation buffer and pose filter entirely.
 const aiNoSmooth = params.get("aiNoSmooth") === "1";
 const aiRaw = params.get("aiRaw") === "1";
+// `?collisionDebug=1` draws per-car planar collision-box wireframes. Off by default.
+const collisionDebug = params.get("collisionDebug") === "1";
 const aiRenderMode = aiRenderSource(aiNoSmooth, aiRaw);
 const DEV_TUNING_KEY = "lapster.tuning.dev.v1";
 let storedDevTuning: string | null = null;
@@ -1503,6 +1505,9 @@ async function boot() {
   const treeDetail = new URLSearchParams(window.location.search).get("trees");
   if (treeDetail === "high" || treeDetail === "low" || treeDetail === "cards") {
     viewer.set_tree_detail(treeDetail);
+  }
+  if (collisionDebug) {
+    viewer.set_collision_debug(true);
   }
   saveSelectedBay(carBay);
 

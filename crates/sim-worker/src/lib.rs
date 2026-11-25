@@ -1,7 +1,7 @@
 use glam::{Quat, Vec3};
 use sim_core::{
-    resolve_car_contact_with_slots, AiDriver, AiPace, Controls, PhysicsTuning, RaceTracker,
-    TrackCollider, Vehicle, FIXED_DT,
+    resolve_car_contact_with_slots, AiDriver, AiPace, CollisionBox, Controls, PhysicsTuning,
+    RaceTracker, TrackCollider, Vehicle, FIXED_DT,
 };
 use sim_types::snapshot_state as state;
 use sim_types::{CarTuning, RaceData, SpawnPoint, SNAPSHOT_STATE_FLOATS};
@@ -145,6 +145,7 @@ impl Simulation {
             return Err(JsValue::from_str("expected a car pack"));
         }
         let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
+        let collision_box = CollisionBox::from_aabb(&car_pack.manifest().bounds);
         drop(car_pack);
 
         let mut spawn = track_metadata
@@ -156,7 +157,8 @@ impl Simulation {
         spawn.rotation_xyzw =
             (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
         let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
-        let vehicle = Vehicle::new(car_physics.clone(), collider.clone(), &spawn);
+        let mut vehicle = Vehicle::new(car_physics.clone(), collider.clone(), &spawn);
+        vehicle.set_collision_box(collision_box);
 
         let redline = car_physics.engine.redline_rpm;
         let idle = car_physics.engine.idle_rpm;
@@ -176,9 +178,10 @@ impl Simulation {
         if let Some(race) = race.as_ref() {
             for index in 0..ai_total as usize {
                 let driver = AiDriver::new(upshift_rpm, downshift_rpm, max_gear, pace);
-                if let Some(car) =
+                if let Some(mut car) =
                     AiCar::new(car_physics.clone(), collider.clone(), race, index, driver)
                 {
+                    car.vehicle.set_collision_box(collision_box);
                     ai_cars.push(car);
                 } else {
                     break;

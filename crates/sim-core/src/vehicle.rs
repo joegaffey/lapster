@@ -3,43 +3,13 @@ use serde::{Deserialize, Serialize};
 use sim_types::{CarPhysics, CarTuning, PacejkaCoefficients, SpawnPoint, TorquePoint};
 
 use crate::collider::TrackCollider;
+use crate::collision_box::CollisionBox;
 
 pub const FIXED_DT: f32 = 1.0 / 500.0;
-
-/// Front/rear body overhang past the wheelbase used for car contact.
-const CONTACT_LENGTH_OVERHANG: f32 = 0.9;
-/// Tire and mirror margin past the half track used for car contact.
-const CONTACT_WIDTH_MARGIN: f32 = 0.25;
-/// Small contact skin that keeps resolved boxes just clear of each other.
-const CONTACT_SKIN: f32 = 0.02;
-const CONTACT_MIN_HALF_LENGTH: f32 = 1.9;
-const CONTACT_MAX_HALF_LENGTH: f32 = 2.3;
-const CONTACT_MIN_HALF_WIDTH: f32 = 0.9;
-const CONTACT_MAX_HALF_WIDTH: f32 = 1.1;
 
 /// Radius of each horizontal wall/environment probe around the car body.
 const WALL_PROBE_RADIUS: f32 = 0.45;
 const WALL_PROBE_HEIGHT: f32 = 0.4;
-const WALL_HALF_WIDTH: f32 = 0.45;
-const WALL_HALF_LENGTH: f32 = 1.65;
-/// Eight perimeter probes plus interior points, including the footprint
-/// centre. The centre probe catches a thin post under the body instead of
-/// letting it slip between the perimeter samples.
-const WALL_PERIMETER_PROBES: [Vec3; 8] = [
-    Vec3::new(-WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, -WALL_HALF_LENGTH),
-    Vec3::new(0.0, WALL_PROBE_HEIGHT, -WALL_HALF_LENGTH),
-    Vec3::new(WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, -WALL_HALF_LENGTH),
-    Vec3::new(-WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, 0.0),
-    Vec3::new(WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, 0.0),
-    Vec3::new(-WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, WALL_HALF_LENGTH),
-    Vec3::new(0.0, WALL_PROBE_HEIGHT, WALL_HALF_LENGTH),
-    Vec3::new(WALL_HALF_WIDTH, WALL_PROBE_HEIGHT, WALL_HALF_LENGTH),
-];
-const WALL_INTERIOR_PROBES: [Vec3; 3] = [
-    Vec3::new(0.0, WALL_PROBE_HEIGHT, 0.0),
-    Vec3::new(0.0, WALL_PROBE_HEIGHT, -0.825),
-    Vec3::new(0.0, WALL_PROBE_HEIGHT, 0.825),
-];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -184,6 +154,7 @@ pub struct Vehicle {
     esc_activity: f32,
     steer_angle: f32,
     physics_tuning: PhysicsTuning,
+    collision_box: CollisionBox,
 }
 
 impl Vehicle {
@@ -194,6 +165,7 @@ impl Vehicle {
         let physics_tuning = PhysicsTuning::default();
         let (wheel_attach_local, wheel_radius, rest_length, wheel_inertia) =
             wheel_dimensions(&physics, physics_tuning.wheel_mass);
+        let collision_box = CollisionBox::from_car_physics(&physics);
 
         let state = VehicleState {
             position: spawn_position,
@@ -233,6 +205,7 @@ impl Vehicle {
             esc_activity: 0.0,
             steer_angle: 0.0,
             physics_tuning,
+            collision_box,
         }
     }
 
@@ -256,6 +229,19 @@ impl Vehicle {
 
     pub fn physics_tuning(&self) -> PhysicsTuning {
         self.physics_tuning.clone()
+    }
+
+    /// Installs the per-car planar collision box used for both car-to-car and
+    /// wall/scenery contact. Construct it from the loaded car pack's visual
+    /// AABB with [`CollisionBox::from_aabb`].
+    pub fn set_collision_box(&mut self, collision_box: CollisionBox) {
+        self.collision_box = collision_box;
+    }
+
+    /// The installed collision box, or the wheelbase/track fallback when no box
+    /// has been set.
+    pub fn collision_box(&self) -> CollisionBox {
+        self.collision_box
     }
 
     pub fn set_traction_control(&mut self, enabled: bool) {
@@ -334,24 +320,15 @@ impl Vehicle {
         1.0 / self.physics.mass.max(1.0)
     }
 
-    /// Half extents `(length, width)` of this car's XZ contact box in metres.
+    /// Half extents `(length, width)` of this car's XZ collision box in metres.
     ///
-    /// Derived from the car's own [`CarPhysics`] so different models separate at
-    /// their own body size rather than a shared hard-coded footprint.
+    /// Uses the installed [`CollisionBox`] (derived from the car pack visual
+    /// AABB) when available, otherwise the wheelbase/track fallback.
     pub(crate) fn contact_half_extents(&self) -> (f32, f32) {
-        let half_length =
-            (self.physics.wheelbase.max(0.0) * 0.5 + CONTACT_LENGTH_OVERHANG + CONTACT_SKIN)
-                .clamp(CONTACT_MIN_HALF_LENGTH, CONTACT_MAX_HALF_LENGTH);
-        let half_track = self
-            .physics
-            .track_width
-            .iter()
-            .copied()
-            .fold(0.0_f32, f32::max)
-            * 0.5;
-        let half_width = (half_track + CONTACT_WIDTH_MARGIN + CONTACT_SKIN)
-            .clamp(CONTACT_MIN_HALF_WIDTH, CONTACT_MAX_HALF_WIDTH);
-        (half_length, half_width)
+        (
+            self.collision_box.half_length,
+            self.collision_box.half_width,
+        )
     }
 
     /// Applies the inverse body inertia to a world-space angular vector.
@@ -894,6 +871,52 @@ impl Vehicle {
         }
     }
 
+    /// Perimeter and interior wall-probe offsets in the vehicle's local frame.
+    ///
+    /// Perimeter probes are inset by [`WALL_PROBE_RADIUS`] so the swept circle
+    /// edge matches the collision box edge (visual AABB plus skin). The box
+    /// centre offset is included so an asymmetric overhang shifts the whole
+    /// probe set.
+    fn wall_probe_offsets(&self) -> ([Vec3; 8], [Vec3; 3]) {
+        let collision = self.collision_box;
+        let probe_half_width = (collision.half_width - WALL_PROBE_RADIUS).max(0.0);
+        let probe_half_length = (collision.half_length - WALL_PROBE_RADIUS).max(0.0);
+        let cx = collision.center_x;
+        let cz = collision.center_z;
+        let perimeter = [
+            Vec3::new(
+                cx - probe_half_width,
+                WALL_PROBE_HEIGHT,
+                cz - probe_half_length,
+            ),
+            Vec3::new(cx, WALL_PROBE_HEIGHT, cz - probe_half_length),
+            Vec3::new(
+                cx + probe_half_width,
+                WALL_PROBE_HEIGHT,
+                cz - probe_half_length,
+            ),
+            Vec3::new(cx - probe_half_width, WALL_PROBE_HEIGHT, cz),
+            Vec3::new(cx + probe_half_width, WALL_PROBE_HEIGHT, cz),
+            Vec3::new(
+                cx - probe_half_width,
+                WALL_PROBE_HEIGHT,
+                cz + probe_half_length,
+            ),
+            Vec3::new(cx, WALL_PROBE_HEIGHT, cz + probe_half_length),
+            Vec3::new(
+                cx + probe_half_width,
+                WALL_PROBE_HEIGHT,
+                cz + probe_half_length,
+            ),
+        ];
+        let interior = [
+            Vec3::new(cx, WALL_PROBE_HEIGHT, cz),
+            Vec3::new(cx, WALL_PROBE_HEIGHT, cz - probe_half_length * 0.5),
+            Vec3::new(cx, WALL_PROBE_HEIGHT, cz + probe_half_length * 0.5),
+        ];
+        (perimeter, interior)
+    }
+
     fn resolve_wall_collisions(&mut self) {
         let rotation = self.state.rotation;
         let cg_world =
@@ -910,11 +933,12 @@ impl Vehicle {
         let mut first_normal = Vec3::ZERO;
         let mut opposing = false;
         let mut max_penetration = 0.0f32;
+        let (perimeter_probes, interior_probes) = self.wall_probe_offsets();
         for pass in 0..2 {
             let probes: &[Vec3] = if pass == 0 {
-                &WALL_PERIMETER_PROBES
+                &perimeter_probes
             } else {
-                &WALL_INTERIOR_PROBES
+                &interior_probes
             };
             for &offset in probes {
                 let center = self.state.position + rotation * offset;
@@ -1630,7 +1654,8 @@ pub(crate) mod tests {
     fn wall_contact_summary(vehicle: &Vehicle) -> (usize, f32) {
         let mut count = 0usize;
         let mut max_penetration = 0.0f32;
-        for probes in [&WALL_PERIMETER_PROBES[..], &WALL_INTERIOR_PROBES[..]] {
+        let (perimeter, interior) = vehicle.wall_probe_offsets();
+        for probes in [&perimeter[..], &interior[..]] {
             for &offset in probes {
                 let center = vehicle.state.position + vehicle.state.rotation * offset;
                 for contact in vehicle.collider.wall_contacts(center, WALL_PROBE_RADIUS) {
@@ -1640,6 +1665,132 @@ pub(crate) mod tests {
             }
         }
         (count, max_penetration)
+    }
+
+    #[test]
+    fn wall_probes_derive_from_installed_box_and_include_centre_offset() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        let collision = CollisionBox {
+            half_width: 1.2,
+            half_length: 2.5,
+            center_x: 0.1,
+            center_z: 0.4,
+        };
+        vehicle.set_collision_box(collision);
+
+        let (perimeter, interior) = vehicle.wall_probe_offsets();
+        let probe_half_width = collision.half_width - WALL_PROBE_RADIUS;
+        let probe_half_length = collision.half_length - WALL_PROBE_RADIUS;
+        let y = WALL_PROBE_HEIGHT;
+
+        assert_eq!(perimeter.len(), 8);
+        assert_eq!(interior.len(), 3);
+
+        // Perimeter probes are inset by the probe radius so the swept circle
+        // edge matches the box edge, and every probe carries the box centre.
+        assert_eq!(
+            perimeter[0],
+            Vec3::new(
+                collision.center_x - probe_half_width,
+                y,
+                collision.center_z - probe_half_length
+            )
+        );
+        assert_eq!(
+            perimeter[1],
+            Vec3::new(
+                collision.center_x,
+                y,
+                collision.center_z - probe_half_length
+            )
+        );
+        assert_eq!(
+            perimeter[2],
+            Vec3::new(
+                collision.center_x + probe_half_width,
+                y,
+                collision.center_z - probe_half_length
+            )
+        );
+        assert_eq!(
+            perimeter[3],
+            Vec3::new(collision.center_x - probe_half_width, y, collision.center_z)
+        );
+        assert_eq!(
+            perimeter[4],
+            Vec3::new(collision.center_x + probe_half_width, y, collision.center_z)
+        );
+        assert_eq!(
+            perimeter[5],
+            Vec3::new(
+                collision.center_x - probe_half_width,
+                y,
+                collision.center_z + probe_half_length
+            )
+        );
+        assert_eq!(
+            perimeter[6],
+            Vec3::new(
+                collision.center_x,
+                y,
+                collision.center_z + probe_half_length
+            )
+        );
+        assert_eq!(
+            perimeter[7],
+            Vec3::new(
+                collision.center_x + probe_half_width,
+                y,
+                collision.center_z + probe_half_length
+            )
+        );
+
+        // Interior probes keep the box centre and the longitudinal thirds.
+        assert_eq!(
+            interior[0],
+            Vec3::new(collision.center_x, y, collision.center_z)
+        );
+        assert_eq!(
+            interior[1],
+            Vec3::new(
+                collision.center_x,
+                y,
+                collision.center_z - probe_half_length * 0.5
+            )
+        );
+        assert_eq!(
+            interior[2],
+            Vec3::new(
+                collision.center_x,
+                y,
+                collision.center_z + probe_half_length * 0.5
+            )
+        );
+
+        // Every probe is inside the box footprint and shifted with the centre.
+        for offset in perimeter.iter().chain(interior.iter()) {
+            assert!((offset.x - collision.center_x).abs() <= probe_half_width + 1e-6);
+            assert!((offset.z - collision.center_z).abs() <= probe_half_length + 1e-6);
+        }
+    }
+
+    #[test]
+    fn wall_probes_clamp_to_centre_for_a_tiny_box() {
+        let mut vehicle = Vehicle::new(physics(), collider(), &spawn());
+        vehicle.set_collision_box(CollisionBox {
+            half_width: 0.2,
+            half_length: 0.3,
+            center_x: 0.0,
+            center_z: 0.0,
+        });
+
+        let (perimeter, _) = vehicle.wall_probe_offsets();
+        // Inset larger than the half extent collapses to the centre rather than
+        // inverting the probe positions.
+        assert_eq!(perimeter[0].x, 0.0);
+        assert_eq!(perimeter[0].z, 0.0);
+        assert_eq!(perimeter[7].x, 0.0);
+        assert_eq!(perimeter[7].z, 0.0);
     }
 
     #[test]

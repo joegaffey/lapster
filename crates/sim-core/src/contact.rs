@@ -114,10 +114,16 @@ struct BodyBox {
 
 impl BodyBox {
     fn from_vehicle(vehicle: &Vehicle) -> Self {
+        let collision = vehicle.collision_box();
         let (half_length, half_width) = vehicle.contact_half_extents();
         let (forward, right) = planar_axes(vehicle);
+        // The visual AABB can be asymmetric front-to-back (for example a long
+        // rear overhang), so carry its local XZ centre into world space.
+        let local_offset = Vec3::new(collision.center_x, 0.0, collision.center_z);
+        let rotated_offset = vehicle.state.rotation * local_offset;
+        let center = planar_center(vehicle) + Vec3::new(rotated_offset.x, 0.0, rotated_offset.z);
         Self {
-            center: planar_center(vehicle),
+            center,
             forward,
             right,
             half_length,
@@ -380,6 +386,7 @@ fn separate(a: &mut Vehicle, b: &mut Vehicle, manifold: &[ContactHit]) {
 mod tests {
     use super::*;
     use crate::collider::TrackCollider;
+    use crate::collision_box::{CollisionBox, COLLISION_SKIN};
     use glam::Quat;
     use sim_types::{
         Aabb, AeroSpec, BrakeSpec, CarPhysics, DriveLayout, DrivetrainSpec, EngineSpec,
@@ -917,6 +924,123 @@ mod tests {
         assert!(
             remaining < 0.03,
             "offset front contact left deep overlap: {remaining}"
+        );
+        assert_finite(&a);
+        assert_finite(&b);
+    }
+
+    #[test]
+    fn asymmetric_aabb_derives_extents_centre_and_skin() {
+        let bounds = Aabb {
+            min: [-0.85, 0.0, -2.0],
+            max: [0.95, 1.2, 2.8],
+        };
+        let collision = CollisionBox::from_aabb(&bounds);
+
+        assert!((collision.half_width - (1.8 * 0.5 + COLLISION_SKIN)).abs() < 1e-6);
+        assert!((collision.half_length - (4.8 * 0.5 + COLLISION_SKIN)).abs() < 1e-6);
+        assert!((collision.center_x - 0.05).abs() < 1e-6);
+        assert!((collision.center_z - 0.4).abs() < 1e-6);
+
+        // A degenerate AABB still yields a usable minimum footprint.
+        let degenerate = Aabb {
+            min: [0.0, 0.0, 0.0],
+            max: [0.0, 0.0, 0.0],
+        };
+        let collision = CollisionBox::from_aabb(&degenerate);
+        assert!(collision.half_width > 0.0);
+        assert!(collision.half_length > 0.0);
+        assert_eq!(collision.center_x, 0.0);
+        assert_eq!(collision.center_z, 0.0);
+    }
+
+    #[test]
+    fn fallback_box_matches_previous_heuristic() {
+        let physics = physics();
+        let collision = CollisionBox::from_car_physics(&physics);
+        let expected_length = physics.wheelbase * 0.5 + 0.9 + COLLISION_SKIN;
+        let expected_half_track = physics.track_width.iter().copied().fold(0.0_f32, f32::max) * 0.5;
+
+        assert!((collision.half_length - expected_length).abs() < 1e-6);
+        assert!(
+            (collision.half_width - (expected_half_track + 0.25 + COLLISION_SKIN)).abs() < 1e-6
+        );
+        assert_eq!(collision.center_x, 0.0);
+        assert_eq!(collision.center_z, 0.0);
+
+        // The old clamps still bound extreme wheelbases and track widths.
+        let mut short = physics.clone();
+        short.wheelbase = 1.8;
+        short.track_width = [1.3, 1.3];
+        let short_box = CollisionBox::from_car_physics(&short);
+        assert_eq!(short_box.half_length, 1.9);
+
+        let mut long = physics;
+        long.wheelbase = 3.2;
+        long.track_width = [1.9, 1.9];
+        let long_box = CollisionBox::from_car_physics(&long);
+        assert_eq!(long_box.half_length, 2.3);
+        assert_eq!(long_box.half_width, 1.1);
+    }
+
+    #[test]
+    fn installed_box_drives_nose_to_tail_contact_with_rear_overhang() {
+        // The AABB runs further behind the origin than ahead of it, so the
+        // collision box centre is offset toward +Z (the rear).
+        let rear_overhang = Aabb {
+            min: [-0.9, 0.0, -2.0],
+            max: [0.9, 0.0, 2.8],
+        };
+        let centred = Aabb {
+            min: [-0.9, 0.0, -2.4],
+            max: [0.9, 0.0, 2.4],
+        };
+        let overhang_box = CollisionBox::from_aabb(&rear_overhang);
+        let centred_box = CollisionBox::from_aabb(&centred);
+        assert!(overhang_box.center_z > 0.39);
+
+        let mut a = vehicle_at(Vec3::new(0.0, 0.25, 0.0));
+        a.set_collision_box(overhang_box);
+        let mut b = vehicle_at(Vec3::new(0.0, 0.25, 4.9));
+        b.set_collision_box(centred_box);
+
+        for _ in 0..240 {
+            resolve_car_contact(&mut a, &mut b);
+        }
+
+        let expected = overhang_box.half_length + centred_box.half_length + overhang_box.center_z;
+        let separation = b.state.position.z - a.state.position.z;
+        assert!(
+            (separation - expected).abs() < 0.03,
+            "nose-to-tail separation {separation} != installed box {expected}"
+        );
+        assert_finite(&a);
+        assert_finite(&b);
+    }
+
+    #[test]
+    fn installed_box_drives_side_by_side_contact() {
+        let wide = Aabb {
+            min: [-1.3, 0.0, -2.4],
+            max: [1.3, 0.0, 2.4],
+        };
+        let wide_box = CollisionBox::from_aabb(&wide);
+        assert!(wide_box.half_width > 1.3);
+
+        let mut a = vehicle_at(Vec3::new(0.0, 0.25, 0.0));
+        a.set_collision_box(wide_box);
+        let mut b = vehicle_at(Vec3::new(1.5, 0.25, 0.0));
+        b.set_collision_box(wide_box);
+
+        for _ in 0..240 {
+            resolve_car_contact(&mut a, &mut b);
+        }
+
+        let expected = wide_box.half_width + wide_box.half_width;
+        let separation = b.state.position.x - a.state.position.x;
+        assert!(
+            (separation - expected).abs() < 0.03,
+            "side-by-side separation {separation} != installed box {expected}"
         );
         assert_finite(&a);
         assert_finite(&b);
