@@ -1,6 +1,6 @@
 # Tyre Smoke Realism
 
-- **Status:** planned
+- **Status:** implemented
 - **Date:** 2026-11-25
 - **Owner:** architect
 - **Domain:** render
@@ -70,8 +70,9 @@ onset makes it too weak.
 
 - Add `particles.onsetPower` and `particles.frontRateScale` to
   `schema_fields()` so they can be swept live.
-- No storage migration is needed: `TUNING_STORAGE_KEY` is written but not
-  currently restored, so defaults apply on reload.
+- Dev tuning is restored from `localStorage` (`lapster.tuning.dev.v1`). After
+  changing defaults, click **Reset tuning** in the dev menu or remove that key,
+  otherwise stored values mask the new defaults.
 
 ## 4. Tests
 

@@ -126,6 +126,8 @@ pub struct ParticleTuning {
     pub lateral_threshold: f32,
     pub lateral_scale: f32,
     pub longitudinal_threshold: f32,
+    pub onset_power: f32,
+    pub front_rate_scale: f32,
     pub load_reference: f32,
     pub load_min: f32,
     pub speed_factor_range: f32,
@@ -319,14 +321,16 @@ impl Default for ParticleTuning {
     fn default() -> Self {
         Self {
             max_active: 1024,
-            max_spawn_per_step: 8,
+            max_spawn_per_step: 3,
             min_speed: 1.5,
             max_dt: 0.05,
             front_gate_speed: 8.0,
             front_gate_range: 10.0,
-            lateral_threshold: 0.09,
-            lateral_scale: 1.5,
-            longitudinal_threshold: 0.14,
+            lateral_threshold: 0.17,
+            lateral_scale: 1.1,
+            longitudinal_threshold: 0.18,
+            onset_power: 2.0,
+            front_rate_scale: 0.5,
             load_reference: 4_500.0,
             load_min: 0.12,
             speed_factor_range: 8.0,
@@ -343,21 +347,21 @@ impl Default for ParticleSurfaces {
     fn default() -> Self {
         Self {
             asphalt: ParticleSurface {
-                rate_scale: 2_000.0,
-                rate_cap: 210.0,
+                rate_scale: 5_000.0,
+                rate_cap: 110.0,
                 rolling_speed: 12.0,
                 rolling_amount: 0.0,
                 rolling_rate: 0.0,
                 color: [0.55, 0.56, 0.58],
-                start_size_min: 0.10,
-                start_size_max: 0.17,
-                end_size_min: 0.75,
-                end_size_max: 1.55,
+                start_size_min: 0.08,
+                start_size_max: 0.14,
+                end_size_min: 0.55,
+                end_size_max: 1.05,
                 end_variance_min: 0.90,
                 end_variance_max: 1.20,
-                life_min: 1.10,
-                life_max: 1.70,
-                alpha: 0.30,
+                life_min: 0.90,
+                life_max: 1.35,
+                alpha: 0.18,
                 rise: 0.60,
                 drag: 1.0,
             },
@@ -475,8 +479,8 @@ impl Default for ParticleFade {
     fn default() -> Self {
         Self {
             fade_in_end: 0.10,
-            fade_out_start: 0.55,
-            grow_power: 2.0,
+            fade_out_start: 0.45,
+            grow_power: 2.5,
         }
     }
 }
@@ -572,6 +576,8 @@ impl TuningConfig {
         self.particles.front_gate_range = self.particles.front_gate_range.max(0.01);
         self.particles.load_reference = self.particles.load_reference.max(1.0);
         self.particles.speed_factor_range = self.particles.speed_factor_range.max(0.01);
+        self.particles.onset_power = self.particles.onset_power.clamp(0.1, 4.0);
+        self.particles.front_rate_scale = self.particles.front_rate_scale.clamp(0.0, 1.0);
         self.particles.fade.fade_in_end = self.particles.fade.fade_in_end.clamp(0.0, 1.0);
         self.particles.fade.fade_out_start = self
             .particles
@@ -1623,6 +1629,26 @@ fn schema_fields() -> Vec<Value> {
         field(
             "particles.longitudinalThreshold",
             "Longitudinal slip threshold",
+            "Particles / Global",
+            "float",
+            0.0,
+            1.0,
+            0.01,
+            "",
+        ),
+        field(
+            "particles.onsetPower",
+            "Onset power",
+            "Particles / Global",
+            "float",
+            0.1,
+            4.0,
+            0.1,
+            "",
+        ),
+        field(
+            "particles.frontRateScale",
+            "Front rate scale",
             "Particles / Global",
             "float",
             0.0,

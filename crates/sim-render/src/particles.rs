@@ -135,17 +135,26 @@ impl ParticleSystem {
                     self.accumulators[index] = 0.0;
                     continue;
                 }
-                let lateral = (wheel.slip_angle.abs() - tuning.lateral_threshold).max(0.0)
-                    * tuning.lateral_scale;
-                let longitudinal =
-                    (wheel.slip_ratio.abs() - tuning.longitudinal_threshold).max(0.0);
-                let skid = lateral.max(longitudinal);
+                let severity = wheel_smoke_severity(
+                    wheel.slip_angle,
+                    wheel.slip_ratio,
+                    tuning.lateral_threshold,
+                    tuning.lateral_scale,
+                    tuning.longitudinal_threshold,
+                    tuning.onset_power,
+                );
+                let front_rate_scale = if rig_wheel.is_front {
+                    tuning.front_rate_scale
+                } else {
+                    1.0
+                };
                 let load = (wheel.normal_load / tuning.load_reference).clamp(tuning.load_min, 1.0);
                 let speed_factor =
                     ((speed - tuning.min_speed) / tuning.speed_factor_range).clamp(0.0, 1.0);
                 let rolling = (speed / surface.rolling_speed.max(0.01)).clamp(0.0, 1.0)
                     * surface.rolling_amount;
-                let rate = (skid * surface.rate_scale + rolling * surface.rolling_rate)
+                let rate = ((severity * surface.rate_scale * front_rate_scale)
+                    + rolling * surface.rolling_rate)
                     .min(surface.rate_cap)
                     * load
                     * speed_factor
@@ -396,6 +405,30 @@ impl ParticleSystem {
     }
 }
 
+/// Per-wheel skid severity used to drive smoke emission.
+///
+/// The slip excess beyond the lateral/longitudinal thresholds is combined,
+/// then shaped by `onset_power` so smoke ramps up sharply only for genuine
+/// slides instead of ordinary cornering near peak grip. Slip below the
+/// thresholds yields exactly zero.
+fn wheel_smoke_severity(
+    slip_angle: f32,
+    slip_ratio: f32,
+    lateral_threshold: f32,
+    lateral_scale: f32,
+    longitudinal_threshold: f32,
+    onset_power: f32,
+) -> f32 {
+    let lateral = (slip_angle.abs() - lateral_threshold).max(0.0) * lateral_scale;
+    let longitudinal = (slip_ratio.abs() - longitudinal_threshold).max(0.0);
+    let excess = lateral.max(longitudinal);
+    if excess <= 0.0 {
+        0.0
+    } else {
+        excess.powf(onset_power)
+    }
+}
+
 fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -497,19 +530,81 @@ mod tests {
 
         let mut calm = state;
         for wheel in &mut calm.wheels {
-            wheel.slip_angle = 0.02;
-            wheel.slip_ratio = 0.02;
+            // Ordinary hard cornering near peak grip: must not smoke.
+            wheel.slip_angle = 0.12;
+            wheel.slip_ratio = 0.05;
         }
         particles.clear();
-        particles.update(
-            1.0 / 60.0,
-            Mat4::IDENTITY,
-            &calm,
-            &car_rig(),
-            &["ASPHALT".to_string()],
-            &ParticleTuning::default(),
-        );
+        for _ in 0..120 {
+            particles.update(
+                1.0 / 60.0,
+                Mat4::IDENTITY,
+                &calm,
+                &car_rig(),
+                &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
+            );
+        }
         assert_eq!(particles.count(), 0);
+    }
+
+    fn emit_count(front_slip: f32, rear_slip: f32) -> usize {
+        let mut state = sliding_state();
+        for (index, wheel) in state.wheels.iter_mut().enumerate() {
+            wheel.slip_angle = if index < 2 { front_slip } else { rear_slip };
+            wheel.slip_ratio = 0.0;
+        }
+        let mut particles = ParticleSystem::new();
+        for _ in 0..60 {
+            particles.update(
+                1.0 / 60.0,
+                Mat4::IDENTITY,
+                &state,
+                &car_rig(),
+                &["ASPHALT".to_string()],
+                &ParticleTuning::default(),
+            );
+        }
+        particles.count()
+    }
+
+    #[test]
+    fn front_wheel_emission_is_lighter_than_rear() {
+        let front = emit_count(0.32, 0.0);
+        let rear = emit_count(0.0, 0.32);
+        assert!(front > 0, "front slide should emit some smoke");
+        assert!(rear > 0, "rear slide should emit smoke");
+        assert!(
+            front < rear,
+            "front emission {front} should be lighter than rear {rear}"
+        );
+    }
+
+    #[test]
+    fn heavier_slide_emits_more_smoke() {
+        let moderate = emit_count(0.0, 0.24);
+        let heavy = emit_count(0.0, 0.34);
+        assert!(moderate > 0, "moderate slide should emit some smoke");
+        assert!(
+            heavy > moderate,
+            "heavy slide {heavy} should emit more than moderate {moderate}"
+        );
+    }
+
+    #[test]
+    fn smoke_severity_has_smooth_on_threshold_onset() {
+        // Below threshold: exactly zero, including ordinary cornering slip.
+        assert_eq!(wheel_smoke_severity(0.12, 0.0, 0.17, 1.1, 0.18, 2.0), 0.0);
+        // Just above threshold: small but non-zero.
+        let near = wheel_smoke_severity(0.18, 0.0, 0.17, 1.1, 0.18, 2.0);
+        assert!(near > 0.0 && near < 0.01, "{near}");
+        // Genuine slides ramp up monotonically.
+        let moderate = wheel_smoke_severity(0.24, 0.0, 0.17, 1.1, 0.18, 2.0);
+        let heavy = wheel_smoke_severity(0.34, 0.0, 0.17, 1.1, 0.18, 2.0);
+        assert!(moderate > near && heavy > moderate);
+        // Longitudinal lockup is shaped by the same onset curve.
+        assert!(wheel_smoke_severity(0.0, 0.30, 0.17, 1.1, 0.18, 2.0) > 0.0);
+        assert_eq!(wheel_smoke_severity(0.0, 0.10, 0.17, 1.1, 0.18, 2.0), 0.0);
     }
 
     #[test]
