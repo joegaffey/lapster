@@ -1,7 +1,7 @@
 # Project Progress
 
 Last updated: 2026-11-26
-Current phase: **Car categories — local same-category grids on `feat/car-categories`; multiplayer batch pending**
+Current phase: **Opponent audio on `feat/car-audio` (stacked on merged categories PR #82); dev preview pending**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +53,15 @@ Deployment:
 
 ## Current focus
 
+- Per-car opponent audio is implemented on `feat/car-audio` (worktree
+  `/home/joe/code/lapster-car-audio`), stacked on merged categories PR #82.
+  The player keeps the EngineSim voice. Opponent audio defaults to one
+  nearest-AI EngineSim voice on the player's AudioContext; a persisted 0-5
+  "Opponent audio" app-menu setting (`lapster.audio.aiVoices.v1`, default 1)
+  selects off, nearest (1), or 2-5 per-slot voices. Opponent voices use the AI
+  car's catalog engine profile and a 250 m distance cutoff. The lite oscillator
+  path is diagnostic only. Scoped unit and ai-audio/audio browser tests pass;
+  sampled opponent engine loops remain a future asset batch.
 - Car categories are implemented on `feat/car-categories` (worktree
   `/home/joe/code/lapster-car-categories`) through the local same-category
   grid batch. ADR-0022 is accepted. Car packs carry an optional

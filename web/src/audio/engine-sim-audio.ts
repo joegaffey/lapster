@@ -116,6 +116,11 @@ export class EngineSimAudio {
     return this.context?.state ?? "closed";
   }
 
+  /** The player context, exposed so remote voices can optionally share it. */
+  get audioContext(): AudioContext | null {
+    return this.context;
+  }
+
   async start(): Promise<void> {
     if (this.started) {
       await this.context?.resume();
