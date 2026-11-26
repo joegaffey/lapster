@@ -1841,6 +1841,46 @@ async function boot() {
   lastRpm = initial.rpm;
   asset.textContent = `${info.asset.id} + ${info.car.id} · ${initial.carColor}`;
 
+  // Player audio is independent of the physics worker. Create it before the
+  // worker starts so a worker failure (or a slow AI field init) cannot leave
+  // the session silent. Opponent voices are only added once the worker is up.
+  const carOption = findCar(carPack.manifest.id);
+  playerAudioProfile = carOption
+    ? { engine: carOption.engine, vehicle: carOption.vehicle }
+    : undefined;
+  audio = new EngineSimAudio(playerAudioProfile);
+  sessionHasOpponents = mpMode || (!soloMode && aiCount > 0);
+  sessionAiRoster = aiRoster;
+  if (storedTuning?.audio) {
+    audio.applyTuning(storedTuning.audio);
+  }
+  audio.setMuted(audioMuted);
+  window.__driveAudio = audio;
+  updateAudioButton();
+  armAudioGesture();
+  document.addEventListener("visibilitychange", () => {
+    if (!audio) {
+      return;
+    }
+    if (document.hidden) {
+      audio.suspend();
+      remoteAudio?.suspend();
+    } else {
+      void audio.resume().catch((error) => {
+        console.warn("audio resume unavailable", error);
+      });
+      void remoteAudio?.resume();
+      // If the browser still holds the context suspended, the next gesture
+      // must resume it.
+      armAudioGesture();
+    }
+  });
+  window.addEventListener("pagehide", () => {
+    audio?.dispose();
+    remoteAudio?.dispose();
+  });
+  audioButton.addEventListener("click", toggleAudio);
+
   let driver: DriveViewer = viewer;
   if (params.get("physics") !== "main" && window.crossOriginIsolated) {
     try {
@@ -1972,45 +2012,9 @@ async function boot() {
   }
 
   if (physicsWorker) {
-    const carOption = findCar(carPack.manifest.id);
-    playerAudioProfile = carOption
-      ? { engine: carOption.engine, vehicle: carOption.vehicle }
-      : undefined;
-    audio = new EngineSimAudio(playerAudioProfile);
-    sessionHasOpponents = mpMode || (!soloMode && aiCount > 0);
-    sessionAiRoster = aiRoster;
+    // Opponent voices need AI frames from the worker; player audio is already
+    // active even if the worker failed.
     createRemoteAudio();
-    if (storedTuning?.audio) {
-      audio.applyTuning(storedTuning.audio);
-    }
-    audio.setMuted(audioMuted);
-    window.__driveAudio = audio;
-    updateAudioButton();
-    armAudioGesture();
-    document.addEventListener("visibilitychange", () => {
-      if (!audio) {
-        return;
-      }
-      if (document.hidden) {
-        audio.suspend();
-        remoteAudio?.suspend();
-      } else {
-        void audio.resume().catch((error) => {
-          console.warn("audio resume unavailable", error);
-        });
-        void remoteAudio?.resume();
-        // If the browser still holds the context suspended, the next gesture
-        // must resume it.
-        armAudioGesture();
-      }
-    });
-    window.addEventListener("pagehide", () => {
-      audio?.dispose();
-      remoteAudio?.dispose();
-    });
-    audioButton.addEventListener("click", toggleAudio);
-  } else {
-    updateAudioButton();
   }
 
   window.addEventListener("keydown", (event) => {

@@ -249,6 +249,38 @@ test("audio preference survives reload and starts on the first gesture", async (
   ).toBe(true);
 });
 
+test("main-thread fallback starts player audio with AI requested", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto(
+    "/web/drive/?track=race-loop&race=1&ai=2&category=gp67&physics=main&v=audio-main-ai",
+  );
+  await waitForReady(page);
+  await clickMenuControl(page, "#audio-toggle");
+  await page.waitForFunction(
+    () => (window as any).__driveAudio?.status === "running",
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.waitForTimeout(1000);
+
+  const state = await page.evaluate(() => {
+    const audio = (window as any).__driveAudio;
+    return {
+      status: audio.status,
+      context: audio.contextState,
+      level: audio.level(),
+    };
+  });
+  expect(state.status).toBe("running");
+  expect(state.context).toBe("running");
+  expect(state.level).toBeGreaterThan(0);
+  expect(pageErrors).toEqual([]);
+});
+
 test("saved audio preference asks for a tap before claiming On", async ({ page }) => {
   const url =
     "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=audio-tap-start";

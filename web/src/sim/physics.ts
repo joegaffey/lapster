@@ -111,21 +111,18 @@ export class PhysicsClient {
         15_000,
       );
     });
-    worker.postMessage(
-      {
-        type: "init",
-        sab,
-        trackBytes: trackCopy,
-        carBytes: carCopy,
-        aiCarBytes: aiCopies,
-        aiPace,
-      },
-      [
-        trackCopy.buffer,
-        carCopy.buffer,
-        ...aiCopies.map((bytes) => bytes.buffer),
-      ],
-    );
+    // Structured-clone the packs instead of transferring their buffers.
+    // Mobile browsers have rejected multi-buffer transfer lists for AI grids,
+    // which used to fail worker startup (and, before audio was decoupled, left
+    // the whole session silent).
+    worker.postMessage({
+      type: "init",
+      sab,
+      trackBytes: trackCopy,
+      carBytes: carCopy,
+      aiCarBytes: aiCopies,
+      aiPace,
+    });
     try {
       await ready;
     } catch (error) {
