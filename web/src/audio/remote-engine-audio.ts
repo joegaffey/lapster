@@ -357,6 +357,9 @@ export class RemoteEngineAudio {
         shared ?? new AudioContext({ latencyHint: "interactive" });
       this.sharedContext = shared !== null;
       this.context = context;
+      // Resume inside the same user gesture before any await. Mobile Chrome and
+      // Samsung Internet can reject a resume that happens after other awaits.
+      const resume = this.sharedContext ? null : context.resume();
       if (this.mode === "full") {
         EngineSim.workletURL = new URL(
           `../audio/combustion-worklet.js?v=${encodeURIComponent(APP_VERSION)}`,
@@ -373,8 +376,14 @@ export class RemoteEngineAudio {
       noiseSource.loop = true;
       noiseSource.start();
       this.noiseSource = noiseSource;
-      if (!this.sharedContext) {
-        await context.resume();
+      if (resume) {
+        try {
+          await resume;
+        } catch (error) {
+          throw new Error(
+            `remote audio context could not resume: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
       this.status = "running";
     } catch (error) {

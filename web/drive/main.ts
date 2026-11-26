@@ -1442,7 +1442,13 @@ function clearAudioGesture(): void {
 }
 
 function armAudioGesture(): void {
-  if (!audio || !audioEnabled || audio.status === "running" || audioGestureCleanup) {
+  const player = audio;
+  if (!player || !audioEnabled || audioGestureCleanup) {
+    return;
+  }
+  // Also arm when the engine is running but its context was suspended by a
+  // mobile background; that gesture resumes instead of rebuilding audio.
+  if (player.status === "running" && player.contextState === "running") {
     return;
   }
   const onGesture = (event: Event) => {
@@ -1451,6 +1457,16 @@ function armAudioGesture(): void {
       return;
     }
     clearAudioGesture();
+    if (player.status === "running" && player.contextState !== "running") {
+      // The engine is built but its context was suspended (e.g. a mobile
+      // background). Resume it and the remote voices instead of starting over.
+      void player
+        .resume()
+        .then(() => remoteAudio?.resume())
+        .catch((error) => console.warn("audio resume unavailable", error))
+        .finally(updateAudioButton);
+      return;
+    }
     void startAudio();
   };
   window.addEventListener("pointerdown", onGesture, true);
@@ -1476,15 +1492,16 @@ function updateAudioButton() {
   } else if (audio.status === "running") {
     audioButton.textContent = audio.muted ? "Audio: Muted" : "Audio: On";
   } else if (audioEnabled) {
-    audioButton.textContent = audioMuted ? "Audio: Muted" : "Audio: On";
+    audioButton.textContent = "Audio: Tap to start";
   } else {
     audioButton.textContent = "Audio: Off";
   }
   audioButton.setAttribute(
     "aria-pressed",
     String(
-      (audio.status === "running" && !audio.muted) ||
-        (audio.status !== "running" && audioEnabled && !audioMuted),
+      audio.status === "running" &&
+        audio.contextState === "running" &&
+        !audio.muted,
     ),
   );
 }
@@ -1978,8 +1995,13 @@ async function boot() {
         audio.suspend();
         remoteAudio?.suspend();
       } else {
-        void audio.resume();
+        void audio.resume().catch((error) => {
+          console.warn("audio resume unavailable", error);
+        });
         void remoteAudio?.resume();
+        // If the browser still holds the context suspended, the next gesture
+        // must resume it.
+        armAudioGesture();
       }
     });
     window.addEventListener("pagehide", () => {

@@ -143,6 +143,9 @@ export class EngineSimAudio {
     try {
       const context = new AudioContext({ latencyHint: "interactive" });
       this.context = context;
+      // Resume inside the same user gesture before any await. Mobile Chrome and
+      // Samsung Internet can reject a resume that happens after other awaits.
+      const resume = context.resume();
       EngineSim.workletURL = new URL(
         `../audio/combustion-worklet.js?v=${encodeURIComponent(APP_VERSION)}`,
         import.meta.url,
@@ -298,6 +301,13 @@ export class EngineSimAudio {
       this.tireBand1 = tireBand1;
       this.tireBand2 = tireBand2;
       this.tireGain = tireGain;
+      try {
+        await resume;
+      } catch (error) {
+        throw new Error(
+          `audio context could not resume: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       await sim.start();
       this.sim = sim;
       this.gain = gain;
