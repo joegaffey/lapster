@@ -1,6 +1,7 @@
 # Car Categories and Same-Category Grids
 
-- **Status:** planned
+- **Status:** local same-category grids implemented on `feat/car-categories`;
+  multiplayer batch pending
 - **Date:** 2026-11-25
 - **Owner:** architect
 - **Domains:** architect, assets, physics, render, web, multiplayer

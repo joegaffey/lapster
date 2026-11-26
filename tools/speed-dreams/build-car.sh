@@ -34,6 +34,12 @@ read_config() {
 BODY="$SRC/$(read_config body)"
 XML="$SRC/$(read_config xml)"
 WHEEL="$SRC/$(read_config wheel)"
+CATEGORY="$(read_config category || true)"
+
+if [[ "$CATEGORY" != "road" && "$CATEGORY" != "gp67" ]]; then
+  echo "import.json must define category as road or gp67" >&2
+  exit 1
+fi
 
 for file in "$BODY" "$XML" "$WHEEL"; do
   if [[ ! -f "$file" ]]; then
@@ -60,4 +66,4 @@ NAME="$(basename "$OUT")"
 NAME="${NAME%.sima}"
 node "$ROOT/tools/speed-dreams/assemble.mjs" "$CONFIG" "$TMP/body.glb" "$TMP/wheel.glb" "$TMP/$NAME.glb"
 mkdir -p "$(dirname "$OUT")"
-cargo run -q -p asset-compiler -- bake-glb "$TMP/$NAME.glb" "$OUT" --textures --physics-xml "$XML"
+cargo run -q -p asset-compiler -- bake-glb "$TMP/$NAME.glb" "$OUT" --category "$CATEGORY" --textures --physics-xml "$XML"

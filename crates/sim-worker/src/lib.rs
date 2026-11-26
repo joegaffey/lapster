@@ -28,6 +28,36 @@ enum RacePhase {
     Running,
 }
 
+/// Per-AI-car base physics, collision footprint, and gearbox shift points.
+///
+/// Each AI slot is built from its own car pack, so same-category grids can mix
+/// models. Driver aids such as traction control remain global.
+#[derive(Clone)]
+struct AiCarSetup {
+    physics: sim_types::CarPhysics,
+    collision_box: CollisionBox,
+    upshift_rpm: f32,
+    downshift_rpm: f32,
+    max_gear: i32,
+}
+
+impl AiCarSetup {
+    fn from_physics(physics: sim_types::CarPhysics, collision_box: CollisionBox) -> Self {
+        let redline = physics.engine.redline_rpm;
+        let idle = physics.engine.idle_rpm;
+        let max_gear = physics.drivetrain.gear_ratios.len() as i32;
+        let upshift_rpm = idle + (redline - idle) * 0.85;
+        let downshift_rpm = idle + (redline - idle) * 0.3;
+        Self {
+            physics,
+            collision_box,
+            upshift_rpm,
+            downshift_rpm,
+            max_gear,
+        }
+    }
+}
+
 struct AiCar {
     vehicle: Vehicle,
     tracker: RaceTracker,
@@ -38,16 +68,25 @@ struct AiCar {
 
 impl AiCar {
     fn new(
-        physics: sim_types::CarPhysics,
+        setup: AiCarSetup,
         collider: TrackCollider,
         race: &RaceData,
         index: usize,
-        driver: AiDriver,
+        pace: AiPace,
     ) -> Option<Self> {
         let grid_spawn = race.grid.get(index + 1)?;
         let tracker = RaceTracker::new(race);
         let spawn = oriented_spawn(&tracker, grid_spawn);
-        let vehicle = Vehicle::new(physics, collider, &spawn);
+        let AiCarSetup {
+            physics,
+            collision_box,
+            upshift_rpm,
+            downshift_rpm,
+            max_gear,
+        } = setup;
+        let driver = AiDriver::new(upshift_rpm, downshift_rpm, max_gear, pace);
+        let mut vehicle = Vehicle::new(physics, collider, &spawn);
+        vehicle.set_collision_box(collision_box);
         let mut car = Self {
             vehicle,
             tracker,
@@ -125,8 +164,8 @@ impl Simulation {
     #[wasm_bindgen(constructor)]
     pub fn new(
         track_pack_bytes: &[u8],
-        car_pack_bytes: &[u8],
-        ai_count: u32,
+        player_car_pack_bytes: &[u8],
+        ai_car_packs: js_sys::Array,
         ai_pace: u32,
     ) -> Result<Simulation, JsValue> {
         let track_bytes = track_pack_bytes.to_vec();
@@ -139,14 +178,12 @@ impl Simulation {
         let race = track_pack.track_race_owned().map_err(js_error)?;
         drop(track_pack);
 
-        let car_bytes = car_pack_bytes.to_vec();
-        let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-        if car_pack.kind() != sim_types::AssetKind::Car {
-            return Err(JsValue::from_str("expected a car pack"));
-        }
-        let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-        let collision_box = CollisionBox::from_aabb(&car_pack.manifest().bounds);
-        drop(car_pack);
+        let player_setup = car_setup_from_pack(player_car_pack_bytes)?;
+        let AiCarSetup {
+            physics: player_physics,
+            collision_box: player_collision_box,
+            ..
+        } = player_setup;
 
         let mut spawn = track_metadata
             .spawns
@@ -157,35 +194,26 @@ impl Simulation {
         spawn.rotation_xyzw =
             (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
         let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
-        let mut vehicle = Vehicle::new(car_physics.clone(), collider.clone(), &spawn);
-        vehicle.set_collision_box(collision_box);
+        let mut vehicle = Vehicle::new(player_physics, collider.clone(), &spawn);
+        vehicle.set_collision_box(player_collision_box);
 
-        let redline = car_physics.engine.redline_rpm;
-        let idle = car_physics.engine.idle_rpm;
-        let max_gear = car_physics.drivetrain.gear_ratios.len() as i32;
-        let upshift_rpm = idle + (redline - idle) * 0.85;
-        let downshift_rpm = idle + (redline - idle) * 0.3;
-
-        let requested = ai_count.min(MAX_AI);
+        let pace = AiPace::from_index(ai_pace);
         let available = race
             .as_ref()
-            .map(|race| race.grid.len().saturating_sub(1) as u32)
+            .map(|race| race.grid.len().saturating_sub(1))
             .unwrap_or(0);
-        let ai_total = requested.min(available);
-        let pace = AiPace::from_index(ai_pace);
+        let ai_total = ai_slot_count(ai_car_packs.length() as usize, available);
 
-        let mut ai_cars = Vec::with_capacity(ai_total as usize);
+        let mut ai_cars = Vec::with_capacity(ai_total);
         if let Some(race) = race.as_ref() {
-            for index in 0..ai_total as usize {
-                let driver = AiDriver::new(upshift_rpm, downshift_rpm, max_gear, pace);
-                if let Some(mut car) =
-                    AiCar::new(car_physics.clone(), collider.clone(), race, index, driver)
-                {
-                    car.vehicle.set_collision_box(collision_box);
-                    ai_cars.push(car);
-                } else {
+            for index in 0..ai_total {
+                let value = ai_car_packs.get(index as u32);
+                let bytes = js_sys::Uint8Array::new(&value).to_vec();
+                let setup = car_setup_from_pack(&bytes)?;
+                let Some(car) = AiCar::new(setup, collider.clone(), race, index, pace) else {
                     break;
-                }
+                };
+                ai_cars.push(car);
             }
         }
 
@@ -483,6 +511,10 @@ impl Simulation {
         serde_json::to_string(&self.vehicle.default_setup()).unwrap_or_default()
     }
 
+    /// Applies a global physics tuning to the player and every AI car.
+    ///
+    /// This is a developer-wide model tuning, not a per-car setup. Each car's
+    /// base physics still comes from its own pack.
     pub fn apply_physics_tuning(&mut self, json: &str) -> Result<f64, JsValue> {
         let tuning: PhysicsTuning = serde_json::from_str(json)
             .map_err(|error| JsValue::from_str(&format!("invalid physics tuning: {error}")))?;
@@ -494,21 +526,20 @@ impl Simulation {
         Ok(self.tick())
     }
 
+    /// Applies a car setup to the player only.
+    ///
+    /// A single setup must not overwrite different AI base cars, so AI slots
+    /// keep the physics from their own packs.
     pub fn apply_setup(&mut self, json: &str) -> Result<String, JsValue> {
         let tuning: CarTuning = serde_json::from_str(json)
             .map_err(|error| JsValue::from_str(&format!("invalid setup: {error}")))?;
         self.vehicle.apply_setup(&tuning);
-        for ai in &mut self.ai_cars {
-            ai.vehicle.apply_setup(&tuning);
-        }
         Ok(self.setup())
     }
 
+    /// Restores the player's setup defaults only. AI base cars are untouched.
     pub fn reset_setup(&mut self) -> String {
         self.vehicle.reset_setup();
-        for ai in &mut self.ai_cars {
-            ai.vehicle.reset_setup();
-        }
         self.setup()
     }
 
@@ -681,6 +712,25 @@ fn snapshot_for(vehicle: &Vehicle, last_throttle: f32, last_brake: f32) -> Vec<f
     }
     out[state::SURFACE_IDS] = surface_ids as f32;
     out
+}
+
+/// Number of AI slots to build from the supplied packs.
+///
+/// Bounded by the pack array length, [`MAX_AI`], and the race grid slots after
+/// the player's. An empty array or a single-slot grid yields zero AI.
+fn ai_slot_count(pack_count: usize, available_slots: usize) -> usize {
+    pack_count.min(MAX_AI as usize).min(available_slots)
+}
+
+/// Parses one car pack into independent physics, collision, and shift setup.
+fn car_setup_from_pack(bytes: &[u8]) -> Result<AiCarSetup, JsValue> {
+    let pack = sim_asset::Pack::from_bytes(bytes).map_err(js_error)?;
+    if pack.kind() != sim_types::AssetKind::Car {
+        return Err(JsValue::from_str("expected a car pack"));
+    }
+    let physics = pack.car_physics_owned().map_err(js_error)?;
+    let collision_box = CollisionBox::from_aabb(&pack.manifest().bounds);
+    Ok(AiCarSetup::from_physics(physics, collision_box))
 }
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {
@@ -937,16 +987,40 @@ mod tests {
         simulation_from_race(race, ai_count)
     }
 
+    fn setup_from_physics(physics: sim_types::CarPhysics) -> AiCarSetup {
+        let collision_box = CollisionBox::from_car_physics(&physics);
+        AiCarSetup::from_physics(physics, collision_box)
+    }
+
+    fn boxing(half_width: f32, half_length: f32) -> CollisionBox {
+        CollisionBox::from_aabb(&Aabb {
+            min: [-half_width, 0.0, -half_length],
+            max: [half_width, 1.2, half_length],
+        })
+    }
+
     fn simulation_from_race(race: RaceData, ai_count: usize) -> Simulation {
-        let physics = physics();
+        let setups = (0..ai_count)
+            .map(|_| setup_from_physics(physics()))
+            .collect();
+        simulation_from_race_with_setups(race, setup_from_physics(physics()), setups)
+    }
+
+    fn simulation_from_race_with_setups(
+        race: RaceData,
+        player: AiCarSetup,
+        ai_setups: Vec<AiCarSetup>,
+    ) -> Simulation {
         let collider = collider();
-        let vehicle = Vehicle::new(physics.clone(), collider.clone(), &race.grid[0]);
+        let mut vehicle = Vehicle::new(player.physics, collider.clone(), &race.grid[0]);
+        vehicle.set_collision_box(player.collision_box);
         let mut ai_cars = Vec::new();
-        for index in 0..ai_count {
-            let driver = AiDriver::default();
-            if let Some(ai) = AiCar::new(physics.clone(), collider.clone(), &race, index, driver) {
-                ai_cars.push(ai);
-            }
+        for (index, setup) in ai_setups.into_iter().enumerate() {
+            let Some(ai) = AiCar::new(setup, collider.clone(), &race, index, AiPace::default())
+            else {
+                break;
+            };
+            ai_cars.push(ai);
         }
         Simulation {
             vehicle,
@@ -1094,25 +1168,24 @@ mod tests {
     fn max_ai_builds_on_a_ten_slot_grid() {
         assert_eq!(MAX_AI, 9);
         let race = grid_race_with_slots(10);
-        let physics = physics();
         let collider = collider();
         for index in 0..MAX_AI as usize {
             let ai = AiCar::new(
-                physics.clone(),
+                setup_from_physics(physics()),
                 collider.clone(),
                 &race,
                 index,
-                AiDriver::default(),
+                AiPace::default(),
             );
             assert!(ai.is_some(), "missing AI car at grid index {}", index + 1);
         }
         assert!(
             AiCar::new(
-                physics.clone(),
+                setup_from_physics(physics()),
                 collider.clone(),
                 &race,
                 MAX_AI as usize,
-                AiDriver::default(),
+                AiPace::default(),
             )
             .is_none(),
             "built an AI car beyond the ten-slot grid"
@@ -1344,6 +1417,99 @@ mod tests {
         assert!(simulation.contacts.is_empty());
         assert!(simulation.contact_cooldowns.is_empty());
         assert_eq!(simulation.drain_contacts(), "[]");
+    }
+
+    #[test]
+    fn ai_slots_use_their_own_physics_gearbox_and_collision_box() {
+        let light = setup_from_physics(physics());
+        let mut heavy_physics = physics();
+        heavy_physics.mass = 2_100.0;
+        heavy_physics.drivetrain.gear_ratios = vec![3.1, 1.9, 1.1];
+        let heavy = AiCarSetup::from_physics(heavy_physics, boxing(1.4, 2.8));
+
+        let simulation =
+            simulation_from_race_with_setups(race(), light.clone(), vec![light, heavy]);
+
+        assert_eq!(simulation.ai_count(), 2);
+        assert!((simulation.ai_cars[0].vehicle.mass() - 1_270.0).abs() < 0.1);
+        assert!((simulation.ai_cars[1].vehicle.mass() - 2_100.0).abs() < 0.1);
+        assert_eq!(simulation.ai_cars[0].vehicle.gear_count(), 6);
+        assert_eq!(simulation.ai_cars[1].vehicle.gear_count(), 3);
+
+        let small_box = simulation.ai_cars[0].vehicle.collision_box();
+        let large_box = simulation.ai_cars[1].vehicle.collision_box();
+        assert!(large_box.half_width > small_box.half_width);
+        assert!(large_box.half_length > small_box.half_length);
+    }
+
+    #[test]
+    fn ai_count_clamps_to_pack_array_and_grid() {
+        assert_eq!(ai_slot_count(0, 9), 0);
+        assert_eq!(ai_slot_count(2, 9), 2);
+        assert_eq!(ai_slot_count(20, 9), MAX_AI as usize);
+        assert_eq!(ai_slot_count(5, 2), 2);
+        assert_eq!(ai_slot_count(20, 20), MAX_AI as usize);
+        assert_eq!(ai_slot_count(1, 0), 0);
+    }
+
+    #[test]
+    fn mixed_size_ai_contact_resolves() {
+        let player = setup_from_physics(physics());
+        let mut large_physics = physics();
+        large_physics.mass = 1_900.0;
+        let large = AiCarSetup::from_physics(large_physics, boxing(1.4, 2.8));
+        let mut simulation = simulation_from_race_with_setups(race(), player, vec![large]);
+
+        place_pairs(
+            &mut simulation,
+            &[
+                (0, Vec3::new(0.0, 0.25, 0.0)),
+                (1, Vec3::new(0.0, 0.25, 4.2)),
+            ],
+        );
+        simulation.vehicle.state.rotation = Quat::IDENTITY;
+        simulation.ai_cars[0].vehicle.state.rotation = Quat::IDENTITY;
+        simulation.vehicle.state.velocity = Vec3::new(0.0, 0.0, 4.0);
+        simulation.ai_cars[0].vehicle.state.velocity = Vec3::new(0.0, 0.0, -4.0);
+
+        simulation.resolve_contacts();
+        let events = contact_events(&mut simulation);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["a"], 0);
+        assert_eq!(events[0]["b"], 1);
+        assert!(events[0]["speed"].as_f64().unwrap_or(0.0) > 1.0);
+    }
+
+    #[test]
+    fn apply_setup_changes_player_only_not_mixed_ai_base_physics() {
+        let player = setup_from_physics(physics());
+        let mut ai_physics = physics();
+        ai_physics.mass = 2_050.0;
+        ai_physics.drivetrain.gear_ratios = vec![3.0, 1.9, 1.3];
+        let ai_setup = AiCarSetup::from_physics(ai_physics, boxing(1.3, 2.6));
+        let mut simulation = simulation_from_race_with_setups(race(), player, vec![ai_setup]);
+
+        let ai_mass_before = simulation.ai_cars[0].vehicle.mass();
+        let ai_setup_before = simulation.ai_cars[0].vehicle.setup();
+
+        let mut tuning = simulation.vehicle.setup();
+        tuning.engine.redline_rpm = 9_200.0;
+        tuning.drivetrain.gear_ratios = vec![2.8, 1.7, 1.2, 0.95];
+        let json = serde_json::to_string(&tuning).expect("serialize setup");
+        simulation.apply_setup(&json).expect("apply setup");
+
+        assert_eq!(simulation.vehicle.gear_count(), 4);
+        assert!((simulation.vehicle.setup().engine.redline_rpm - 9_200.0).abs() < 0.1);
+
+        assert_eq!(simulation.ai_cars[0].vehicle.mass(), ai_mass_before);
+        assert_eq!(simulation.ai_cars[0].vehicle.gear_count(), 3);
+        assert_eq!(simulation.ai_cars[0].vehicle.setup(), ai_setup_before);
+
+        simulation.reset_setup();
+        assert_eq!(simulation.vehicle.gear_count(), 6);
+        assert_eq!(simulation.ai_cars[0].vehicle.mass(), ai_mass_before);
+        assert_eq!(simulation.ai_cars[0].vehicle.setup(), ai_setup_before);
     }
 
     #[test]

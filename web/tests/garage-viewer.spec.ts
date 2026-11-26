@@ -56,7 +56,7 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
   expect(state.debug.asset.id).toBe("concrete-garage");
   expect(state.debug.garage.mode).toBe("concrete");
   expect(state.debug.garage.layout).toBe("line");
-  expect(state.debug.garage.spotLights).toBe(8);
+  expect(state.debug.garage.spotLights).toBe(state.bays.length);
   expect(state.debug.garage.floorTriangles).toBeGreaterThan(0);
   expect(state.bay.layout).toBe("line");
   expect(state.bay.loaded).toBe(true);
@@ -66,12 +66,6 @@ test("garage viewer defaults to the concrete scene", async ({ page }) => {
   expect(state.bays.map((bay: any) => bay.carId)).toEqual([
     "mazda-rx7",
     "sc-deckard-conejo",
-    "67gp-cavallo-123",
-    "67gp-guthrie-eagle",
-    "67gp-kuiper-t81",
-    "67gp-mango-ms7",
-    "67gp-murasama-37a",
-    "67gp-upping-ut19",
   ]);
   expect(state.debug.car.id).toBe("mazda-rx7");
   expect(pageErrors).toEqual([]);
@@ -132,13 +126,14 @@ test("garage paint picker updates the selected car and drive link", async ({ pag
   const driveHref = await page.locator("#drive-car").getAttribute("href");
   expect(new URL(driveHref!).searchParams.get("paint")).toBe("1");
 
-  await page.mouse.move(640, 360);
-  await page.click("#bay-next");
-  await page.click("#bay-next");
+  await page.goto("/web/garage/?v=cp6&category=gp67");
+  await waitForGarage(page);
+  await waitForSelectedBay(page);
+
   const cavallo = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(cavallo.selected).toBe(2);
+  expect(cavallo.selected).toBe(0);
   expect(cavallo.carId).toBe("67gp-cavallo-123");
   expect(cavallo.recolorable).toBe(false);
   expect(cavallo.paintName).toBe("Factory livery");
@@ -204,10 +199,10 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await page.addInitScript(() => {
-    const marker = "67gp-cavallo-123.sima";
+    const marker = "67gp-guthrie-eagle.sima";
     let released = false;
     const waiters: Array<() => void> = [];
-    (window as any).__releaseCavalloLoaderTest = () => {
+    (window as any).__releaseGuthrieLoaderTest = () => {
       released = true;
       for (const resolve of waiters.splice(0)) {
         resolve();
@@ -228,12 +223,11 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
     };
   });
 
-  await page.goto("/web/garage/?v=cp6");
+  await page.goto("/web/garage/?v=cp6&category=gp67");
   await waitForGarage(page);
 
   const panel = page.locator("#paint-panel");
   await page.mouse.move(640, 360);
-  await page.click("#bay-next");
   await page.click("#bay-next");
 
   try {
@@ -242,7 +236,7 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
       loaded: (window as any).__garageCarsLoaded,
       total: (window as any).__garageCarsTotal,
     }));
-    expect(pending.bay.selected).toBe(2);
+    expect(pending.bay.selected).toBe(1);
     expect(pending.bay.loaded).toBe(false);
     expect(pending.loaded).toBeLessThan(pending.total);
 
@@ -252,9 +246,9 @@ test("garage hides the paint picker and shows a loader for pending cars", async 
     await expect(panel).toHaveCSS("opacity", "0");
     await expect(page.locator("#car-loading")).toHaveClass(/car-loading-visible/);
     await expect(page.locator("#car-loading")).not.toHaveAttribute("aria-hidden", "true");
-    await expect(page.locator("#car-loading")).toContainText("Loading Cavallo 123");
+    await expect(page.locator("#car-loading")).toContainText("Loading Guthrie Eagle");
   } finally {
-    await page.evaluate(() => (window as any).__releaseCavalloLoaderTest?.());
+    await page.evaluate(() => (window as any).__releaseGuthrieLoaderTest?.());
   }
 
   await page.waitForFunction(

@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use serde::Deserialize;
 use sim_types::{
-    CarPhysics, InstanceRef, MaterialRef, MeshRef, NodeTransform, TrackMetadata, WheelVisual,
+    CarCategory, CarPhysics, InstanceRef, MaterialRef, MeshRef, NodeTransform, TrackMetadata,
+    WheelVisual,
 };
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +121,8 @@ pub struct CarSource {
     pub schema: String,
     pub kind: String,
     pub id: String,
+    #[serde(default)]
+    pub category: Option<CarCategory>,
     pub units: UnitsSource,
     pub frame: FrameSource,
     pub physics: CarPhysics,

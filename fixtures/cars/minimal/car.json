@@ -1,6 +1,7 @@
 {
   "schema": "sim-source-v1",
   "kind": "car",
+  "category": "road",
   "id": "fixtures/car/minimal",
   "units": {
     "length": "m",

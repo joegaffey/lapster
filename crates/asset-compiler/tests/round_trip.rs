@@ -1,7 +1,7 @@
-use asset_compiler::bake::{bake_car, bake_glb_track, bake_track};
+use asset_compiler::bake::{bake_car, bake_car_glb, bake_glb_track, bake_track, set_category};
 use glam::Vec3;
 use sim_asset::{Pack, PackError};
-use sim_types::{AssetKind, PACK_FORMAT_VERSION, PACK_HEADER_SIZE};
+use sim_types::{AssetKind, CarCategory, ChunkKind, PACK_FORMAT_VERSION, PACK_HEADER_SIZE};
 use std::path::PathBuf;
 
 fn fixture_dir(relative: &str) -> PathBuf {
@@ -19,6 +19,7 @@ fn car_bake_is_deterministic_and_round_trips() {
 
     let pack = Pack::from_bytes(&first).expect("car pack failed validation");
     assert_eq!(pack.kind(), AssetKind::Car);
+    assert_eq!(pack.manifest().category, Some(CarCategory::Road));
 
     let physics = pack.car_physics_owned().expect("physics load failed");
     assert_eq!(physics.mass, 1200.0);
@@ -40,6 +41,83 @@ fn car_bake_is_deterministic_and_round_trips() {
 }
 
 #[test]
+fn glb_car_bake_emits_category() {
+    let input = fixture_dir("fixtures/cars/mazda-rx7/mazda-rx7.glb");
+    let bytes = bake_car_glb(&input, CarCategory::Gp67).expect("GLB car bake failed");
+    let pack = Pack::from_bytes(&bytes).expect("GLB car pack failed validation");
+    assert_eq!(pack.manifest().category, Some(CarCategory::Gp67));
+}
+
+#[test]
+fn set_category_preserves_chunks_and_sets_category() {
+    let dir = fixture_dir("fixtures/cars/minimal");
+    let original = bake_car(&dir).expect("car bake failed");
+    let before = Pack::from_bytes(&original).expect("original pack parses");
+    assert_eq!(before.manifest().category, Some(CarCategory::Road));
+
+    let updated = set_category(&original, CarCategory::Gp67).expect("category rewrite");
+    let after = Pack::from_bytes(&updated).expect("rewritten pack parses");
+    assert_eq!(after.manifest().category, Some(CarCategory::Gp67));
+
+    for kind in [ChunkKind::Physics, ChunkKind::Visual] {
+        let before_bytes = before.chunk_bytes(kind).expect("before chunk");
+        let after_bytes = after.chunk_bytes(kind).expect("after chunk");
+        assert_eq!(before_bytes, after_bytes, "chunk {kind} bytes changed");
+        assert_eq!(
+            sim_asset::sha256(before_bytes),
+            sim_asset::sha256(after_bytes),
+            "chunk {kind} hash changed"
+        );
+    }
+    assert_eq!(
+        before
+            .manifest()
+            .chunks
+            .iter()
+            .map(|chunk| chunk.hash)
+            .collect::<Vec<_>>(),
+        after
+            .manifest()
+            .chunks
+            .iter()
+            .map(|chunk| chunk.hash)
+            .collect::<Vec<_>>(),
+        "manifest chunk hashes changed"
+    );
+    assert_eq!(before.manifest().stats, after.manifest().stats);
+}
+
+#[test]
+fn car_source_requires_category() {
+    let source = std::fs::read_to_string(fixture_dir("fixtures/cars/minimal/car.json"))
+        .expect("minimal car source");
+    let mut value: serde_json::Value = serde_json::from_str(&source).expect("car source JSON");
+    value
+        .as_object_mut()
+        .expect("car source object")
+        .remove("category");
+
+    let dir = std::env::temp_dir().join(format!(
+        "lapster-car-without-category-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp car directory");
+    std::fs::write(
+        dir.join("car.json"),
+        serde_json::to_vec(&value).expect("car source bytes"),
+    )
+    .expect("car source write");
+
+    let error = bake_car(&dir).expect_err("car bake without category should fail");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        format!("{error:#}").contains("category"),
+        "unexpected error: {error:#}"
+    );
+}
+
+#[test]
 fn track_bake_is_deterministic_and_round_trips() {
     let dir = fixture_dir("fixtures/tracks/minimal");
     let first = bake_track(&dir).expect("track bake failed");
@@ -48,6 +126,7 @@ fn track_bake_is_deterministic_and_round_trips() {
 
     let pack = Pack::from_bytes(&first).expect("track pack failed validation");
     assert_eq!(pack.kind(), AssetKind::Track);
+    assert_eq!(pack.manifest().category, None);
 
     let metadata = pack.track_metadata_owned().expect("metadata load failed");
     assert_eq!(metadata.name, "Minimal Test Track");

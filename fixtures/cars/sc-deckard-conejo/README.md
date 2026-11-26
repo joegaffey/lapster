@@ -30,7 +30,7 @@ owners. Lapster does not imply manufacturer affiliation.
 
 ## Pack
 
-- SHA-256: `4812013118dd62ac459391c4a65660265963b12d772cfab8ac050448dbac8b11`
+- SHA-256: `b1ac25f657fc19a93087c3dbe3751e748f673837e74e9a3921df3e645063a777`
 - ID: `sc-deckard-conejo`
 - Schema: 3
 - 11,352 vertices, 13,058 triangles, 4 materials, 3 textures, 7 draw calls.
@@ -41,7 +41,7 @@ owners. Lapster does not imply manufacturer affiliation.
   distribution, 6.2 L V8 with a 21-point torque curve, six-speed RWD gearbox with
   3.8 final drive, source steering lock, brake pressure/areas, spring/damper rates,
   anti-roll bars, tire mu, and aerodynamic coefficients.
-- 2.73 m wheelbase, 1.62 m track; 6,426,968 bytes.
+- 2.73 m wheelbase, 1.62 m track; 6,427,032 bytes.
 
 ## Rebuild
 

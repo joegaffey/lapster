@@ -41,7 +41,8 @@ demos. Re-bake them after changing a fixture:
 ```bash
 cargo run -p asset-compiler -- bake car fixtures/cars/minimal
 cargo run -p asset-compiler -- bake track fixtures/tracks/minimal
-cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb
+cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb \
+  --category road
 cargo run -p asset-compiler -- bake-glb-track fixtures/tracks/drift-sketchfab
 cargo run -p asset-compiler -- bake-glb-track fixtures/tracks/race-loop
 tools/speed-dreams/build-car.sh fixtures/sources/cars/sc-deckard-conejo \

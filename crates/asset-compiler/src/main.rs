@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use asset_compiler::bake;
+use sim_types::CarCategory;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -24,8 +25,14 @@ fn run() -> Result<()> {
             bake_asset(kind, Path::new(dir), Some(Path::new(out)))?;
         }
         [command, rest @ ..] if command == "bake-glb" => {
-            let (input, out, textures, physics_xml) = parse_glb_args(rest)?;
-            bake_glb(&input, out.as_deref(), textures, physics_xml.as_deref())?;
+            let args = parse_glb_args(rest)?;
+            bake_glb(
+                &args.input,
+                args.out.as_deref(),
+                args.textures,
+                args.physics_xml.as_deref(),
+                args.category,
+            )?;
         }
         [command, dir] if command == "bake-glb-track" => {
             bake_glb_track(Path::new(dir), None)?;
@@ -72,6 +79,12 @@ fn run() -> Result<()> {
         [command, pack] if command == "validate" => {
             let bytes = read_pack(pack)?;
             bake::validate(&bytes)?;
+        }
+        [command, pack, category] if command == "set-category" => {
+            set_category(pack, category, None)?;
+        }
+        [command, pack, category, out] if command == "set-category" => {
+            set_category(pack, category, Some(Path::new(out)))?;
         }
         _ => {
             usage();
@@ -157,11 +170,53 @@ fn bake_asset(kind: &str, dir: &Path, out: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn parse_glb_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>, bool, Option<PathBuf>)> {
+fn parse_category(value: &str) -> Result<CarCategory> {
+    match value {
+        "road" => Ok(CarCategory::Road),
+        "gp67" => Ok(CarCategory::Gp67),
+        other => bail!("invalid category {other}; expected road or gp67"),
+    }
+}
+
+fn set_category(pack: &str, category: &str, out: Option<&Path>) -> Result<()> {
+    let category = parse_category(category)?;
+    let input = Path::new(pack);
+    let bytes = fs::read(input).with_context(|| format!("failed to read {}", input.display()))?;
+    let rewritten = bake::set_category(&bytes, category)?;
+    let output = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| input.to_path_buf());
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+    }
+    fs::write(&output, &rewritten)
+        .with_context(|| format!("failed to write {}", output.display()))?;
+    println!(
+        "set category {category:?} on {} -> {} ({} bytes)",
+        input.display(),
+        output.display(),
+        rewritten.len()
+    );
+    Ok(())
+}
+
+struct GlbArgs {
+    input: PathBuf,
+    out: Option<PathBuf>,
+    textures: bool,
+    physics_xml: Option<PathBuf>,
+    category: CarCategory,
+}
+
+fn parse_glb_args(args: &[String]) -> Result<GlbArgs> {
     let mut input = None;
     let mut out = None;
     let mut textures = false;
     let mut physics_xml = None;
+    let mut category = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -171,6 +226,11 @@ fn parse_glb_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>, bool, Op
                 let value = args.get(index).context("--physics-xml requires a path")?;
                 physics_xml = Some(PathBuf::from(value));
             }
+            "--category" => {
+                index += 1;
+                let value = args.get(index).context("--category requires a value")?;
+                category = Some(parse_category(value)?);
+            }
             flag if flag.starts_with("--") => bail!("unknown bake-glb option {flag}"),
             value if input.is_none() => input = Some(PathBuf::from(value)),
             value if out.is_none() => out = Some(PathBuf::from(value)),
@@ -178,12 +238,13 @@ fn parse_glb_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>, bool, Op
         }
         index += 1;
     }
-    Ok((
-        input.context("bake-glb requires a GLB path")?,
+    Ok(GlbArgs {
+        input: input.context("bake-glb requires a GLB path")?,
         out,
         textures,
         physics_xml,
-    ))
+        category: category.context("bake-glb requires --category <road|gp67>")?,
+    })
 }
 
 fn bake_glb(
@@ -191,8 +252,9 @@ fn bake_glb(
     out: Option<&Path>,
     textures: bool,
     physics_xml: Option<&Path>,
+    category: CarCategory,
 ) -> Result<()> {
-    let bytes = bake::bake_car_glb_with_physics(input, textures, physics_xml)?;
+    let bytes = bake::bake_car_glb_with_physics(input, textures, physics_xml, category)?;
     let output = out
         .map(Path::to_path_buf)
         .unwrap_or_else(|| input.with_extension("sima"));
@@ -217,6 +279,6 @@ fn read_pack(path: &str) -> Result<Vec<u8>> {
 
 fn usage() {
     eprintln!(
-        "usage:\n  asset-compiler bake <car|track> <dir> [out]\n  asset-compiler bake-glb <car.glb> [out] [--textures] [--physics-xml <file>]\n  asset-compiler bake-glb-track <dir> [out]\n  asset-compiler bake-ac-track <dir> [out] [--scale <factor>] [--texture-overrides <file>]\n  asset-compiler inspect <pack>\n  asset-compiler validate <pack>"
+        "usage:\n  asset-compiler bake <car|track> <dir> [out]\n  asset-compiler bake-glb <car.glb> [out] --category <road|gp67> [--textures] [--physics-xml <file>]\n  asset-compiler bake-glb-track <dir> [out]\n  asset-compiler bake-ac-track <dir> [out] [--scale <factor>] [--texture-overrides <file>]\n  asset-compiler set-category <pack> <road|gp67> [out]\n  asset-compiler inspect <pack>\n  asset-compiler validate <pack>"
     );
 }

@@ -92,16 +92,17 @@ export class PhysicsClient {
   static async create(
     sab: SharedArrayBuffer,
     trackBytes: Uint8Array,
-    carBytes: Uint8Array,
-    aiCount = 0,
+    playerCarBytes: Uint8Array,
+    aiCarBytes: Uint8Array[] = [],
     aiPace = 1,
   ): Promise<PhysicsClient> {
     const url = new URL(`../worker/physics-worker.js?v=${encodeURIComponent(APP_VERSION)}`, import.meta.url);
     const worker = new Worker(url, { type: "module" });
     const client = new PhysicsClient(worker, sab);
-    client.diagnostics.aiCount = aiCount;
+    client.diagnostics.aiCount = aiCarBytes.length;
     const trackCopy = trackBytes.slice();
-    const carCopy = carBytes.slice();
+    const carCopy = playerCarBytes.slice();
+    const aiCopies = aiCarBytes.map((bytes) => bytes.slice());
     const ready = new Promise<void>((resolve, reject) => {
       client.readyResolve = resolve;
       client.readyReject = reject;
@@ -116,10 +117,14 @@ export class PhysicsClient {
         sab,
         trackBytes: trackCopy,
         carBytes: carCopy,
-        aiCount,
+        aiCarBytes: aiCopies,
         aiPace,
       },
-      [trackCopy.buffer, carCopy.buffer],
+      [
+        trackCopy.buffer,
+        carCopy.buffer,
+        ...aiCopies.map((bytes) => bytes.buffer),
+      ],
     );
     try {
       await ready;

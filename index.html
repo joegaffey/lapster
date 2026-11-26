@@ -358,6 +358,15 @@
             <h2 id="drive-heading">Drive</h2>
           </div>
           <p class="panel-note">All tracks · no AI</p>
+          <div class="field">
+            <label for="drive-category">Category</label>
+            <div class="select-wrap">
+              <select id="drive-category" name="category" data-category-select>
+                <option value="road">Road</option>
+                <option value="gp67">GP 67</option>
+              </select>
+            </div>
+          </div>
           <a
             class="car-summary"
             href="./web/garage/"
@@ -388,6 +397,15 @@
             <span class="panel-badge">Under development</span>
           </div>
           <p class="panel-note">3 AI · 3 laps</p>
+          <div class="field">
+            <label for="race-category">Category</label>
+            <div class="select-wrap">
+              <select id="race-category" name="category" data-category-select>
+                <option value="road">Road</option>
+                <option value="gp67">GP 67</option>
+              </select>
+            </div>
+          </div>
           <a
             class="car-summary"
             href="./web/garage/"
@@ -466,11 +484,17 @@
     <script>
       (() => {
         const CAR_STORAGE_KEY = "lapster.car.v1";
+        const CATEGORY_STORAGE_KEY = "lapster.category.v1";
         const DRIVE_TRACK_STORAGE_KEY = "lapster.track.v1";
         const RACE_TRACK_STORAGE_KEY = "lapster.race.track.v1";
         const DEFAULT_CAR_ID = "mazda-rx7";
+        const DEFAULT_CATEGORY = "road";
         const DEFAULT_DRIVE_TRACK = "skidpad05";
         const DEFAULT_RACE_TRACK = "loop-spline-point-terrain";
+        const CATEGORY_NAMES = {
+          road: "Road",
+          gp67: "GP 67",
+        };
         const CAR_NAMES = {
           "mazda-rx7": "Mazda RX-7",
           "67gp-cavallo-123": "Cavallo 123",
@@ -481,6 +505,31 @@
           "67gp-upping-ut19": "Upping UT19",
           "sc-deckard-conejo": "Deckard Conejo",
         };
+        const CAR_CATEGORIES = {
+          "mazda-rx7": "road",
+          "sc-deckard-conejo": "road",
+          "67gp-cavallo-123": "gp67",
+          "67gp-guthrie-eagle": "gp67",
+          "67gp-kuiper-t81": "gp67",
+          "67gp-mango-ms7": "gp67",
+          "67gp-murasama-37a": "gp67",
+          "67gp-upping-ut19": "gp67",
+        };
+        const CARS_BY_CATEGORY = {
+          road: ["mazda-rx7", "sc-deckard-conejo"],
+          gp67: [
+            "67gp-cavallo-123",
+            "67gp-guthrie-eagle",
+            "67gp-kuiper-t81",
+            "67gp-mango-ms7",
+            "67gp-murasama-37a",
+            "67gp-upping-ut19",
+          ],
+        };
+        const isCarCategory = (value) =>
+          Object.prototype.hasOwnProperty.call(CATEGORY_NAMES, value);
+        const firstCarInCategory = (category) =>
+          CARS_BY_CATEGORY[category]?.[0] ?? DEFAULT_CAR_ID;
 
         const readStored = (key) => {
           try {
@@ -497,19 +546,72 @@
           }
         };
 
-        let selectedCar = DEFAULT_CAR_ID;
+        const storedCategory = readStored(CATEGORY_STORAGE_KEY);
+        const queryCategory = new URLSearchParams(window.location.search).get("category");
+        let selectedCategory = isCarCategory(queryCategory)
+          ? queryCategory
+          : isCarCategory(storedCategory)
+            ? storedCategory
+            : DEFAULT_CATEGORY;
         const storedCar = readStored(CAR_STORAGE_KEY);
-        if (storedCar && Object.prototype.hasOwnProperty.call(CAR_NAMES, storedCar)) {
-          selectedCar = storedCar;
+        let selectedCar =
+          storedCar &&
+          Object.prototype.hasOwnProperty.call(CAR_NAMES, storedCar) &&
+          CAR_CATEGORIES[storedCar] === selectedCategory
+            ? storedCar
+            : firstCarInCategory(selectedCategory);
+        const categorySelects = Array.from(
+          document.querySelectorAll("[data-category-select]"),
+        );
+        const syncCategoryUi = () => {
+          for (const select of categorySelects) {
+            select.value = selectedCategory;
+          }
+          writeStored(CATEGORY_STORAGE_KEY, selectedCategory);
+          const selectedCarName = CAR_NAMES[selectedCar] ?? selectedCar;
+          for (const label of document.querySelectorAll("[data-selected-car-name]")) {
+            label.textContent = selectedCarName;
+          }
+          for (const card of document.querySelectorAll("[data-car-summary]")) {
+            card.setAttribute(
+              "href",
+              `./web/garage/?category=${encodeURIComponent(selectedCategory)}`,
+            );
+            card.setAttribute(
+              "aria-label",
+              `Change ${CATEGORY_NAMES[selectedCategory]} car (currently ${selectedCarName})`,
+            );
+          }
+        };
+        const setCategory = (category, persist) => {
+          if (!isCarCategory(category)) {
+            return;
+          }
+          selectedCategory = category;
+          if (CAR_CATEGORIES[selectedCar] !== category) {
+            selectedCar = firstCarInCategory(category);
+          }
+          if (persist) {
+            writeStored(CAR_STORAGE_KEY, selectedCar);
+          }
+          syncCategoryUi();
+        };
+        for (const select of categorySelects) {
+          select.addEventListener("change", () => {
+            setCategory(select.value, true);
+            const link = document.querySelector("#multiplayer-link");
+            if (link) {
+              try {
+                const url = new URL(link.href);
+                url.searchParams.set("category", selectedCategory);
+                link.href = url.toString();
+              } catch {
+                // Keep the existing link if it cannot be parsed.
+              }
+            }
+          });
         }
-        const selectedCarName = CAR_NAMES[selectedCar];
-        for (const label of document.querySelectorAll("[data-selected-car-name]")) {
-          label.textContent = selectedCarName;
-        }
-        for (const card of document.querySelectorAll("[data-car-summary]")) {
-          card.setAttribute("href", "./web/garage/");
-          card.setAttribute("aria-label", `Change car (currently ${selectedCarName})`);
-        }
+        syncCategoryUi();
 
         const driveTrack = document.querySelector("#drive-track");
         const raceTrack = document.querySelector("#race-track");
@@ -561,6 +663,7 @@
             const url = new URL("./web/drive/", window.location.href);
             url.searchParams.set("track", track);
             url.searchParams.set("race", raceFlag);
+            url.searchParams.set("category", selectedCategory);
             window.location.assign(url.toString());
           });
         };
@@ -579,18 +682,21 @@
 
         const RELAY_STORAGE_KEY = "lapster.net.relay.v1";
         const multiplayerLink = document.querySelector("#multiplayer-link");
-        try {
-          const params = new URLSearchParams(window.location.search);
-          const fromUrl = params.get("ws");
-          if (fromUrl) localStorage.setItem(RELAY_STORAGE_KEY, fromUrl);
-          const relay = fromUrl || localStorage.getItem(RELAY_STORAGE_KEY);
-          if (relay && multiplayerLink) {
+        if (multiplayerLink) {
+          try {
+            const params = new URLSearchParams(window.location.search);
+            const fromUrl = params.get("ws");
+            if (fromUrl) localStorage.setItem(RELAY_STORAGE_KEY, fromUrl);
+            const relay = fromUrl || localStorage.getItem(RELAY_STORAGE_KEY);
             const url = new URL("./web/multiplayer/", window.location.href);
-            url.searchParams.set("ws", relay);
+            url.searchParams.set("category", selectedCategory);
+            if (relay) {
+              url.searchParams.set("ws", relay);
+            }
             multiplayerLink.href = url.toString();
+          } catch {
+            // Keep the plain lobby link when storage is unavailable.
           }
-        } catch {
-          // Keep the plain lobby link when storage is unavailable.
         }
 
         const current = document.querySelector('meta[name="lapster-version"]')?.content;

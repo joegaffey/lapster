@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-25
-Current phase: **Ten-car AI grid — released to main (`a8dc7db`); ADR-0021 verified**
+Last updated: 2026-11-26
+Current phase: **Car categories — local same-category grids on `feat/car-categories`; multiplayer batch pending**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +53,17 @@ Deployment:
 
 ## Current focus
 
+- Car categories are implemented on `feat/car-categories` (worktree
+  `/home/joe/code/lapster-car-categories`) through the local same-category
+  grid batch. ADR-0022 is accepted. Car packs carry an optional
+  `road`/`gp67` manifest category; the launcher selects a category; the garage
+  and multiplayer lobby filter to it; AI opponents load their own car packs
+  from the same category; and Drive renders one rig per slot with per-slot
+  paint. Gate so far: cargo fmt, workspace clippy, workspace tests, wasm
+  check, 128 web unit tests, and the full default viewer project (101 passed,
+  4 skipped after the PWA href fix) plus the two WebGL2 fallback tests. The
+  multiplayer same-category batch (relay room identity plus per-player remote
+  cars) is not implemented yet; see TD-0025.
 - Tyre-smoke realism is implemented on `feat/tyre-smoke-realism` (PR #81):
   smoke onset now sits above peak-grip slip, uses a squared onset curve, lowers
   asphalt smoke rate/size/life/alpha, and reduces front-wheel contribution. The

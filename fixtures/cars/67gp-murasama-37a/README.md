@@ -25,8 +25,8 @@ Murasama and related marks belong to their respective owners. Lapster does not i
 
 ## Pack
 
-- SHA-256: `b1c1b9c21f16564fb2912497da4761a0242530f400ccbe1aac42a740fb0b4477`
-- Byte size: 3,361,152 bytes.
+- SHA-256: `866a7b4c859c82180b1e5341146452da6313d0bee3cf5ec19c56780fa206f93d`
+- Byte size: 3,361,216 bytes.
 - ID: `67gp-murasama-37a`
 - Schema: 3
 - 11,448 vertices, 19,355 triangles, 4 materials,
