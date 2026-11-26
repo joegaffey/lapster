@@ -58,21 +58,7 @@ import {
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
 import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
-import {
-  NEAREST_SLOT,
-  RemoteEngineAudio,
-  type RemoteAudioOptions,
-  type RemoteEngineState,
-} from "../src/audio/remote-engine-audio.ts";
-import {
-  aiAudioFromVoices,
-  clampAiVoices,
-  loadAiVoices,
-  parseAiAudioOverride,
-  saveAiVoices,
-  type AiAudioMode,
-} from "../src/audio/ai-audio-setting.ts";
-import { REMOTE_MAX_DISTANCE } from "../src/audio/remote-engine-mix.ts";
+import { RemoteEngineAudio } from "../src/audio/remote-engine-audio.ts";
 import { WheelFfb } from "../src/input/wheel-ffb.ts";
 import { rateLimitSteering } from "../src/input/steering-rate.ts";
 import { RelayClient } from "../src/net/relay.ts";
@@ -224,17 +210,6 @@ const mpMode = params.get("mp") === "1";
 const soloMode = params.get("race") === "0";
 const REMOTE_SLOTS = 3;
 const AI_FIELD_MAX = 9;
-// AI/opponent audio mode: 0 is off, 1 runs one EngineSim voice for the nearest
-// AI, and 2..5 keeps that many per-slot EngineSim voices. `nearest`, `full`,
-// `lite`, and `off` remain available as a `?aiAudio` diagnostic override.
-const aiAudioOverride = parseAiAudioOverride(params);
-// Effective setting for this session. A query override wins at load but is
-// never persisted; moving the selector writes the stored value instead.
-let aiVoiceSetting = aiAudioOverride?.voices ?? loadAiVoices();
-let AI_AUDIO_MODE: AiAudioMode =
-  aiAudioOverride?.mode ?? aiAudioFromVoices(aiVoiceSetting).mode;
-let AI_AUDIO_VOICES =
-  aiAudioOverride?.voices ?? aiAudioFromVoices(aiVoiceSetting).voices;
 const DEFAULT_AI_COUNT = 3;
 const DEFAULT_AI_PACE = 1;
 const AI_PACE_INDICES: Record<string, number> = {
@@ -307,8 +282,6 @@ const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
 const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
-const aiVoicesSelect =
-  document.querySelector<HTMLSelectElement>("#ai-audio-voices");
 const netBadge = document.querySelector<HTMLElement>("#net-badge")!;
 const racePanel = document.querySelector<HTMLElement>("#race-panel")!;
 const racePositionStat = document.querySelector<HTMLElement>("#race-position-stat")!;
@@ -382,15 +355,6 @@ if (aiDebugHistory) {
 let playerSteeringRate = 6;
 let audio: EngineSimAudio | null = null;
 let remoteAudio: RemoteEngineAudio | null = null;
-let remoteSharesPlayerContext = false;
-// Whether this session has AI or multiplayer opponents to voice.
-let sessionHasOpponents = false;
-// Player car audio profile, reused when rebuilding remote voices.
-let playerAudioProfile: { engine?: string; vehicle?: string } | undefined;
-// AI slot (1..9) -> catalog engine/vehicle profile for positional voices.
-const aiAudioProfiles = new Map<number, { engine: string; vehicle: string }>();
-// Roster snapshot used to assign per-slot profiles when remote audio is rebuilt.
-let sessionAiRoster: Array<{ engine: string; vehicle: string }> = [];
 let wheel: WheelFfb | null = null;
 let ffbSab: SharedArrayBuffer | null = null;
 const storedAudioPreference = loadAudioPreference();
@@ -691,25 +655,6 @@ function handleRelayState(message: StateMessage): void {
     ?.buffer.push(message.seq, message.tick, message.state, performance.now());
 }
 
-function frameToRemoteState(frame: Float32Array): RemoteEngineState {
-  return {
-    rpm: frame[SNAPSHOT_STATE.engineRpm],
-    speedMps: Math.hypot(
-      frame[SNAPSHOT_STATE.velocity],
-      frame[SNAPSHOT_STATE.velocity + 2],
-    ),
-    gear: Math.round(frame[SNAPSHOT_STATE.gear]),
-    throttle: frame[SNAPSHOT_STATE.throttle],
-    brake: frame[SNAPSHOT_STATE.brake],
-    wheels: Array.from({ length: 4 }, (_, wheel) => ({
-      slipRatio: frame[SNAPSHOT_STATE.slipRatio + wheel],
-      slipAngle: frame[SNAPSHOT_STATE.slipAngle + wheel],
-      load: frame[SNAPSHOT_STATE.tireLoad + wheel],
-      contact: frame[SNAPSHOT_STATE.contactFlags + wheel] > 0.5,
-    })),
-  };
-}
-
 function renderRemotePlayers(
   now: number,
   localState: Float32Array,
@@ -733,7 +678,22 @@ function renderRemotePlayers(
       const dz = frame[SNAPSHOT_STATE.position + 2] - localZ;
       remoteAudio?.update(
         remote.rig,
-        frameToRemoteState(frame),
+        {
+          rpm: frame[SNAPSHOT_STATE.engineRpm],
+          speedMps: Math.hypot(
+            frame[SNAPSHOT_STATE.velocity],
+            frame[SNAPSHOT_STATE.velocity + 2],
+          ),
+          gear: Math.round(frame[SNAPSHOT_STATE.gear]),
+          throttle: frame[SNAPSHOT_STATE.throttle],
+          brake: frame[SNAPSHOT_STATE.brake],
+          wheels: Array.from({ length: 4 }, (_, wheel) => ({
+            slipRatio: frame[SNAPSHOT_STATE.slipRatio + wheel],
+            slipAngle: frame[SNAPSHOT_STATE.slipAngle + wheel],
+            load: frame[SNAPSHOT_STATE.tireLoad + wheel],
+            contact: frame[SNAPSHOT_STATE.contactFlags + wheel] > 0.5,
+          })),
+        },
         Math.hypot(dx, dz),
         deltaSeconds,
       );
@@ -751,10 +711,7 @@ function resetAiBuffers(): void {
   aiLastRenderMs = 0;
 }
 
-function renderAiFrames(
-  now: number,
-  localState: Float32Array | null,
-): void {
+function renderAiFrames(now: number): void {
   const viewer = window.__driveViewer;
   if (!viewer) {
     return;
@@ -764,15 +721,6 @@ function renderAiFrames(
       ? Math.min(0.25, Math.max(0, (now - aiLastRenderMs) / 1000))
       : 0;
   aiLastRenderMs = now;
-  const localX =
-    localState !== null ? localState[SNAPSHOT_STATE.position] : null;
-  const localZ =
-    localState !== null ? localState[SNAPSHOT_STATE.position + 2] : null;
-  const audioCandidates: Array<{
-    slot: number;
-    state: RemoteEngineState;
-    distance: number;
-  }> = [];
   for (const [slot, buffer] of aiBuffers) {
     const bufferFrame = aiRenderMode === "raw" ? null : buffer.frame(now);
     const rawFrame =
@@ -785,9 +733,6 @@ function renderAiFrames(
       dtSeconds,
     );
     if (!render) {
-      if (buffer.age(now) > 2000) {
-        remoteAudio?.silence(slot);
-      }
       continue;
     }
     const { source, drawn } = render;
@@ -822,67 +767,6 @@ function renderAiFrames(
       viewer.set_remote_state(slot, drawn);
     } catch (error) {
       console.warn("AI car update failed", error);
-    }
-    if (localX !== null && localZ !== null) {
-      const dx = source[SNAPSHOT_STATE.position] - localX;
-      const dz = source[SNAPSHOT_STATE.position + 2] - localZ;
-      audioCandidates.push({
-        slot,
-        state: frameToRemoteState(source),
-        distance: Math.hypot(dx, dz),
-      });
-    }
-  }
-  if (!remoteAudio) {
-    return;
-  }
-  if (AI_AUDIO_MODE === "nearest") {
-    // Multiplayer rigs keep their own per-player slots; only single-player AI
-    // uses the dedicated nearest slot.
-    if (mpMode) {
-      return;
-    }
-    let nearest: (typeof audioCandidates)[number] | null = null;
-    for (const candidate of audioCandidates) {
-      if (candidate.distance >= REMOTE_MAX_DISTANCE) {
-        continue;
-      }
-      if (!nearest || candidate.distance < nearest.distance) {
-        nearest = candidate;
-      }
-    }
-    if (!nearest) {
-      remoteAudio.silence(NEAREST_SLOT);
-      return;
-    }
-    const profile = aiAudioProfiles.get(nearest.slot);
-    if (profile) {
-      // No-op when the nearest car keeps the current engine profile.
-      remoteAudio.setProfile(NEAREST_SLOT, profile.engine, profile.vehicle);
-    }
-    remoteAudio.update(
-      NEAREST_SLOT,
-      nearest.state,
-      nearest.distance,
-      dtSeconds,
-    );
-    return;
-  }
-  if (audioCandidates.length === 0) {
-    return;
-  }
-  audioCandidates.sort((a, b) => a.distance - b.distance);
-  for (let index = 0; index < audioCandidates.length; index += 1) {
-    const candidate = audioCandidates[index];
-    if (index < AI_AUDIO_VOICES) {
-      remoteAudio.update(
-        candidate.slot,
-        candidate.state,
-        candidate.distance,
-        dtSeconds,
-      );
-    } else {
-      remoteAudio.silence(candidate.slot);
     }
   }
 }
@@ -1489,110 +1373,24 @@ function updateAudioButton() {
   );
 }
 
-function updateAiAudioControl(): void {
-  if (!aiVoicesSelect) {
-    return;
-  }
-  aiVoicesSelect.value = String(clampAiVoices(aiVoiceSetting));
-}
-
-function clearRemoteAudio(): void {
-  remoteAudio?.dispose();
-  remoteAudio = null;
-  remoteSharesPlayerContext = false;
-  if (window.__remoteAudio) {
-    delete window.__remoteAudio;
-  }
-}
-
-/**
- * Dispose and rebuild the remote opponent voices for the current setting.
- * Player audio owns its context, so this never touches the player engine.
- */
-function createRemoteAudio(): void {
-  clearRemoteAudio();
-  if (!audio || !sessionHasOpponents) {
-    return;
-  }
-  if (AI_AUDIO_MODE === "off" || AI_AUDIO_VOICES <= 0) {
-    return;
-  }
-  // Single-player nearest/full voices attach to the player's context; MP rigs
-  // keep their own context so remote players stay independent of local audio.
-  remoteSharesPlayerContext = !mpMode;
-  const options: RemoteAudioOptions = {
-    ...(playerAudioProfile ?? {}),
-    mode: AI_AUDIO_MODE === "lite" ? "lite" : "full",
-    ...(remoteSharesPlayerContext
-      ? { contextProvider: () => audio?.audioContext ?? null }
-      : {}),
-  };
-  const instance = new RemoteEngineAudio(options);
-  remoteAudio = instance;
-  window.__remoteAudio = instance;
-  instance.setMuted(audioMuted);
-  if (!mpMode) {
-    sessionAiRoster.forEach((car, index) => {
-      const slot = index + 1;
-      aiAudioProfiles.set(slot, { engine: car.engine, vehicle: car.vehicle });
-      if (AI_AUDIO_MODE !== "nearest") {
-        instance.setProfile(slot, car.engine, car.vehicle);
-      }
-    });
-  }
-  if (audio.status === "running") {
-    // Apply a live change immediately without restarting the player engine.
-    void instance.start().catch(() => {
-      // Local engine audio still works without remote voices.
-    });
-  }
-}
-
-function applyAiVoices(value: number | string): void {
-  aiVoiceSetting = saveAiVoices(value);
-  const resolution = aiAudioFromVoices(aiVoiceSetting);
-  AI_AUDIO_MODE = resolution.mode;
-  AI_AUDIO_VOICES = resolution.voices;
-  updateAiAudioControl();
-  createRemoteAudio();
-}
-
-if (aiVoicesSelect) {
-  aiVoicesSelect.addEventListener("change", () => {
-    applyAiVoices(aiVoicesSelect.value);
-  });
-}
-updateAiAudioControl();
-
 async function startAudio() {
   if (!audio) {
     return;
   }
   try {
-    audio.setMuted(audioMuted);
-    remoteAudio?.setMuted(audioMuted);
-    if (remoteSharesPlayerContext && remoteAudio) {
-      // Nearest/lite voices reuse the player's context, so start the player
-      // first and let it create the context before the remote engine attaches.
-      await audio.start();
-      try {
-        await remoteAudio.start();
-      } catch {
-        // Local engine audio still works without remote voices.
-      }
-    } else {
-      // Create both AudioContexts in the same user gesture. Remote failures
-      // are isolated so the player engine still plays.
-      const playerStart = audio.start();
-      const remoteStart = remoteAudio
-        ? remoteAudio.start().catch(() => {
-            // Local engine audio still works without remote voices.
-          })
-        : Promise.resolve();
-      await playerStart;
-      await remoteStart;
+    if (audio.status !== "running") {
+      audio.setMuted(audioMuted);
     }
+    await audio.start();
     if (audio.status === "running") {
+      if (remoteAudio) {
+        try {
+          remoteAudio.setMuted(audioMuted);
+          await remoteAudio.start();
+        } catch {
+          // Local engine audio still works without remote voices.
+        }
+      }
       audioEnabled = true;
       audioMuted = audio.muted;
       saveAudioPreference();
@@ -1956,13 +1754,15 @@ async function boot() {
 
   if (physicsWorker) {
     const carOption = findCar(carPack.manifest.id);
-    playerAudioProfile = carOption
+    const audioOptions = carOption
       ? { engine: carOption.engine, vehicle: carOption.vehicle }
       : undefined;
-    audio = new EngineSimAudio(playerAudioProfile);
-    sessionHasOpponents = mpMode || (!soloMode && aiCount > 0);
-    sessionAiRoster = aiRoster;
-    createRemoteAudio();
+    audio = new EngineSimAudio(audioOptions);
+    if (mpMode) {
+      remoteAudio = new RemoteEngineAudio(audioOptions);
+      window.__remoteAudio = remoteAudio;
+      remoteAudio.setMuted(audioMuted);
+    }
     if (storedTuning?.audio) {
       audio.applyTuning(storedTuning.audio);
     }
@@ -2101,8 +1901,6 @@ async function boot() {
         }
         audio.applyTuning(tuning);
         await audio.restart();
-        // The player context was recreated, so remote voices must reattach.
-        createRemoteAudio();
         updateAudioButton();
       },
       reloadGpu: () => window.location.reload(),
@@ -2313,7 +2111,7 @@ async function boot() {
         const remoteState = playerState.frame(renderNow);
         if (remoteState) {
           renderRemotePlayers(renderNow, remoteState, delta);
-          renderAiFrames(renderNow, remoteState);
+          renderAiFrames(renderNow);
           viewer.render_remote(remoteState);
           const telemetry = JSON.parse(driver.telemetry());
           lastSpeedMps = telemetry.speedMps;
