@@ -29,10 +29,11 @@ DSP is moved behind the worker boundary.
   graph. Its own drivetrain is bypassed.
 - The surface and tire layers are Web Audio noise graphs driven from the same telemetry.
 - All layers share the master Drive gain, so mute applies to the complete mix.
-- Opponent audio is managed by `RemoteEngineAudio`. In single-player it reuses
-  the player's AudioContext, so the page has only one output context. The
-  nearest-AI default runs one EngineSim voice on a dedicated slot; 2-5 voices
-  use one EngineSim voice per AI slot; 0 disables opponent audio.
+- Opponent audio is managed by `RemoteEngineAudio` and owns a separate
+  AudioContext from the player engine, so a failed AI voice cannot take the
+  player audio down. The nearest-AI default runs one EngineSim voice on a
+  dedicated slot; 2-5 voices use one EngineSim voice per AI slot; 0 disables
+  opponent audio.
 - The audio HUD row shows the current wheel surface names and the current road-noise target
   gain.
 
@@ -64,9 +65,9 @@ DSP is moved behind the worker boundary.
 - 1 uses one EngineSim voice for the nearest car, switching engine/vehicle
   profile as the nearest car changes. 2-5 use one EngineSim voice per AI slot,
   capped by the selected value. 0 disables opponent audio.
-- Single-player opponent voices share the player's AudioContext to avoid a
-  second context and its startup cost. Distance attenuation cuts off at 250 m
-  with a gentler falloff than the original prototype.
+- Opponent voices use their own AudioContext so the player context stays
+  isolated. Distance attenuation cuts off at 250 m with a gentler falloff than
+  the original prototype.
 - AI frames are interpolated by the Drive render path; rpm, throttle, brake,
   gear, and wheel state come from the 64-float snapshot.
 - The lite oscillator mode is diagnostic only and is not the default. It was

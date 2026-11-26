@@ -74,7 +74,7 @@ async function waitForVoiceCount(
   );
 }
 
-test("default AI audio uses one nearest EngineSim voice on the player context", async ({
+test("default AI audio uses one nearest EngineSim voice in its own context", async ({
   page,
 }) => {
   const pageErrors: string[] = [];
@@ -92,7 +92,7 @@ test("default AI audio uses one nearest EngineSim voice on the player context", 
       voices: remote.voiceSummary(),
     };
   });
-  expect(state.sharesPlayerContext).toBe(true);
+  expect(state.sharesPlayerContext).toBe(false);
   expect(state.status).toBe("running");
   expect(state.voices.length).toBe(1);
   const [voice] = state.voices;
@@ -118,7 +118,7 @@ test("?aiAudio=lite keeps the low-cost oscillator path", async ({ page }) => {
       voices: remote.voiceSummary(),
     };
   });
-  expect(state.sharesPlayerContext).toBe(true);
+  expect(state.sharesPlayerContext).toBe(false);
   expect(state.status).toBe("running");
   expect(state.voices.length).toBeGreaterThanOrEqual(1);
   expect(state.voices.length).toBeLessThanOrEqual(3);
@@ -147,7 +147,7 @@ test("?aiAudio=full keeps the per-slot EngineSim voice path", async ({
       voices: remote.voiceSummary(),
     };
   });
-  expect(state.sharesPlayerContext).toBe(true);
+  expect(state.sharesPlayerContext).toBe(false);
   expect(state.status).toBe("running");
   const ready = state.voices.filter(
     (voice: any) => voice.ready && voice.gain > 0,
@@ -194,7 +194,7 @@ test("selecting three rebuilds three full EngineSim voices", async ({
       voices: remote.voiceSummary(),
     };
   });
-  expect(state.sharesPlayerContext).toBe(true);
+  expect(state.sharesPlayerContext).toBe(false);
   expect(state.voices.length).toBe(3);
   expect(state.voices.every((voice: any) => voice.mode === "full")).toBe(true);
   expect(state.voices.some((voice: any) => voice.gain > 0)).toBe(true);

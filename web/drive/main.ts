@@ -1534,15 +1534,13 @@ function createRemoteAudio(): void {
   if (AI_AUDIO_MODE === "off" || AI_AUDIO_VOICES <= 0) {
     return;
   }
-  // Single-player nearest/full voices attach to the player's context; MP rigs
-  // keep their own context so remote players stay independent of local audio.
-  remoteSharesPlayerContext = !mpMode;
+  // Opponent voices always own their AudioContext. Sharing the player's
+  // context let an AI voice failure take the player engine down on mobile
+  // browsers, which is why adding an `ai` param could silence the whole session.
+  remoteSharesPlayerContext = false;
   const options: RemoteAudioOptions = {
     ...(playerAudioProfile ?? {}),
     mode: AI_AUDIO_MODE === "lite" ? "lite" : "full",
-    ...(remoteSharesPlayerContext
-      ? { contextProvider: () => audio?.audioContext ?? null }
-      : {}),
   };
   const instance = new RemoteEngineAudio(options);
   remoteAudio = instance;
