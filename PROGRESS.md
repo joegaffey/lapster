@@ -53,6 +53,11 @@ Deployment:
 
 ## Current focus
 
+- Tyre-smoke realism is implemented on `feat/tyre-smoke-realism` (PR #81):
+  smoke onset now sits above peak-grip slip, uses a squared onset curve, lowers
+  asphalt smoke rate/size/life/alpha, and reduces front-wheel contribution. The
+  full gate passed (130 viewer / 1 skipped, WebGL2 2/2) and manual LAN
+  validation passed after resetting dev tuning. Awaiting merge to `dev`.
 - The ten-car AI grid batch is merged to `dev` as PR #77 (`cb9dee7`): nine AI is
   the new maximum, the default stays three, track-ed and `track-pack` accept
   ten grid slots, the renderer supports nine remote rigs, and both race
