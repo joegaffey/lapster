@@ -1,3 +1,5 @@
+import type { CarCategory } from "../assets/types.ts";
+
 const NAME_STORAGE_KEY = "lapster.net.name.v1";
 const PASSWORD_STORAGE_KEY = "lapster.net.password.v1";
 const RELAY_STORAGE_KEY = "lapster.net.relay.v1";
@@ -111,6 +113,7 @@ export function lobbyInviteUrl(
   car: string,
   track: string,
   relayUrl?: string | null,
+  category?: CarCategory | null,
 ): string {
   const url = new URL(baseHref);
   url.search = "";
@@ -118,6 +121,9 @@ export function lobbyInviteUrl(
   url.searchParams.set("room", room);
   url.searchParams.set("car", car);
   url.searchParams.set("track", track);
+  if (category) {
+    url.searchParams.set("category", category);
+  }
   if (relayUrl) {
     url.searchParams.set("ws", relayUrl);
   }
@@ -130,6 +136,7 @@ export function driveRoomUrl(
   car: string,
   track: string,
   relayUrl?: string | null,
+  category?: CarCategory | null,
 ): string {
   const url = new URL(baseHref);
   url.search = "";
@@ -138,6 +145,9 @@ export function driveRoomUrl(
   url.searchParams.set("room", room);
   url.searchParams.set("car", car);
   url.searchParams.set("track", track);
+  if (category) {
+    url.searchParams.set("category", category);
+  }
   if (relayUrl) {
     url.searchParams.set("ws", relayUrl);
   }

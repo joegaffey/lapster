@@ -1,9 +1,14 @@
+import type { CarCategory } from "../assets/types.ts";
+
+export type { CarCategory };
+
 export interface CarOption {
   id: string;
   name: string;
   url: string;
   engine: string;
   vehicle: string;
+  category: CarCategory;
   paintable?: boolean;
   defaultPaint?: number;
 }
@@ -15,6 +20,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/mazda-rx7/mazda-rx7.sima",
     engine: "rotary2",
     vehicle: "sports",
+    category: "road",
   },
   {
     id: "sc-deckard-conejo",
@@ -22,6 +28,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/sc-deckard-conejo/sc-deckard-conejo.sima",
     engine: "v8cross",
     vehicle: "sports",
+    category: "road",
     paintable: true,
     defaultPaint: 0,
   },
@@ -31,6 +38,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/67gp-cavallo-123/67gp-cavallo-123.sima",
     engine: "v12",
     vehicle: "sports",
+    category: "gp67",
   },
   {
     id: "67gp-guthrie-eagle",
@@ -38,6 +46,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/67gp-guthrie-eagle/67gp-guthrie-eagle.sima",
     engine: "v12",
     vehicle: "sports",
+    category: "gp67",
   },
   {
     id: "67gp-kuiper-t81",
@@ -45,6 +54,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/67gp-kuiper-t81/67gp-kuiper-t81.sima",
     engine: "v12",
     vehicle: "sports",
+    category: "gp67",
   },
   {
     id: "67gp-mango-ms7",
@@ -52,6 +62,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/67gp-mango-ms7/67gp-mango-ms7.sima",
     engine: "v8cross",
     vehicle: "sports",
+    category: "gp67",
   },
   {
     id: "67gp-murasama-37a",
@@ -59,6 +70,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/67gp-murasama-37a/67gp-murasama-37a.sima",
     engine: "v12",
     vehicle: "sports",
+    category: "gp67",
   },
   {
     id: "67gp-upping-ut19",
@@ -66,6 +78,7 @@ export const CAR_OPTIONS: CarOption[] = [
     url: "../../fixtures/cars/67gp-upping-ut19/67gp-upping-ut19.sima",
     engine: "v8cross",
     vehicle: "sports",
+    category: "gp67",
   },
 ];
 
@@ -73,23 +86,82 @@ export const DEFAULT_CAR = CAR_OPTIONS[0];
 export const CAR_STORAGE_KEY = "lapster.car.v1";
 export const PAINT_STORAGE_KEY = "lapster.garage.paint.v1";
 
+export const CATEGORY_STORAGE_KEY = "lapster.category.v1";
+export const DEFAULT_CATEGORY: CarCategory = "road";
+export const CAR_CATEGORIES: ReadonlyArray<{ id: CarCategory; name: string }> = [
+  { id: "road", name: "Road" },
+  { id: "gp67", name: "GP 67" },
+];
+
 const BAY_COUNT = CAR_OPTIONS.length;
 const STORAGE_KEY = "lapster.garage.car.v1";
+
+export function isCarCategory(value: unknown): value is CarCategory {
+  return value === "road" || value === "gp67";
+}
+
+export function categoryFromQuery(search: string): CarCategory | null {
+  const value = new URLSearchParams(search).get("category");
+  return isCarCategory(value) ? value : null;
+}
+
+export function loadSelectedCategory(): CarCategory {
+  try {
+    const stored = localStorage.getItem(CATEGORY_STORAGE_KEY);
+    return isCarCategory(stored) ? stored : DEFAULT_CATEGORY;
+  } catch {
+    return DEFAULT_CATEGORY;
+  }
+}
+
+export function saveSelectedCategory(category: CarCategory): CarCategory {
+  const resolved = isCarCategory(category) ? category : DEFAULT_CATEGORY;
+  try {
+    localStorage.setItem(CATEGORY_STORAGE_KEY, resolved);
+  } catch {
+    // Storage may be unavailable in private or embedded contexts.
+  }
+  return resolved;
+}
+
+export function carsInCategory(category: CarCategory): CarOption[] {
+  return CAR_OPTIONS.filter((car) => car.category === category);
+}
 
 export function findCar(id: string | null | undefined): CarOption | null {
   return CAR_OPTIONS.find((car) => car.id === id) ?? null;
 }
 
-export function loadSelectedCar(): CarOption {
+export function findCarInCategory(
+  id: string | null | undefined,
+  category: CarCategory,
+): CarOption | null {
+  return carsInCategory(category).find((car) => car.id === id) ?? null;
+}
+
+export function loadSelectedCar(
+  category: CarCategory = loadSelectedCategory(),
+): CarOption {
+  const options = carsInCategory(category);
+  const fallback = options[0] ?? DEFAULT_CAR;
   try {
-    return findCar(localStorage.getItem(CAR_STORAGE_KEY)) ?? DEFAULT_CAR;
+    return (
+      findCarInCategory(localStorage.getItem(CAR_STORAGE_KEY), category) ??
+      fallback
+    );
   } catch {
-    return DEFAULT_CAR;
+    return fallback;
   }
 }
 
-export function saveSelectedCar(id: string): CarOption {
-  const car = findCar(id) ?? DEFAULT_CAR;
+export function saveSelectedCar(
+  id: string,
+  category: CarCategory = loadSelectedCategory(),
+): CarOption {
+  const car =
+    findCarInCategory(id, category) ??
+    carsInCategory(category)[0] ??
+    DEFAULT_CAR;
   try {
     localStorage.setItem(CAR_STORAGE_KEY, car.id);
   } catch {
@@ -139,33 +211,49 @@ export function saveCarPaint(carId: string, paint: number): number {
   return paint;
 }
 
-export function normalizeBay(index: number): number {
+function bayCount(count: number): number {
+  return Number.isFinite(count) && count > 0 ? Math.trunc(count) : BAY_COUNT;
+}
+
+export function normalizeBay(
+  index: number,
+  count: number = BAY_COUNT,
+): number {
+  const bays = bayCount(count);
   if (!Number.isFinite(index)) {
     return 0;
   }
-  return ((Math.trunc(index) % BAY_COUNT) + BAY_COUNT) % BAY_COUNT;
+  return ((Math.trunc(index) % bays) + bays) % bays;
 }
 
-export function bayFromQuery(search: string): number | null {
+export function bayFromQuery(
+  search: string,
+  count: number = BAY_COUNT,
+): number | null {
   const value = new URLSearchParams(search).get("bay");
   if (value === null || value.trim() === "") {
     return null;
   }
   const bay = Number(value);
-  return Number.isFinite(bay) ? normalizeBay(Math.trunc(bay) - 1) : null;
+  return Number.isFinite(bay)
+    ? normalizeBay(Math.trunc(bay) - 1, count)
+    : null;
 }
 
-export function loadSelectedBay(): number {
+export function loadSelectedBay(count: number = BAY_COUNT): number {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === null ? 0 : normalizeBay(Number(stored));
+    return stored === null ? 0 : normalizeBay(Number(stored), count);
   } catch {
     return 0;
   }
 }
 
-export function saveSelectedBay(index: number): number {
-  const bay = normalizeBay(index);
+export function saveSelectedBay(
+  index: number,
+  count: number = BAY_COUNT,
+): number {
+  const bay = normalizeBay(index, count);
   try {
     localStorage.setItem(STORAGE_KEY, String(bay));
   } catch {
@@ -174,6 +262,9 @@ export function saveSelectedBay(index: number): number {
   return bay;
 }
 
-export function selectedBay(search = window.location.search): number {
-  return bayFromQuery(search) ?? loadSelectedBay();
+export function selectedBay(
+  search = window.location.search,
+  count: number = BAY_COUNT,
+): number {
+  return bayFromQuery(search, count) ?? loadSelectedBay(count);
 }

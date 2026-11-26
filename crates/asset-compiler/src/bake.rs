@@ -2,9 +2,9 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use sim_asset::{archive, sha256, write_pack, ChunkSpec};
 use sim_types::{
-    Aabb, AssetKind, AssetManifest, AssetStats, CarVisual, ChunkKind, EntryPoints, MaterialRef,
-    MeshBuffers, MeshRef, TextureRef, TrackCollision, TrackVisual, WheelVisual, ENGINE_FRAME,
-    ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
+    Aabb, AssetKind, AssetManifest, AssetStats, CarCategory, CarVisual, ChunkKind, EntryPoints,
+    MaterialRef, MeshBuffers, MeshRef, TextureRef, TrackCollision, TrackVisual, WheelVisual,
+    ENGINE_FRAME, ENGINE_UNITS, MAGIC, SCHEMA_VERSION,
 };
 use std::fs;
 use std::path::Path;
@@ -37,6 +37,9 @@ pub fn bake_car(dir: &Path) -> Result<Vec<u8>> {
     if source.physics.mass <= 0.0 {
         bail!("car mass must be positive");
     }
+    let category = source
+        .category
+        .context("car source is missing a required category (expected \"road\" or \"gp67\")")?;
 
     let (visual, visual_bounds, stats) = build_car_visual(&source.visual)?;
     let physics = source.physics;
@@ -58,6 +61,7 @@ pub fn bake_car(dir: &Path) -> Result<Vec<u8>> {
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
         kind: AssetKind::Car,
+        category: Some(category),
         id: source.id,
         source_hash: sha256(&source_bytes),
         units: ENGINE_UNITS,
@@ -80,18 +84,23 @@ pub fn bake_car(dir: &Path) -> Result<Vec<u8>> {
     Ok(write_pack(manifest, chunks)?)
 }
 
-pub fn bake_car_glb(path: &Path) -> Result<Vec<u8>> {
-    bake_car_glb_with_textures(path, false)
+pub fn bake_car_glb(path: &Path, category: CarCategory) -> Result<Vec<u8>> {
+    bake_car_glb_with_textures(path, false, category)
 }
 
-pub fn bake_car_glb_with_textures(path: &Path, use_textures: bool) -> Result<Vec<u8>> {
-    bake_car_glb_with_physics(path, use_textures, None)
+pub fn bake_car_glb_with_textures(
+    path: &Path,
+    use_textures: bool,
+    category: CarCategory,
+) -> Result<Vec<u8>> {
+    bake_car_glb_with_physics(path, use_textures, None, category)
 }
 
 pub fn bake_car_glb_with_physics(
     path: &Path,
     use_textures: bool,
     physics_xml: Option<&Path>,
+    category: CarCategory,
 ) -> Result<Vec<u8>> {
     let source_bytes =
         fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
@@ -126,6 +135,7 @@ pub fn bake_car_glb_with_physics(
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
         kind: AssetKind::Car,
+        category: Some(category),
         id,
         source_hash: sha256(&source_bytes),
         units: ENGINE_UNITS,
@@ -145,6 +155,28 @@ pub fn bake_car_glb_with_physics(
         warnings: imported.warnings,
     };
 
+    Ok(write_pack(manifest, chunks)?)
+}
+
+/// Rewrite only the manifest category, preserving every chunk verbatim.
+///
+/// The existing chunks are read back in manifest order and written through
+/// `write_pack`, which recomputes the same hashes and offsets. Nothing in the
+/// geometry or physics payload changes.
+pub fn set_category(bytes: &[u8], category: CarCategory) -> Result<Vec<u8>> {
+    let pack = sim_asset::Pack::from_bytes(bytes)?;
+    let mut manifest = pack.manifest().clone();
+    manifest.category = Some(category);
+    let chunks = manifest
+        .chunks
+        .iter()
+        .map(|chunk| {
+            Ok(ChunkSpec {
+                kind: chunk.kind,
+                bytes: pack.chunk_bytes(chunk.kind)?.to_vec(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(write_pack(manifest, chunks)?)
 }
 
@@ -194,6 +226,7 @@ pub fn bake_ac_track_with_overrides(
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
         kind: AssetKind::Track,
+        category: None,
         id,
         source_hash: tree_hash(dir)?,
         units: ENGINE_UNITS,
@@ -265,6 +298,7 @@ pub fn bake_track(dir: &Path) -> Result<Vec<u8>> {
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
         kind: AssetKind::Track,
+        category: None,
         id: source.id,
         source_hash: sha256(&source_bytes),
         units: ENGINE_UNITS,
@@ -707,6 +741,7 @@ pub fn inspect(bytes: &[u8]) -> Result<()> {
     let pack = sim_asset::Pack::from_bytes(bytes)?;
     let manifest = pack.manifest();
     println!("asset: {} ({:?})", manifest.id, manifest.kind);
+    println!("category: {:?}", manifest.category);
     println!(
         "schema: {}  chunks: {}  bounds: {:?}..{:?}",
         manifest.schema_version,

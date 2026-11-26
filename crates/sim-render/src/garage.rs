@@ -34,6 +34,7 @@ impl Scene {
         static_car_shadows: bool,
         brake_lights: bool,
         paintable: &[bool],
+        slot_cars: Option<&[usize]>,
     ) -> Result<Scene, String> {
         if cars.is_empty() {
             return Err("garage requires at least one car".to_string());
@@ -79,9 +80,18 @@ impl Scene {
         let bay_count = car_count.clamp(1, 10);
         let mut bays = Vec::with_capacity(bay_count);
         let mut first_bounds = None;
+        let mut slot_ids = Vec::with_capacity(bay_count);
         for index in 0..bay_count {
-            let car_index = index % cars.len();
-            let car = &cars[car_index];
+            let car_index = match slot_cars {
+                Some(slots) => *slots
+                    .get(index)
+                    .ok_or_else(|| format!("slot car mapping is missing bay {index}"))?,
+                None => index % cars.len(),
+            };
+            let car = cars
+                .get(car_index)
+                .ok_or_else(|| format!("slot {index} maps to unknown car index {car_index}"))?;
+            slot_ids.push(car.manifest.id.clone());
             let car_texture_base = car_texture_bases[car_index];
             let silhouette = &silhouettes[car_index];
             let decal_texture = decal_textures[car_index];
@@ -256,6 +266,7 @@ impl Scene {
                 "id": car.manifest.id,
                 "meshCount": car.visual.meshes.len(),
             })).collect::<Vec<_>>(),
+            "slots": slot_ids,
             "stats": {
                 "vertices": scene.stats.vertices,
                 "triangles": scene.stats.triangles,
@@ -3223,6 +3234,7 @@ mod tests {
             magic: *b"SIMA",
             schema_version: sim_types::SCHEMA_VERSION,
             kind: sim_types::AssetKind::Car,
+            category: None,
             id: id.to_string(),
             source_hash: [0; 32],
             units: sim_types::ENGINE_UNITS,
@@ -3249,6 +3261,55 @@ mod tests {
                 draw_calls: 1,
             },
             warnings: Vec::new(),
+        }
+    }
+
+    fn test_track_manifest() -> AssetManifest {
+        let mut manifest = test_manifest("test-track");
+        manifest.kind = sim_types::AssetKind::Track;
+        manifest
+    }
+
+    fn test_track_visual() -> TrackVisual {
+        TrackVisual {
+            meshes: Vec::new(),
+            materials: Vec::new(),
+            textures: Vec::new(),
+            mesh_buffers: Vec::new(),
+            instances: Vec::new(),
+        }
+    }
+
+    fn test_track_metadata() -> TrackMetadata {
+        TrackMetadata {
+            name: "test-track".to_string(),
+            length: 10.0,
+            spawns: vec![sim_types::SpawnPoint {
+                name: "start".to_string(),
+                position: [0.0, 0.0, 0.0],
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            }],
+            pit_boxes: Vec::new(),
+            cameras: Vec::new(),
+            sectors: Vec::new(),
+            surfaces: vec![sim_types::SurfaceSpec {
+                id: 0,
+                name: "asphalt".to_string(),
+                friction: 1.0,
+                roughness: 0.0,
+            }],
+        }
+    }
+
+    fn test_track_collision() -> TrackCollision {
+        TrackCollision {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            surface_ids: Vec::new(),
+            bounds: Aabb {
+                min: [-10.0; 3],
+                max: [10.0; 3],
+            },
         }
     }
 
@@ -3528,6 +3589,77 @@ mod tests {
     }
 
     #[test]
+    fn build_garage_maps_slots_to_shared_unique_cars_and_textures() {
+        let physics = test_car_physics();
+        let visual_a = textured_car_visual(paint_texture(30, 100));
+        let visual_b = textured_car_visual(paint_texture(70, 100));
+        let manifest_a = test_manifest("car-a");
+        let manifest_b = test_manifest("car-b");
+        let cars = [
+            GarageCar {
+                physics: &physics,
+                visual: &visual_a,
+                manifest: &manifest_a,
+            },
+            GarageCar {
+                physics: &physics,
+                visual: &visual_b,
+                manifest: &manifest_b,
+            },
+        ];
+        let slot_cars = [1usize, 0, 1];
+        let track_visual = test_track_visual();
+        let track_metadata = test_track_metadata();
+        let track_collision = test_track_collision();
+        let track_manifest = test_track_manifest();
+        let scene = Scene::build_garage(
+            &track_visual,
+            &track_metadata,
+            &track_collision,
+            &track_manifest,
+            &cars,
+            3,
+            0,
+            false,
+            true,
+            &[false; 3],
+            Some(&slot_cars),
+        )
+        .expect("garage with slot mapping");
+
+        let ids = scene
+            .garage_bays
+            .iter()
+            .map(|bay| bay.car_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["car-b", "car-a", "car-b"]);
+        assert_eq!(scene.car_rigs.len(), 3);
+
+        let texture = |bay: &GarageBay| {
+            scene.meshes[bay.body_mesh_index]
+                .texture
+                .expect("textured body keeps a texture")
+        };
+        assert_eq!(
+            texture(&scene.garage_bays[0]),
+            texture(&scene.garage_bays[2]),
+            "repeated slots share the unique car texture"
+        );
+        assert_ne!(
+            texture(&scene.garage_bays[0]),
+            texture(&scene.garage_bays[1]),
+            "different unique cars keep separate textures"
+        );
+
+        let debug: serde_json::Value = serde_json::from_str(&scene.debug_info).expect("debug json");
+        assert_eq!(
+            debug["slots"],
+            serde_json::json!(["car-b", "car-a", "car-b"])
+        );
+        assert_eq!(debug["cars"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[test]
     fn drive_paint_hints_paint_all_ten_bays_with_distinct_palette_colours() {
         let factory = paint_texture(70, 100);
         let visual = textured_car_visual(factory);
@@ -3546,7 +3678,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let explicit_paint = 3;
-        let hints = crate::drive_paint_hints(true, Some(explicit_paint), 1 + 9);
+        let hints = crate::drive_paint_hints(&[true; 10], Some(explicit_paint));
         assert_eq!(hints, vec![true; 10]);
 
         let build = build_concrete_garage(&ids, &slots, explicit_paint, &hints)

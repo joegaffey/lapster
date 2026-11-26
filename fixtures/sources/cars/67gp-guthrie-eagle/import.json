@@ -1,5 +1,6 @@
 {
   "id": "67gp-guthrie-eagle",
+  "category": "gp67",
   "body": "body/67gp-guthrie-eagle.acc",
   "xml": "body/67gp-guthrie-eagle.xml",
   "wheel": "wheel/wheel0.acc",

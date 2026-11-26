@@ -25,12 +25,17 @@ import { recordFrame } from "../src/ui/fps.ts";
 import { hideLoading, showLoadingFailure } from "../src/ui/loading.ts";
 import {
   CAR_OPTIONS,
+  carsInCategory,
+  categoryFromQuery,
   findCar,
+  findCarInCategory,
   loadCarPaint,
   loadSelectedCar,
+  loadSelectedCategory,
   saveSelectedBay,
   selectedBay,
 } from "../src/ui/car-selection.ts";
+import { selectAiRoster } from "../src/race/ai-roster.ts";
 import { findTrack, loadSelectedTrack } from "../src/ui/track-selection.ts";
 import { PhysicsClient } from "../src/sim/physics.ts";
 import {
@@ -128,8 +133,7 @@ const TRACK_URL = withPackVersion(
   trackParam && !findTrack(trackParam) ? trackParam : defaultTrack.url,
   APP_VERSION,
 );
-const carParam = params.get("car");
-const selectedCar = findCar(carParam) ?? loadSelectedCar();
+const carParam = params.get("car") || null;
 
 function packUrlSegments(value: string): string[] {
   let path = value;
@@ -163,13 +167,33 @@ function findCarByPackUrl(value: string) {
   return null;
 }
 
+const catalogCarParam =
+  findCar(carParam) ?? (carParam ? findCarByPackUrl(carParam) : null);
+const queryCategory = categoryFromQuery(window.location.search);
+const selectedCategory =
+  queryCategory ?? catalogCarParam?.category ?? loadSelectedCategory();
+const categoryCars = carsInCategory(selectedCategory);
+const selectedCar = loadSelectedCar(selectedCategory);
+const playerCar =
+  catalogCarParam && catalogCarParam.category === selectedCategory
+    ? catalogCarParam
+    : findCarInCategory(carParam, selectedCategory) ?? selectedCar;
+const customPackUrl =
+  carParam !== null && !findCar(carParam) ? carParam : null;
 const catalogCar =
-  findCar(carParam) ?? (carParam ? findCarByPackUrl(carParam) : selectedCar);
+  catalogCarParam && catalogCarParam.category === selectedCategory
+    ? catalogCarParam
+    : customPackUrl === null
+      ? selectedCar
+      : null;
 const CAR_URL = withPackVersion(
-  carParam && !findCar(carParam) ? carParam : selectedCar.url,
+  customPackUrl !== null &&
+    (!catalogCarParam || catalogCarParam.category === selectedCategory)
+    ? customPackUrl
+    : playerCar.url,
   APP_VERSION,
 );
-const carBay = selectedBay();
+const carBay = selectedBay(window.location.search, categoryCars.length);
 const carPaint = resolveCarPaint();
 
 function resolveCarPaint(): number | null {
@@ -1486,6 +1510,54 @@ async function boot() {
   const hasRace = trackPack.manifest.entrypoints.race != null;
   const aiCount = resolveAiCount(hasRace);
   const aiPace = resolveAiPace();
+  const aiRoster =
+    hasRace && !mpMode && !soloMode
+      ? selectAiRoster(selectedCategory, carPack.manifest.id, aiCount)
+      : [];
+  const aiPackBytes = new Map<string, Uint8Array>();
+  const aiPackUrls = new Map<string, string>();
+  for (const car of aiRoster) {
+    if (car.id === carPack.manifest.id) {
+      aiPackBytes.set(car.id, carPack.bytes);
+      continue;
+    }
+    aiPackUrls.set(car.id, withPackVersion(car.url, APP_VERSION));
+  }
+  const uniqueAiUrls = [...new Set(aiPackUrls.values())];
+  await Promise.all(
+    uniqueAiUrls.map(async (url) => {
+      const pack = await loadPack(url);
+      for (const [carId, carUrl] of aiPackUrls) {
+        if (carUrl === url) {
+          aiPackBytes.set(carId, pack.bytes);
+        }
+      }
+    }),
+  );
+  const aiSlotPacks = Array.from(
+    { length: aiCount },
+    (_, index) => {
+      const car = aiRoster[index];
+      return car ? aiPackBytes.get(car.id) ?? carPack.bytes : carPack.bytes;
+    },
+  );
+  const playerPaintable = catalogCar?.paintable === true;
+  const aiPaintable = aiRoster.map((car) => car.paintable === true);
+  let slotCarPacks: Uint8Array[];
+  let slotPaintable: boolean[];
+  if (mpMode) {
+    slotCarPacks = Array.from({ length: REMOTE_SLOTS + 1 }, () => carPack.bytes);
+    slotPaintable = Array.from(
+      { length: REMOTE_SLOTS + 1 },
+      () => playerPaintable,
+    );
+  } else if (aiCount > 0) {
+    slotCarPacks = [carPack.bytes, ...aiSlotPacks];
+    slotPaintable = [playerPaintable, ...aiPaintable];
+  } else {
+    slotCarPacks = [carPack.bytes];
+    slotPaintable = [playerPaintable];
+  }
   const spectatorSlot = resolveSpectatorSlot(
     params.get("spectate"),
     aiCount,
@@ -1496,12 +1568,12 @@ async function boot() {
   const viewer = await DriveViewer.create(
     canvas,
     trackPack.bytes,
-    carPack.bytes,
+    slotCarPacks,
     carBay,
     storedDevTuning ?? undefined,
     mpMode ? REMOTE_SLOTS : aiCount,
     carPaint,
-    catalogCar?.paintable === true,
+    slotPaintable,
   );
   const treeDetail = new URLSearchParams(window.location.search).get("trees");
   if (treeDetail === "high" || treeDetail === "low" || treeDetail === "cards") {
@@ -1510,7 +1582,7 @@ async function boot() {
   if (collisionDebug) {
     viewer.set_collision_debug(true);
   }
-  saveSelectedBay(carBay);
+  saveSelectedBay(carBay, categoryCars.length);
 
   const info = JSON.parse(viewer.info());
   const initial = JSON.parse(viewer.telemetry());
@@ -1562,7 +1634,7 @@ async function boot() {
         sab,
         trackPack.bytes,
         carPack.bytes,
-        aiCount,
+        aiSlotPacks,
         aiPace,
       );
       physics = client;

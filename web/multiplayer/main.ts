@@ -1,4 +1,11 @@
-import { findCar, loadSelectedCar } from "../src/ui/car-selection.ts";
+import {
+  CAR_CATEGORIES,
+  categoryFromQuery,
+  findCarInCategory,
+  loadSelectedCar,
+  loadSelectedCategory,
+  saveSelectedCategory,
+} from "../src/ui/car-selection.ts";
 import { findTrack, loadSelectedTrack } from "../src/ui/track-selection.ts";
 import {
   driveRoomUrl,
@@ -14,13 +21,18 @@ import {
 } from "../src/net/room.ts";
 
 const params = new URLSearchParams(window.location.search);
-const selectedCar = findCar(params.get("car")) ?? loadSelectedCar();
+const category = saveSelectedCategory(
+  categoryFromQuery(window.location.search) ?? loadSelectedCategory(),
+);
+const selectedCar =
+  findCarInCategory(params.get("car"), category) ?? loadSelectedCar(category);
 const selectedTrack = findTrack(params.get("track")) ?? loadSelectedTrack();
 const roomInput = document.querySelector<HTMLInputElement>("#room")!;
 const nameInput = document.querySelector<HTMLInputElement>("#name")!;
 const passwordInput = document.querySelector<HTMLInputElement>("#password")!;
 const relayInput = document.querySelector<HTMLInputElement>("#relay")!;
 const carName = document.querySelector<HTMLElement>("#car-name")!;
+const categoryName = document.querySelector<HTMLElement>("#category-name")!;
 const trackName = document.querySelector<HTMLElement>("#track-name")!;
 const serverName = document.querySelector<HTMLElement>("#server-name")!;
 const status = document.querySelector<HTMLElement>("#status")!;
@@ -28,7 +40,10 @@ const form = document.querySelector<HTMLFormElement>("#join-form")!;
 const newRoomButton = document.querySelector<HTMLButtonElement>("#new-room")!;
 const copyInviteButton = document.querySelector<HTMLButtonElement>("#copy-invite")!;
 
+const categoryLabel =
+  CAR_CATEGORIES.find((entry) => entry.id === category)?.name ?? category;
 carName.textContent = selectedCar.name;
+categoryName.textContent = categoryLabel;
 trackName.textContent = selectedTrack.name;
 relayInput.value = normalizeRelayUrl(params.get("ws")) ?? loadRelayUrl() ?? "";
 if (params.get("ws")) {
@@ -62,6 +77,7 @@ function syncUrl(): void {
     url.searchParams.set("room", currentRoom());
     url.searchParams.set("car", selectedCar.id);
     url.searchParams.set("track", selectedTrack.id);
+    url.searchParams.set("category", category);
     const relay = currentRelay();
     if (relay) {
       url.searchParams.set("ws", relay);
@@ -114,6 +130,7 @@ syncUrl();
       selectedCar.id,
       selectedTrack.id,
       currentRelay(),
+      category,
     );
     saveRelayUrl(currentRelay());
     await navigator.clipboard.writeText(url);
@@ -143,6 +160,7 @@ syncUrl();
       selectedCar.id,
       selectedTrack.id,
       currentRelay(),
+      category,
     );
     window.location.assign(driveUrl);
   } catch (error) {

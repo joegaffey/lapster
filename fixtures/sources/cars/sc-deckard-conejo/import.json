@@ -1,5 +1,6 @@
 {
   "id": "sc-deckard-conejo",
+  "category": "road",
   "body": "body/sc-deckard-conejo.acc",
   "xml": "body/sc-deckard-conejo.xml",
   "wheel": "wheel/wheel0.acc",

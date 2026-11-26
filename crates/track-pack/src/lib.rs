@@ -358,6 +358,7 @@ pub fn bake_glb_track_bytes(track_json: &[u8], glb: &[u8], id: &str) -> Result<V
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
         kind: AssetKind::Track,
+        category: None,
         id: if id.is_empty() {
             String::from("track-ed")
         } else {

@@ -25,8 +25,8 @@ Cavallo and related marks belong to their respective owners. Lapster does not im
 
 ## Pack
 
-- SHA-256: `c5d422496b08b412dc74de30c98f9167d68eb03a712d8e7033d2500cce76ce13`
-- Byte size: 3,165,936 bytes.
+- SHA-256: `643bdcdcda00fb0e122ac026d2bedf674e11096f9c213fd0392d7a97202821b2`
+- Byte size: 3,166,000 bytes.
 - ID: `67gp-cavallo-123`
 - Schema: 3
 - 8,520 vertices, 13,823 triangles, 4 materials,

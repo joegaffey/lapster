@@ -17,6 +17,11 @@ carries `RaceData` with its own `version`; `SCHEMA_VERSION` remains 3. Existing
 packs stay readable, but new packs require a reader that knows
 `ChunkKind::Race`. See ADR-0011.
 
+`AssetManifest.category` is an additive optional JSON field carrying
+`CarCategory` (`road` | `gp67`). It is set on car assets and omitted on tracks
+and legacy car packs. Because the manifest is JSON and the field is optional,
+`SCHEMA_VERSION` remains 3 and old packs stay readable. See ADR-0022.
+
 ## Rules
 
 1. Only the architect edits canonical contracts and mirrors.

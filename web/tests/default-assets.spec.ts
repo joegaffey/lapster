@@ -63,13 +63,10 @@ test("default demos use skidpad and the rx7 without url params", async ({ page }
   expect(garage.bays.map((bay: any) => bay.carId)).toEqual([
     "mazda-rx7",
     "sc-deckard-conejo",
-    "67gp-cavallo-123",
-    "67gp-guthrie-eagle",
-    "67gp-kuiper-t81",
-    "67gp-mango-ms7",
-    "67gp-murasama-37a",
-    "67gp-upping-ut19",
   ]);
+  expect(await page.evaluate(() => localStorage.getItem("lapster.category.v1"))).toBe(
+    "road",
+  );
   expect(garage.debug.car.id).toBe("mazda-rx7");
 
   await page.goto("/web/track-viewer/");

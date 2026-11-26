@@ -3,7 +3,7 @@ import { clickMenuControl } from "./menu-helpers";
 
 test("garage camera orbits, zooms, and resets", async ({ page }) => {
   await page.goto(
-    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6",
+    "/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6&category=gp67",
   );
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
@@ -53,7 +53,7 @@ test("garage camera orbits, zooms, and resets", async ({ page }) => {
   const initialBay = await page.evaluate(() =>
     JSON.parse((window as any).__garageViewer.bay_info()),
   );
-  expect(initialBay.count).toBe(8);
+  expect(initialBay.count).toBe(6);
   expect(initialBay.selected).toBe(0);
 
   await page.click("#bay-next");
@@ -113,7 +113,7 @@ test("garage camera flies between bays", async ({ page }) => {
 });
 
 test("garage bay navigation steps along the line", async ({ page }) => {
-  await page.goto("/web/garage/?v=cp6");
+  await page.goto("/web/garage/?v=cp6&category=gp67");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,

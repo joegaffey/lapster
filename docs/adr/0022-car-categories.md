@@ -1,6 +1,6 @@
 # 0022. Car categories and same-category grids
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-25
 - Deciders: architect, @joegaffey
 - Related: ADR-0011, ADR-0014, ADR-0018, ADR-0021,

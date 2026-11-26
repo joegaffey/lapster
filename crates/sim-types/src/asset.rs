@@ -50,6 +50,31 @@ impl AssetKind {
     }
 }
 
+/// Product category for a car asset.
+///
+/// Categories exist so a race or room can be restricted to one class while
+/// still allowing any car from that class. Track assets and legacy car packs
+/// may omit the category in the manifest.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    SerdeSerialize,
+    SerdeDeserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
+#[archive(check_bytes)]
+#[serde(rename_all = "lowercase")]
+pub enum CarCategory {
+    Road,
+    Gp67,
+}
+
 #[derive(
     Debug,
     Clone,
@@ -412,6 +437,11 @@ pub struct AssetManifest {
     pub magic: [u8; 4],
     pub schema_version: u16,
     pub kind: AssetKind,
+    /// Optional product category. Cars should set this; tracks and legacy
+    /// packs may omit it. The field is additive JSON metadata, so
+    /// `SCHEMA_VERSION` does not change and old packs stay readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<CarCategory>,
     pub id: String,
     pub source_hash: [u8; 32],
     pub units: UnitSystem,
@@ -1112,6 +1142,7 @@ mod tests {
             magic: MAGIC,
             schema_version: SCHEMA_VERSION,
             kind,
+            category: None,
             id: String::from("test"),
             source_hash: [0; 32],
             units: ENGINE_UNITS,
@@ -1187,6 +1218,45 @@ mod tests {
         assert_eq!(manifest.validate(), Ok(()));
         manifest.magic = *b"NOPE";
         assert_eq!(manifest.validate(), Err(ManifestError::BadMagic));
+    }
+
+    #[test]
+    fn car_category_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_value(CarCategory::Road).expect("road category"),
+            serde_json::json!("road")
+        );
+        assert_eq!(
+            serde_json::to_value(CarCategory::Gp67).expect("gp67 category"),
+            serde_json::json!("gp67")
+        );
+        let decoded: CarCategory =
+            serde_json::from_value(serde_json::json!("gp67")).expect("decode gp67");
+        assert_eq!(decoded, CarCategory::Gp67);
+    }
+
+    #[test]
+    fn manifest_category_is_optional_for_legacy_packs() {
+        let manifest = manifest(
+            AssetKind::Car,
+            EntryPoints {
+                physics: Some(0),
+                visual: Some(1),
+                collision: None,
+                metadata: None,
+                audio: None,
+                texture: None,
+                race: None,
+            },
+        );
+        let value = serde_json::to_value(&manifest).expect("serialize manifest");
+        let object = value.as_object().expect("manifest object");
+        assert!(
+            !object.contains_key("category"),
+            "an absent category must be omitted from the manifest JSON"
+        );
+        let decoded: AssetManifest = serde_json::from_value(value).expect("decode legacy manifest");
+        assert_eq!(decoded.category, None);
     }
 
     #[test]

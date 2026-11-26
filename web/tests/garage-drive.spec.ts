@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { clickMenuControl } from "./menu-helpers";
 
 test("selected garage car becomes the driving car", async ({ page }) => {
-  await page.goto("/web/garage/");
+  await page.goto("/web/garage/?category=gp67");
   await page.waitForFunction(
     () => (window as any).__garageViewerReady === true || (window as any).__garageViewerError,
     undefined,
@@ -22,7 +22,8 @@ test("selected garage car becomes the driving car", async ({ page }) => {
   const driveHref = await page.locator("#drive-car").getAttribute("href");
   const driveUrl = new URL(driveHref!);
   expect(driveUrl.searchParams.get("bay")).toBe("3");
-  expect(driveUrl.searchParams.get("car")).toContain("67gp-cavallo-123");
+  expect(driveUrl.searchParams.get("car")).toContain("67gp-kuiper-t81");
+  expect(driveUrl.searchParams.get("category")).toBe("gp67");
   expect(driveUrl.searchParams.has("paint")).toBe(false);
   expect(await page.evaluate(() => localStorage.getItem("lapster.garage.car.v1"))).toBe("2");
 

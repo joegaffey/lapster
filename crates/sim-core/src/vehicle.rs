@@ -339,6 +339,16 @@ impl Vehicle {
         self.state.rotation * (local * inverse)
     }
 
+    /// Static body mass in kilograms.
+    pub fn mass(&self) -> f32 {
+        self.physics.mass
+    }
+
+    /// Number of forward gears in the installed drivetrain.
+    pub fn gear_count(&self) -> usize {
+        self.physics.drivetrain.gear_ratios.len()
+    }
+
     pub fn setup(&self) -> CarTuning {
         CarTuning::from_physics(&self.physics)
     }
