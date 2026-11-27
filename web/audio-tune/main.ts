@@ -1,11 +1,12 @@
 // Engine audio tuning tool.
 //
-// Standalone dev page. A local drivetrain + road-load simulation drives the
-// sample audio and a side-view car whose wheels turn. No track, no dyno, and
-// no driving needed: target-speed and target-RPM modes auto-drive the model.
+// Standalone dev page. The garage viewer supplies the real car model in a
+// studio; a local longitudinal road-load model turns its wheels and drives the
+// sample audio. Throttle/brake only: there is no steering.
 
 import {
   CAR_OPTIONS,
+  carsInCategory,
   type CarOption,
 } from "../src/ui/car-selection.ts";
 import {
@@ -36,9 +37,7 @@ interface SimState {
   throttle: number;
   brake: number;
   wheelAngle: number;
-  distance: number;
   acceleration: number;
-  integral: number;
 }
 
 const SAMPLES: SampleOption[] = [
@@ -73,17 +72,6 @@ const DEFAULT_RATES: Record<string, [number, number]> = {
   v12: [0.7, 1.4],
 };
 
-const CAR_COLORS: Record<string, string> = {
-  "mazda-rx7": "#d94a3d",
-  "sc-deckard-conejo": "#b23a2e",
-  "67gp-cavallo-123": "#c9a227",
-  "67gp-guthrie-eagle": "#2f6b4f",
-  "67gp-kuiper-t81": "#2f5f8f",
-  "67gp-murasama-37a": "#d9d9d9",
-  "67gp-mango-ms7": "#e07a2f",
-  "67gp-upping-ut19": "#3f7f3f",
-};
-
 const STORE_KEY = "lapster.audioTune.v1";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -91,23 +79,17 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 const carSelect = $<HTMLSelectElement>("car");
 const sampleSelect = $<HTMLSelectElement>("sample");
 const fileInput = $<HTMLInputElement>("file");
-const modeSelect = $<HTMLSelectElement>("mode");
-const targetSpeedRow = $<HTMLDivElement>("target-speed-row");
-const targetRpmRow = $<HTMLDivElement>("target-rpm-row");
-const targetSpeed = $<HTMLInputElement>("target-speed");
-const targetRpm = $<HTMLInputElement>("target-rpm");
-const gearSelect = $<HTMLSelectElement>("gear");
-const manualControls = $<HTMLDivElement>("manual-controls");
 const throttleInput = $<HTMLInputElement>("throttle");
 const brakeInput = $<HTMLInputElement>("brake");
+const gearSelect = $<HTMLSelectElement>("gear");
 const graph = $<HTMLCanvasElement>("graph");
 const status = $<HTMLDivElement>("status");
 const liveBox = $<HTMLDivElement>("live");
 const metaBox = $<HTMLDivElement>("meta");
-const carView = $<HTMLCanvasElement>("car-view");
 const speedBig = $<HTMLDivElement>("speed-big");
 const stageSub = $<HTMLDivElement>("stage-sub");
 const gearNote = $<HTMLDivElement>("gear-note");
+const garageFrame = $<HTMLIFrameElement>("garage-frame");
 
 let store: Record<string, Mapping> = {};
 try {
@@ -121,6 +103,8 @@ let mapping: Mapping = defaultMapping(car);
 let customUrls = new Map<string, string>();
 let tunerMuted = false;
 let lastRate = 0;
+let garageReady = false;
+let garageCategory = "";
 const sim: SimState = {
   speedMps: 0,
   rpm: 900,
@@ -128,13 +112,15 @@ const sim: SimState = {
   throttle: 0,
   brake: 0,
   wheelAngle: 0,
-  distance: 0,
   acceleration: 0,
-  integral: 0,
 };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function setStatus(text: string): void {
+  status.textContent = text;
 }
 
 function saveStore(): void {
@@ -143,10 +129,6 @@ function saveStore(): void {
   } catch {
     // Storage unavailable.
   }
-}
-
-function setStatus(text: string): void {
-  status.textContent = text;
 }
 
 function engineMeta(target: CarOption): any {
@@ -311,43 +293,19 @@ const tuner = new TunerAudio();
 function torqueFactor(rpm: number): number {
   const idle = idleRpm();
   const redline = redlineRpm();
-  const peak = clamp((Number(engineMeta(car).peakTorqueRpm) || (idle + redline) / 2) - idle, 1, redline - idle) / Math.max(1, redline - idle);
+  const peak = clamp(
+    (Number(engineMeta(car).peakTorqueRpm) || (idle + redline) / 2) - idle,
+    1,
+    redline - idle,
+  ) / Math.max(1, redline - idle);
   const x = clamp((rpm - idle) / Math.max(1, redline - idle), 0, 1.1);
   return 0.55 + 0.45 * Math.exp(-Math.pow((x - peak) / 0.4, 2));
 }
 
-function autoControls(targetSpeedMps: number, dt: number): { throttle: number; brake: number } {
-  if (targetSpeedMps < 0.2 && sim.speedMps < 0.2) {
-    sim.integral = 0;
-    return { throttle: 0, brake: 0 };
-  }
-  const error = targetSpeedMps - sim.speedMps;
-  sim.integral = clamp(sim.integral + error * dt, -3, 3);
-  if (error > 0.2) {
-    return { throttle: clamp(0.08 + error * 0.5 + sim.integral * 0.25, 0, 1), brake: 0 };
-  }
-  if (error < -0.2) {
-    return { throttle: 0, brake: clamp(-error * 0.5 - sim.integral * 0.25, 0, 1) };
-  }
-  return { throttle: clamp(0.08 + sim.integral * 0.25, 0, 1), brake: 0 };
-}
-
 function simulate(dt: number): void {
   sim.gearIndex = clamp(Number(gearSelect.value) || 0, 0, gearRatios().length - 1);
-  const mode = modeSelect.value;
-  let throttle = 0;
-  let brake = 0;
-  if (mode === "manual") {
-    throttle = Number(throttleInput.value) || 0;
-    brake = Number(brakeInput.value) || 0;
-  } else {
-    const target = mode === "rpm"
-      ? rpmToSpeed(Number(targetRpm.value) || idleRpm())
-      : (Number(targetSpeed.value) || 0) / 3.6;
-    const controls = autoControls(target, dt);
-    throttle = controls.throttle;
-    brake = controls.brake;
-  }
+  const throttle = clamp(Number(throttleInput.value) || 0, 0, 1);
+  const brake = clamp(Number(brakeInput.value) || 0, 0, 1);
   const ratio = selectedRatio();
   const fd = finalDrive();
   const radius = wheelRadius();
@@ -366,174 +324,93 @@ function simulate(dt: number): void {
   sim.throttle = throttle;
   sim.brake = brake;
   sim.wheelAngle += (sim.speedMps / Math.max(0.05, radius)) * dt;
-  sim.distance += sim.speedMps * dt;
 }
 
-function carColor(): string {
-  return CAR_COLORS[car.id] ?? "#d94a3d";
-}
-
-function shade(hex: string, amount: number): string {
-  const value = hex.replace("#", "");
-  const r = parseInt(value.slice(0, 2), 16);
-  const g = parseInt(value.slice(2, 4), 16);
-  const b = parseInt(value.slice(4, 6), 16);
-  const mix = (channel: number): number =>
-    amount >= 0 ? channel + (255 - channel) * amount : channel * (1 + amount);
-  return `rgb(${Math.round(mix(r))}, ${Math.round(mix(g))}, ${Math.round(mix(b))})`;
-}
-
-function drawWheel(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, angle: number): void {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(angle);
-  ctx.fillStyle = "#0a0c0f";
-  ctx.beginPath();
-  ctx.arc(0, 0, radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#222a33";
-  ctx.lineWidth = radius * 0.12;
-  ctx.stroke();
-  ctx.fillStyle = "#9aa6b2";
-  ctx.beginPath();
-  ctx.arc(0, 0, radius * 0.58, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#d5dde6";
-  ctx.lineWidth = Math.max(1, radius * 0.06);
-  for (let i = 0; i < 5; i += 1) {
-    const a = (i * Math.PI * 2) / 5;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(a) * radius * 0.52, Math.sin(a) * radius * 0.52);
-    ctx.stroke();
+function garageWindow(): any | null {
+  try {
+    return garageFrame.contentWindow;
+  } catch {
+    return null;
   }
-  ctx.fillStyle = "#2a333d";
-  ctx.beginPath();
-  ctx.arc(0, 0, radius * 0.15, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
 }
 
-function drawCar(): void {
-  const dpr = window.devicePixelRatio || 1;
-  const width = carView.clientWidth;
-  const height = carView.clientHeight;
-  if (carView.width !== Math.round(width * dpr) || carView.height !== Math.round(height * dpr)) {
-    carView.width = Math.round(width * dpr);
-    carView.height = Math.round(height * dpr);
+function setGarageSelection(): void {
+  try {
+    localStorage.setItem("lapster.car.v1", car.id);
+    localStorage.setItem("lapster.category.v1", car.category);
+  } catch {
+    // Storage unavailable.
   }
-  const ctx = carView.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const sky = ctx.createLinearGradient(0, 0, 0, height);
-  sky.addColorStop(0, "#0b1118");
-  sky.addColorStop(0.62, "#121b24");
-  sky.addColorStop(1, "#080b0f");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, width, height);
+}
 
-  const groundY = height * 0.73;
-  ctx.fillStyle = "#090d12";
-  ctx.fillRect(0, groundY, width, height - groundY);
-  ctx.strokeStyle = "#1d2730";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, groundY);
-  ctx.lineTo(width, groundY);
-  ctx.stroke();
+function hideGarageHud(): void {
+  try {
+    const doc = garageFrame.contentDocument;
+    if (!doc) return;
+    const style = doc.createElement("style");
+    style.textContent =
+      "#hud,#viewer-controls,#car-nav,#menu-open,#app-menu,#paint-panel,#viewer-loading,#car-loading{display:none!important}";
+    doc.head.append(style);
+  } catch {
+    // Cross-origin or not ready.
+  }
+}
 
-  const dashSpacing = Math.max(70, 110 * Math.min(1, width / 900));
-  const offset = (sim.distance * 26) % dashSpacing;
-  ctx.strokeStyle = "#2a3540";
-  ctx.lineWidth = 4;
-  ctx.setLineDash([dashSpacing * 0.42, dashSpacing * 0.58]);
-  ctx.lineDashOffset = -offset;
-  ctx.beginPath();
-  ctx.moveTo(0, groundY + (height - groundY) * 0.55);
-  ctx.lineTo(width, groundY + (height - groundY) * 0.55);
-  ctx.stroke();
-  ctx.setLineDash([]);
+function syncGarageWheels(): void {
+  const viewer = garageWindow()?.__garageViewer;
+  if (!viewer) return;
+  try {
+    viewer.set_wheel_angles(0, sim.wheelAngle);
+  } catch {
+    // Viewer not ready.
+  }
+}
 
-  const scale = Math.min(width / 1000, height / 620) * 1.15;
-  const carWidth = 520 * scale;
-  const carHeight = 150 * scale;
-  const wheelRadiusPx = 44 * scale;
-  const cx = width * 0.5;
-  const baseY = groundY + 8;
-  const bob = clamp(sim.acceleration * 1.5, -4, 4) * scale;
-  const bodyY = baseY - wheelRadiusPx * 1.15 - carHeight * 0.62 + bob;
-  const wheelY = baseY - wheelRadiusPx;
-  const color = carColor();
-
-  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-  ctx.beginPath();
-  ctx.ellipse(cx, baseY + 8, carWidth * 0.56, 13 * scale, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  drawWheel(ctx, cx - carWidth * 0.31, wheelY, wheelRadiusPx, sim.wheelAngle);
-  drawWheel(ctx, cx + carWidth * 0.31, wheelY, wheelRadiusPx, sim.wheelAngle);
-
-  ctx.save();
-  ctx.translate(cx, bodyY);
-  ctx.rotate(clamp(-sim.acceleration * 0.006, -0.035, 0.035));
-  const x0 = -carWidth / 2;
-  const y0 = -carHeight / 2;
-  const body = ctx.createLinearGradient(0, y0, 0, y0 + carHeight);
-  body.addColorStop(0, shade(color, 0.25));
-  body.addColorStop(0.5, color);
-  body.addColorStop(1, shade(color, -0.35));
-  ctx.fillStyle = body;
-  ctx.beginPath();
-  ctx.moveTo(x0 + carWidth * 0.02, y0 + carHeight * 0.8);
-  ctx.lineTo(x0 + carWidth * 0.06, y0 + carHeight * 0.56);
-  ctx.lineTo(x0 + carWidth * 0.2, y0 + carHeight * 0.4);
-  ctx.lineTo(x0 + carWidth * 0.38, y0 + carHeight * 0.3);
-  ctx.lineTo(x0 + carWidth * 0.62, y0 + carHeight * 0.28);
-  ctx.lineTo(x0 + carWidth * 0.8, y0 + carHeight * 0.38);
-  ctx.lineTo(x0 + carWidth * 0.95, y0 + carHeight * 0.54);
-  ctx.lineTo(x0 + carWidth * 0.99, y0 + carHeight * 0.8);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = "rgba(10, 16, 22, 0.86)";
-  ctx.beginPath();
-  ctx.moveTo(x0 + carWidth * 0.25, y0 + carHeight * 0.42);
-  ctx.lineTo(x0 + carWidth * 0.38, y0 + carHeight * 0.32);
-  ctx.lineTo(x0 + carWidth * 0.6, y0 + carHeight * 0.31);
-  ctx.lineTo(x0 + carWidth * 0.72, y0 + carHeight * 0.44);
-  ctx.lineTo(x0 + carWidth * 0.6, y0 + carHeight * 0.45);
-  ctx.lineTo(x0 + carWidth * 0.4, y0 + carHeight * 0.46);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = "#f5e6a8";
-  ctx.beginPath();
-  ctx.ellipse(x0 + carWidth * 0.93, y0 + carHeight * 0.58, carWidth * 0.025, carHeight * 0.07, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#7f1d1d";
-  ctx.beginPath();
-  ctx.ellipse(x0 + carWidth * 0.04, y0 + carHeight * 0.6, carWidth * 0.018, carHeight * 0.06, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = shade(color, -0.5);
-  ctx.lineWidth = Math.max(1, 2 * scale);
-  ctx.beginPath();
-  ctx.moveTo(x0 + carWidth * 0.1, y0 + carHeight * 0.78);
-  ctx.lineTo(x0 + carWidth * 0.9, y0 + carHeight * 0.78);
-  ctx.stroke();
-  ctx.restore();
-
-  if (sim.speedMps > 4) {
-    ctx.strokeStyle = "rgba(143, 211, 255, 0.16)";
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 6; i += 1) {
-      const lineY = groundY - 20 - i * 18 * scale;
-      const drift = (sim.distance * 40 + i * 37) % (carWidth * 1.4);
-      ctx.beginPath();
-      ctx.moveTo(cx - carWidth * 0.75 + drift, lineY);
-      ctx.lineTo(cx - carWidth * 0.75 + drift + 70 * scale, lineY);
-      ctx.stroke();
+function selectGarageBay(): void {
+  const viewer = garageWindow()?.__garageViewer;
+  if (!viewer) return;
+  setGarageSelection();
+  const index = carsInCategory(car.category).findIndex((option) => option.id === car.id);
+  if (index >= 0) {
+    try {
+      viewer.select_bay(index);
+    } catch {
+      // Ignore.
     }
   }
+  syncGarageWheels();
+}
+
+function waitForGarage(): void {
+  const started = Date.now();
+  const tick = (): void => {
+    const win = garageWindow();
+    if (win?.__garageViewerReady || win?.__garageViewerError) {
+      garageReady = win.__garageViewerReady === true;
+      hideGarageHud();
+      selectGarageBay();
+      setStatus(
+        win.__garageViewerError
+          ? `Garage failed: ${win.__garageViewerError}`
+          : "Car ready. Use throttle/brake.",
+      );
+      return;
+    }
+    if (Date.now() - started > 60000) {
+      setStatus("Garage view timed out.");
+      return;
+    }
+    setTimeout(tick, 150);
+  };
+  tick();
+}
+
+function loadGarage(category: string): void {
+  garageCategory = category;
+  garageReady = false;
+  setGarageSelection();
+  garageFrame.src = `../garage/?category=${encodeURIComponent(category)}&v=audio-tune-${Date.now()}`;
+  waitForGarage();
 }
 
 function renderMeta(): void {
@@ -552,7 +429,6 @@ function renderMeta(): void {
     ["Final drive", `${finalDrive().toFixed(2)}:1`],
     ["Wheel radius", `${wheelRadius().toFixed(3)} m`],
     ["Mass", `${massKg()} kg`],
-    ["Gearbox source", "catalog preset"],
   ];
   metaBox.innerHTML = `<table>${rows
     .map(([k, v]) => `<tr><td>${k}</td><td><code>${v}</code></td></tr>`)
@@ -571,23 +447,14 @@ function rebuildGearSelect(): void {
 function updateGearNote(): void {
   const ratio = selectedRatio();
   const maxSpeed = rpmToSpeed(redlineRpm()) * 3.6;
-  const mode = modeSelect.value;
-  const target = mode === "speed"
-    ? Number(targetSpeed.value) || 0
-    : mode === "rpm"
-      ? rpmToSpeed(Number(targetRpm.value) || idleRpm()) * 3.6
-      : null;
-  const over = target !== null && target > maxSpeed + 1;
-  gearNote.textContent = `Gear ${Number(gearSelect.value) + 1} · ${ratio.toFixed(2)}:1 · ${maxSpeed.toFixed(0)} km/h at redline${over ? " — target not reachable in this gear" : ""}`;
+  const over = sim.speedMps * 3.6 > maxSpeed + 1;
+  gearNote.textContent = `Gear ${Number(gearSelect.value) + 1} · ${ratio.toFixed(2)}:1 · ${maxSpeed.toFixed(0)} km/h at redline${over ? " — over redline, shift up" : ""}`;
   gearNote.classList.toggle("warn", over);
 }
 
-function updateModeRows(): void {
-  const mode = modeSelect.value;
-  targetSpeedRow.classList.toggle("hidden", mode !== "speed");
-  targetRpmRow.classList.toggle("hidden", mode !== "rpm");
-  manualControls.classList.toggle("hidden", mode !== "manual");
-  updateGearNote();
+function updateControlLabels(): void {
+  $("throttle-value").textContent = `${(Number(throttleInput.value) * 100).toFixed(0)}%`;
+  $("brake-value").textContent = `${(Number(brakeInput.value) * 100).toFixed(0)}%`;
 }
 
 function applyMappingToUi(): void {
@@ -602,11 +469,6 @@ function applyMappingToUi(): void {
   set("rate-high", mapping.rateHigh, 2);
   set("curve", mapping.curve, 2);
   set("gain", mapping.gain, 2);
-  targetRpm.min = String(idleRpm());
-  targetRpm.max = String(redlineRpm());
-  targetRpm.value = String(clamp(Number(targetRpm.value) || 3000, idleRpm(), redlineRpm()));
-  $("target-rpm-value").textContent = `${Math.round(Number(targetRpm.value))} rpm`;
-  $("target-speed-value").textContent = `${Math.round(Number(targetSpeed.value))} km/h`;
   const hasOption = [...sampleSelect.options].some(
     (option) => option.value === mapping.fileId,
   );
@@ -653,9 +515,11 @@ function resetSim(): void {
   sim.throttle = 0;
   sim.brake = 0;
   sim.wheelAngle = 0;
-  sim.distance = 0;
   sim.acceleration = 0;
-  sim.integral = 0;
+  throttleInput.value = "0";
+  brakeInput.value = "0";
+  updateControlLabels();
+  syncGarageWheels();
 }
 
 function selectCar(target: CarOption): void {
@@ -670,6 +534,7 @@ function selectCar(target: CarOption): void {
   resetSim();
   updateGearNote();
   void loadSample(mapping.fileId);
+  loadGarage(car.category);
 }
 
 function drawGraph(rpm: number): void {
@@ -710,11 +575,9 @@ function drawGraph(rpm: number): void {
     else context.lineTo(px, py);
   }
   context.stroke();
-  const cx = x(rpm);
-  const cy = y(mapRate(mapping, rpm));
   context.fillStyle = "#ffd479";
   context.beginPath();
-  context.arc(cx, cy, 4, 0, Math.PI * 2);
+  context.arc(x(rpm), y(mapRate(mapping, rpm)), 4, 0, Math.PI * 2);
   context.fill();
   context.fillStyle = "#7d8996";
   context.font = "10px system-ui";
@@ -725,11 +588,6 @@ function drawGraph(rpm: number): void {
 
 function updateLive(): void {
   const speedKph = sim.speedMps * 3.6;
-  const target = modeSelect.value === "speed"
-    ? `${Math.round(Number(targetSpeed.value))} km/h`
-    : modeSelect.value === "rpm"
-      ? `${Math.round(Number(targetRpm.value))} rpm`
-      : "manual";
   $("rate-readout").textContent = `rpm ${Math.round(sim.rpm)} → ${lastRate.toFixed(3)}x`;
   liveBox.innerHTML = `
     <div class="k">Speed</div><div class="v">${speedKph.toFixed(0)} km/h</div>
@@ -737,7 +595,6 @@ function updateLive(): void {
     <div class="k">Gear</div><div class="v">${sim.gearIndex + 1}</div>
     <div class="k">Throttle</div><div class="v">${(sim.throttle * 100).toFixed(0)}%</div>
     <div class="k">Brake</div><div class="v">${(sim.brake * 100).toFixed(0)}%</div>
-    <div class="k">Target</div><div class="v">${target}</div>
     <div class="k">Playback rate</div><div class="v">${lastRate.toFixed(3)}×</div>
     <div class="k">Sample</div><div class="v">${SAMPLE_BY_ID.get(mapping.fileId)?.label ?? mapping.fileId}</div>
   `;
@@ -750,11 +607,12 @@ function frame(now: number): void {
   const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
   lastFrame = now;
   simulate(dt);
+  syncGarageWheels();
   lastRate = mapRate(mapping, sim.rpm);
   tuner.update(sim.rpm, sim.throttle);
-  drawCar();
   drawGraph(sim.rpm);
   updateLive();
+  updateGearNote();
   requestAnimationFrame(frame);
 }
 
@@ -765,12 +623,9 @@ function initialize(): void {
   sampleSelect.innerHTML = SAMPLES.map(
     (sample) => `<option value="${sample.id}">${sample.label}</option>`,
   ).join("");
-  modeSelect.value = "speed";
-  targetSpeed.value = "60";
-  targetRpm.value = "3000";
   throttleInput.value = "0";
   brakeInput.value = "0";
-  updateModeRows();
+  updateControlLabels();
 
   carSelect.addEventListener("change", () => {
     const next = CAR_OPTIONS.find((option) => option.id === carSelect.value);
@@ -791,30 +646,15 @@ function initialize(): void {
     sampleSelect.value = id;
     void loadSample(id);
   });
-  modeSelect.addEventListener("change", () => {
-    sim.integral = 0;
-    updateModeRows();
-  });
-  targetSpeed.addEventListener("input", () => {
-    sim.integral = 0;
-    $("target-speed-value").textContent = `${Math.round(Number(targetSpeed.value))} km/h`;
-    updateGearNote();
-  });
-  targetRpm.addEventListener("input", () => {
-    sim.integral = 0;
-    $("target-rpm-value").textContent = `${Math.round(Number(targetRpm.value))} rpm`;
-    updateGearNote();
-  });
+  throttleInput.addEventListener("input", updateControlLabels);
+  brakeInput.addEventListener("input", updateControlLabels);
   gearSelect.addEventListener("change", () => {
-    sim.integral = 0;
     sim.gearIndex = clamp(Number(gearSelect.value) || 0, 0, gearRatios().length - 1);
     updateGearNote();
   });
-  throttleInput.addEventListener("input", () => {
-    $("throttle-value").textContent = `${(Number(throttleInput.value) * 100).toFixed(0)}%`;
-  });
-  brakeInput.addEventListener("input", () => {
-    $("brake-value").textContent = `${(Number(brakeInput.value) * 100).toFixed(0)}%`;
+  $("reset-sim").addEventListener("click", () => {
+    resetSim();
+    updateGearNote();
   });
   for (const id of ["rpm-low", "rpm-high", "rate-low", "rate-high", "curve", "gain"]) {
     $(id).addEventListener("input", readMappingFromUi);
@@ -853,10 +693,6 @@ function initialize(): void {
     setStatus("Car mapping reset.");
   });
 
-  $("target-speed-value").textContent = `${Math.round(Number(targetSpeed.value))} km/h`;
-  $("target-rpm-value").textContent = `${Math.round(Number(targetRpm.value))} rpm`;
-  $("throttle-value").textContent = "0%";
-  $("brake-value").textContent = "0%";
   selectCar(car);
   requestAnimationFrame(frame);
 }

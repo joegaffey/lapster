@@ -10,7 +10,7 @@
       html, body { margin: 0; height: 100%; background: #0b0e12; color: #e6e8eb; }
       body { display: grid; grid-template-columns: minmax(0, 1fr) 390px; height: 100vh; }
       #stage { position: relative; min-width: 0; background: #05070a; overflow: hidden; }
-      #car-view { width: 100%; height: 100%; display: block; }
+      #garage-frame { width: 100%; height: 100%; border: 0; display: block; }
       #stage-hud { position: absolute; left: 24px; bottom: 20px; pointer-events: none; }
       #speed-big { font-size: 56px; font-weight: 700; line-height: 1; color: #f4f7fb; font-variant-numeric: tabular-nums; }
       #speed-big span { font-size: 16px; font-weight: 500; color: #8f9bab; margin-left: 6px; }
@@ -53,7 +53,7 @@
   </head>
   <body>
     <div id="stage">
-      <canvas id="car-view"></canvas>
+      <iframe id="garage-frame" title="Car studio"></iframe>
       <div id="stage-hud">
         <div id="speed-big">0<span>km/h</span></div>
         <div id="stage-sub">gear 1 · 900 rpm</div>
@@ -64,7 +64,7 @@
         <h1>Engine audio tuner</h1>
         <button id="audio" class="primary">Start audio</button>
       </header>
-      <p class="hint">Local road-load simulation; no track and no driving needed. The engine audio is this page's own sample.</p>
+      <p class="hint">Real car models in the garage studio. Throttle/brake only — no steering. Drag the car view to orbit.</p>
 
       <h2>Car &amp; sample</h2>
       <div class="row"><label for="car">Car</label><select id="car"></select></div>
@@ -75,34 +75,17 @@
       <h2>Engine / gearbox</h2>
       <div id="meta"></div>
 
-      <h2>Simulation</h2>
-      <div class="row">
-        <label for="mode">Mode</label>
-        <select id="mode">
-          <option value="speed">Target speed</option>
-          <option value="rpm">Target RPM</option>
-          <option value="manual">Manual throttle</option>
-        </select>
+      <h2>Throttle &amp; gearbox</h2>
+      <div class="slider">
+        <label>Throttle <output id="throttle-value"></output></label>
+        <input id="throttle" type="range" min="0" max="1" step="0.01" value="0" />
       </div>
-      <div id="target-speed-row" class="slider">
-        <label>Target speed <output id="target-speed-value"></output></label>
-        <input id="target-speed" type="range" min="0" max="300" step="1" value="60" />
-      </div>
-      <div id="target-rpm-row" class="slider hidden">
-        <label>Target RPM <output id="target-rpm-value"></output></label>
-        <input id="target-rpm" type="range" min="900" max="9000" step="10" value="3000" />
+      <div class="slider">
+        <label>Brake <output id="brake-value"></output></label>
+        <input id="brake" type="range" min="0" max="1" step="0.01" value="0" />
       </div>
       <div class="row"><label for="gear">Gear</label><select id="gear"></select></div>
-      <div id="manual-controls" class="hidden">
-        <div class="slider">
-          <label>Throttle <output id="throttle-value"></output></label>
-          <input id="throttle" type="range" min="0" max="1" step="0.01" value="0" />
-        </div>
-        <div class="slider">
-          <label>Brake <output id="brake-value"></output></label>
-          <input id="brake" type="range" min="0" max="1" step="0.01" value="0" />
-        </div>
-      </div>
+      <div class="row"><label></label><button id="reset-sim">Reset speed</button></div>
       <div class="hint" id="gear-note"></div>
 
       <h2>RPM → playback rate</h2>
@@ -140,7 +123,7 @@
       <div class="row">
         <label></label>
         <button id="copy">Copy JSON</button>
-        <button id="reset">Reset car</button>
+        <button id="reset">Reset mapping</button>
       </div>
       <div id="status"></div>
     </aside>
