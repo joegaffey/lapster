@@ -12,8 +12,10 @@
       #stage { position: relative; min-width: 0; background: #05070a; overflow: hidden; }
       #garage-frame { width: 100%; height: 100%; border: 0; display: block; }
       #stage-hud { position: absolute; left: 24px; bottom: 20px; pointer-events: none; }
-      #speed-big { font-size: 56px; font-weight: 700; line-height: 1; color: #f4f7fb; font-variant-numeric: tabular-nums; }
-      #speed-big span { font-size: 16px; font-weight: 500; color: #8f9bab; margin-left: 6px; }
+      #stage-readouts { display: flex; align-items: baseline; gap: 28px; }
+      #speed-big, #rpm-big { font-size: 56px; font-weight: 700; line-height: 1; color: #f4f7fb; font-variant-numeric: tabular-nums; }
+      #rpm-big { color: #8fd3ff; }
+      #speed-big span, #rpm-big span { font-size: 16px; font-weight: 500; color: #8f9bab; margin-left: 6px; }
       #stage-sub { margin-top: 4px; color: #8fd3ff; font-size: 13px; }
       #panel { overflow-y: auto; padding: 14px 16px 40px; background: rgba(13, 17, 22, 0.98); border-left: 1px solid #232b34; }
       h1 { font-size: 16px; margin: 0; }
@@ -30,6 +32,7 @@
       .slider { margin: 7px 0; }
       .slider label { display: flex; justify-content: space-between; color: #9aa6b2; }
       .slider input { width: 100%; accent-color: #38bdf8; }
+      input:disabled { opacity: 0.45; }
       output { color: #ffd479; font-variant-numeric: tabular-nums; }
       #meta { color: #b8c2cc; font-size: 12px; }
       #meta table { width: 100%; border-collapse: collapse; }
@@ -48,7 +51,7 @@
       @media (max-width: 900px) {
         body { grid-template-columns: 1fr; grid-template-rows: 1fr 54vh; }
         #panel { border-left: 0; border-top: 1px solid #232b34; }
-        #speed-big { font-size: 40px; }
+        #speed-big, #rpm-big { font-size: 40px; }
       }
     </style>
   </head>
@@ -56,7 +59,10 @@
     <div id="stage">
       <iframe id="garage-frame" title="Car studio"></iframe>
       <div id="stage-hud">
-        <div id="speed-big">0<span>km/h</span></div>
+        <div id="stage-readouts">
+          <div id="speed-big">0<span>km/h</span></div>
+          <div id="rpm-big">900<span>rpm</span></div>
+        </div>
         <div id="stage-sub">gear 1 · 900 rpm</div>
       </div>
     </div>
@@ -91,8 +97,16 @@
       </div>
       <div class="row"><label for="gear">Gear</label><select id="gear"></select></div>
       <div class="row"><label></label><button id="reset-sim">Reset speed</button></div>
-      <p class="hint">Keys: W/↑ throttle, S/↓ brake. Neutral is available in the gear list.</p>
+      <p class="hint">Keys: W/↑ throttle, S/↓ brake. Engine braking applies in gear off-throttle.</p>
       <div class="hint" id="gear-note"></div>
+
+      <h2>Manual RPM</h2>
+      <div class="row"><label for="manual-rpm-toggle">Bypass throttle</label><input id="manual-rpm-toggle" type="checkbox" /></div>
+      <div class="slider">
+        <label>RPM <output id="manual-rpm-value">3000 rpm</output></label>
+        <input id="manual-rpm" type="range" min="900" max="9000" step="10" value="3000" disabled />
+      </div>
+      <p class="hint">Manual RPM ignores throttle/brake. The gear sets the visual wheel speed; N keeps the car still.</p>
 
       <h2>RPM → playback rate</h2>
       <div class="slider">
@@ -119,6 +133,11 @@
         <label>Engine gain <output id="gain-value"></output></label>
         <input id="gain" type="range" min="0" max="1" step="0.01" />
       </div>
+      <div class="slider">
+        <label>Load gain <output id="load-gain-value"></output></label>
+        <input id="load-gain" type="range" min="0" max="1" step="0.01" />
+      </div>
+      <p class="hint">Load gain follows throttle by default. Set it to 0 for constant engine gain.</p>
       <canvas id="graph"></canvas>
       <div class="hint">Current: <span id="rate-readout">-</span></div>
 
