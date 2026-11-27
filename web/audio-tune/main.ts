@@ -140,6 +140,16 @@ const DEFAULT_PACK_MAPPINGS: Record<string, Mapping> = {
     gain: 0.26,
     loadGain: 0,
   },
+  "sc-deckard-conejo": {
+    fileId: "v8-ears68",
+    rpmLow: 1000,
+    rpmHigh: 6930,
+    rateLow: 0.6,
+    rateHigh: 2,
+    curve: 1.75,
+    gain: 0.4,
+    loadGain: 0.35,
+  },
 };
 
 const STORE_KEY = "lapster.audioTune.v1";

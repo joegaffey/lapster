@@ -78,6 +78,15 @@ const CAR_MAPPINGS: Record<string, SampleMapping> = {
     gain: 0.26,
     loadGain: 0,
   },
+  "sc-deckard-conejo": {
+    rpmLow: 1000,
+    rpmHigh: 6930,
+    rateLow: 0.6,
+    rateHigh: 2,
+    curve: 1.75,
+    gain: 0.4,
+    loadGain: 0.35,
+  },
 };
 
 function mappingFor(car: string | undefined): SampleMapping | undefined {
