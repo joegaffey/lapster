@@ -58,6 +58,38 @@ interface CarDef {
   rateMax?: number;
 }
 
+interface SampleMapping {
+  rpmLow: number;
+  rpmHigh: number;
+  rateLow: number;
+  rateHigh: number;
+  curve: number;
+  gain: number;
+  loadGain: number;
+}
+
+const CAR_MAPPINGS: Record<string, SampleMapping> = {
+  "mazda-rx7": {
+    rpmLow: 900,
+    rpmHigh: 8000,
+    rateLow: 0.3,
+    rateHigh: 0.8,
+    curve: 2.4,
+    gain: 0.26,
+    loadGain: 0,
+  },
+};
+
+function mappingFor(car: string | undefined): SampleMapping | undefined {
+  return car ? CAR_MAPPINGS[car] : undefined;
+}
+
+function mappedRate(mapping: SampleMapping, rpm: number): number {
+  const span = Math.max(1, mapping.rpmHigh - mapping.rpmLow);
+  const t = clamp((rpm - mapping.rpmLow) / span, 0, 1);
+  return mapping.rateLow + (mapping.rateHigh - mapping.rateLow) * Math.pow(t, mapping.curve);
+}
+
 // Narrow rate ranges: the first pass let rpm sweep 0.25x-3x, which made every
 // car dive too low at idle and scream too high at redline.
 const SAMPLE_DEFS: Record<string, SampleDef> = {
@@ -166,6 +198,8 @@ function playbackRate(
   engine: string | undefined,
   rpm: number,
 ): number {
+  const mapping = mappingFor(car);
+  if (mapping) return mappedRate(mapping, rpm);
   const [min, max] = rateRangeFor(car, engine);
   return clamp(rpm / refRpmFor(car, engine), min, max);
 }
@@ -394,6 +428,15 @@ export class SampleEngineAudio {
     }
   }
 
+  private engineTarget(load: number): number {
+    const mapping = mappingFor(this.carId);
+    if (mapping) {
+      const gainFactor = 1 + mapping.loadGain * ((0.35 + 0.65 * clamp(load, 0, 1)) - 1);
+      return mapping.gain * clamp(gainFactor, 0.2, 1.2);
+    }
+    return ENGINE_TRIM * (0.45 + 0.55 * clamp(load, 0, 1));
+  }
+
   update(
     _delta: number,
     throttle: number,
@@ -414,7 +457,7 @@ export class SampleEngineAudio {
       );
     }
     const load = clamp(Number(throttle) || 0, 0, 1);
-    const target = this.muted ? 0 : ENGINE_TRIM * (0.45 + 0.55 * load);
+    const target = this.muted ? 0 : this.engineTarget(load);
     if (this.gain) this.gain.gain.setTargetAtTime(target, now, 0.06);
 
     // Tyre and road layers from the same wheel telemetry the synth used.
@@ -549,7 +592,7 @@ export class SampleEngineAudio {
     this.muted = muted;
     if (!this.context || !this.gain) return;
     const now = this.context.currentTime;
-    const target = muted ? 0 : ENGINE_TRIM * (0.45 + 0.55 * this.lastLoad);
+    const target = muted ? 0 : this.engineTarget(this.lastLoad);
     this.gain.gain.setTargetAtTime(target, now, 0.03);
     this.roadGain?.gain.setTargetAtTime(0, now, 0.03);
     this.rollingGain?.gain.setTargetAtTime(0, now, 0.03);
@@ -770,9 +813,11 @@ export class SampleRemoteEngineAudio {
       0.04,
     );
     const load = clamp(Number(state.throttle) || 0, 0, 1);
-    const target = this.muted
-      ? 0
-      : distanceGain(distance) * (0.45 + 0.35 * load);
+    const mapping = mappingFor(voice.car);
+    const gainFactor = mapping
+      ? mapping.gain * clamp(1 + mapping.loadGain * ((0.35 + 0.65 * load) - 1), 0.2, 1.2)
+      : 0.45 + 0.35 * load;
+    const target = this.muted ? 0 : distanceGain(distance) * gainFactor;
     voice.gain.gain.setTargetAtTime(target, now, 0.06);
   }
 

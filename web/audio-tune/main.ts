@@ -75,6 +75,73 @@ const DEFAULT_RATES: Record<string, [number, number]> = {
   v12: [0.7, 1.4],
 };
 
+interface PackMeta {
+  idleRpm: number;
+  redlineRpm: number;
+  gearRatios: number[];
+  finalDrive: number;
+  peakTorque: number;
+  peakTorqueRpm: number;
+}
+
+// Engine/gearbox values read from the actual car packs (car_setup()).
+const PACK_META: Record<string, PackMeta> = {
+  "mazda-rx7": {
+    idleRpm: 900, redlineRpm: 8000,
+    gearRatios: [3.483, 2.015, 1.391, 1, 0.719, 0.6], finalDrive: 4.1,
+    peakTorque: 314, peakTorqueRpm: 4500,
+  },
+  "sc-deckard-conejo": {
+    idleRpm: 1000, redlineRpm: 6930,
+    gearRatios: [3.01, 2.07, 1.43, 1, 0.84, 0.57], finalDrive: 3.8,
+    peakTorque: 567.2, peakTorqueRpm: 4620,
+  },
+  "67gp-cavallo-123": {
+    idleRpm: 1000, redlineRpm: 10000,
+    gearRatios: [3.5, 2.4, 1.795, 1.224, 0.95], finalDrive: 3.73,
+    peakTorque: 287.9, peakTorqueRpm: 9250,
+  },
+  "67gp-guthrie-eagle": {
+    idleRpm: 1000, redlineRpm: 9500,
+    gearRatios: [3.26, 2.28, 1.5, 1.01, 0.87], finalDrive: 3.73,
+    peakTorque: 389.6, peakTorqueRpm: 6500,
+  },
+  "67gp-kuiper-t81": {
+    idleRpm: 1000, redlineRpm: 10000,
+    gearRatios: [2.66, 1.78, 1.35, 1.01, 0.87], finalDrive: 3.73,
+    peakTorque: 312, peakTorqueRpm: 8600,
+  },
+  "67gp-murasama-37a": {
+    idleRpm: 1000, redlineRpm: 10000,
+    gearRatios: [3.5, 2.4, 1.795, 1.224, 0.97], finalDrive: 3.73,
+    peakTorque: 323.6, peakTorqueRpm: 8250,
+  },
+  "67gp-mango-ms7": {
+    idleRpm: 1000, redlineRpm: 10000,
+    gearRatios: [2.66, 1.78, 1.35, 1.01, 0.86], finalDrive: 3.73,
+    peakTorque: 176.8, peakTorqueRpm: 7000,
+  },
+  "67gp-upping-ut19": {
+    idleRpm: 1000, redlineRpm: 9000,
+    gearRatios: [2.66, 1.78, 1.35, 1.01, 0.87], finalDrive: 3.73,
+    peakTorque: 348.2, peakTorqueRpm: 6000,
+  },
+};
+
+// Tuned per-car defaults. The Mazda anchors follow the pack: 900/8000.
+const DEFAULT_PACK_MAPPINGS: Record<string, Mapping> = {
+  "mazda-rx7": {
+    fileId: "rotary2",
+    rpmLow: 900,
+    rpmHigh: 8000,
+    rateLow: 0.3,
+    rateHigh: 0.8,
+    curve: 2.4,
+    gain: 0.26,
+    loadGain: 0,
+  },
+};
+
 const STORE_KEY = "lapster.audioTune.v1";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -155,11 +222,15 @@ function vehicleMeta(target: CarOption): any {
 }
 
 function gearRatios(): number[] {
+  const pack = PACK_META[car.id];
+  if (pack) return pack.gearRatios;
   const preset = vehicleMeta(car).gearRatios;
   return Array.isArray(preset) && preset.length > 0 ? preset : [1];
 }
 
 function finalDrive(): number {
+  const pack = PACK_META[car.id];
+  if (pack) return pack.finalDrive;
   return Number(vehicleMeta(car).finalDrive) || 3.7;
 }
 
@@ -172,11 +243,11 @@ function massKg(): number {
 }
 
 function idleRpm(): number {
-  return Number(engineMeta(car).idleRpm) || 900;
+  return PACK_META[car.id]?.idleRpm ?? (Number(engineMeta(car).idleRpm) || 900);
 }
 
 function redlineRpm(): number {
-  return Number(engineMeta(car).redlineRpm) || 8000;
+  return PACK_META[car.id]?.redlineRpm ?? (Number(engineMeta(car).redlineRpm) || 8000);
 }
 
 function selectedRatio(): number {
@@ -194,12 +265,15 @@ function rpmToSpeed(rpm: number): number {
 }
 
 function defaultMapping(target: CarOption): Mapping {
+  const tuned = DEFAULT_PACK_MAPPINGS[target.id];
+  if (tuned) return { ...tuned };
   const engine = engineMeta(target);
+  const pack = PACK_META[target.id];
   const rates = DEFAULT_RATES[target.engine] ?? [0.75, 1.45];
   return {
     fileId: DEFAULT_SAMPLE_BY_CAR[target.id] ?? "v8-ears68",
-    rpmLow: Number(engine.idleRpm) || 900,
-    rpmHigh: Number(engine.redlineRpm) || 8000,
+    rpmLow: pack?.idleRpm ?? (Number(engine.idleRpm) || 900),
+    rpmHigh: pack?.redlineRpm ?? (Number(engine.redlineRpm) || 8000),
     rateLow: rates[0],
     rateHigh: rates[1],
     curve: 1,
@@ -337,8 +411,9 @@ const tuner = new TunerAudio();
 function torqueFactor(rpm: number): number {
   const idle = idleRpm();
   const redline = redlineRpm();
+  const pack = PACK_META[car.id];
   const peak = clamp(
-    (Number(engineMeta(car).peakTorqueRpm) || (idle + redline) / 2) - idle,
+    ((pack?.peakTorqueRpm ?? Number(engineMeta(car).peakTorqueRpm)) || (idle + redline) / 2) - idle,
     1,
     redline - idle,
   ) / Math.max(1, redline - idle);
@@ -384,7 +459,8 @@ function simulate(dt: number): void {
     const fd = finalDrive();
     const rawRpm = (sim.speedMps / (2 * Math.PI * radius)) * ratio * fd * 60;
     sim.rpm = clamp(rawRpm, idle, redline);
-    const peakTorque = Number(engineMeta(car).peakTorque) || 300;
+    const pack = PACK_META[car.id];
+    const peakTorque = pack?.peakTorque ?? (Number(engineMeta(car).peakTorque) || 300);
     const combustionTorque = peakTorque * torqueFactor(sim.rpm) * throttle;
     const engineBrakeTorque =
       peakTorque * 0.3 * (0.3 + 0.7 * (sim.rpm / redline)) * (1 - 0.85 * throttle);
@@ -559,11 +635,13 @@ function renderMeta(): void {
     ["Engine", `${car.engine} · ${engine.label ?? "unknown"}`],
     ["Firing geometry", `${engine.cylinders ?? "?"} firing events`],
     ["Engine gears", `${engine.gears ?? "?"} forward`],
-    ["Idle / redline", `${engine.idleRpm ?? "?"} / ${engine.redlineRpm ?? "?"} rpm`],
-    ["Peak torque", `${engine.peakTorque ?? "?"} Nm @ ${engine.peakTorqueRpm ?? "?"} rpm`],
+    ["Idle / redline", `${idleRpm()} / ${redlineRpm()} rpm`],
+    ["Peak torque", `${PACK_META[car.id]?.peakTorque ?? engine.peakTorque ?? "?"} Nm @ ${PACK_META[car.id]?.peakTorqueRpm ?? engine.peakTorqueRpm ?? "?"} rpm`],
     ["Gearbox preset", `${vehicle.label ?? car.vehicle}`],
+    ["Gearbox gears", `${ratios.length} forward`],
     ["Gear ratios", ratios.map((r: number) => r.toFixed(2)).join(", ")],
     ["Final drive", `${finalDrive().toFixed(2)}:1`],
+    ["Gearbox source", PACK_META[car.id] ? "car pack" : "catalog preset"],
     ["Wheel radius", `${wheelRadius().toFixed(3)} m`],
     ["Mass", `${massKg()} kg`],
   ];
@@ -608,14 +686,12 @@ function updateManualMode(): void {
   brakeInput.disabled = manualRpmOn;
   autoGearsToggle.disabled = manualRpmOn;
   manualRpm.disabled = !manualRpmOn;
-  if (manualRpmOn) {
-    const idle = idleRpm();
-    const redline = redlineRpm();
-    manualRpm.min = String(idle);
-    manualRpm.max = String(redline);
-    manualRpm.value = String(clamp(Number(manualRpm.value) || 3000, idle, redline));
-    manualRpmValue.textContent = `${Math.round(Number(manualRpm.value))} rpm`;
-  }
+  const idle = idleRpm();
+  const redline = redlineRpm();
+  manualRpm.min = String(idle);
+  manualRpm.max = String(redline);
+  manualRpm.value = String(clamp(Number(manualRpm.value) || 3000, idle, redline));
+  manualRpmValue.textContent = `${Math.round(Number(manualRpm.value))} rpm`;
   updateGearNote();
 }
 
