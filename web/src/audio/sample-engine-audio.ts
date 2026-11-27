@@ -13,7 +13,7 @@
 //   ?sampleGain=0.3            override the master gain
 //   ?sampleEngineGain=0.55     engine trim against the noise bus
 
-import { EngineSimAudio, type TireAudioWheel } from "./engine-sim-audio.ts";
+import { SurfaceAudio, type SurfaceTireWheel } from "./surface-audio.ts";
 import { distanceGain } from "./remote-engine-mix.ts";
 
 export const NEAREST_SLOT = 0;
@@ -313,14 +313,13 @@ export class SampleEngineAudio {
   muted = false;
 
   private readonly engineId: string;
-  private readonly vehicleId: string;
   private readonly carId: string | undefined;
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private gain: GainNode | null = null;
   private source: AudioBufferSourceNode | null = null;
   private analyser: AnalyserNode | null = null;
-  private surfaceAudio: EngineSimAudio | null = null;
+  private surfaceAudio: SurfaceAudio | null = null;
   private starting: Promise<void> | null = null;
   private refRpm = DEFAULT_SAMPLE.refRpm;
   private lastRpm = 900;
@@ -332,7 +331,6 @@ export class SampleEngineAudio {
 
   constructor(options: { engine?: string; vehicle?: string; car?: string } = {}) {
     this.engineId = options.engine ?? "rotary2";
-    this.vehicleId = options.vehicle ?? "sports";
     this.carId = options.car;
   }
 
@@ -361,14 +359,6 @@ export class SampleEngineAudio {
       this.context = context;
       // Resume before the sample fetch so the user gesture still applies.
       await context.resume();
-      const surface = new EngineSimAudio({
-        engine: this.engineId,
-        vehicle: this.vehicleId,
-        surfaceOnly: true,
-        context,
-      });
-      await surface.start();
-      this.surfaceAudio = surface;
       const buffer = await loadSample(context, this.carId, this.engineId);
       if (!buffer) throw new Error("no engine sample available");
       this.refRpm = refRpmFor(this.carId, this.engineId);
@@ -381,6 +371,7 @@ export class SampleEngineAudio {
       const gain = context.createGain();
       gain.gain.value = 0;
       gain.connect(master);
+      this.surfaceAudio = new SurfaceAudio(context, gain);
       const source = context.createBufferSource();
       source.buffer = buffer;
       source.loop = true;
@@ -422,7 +413,7 @@ export class SampleEngineAudio {
     gear: number,
     rpm: number,
     speedMps: number,
-    wheels: TireAudioWheel[] = [],
+    wheels: SurfaceTireWheel[] = [],
   ): void {
     if (this.status !== "running" || !this.context) return;
     const now = this.context.currentTime;
@@ -443,7 +434,7 @@ export class SampleEngineAudio {
     const target = this.muted ? 0 : this.engineTarget(load);
     if (this.gain) this.gain.gain.setTargetAtTime(target, now, 0.06);
 
-    this.surfaceAudio?.update(_delta, throttle, _brake, gear, rpm, speedMps, wheels);
+    this.surfaceAudio?.update(wheels, speedMps);
 
     this.lastRpm = this.audioRpm;
     this.lastSpeedMps = Number(speedMps) || 0;
@@ -505,7 +496,6 @@ export class SampleEngineAudio {
     const now = this.context.currentTime;
     const target = muted ? 0 : this.engineTarget(this.lastLoad);
     this.gain.gain.setTargetAtTime(target, now, 0.03);
-    this.surfaceAudio?.setMuted(muted);
   }
 
   toggleMuted(): void {
