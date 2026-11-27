@@ -168,7 +168,7 @@ const ENGINE_TRIM =
 const NOISE_TRIM =
   Number.isFinite(noiseGainOverride) && noiseGainOverride > 0
     ? noiseGainOverride
-    : 1.6;
+    : 0.7;
 const REMOTE_MASTER = 0.55;
 
 const sampleCache = new WeakMap<
@@ -400,8 +400,8 @@ export class SampleEngineAudio {
       noise.start();
       const roadFilter = context.createBiquadFilter();
       roadFilter.type = "lowpass";
-      roadFilter.frequency.value = 850;
-      roadFilter.Q.value = 0.7;
+      roadFilter.frequency.value = 380;
+      roadFilter.Q.value = 0.6;
       const roadGain = context.createGain();
       roadGain.gain.value = 0;
       noise.connect(roadFilter);
@@ -409,8 +409,8 @@ export class SampleEngineAudio {
       roadGain.connect(master);
       const rollingFilter = context.createBiquadFilter();
       rollingFilter.type = "bandpass";
-      rollingFilter.frequency.value = 520;
-      rollingFilter.Q.value = 1.2;
+      rollingFilter.frequency.value = 300;
+      rollingFilter.Q.value = 1.0;
       const rollingGain = context.createGain();
       rollingGain.gain.value = 0;
       noise.connect(rollingFilter);
@@ -418,8 +418,8 @@ export class SampleEngineAudio {
       rollingGain.connect(master);
       const tireFilter = context.createBiquadFilter();
       tireFilter.type = "bandpass";
-      tireFilter.frequency.value = 1100;
-      tireFilter.Q.value = 9;
+      tireFilter.frequency.value = 1500;
+      tireFilter.Q.value = 12;
       const tireGain = context.createGain();
       tireGain.gain.value = 0;
       noise.connect(tireFilter);
@@ -512,27 +512,27 @@ export class SampleEngineAudio {
     const roadTarget = this.muted
       ? 0
       : clamp(
-          0.16 * speedFactor * surfaceRoadFactor(surface) * NOISE_TRIM,
+          0.09 * speedFactor * surfaceRoadFactor(surface) * NOISE_TRIM,
           0,
-          0.4,
+          0.25,
         );
     const rollingTarget = this.muted
       ? 0
-      : clamp(0.12 * speedFactor * NOISE_TRIM, 0, 0.3);
+      : clamp(0.06 * speedFactor * NOISE_TRIM, 0, 0.18);
     const loadFactor = clamp(wheelLoad / 4500, 0.2, 1);
     const tireTarget = this.muted
       ? 0
       : clamp(
-          skid * 2.2 * loadFactor * (0.35 + speedFactor) * NOISE_TRIM,
+          skid * 1.7 * loadFactor * (0.35 + speedFactor) * NOISE_TRIM,
           0,
-          0.55,
+          0.32,
         );
     if (this.roadGain) {
       this.roadGain.gain.setTargetAtTime(roadTarget, now, 0.08);
     }
     if (this.roadFilter) {
       this.roadFilter.frequency.setTargetAtTime(
-        750 + 450 * speedFactor,
+        380 + 240 * speedFactor,
         now,
         0.08,
       );
@@ -542,7 +542,7 @@ export class SampleEngineAudio {
     }
     if (this.rollingFilter) {
       this.rollingFilter.frequency.setTargetAtTime(
-        420 + 260 * speedFactor,
+        300 + 140 * speedFactor,
         now,
         0.1,
       );
@@ -552,7 +552,7 @@ export class SampleEngineAudio {
     }
     if (this.tireFilter) {
       this.tireFilter.frequency.setTargetAtTime(
-        900 + 800 * clamp(skid, 0, 1),
+        1500 + 1200 * clamp(skid, 0, 1),
         now,
         0.05,
       );
