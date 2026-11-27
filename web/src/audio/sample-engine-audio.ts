@@ -1,17 +1,18 @@
 // Lightweight recorded-sample engine audio for the sample-engine test branch.
 //
-// Replaces the runtime Engine_Sim voices with looping recorded Speed Dreams
-// samples. If a recorded sample is missing or fails to decode, it falls back to
-// a loop baked offline from Engine_Sim. The synth is never instantiated at
-// runtime on this path.
+// Each car now prefers its own Speed Dreams source sample where one exists,
+// falling back to the engine-profile sample, then to a loop baked offline from
+// Engine_Sim. The synth is never instantiated at runtime on this path.
 //
 // Test knobs (URL query):
-//   ?sampleSource=fallback   prefer the baked fallback
-//   ?sampleEngine=v8cross    force one sample for every voice
-//   ?sampleRefRpm=3500       override the sample reference rpm
-//   ?sampleRateMin=0.7       override the lowest playback rate
-//   ?sampleRateMax=1.5       override the highest playback rate
-//   ?sampleGain=0.3          override the master gain
+//   ?sampleSource=fallback     prefer the baked fallback
+//   ?sampleEngine=v8cross      force one sample for every voice
+//   ?sampleRefRpm=3500         override the sample reference rpm
+//   ?sampleRateMin=0.7         override the lowest playback rate
+//   ?sampleRateMax=1.5         override the highest playback rate
+//   ?sampleGain=0.3            override the master gain
+//   ?sampleEngineGain=0.55     engine trim against the noise bus
+//   ?sampleNoiseGain=1.6       tyre/road trim
 
 import { distanceGain } from "./remote-engine-mix.ts";
 
@@ -21,6 +22,7 @@ export type RemoteAudioMode = "lite" | "full";
 export interface RemoteAudioOptions {
   engine?: string;
   vehicle?: string;
+  car?: string;
   mode?: RemoteAudioMode;
   contextProvider?: () => AudioContext | null;
 }
@@ -49,9 +51,15 @@ interface SampleDef {
   rateMax: number;
 }
 
+interface CarDef {
+  recorded: string;
+  refRpm?: number;
+  rateMin?: number;
+  rateMax?: number;
+}
+
 // Narrow rate ranges: the first pass let rpm sweep 0.25x-3x, which made every
-// car dive too low at idle and scream too high at redline. These keep the note
-// moving with rpm without leaving the sample's usable band.
+// car dive too low at idle and scream too high at redline.
 const SAMPLE_DEFS: Record<string, SampleDef> = {
   rotary2: {
     recorded: "speed-dreams/rotary2.wav",
@@ -76,6 +84,19 @@ const SAMPLE_DEFS: Record<string, SampleDef> = {
   },
 };
 
+// Per-car source loops. The 67GP cars have their own Speed Dreams recordings;
+// the engine-profile loop is only a fallback for unknown packs.
+const CAR_DEFS: Record<string, CarDef> = {
+  "sc-deckard-conejo": { recorded: "speed-dreams/v8-ears68.wav" },
+  "mazda-rx7": { recorded: "speed-dreams/rotary2.wav" },
+  "67gp-cavallo-123": { recorded: "speed-dreams/cars/f123bis.wav" },
+  "67gp-guthrie-eagle": { recorded: "speed-dreams/cars/GT3O.wav" },
+  "67gp-kuiper-t81": { recorded: "speed-dreams/cars/GT3O.wav" },
+  "67gp-murasama-37a": { recorded: "speed-dreams/cars/037a.wav" },
+  "67gp-mango-ms7": { recorded: "speed-dreams/cars/formulaford.wav" },
+  "67gp-upping-ut19": { recorded: "speed-dreams/cars/GT3O.wav" },
+};
+
 const DEFAULT_SAMPLE = SAMPLE_DEFS.v8cross;
 const ASSET_BASE = new URL("../assets/audio/", import.meta.url);
 
@@ -86,27 +107,49 @@ const refOverride = Number(query.get("sampleRefRpm"));
 const rateMinOverride = Number(query.get("sampleRateMin"));
 const rateMaxOverride = Number(query.get("sampleRateMax"));
 const gainOverride = Number(query.get("sampleGain"));
+const engineGainOverride = Number(query.get("sampleEngineGain"));
+const noiseGainOverride = Number(query.get("sampleNoiseGain"));
 const MASTER_GAIN =
-  Number.isFinite(gainOverride) && gainOverride > 0 ? gainOverride : 0.3;
+  Number.isFinite(gainOverride) && gainOverride > 0 ? gainOverride : 0.32;
+const ENGINE_TRIM =
+  Number.isFinite(engineGainOverride) && engineGainOverride > 0
+    ? engineGainOverride
+    : 0.55;
+const NOISE_TRIM =
+  Number.isFinite(noiseGainOverride) && noiseGainOverride > 0
+    ? noiseGainOverride
+    : 1.6;
+const REMOTE_MASTER = 0.55;
 
 const sampleCache = new WeakMap<
   AudioContext,
   Map<string, Promise<AudioBuffer | null>>
 >();
 
-function sampleDef(engine: string | undefined): SampleDef {
-  const forced = forcedEngine ? SAMPLE_DEFS[forcedEngine] : undefined;
-  if (forced) return forced;
-  return (engine && SAMPLE_DEFS[engine]) || DEFAULT_SAMPLE;
+function sampleDef(car: string | undefined, engine: string | undefined): SampleDef {
+  if (forcedEngine && SAMPLE_DEFS[forcedEngine]) return SAMPLE_DEFS[forcedEngine];
+  const base = (engine && SAMPLE_DEFS[engine]) || DEFAULT_SAMPLE;
+  const carDef = car ? CAR_DEFS[car] : undefined;
+  if (!carDef) return base;
+  return {
+    ...base,
+    recorded: carDef.recorded,
+    refRpm: carDef.refRpm ?? base.refRpm,
+    rateMin: carDef.rateMin ?? base.rateMin,
+    rateMax: carDef.rateMax ?? base.rateMax,
+  };
 }
 
-function refRpmFor(engine: string | undefined): number {
+function refRpmFor(car: string | undefined, engine: string | undefined): number {
   if (Number.isFinite(refOverride) && refOverride > 0) return refOverride;
-  return sampleDef(engine).refRpm;
+  return sampleDef(car, engine).refRpm;
 }
 
-function rateRangeFor(engine: string | undefined): [number, number] {
-  const def = sampleDef(engine);
+function rateRangeFor(
+  car: string | undefined,
+  engine: string | undefined,
+): [number, number] {
+  const def = sampleDef(car, engine);
   const min =
     Number.isFinite(rateMinOverride) && rateMinOverride > 0
       ? rateMinOverride
@@ -118,9 +161,13 @@ function rateRangeFor(engine: string | undefined): [number, number] {
   return [Math.min(min, max), Math.max(min, max)];
 }
 
-function playbackRate(engine: string | undefined, rpm: number): number {
-  const [min, max] = rateRangeFor(engine);
-  return clamp(rpm / refRpmFor(engine), min, max);
+function playbackRate(
+  car: string | undefined,
+  engine: string | undefined,
+  rpm: number,
+): number {
+  const [min, max] = rateRangeFor(car, engine);
+  return clamp(rpm / refRpmFor(car, engine), min, max);
 }
 
 async function decode(
@@ -130,11 +177,33 @@ async function decode(
   const url = new URL(relative, ASSET_BASE);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${url}`);
-  return context.decodeAudioData(await response.arrayBuffer());
+  return normalizeBuffer(context, await context.decodeAudioData(await response.arrayBuffer()));
+}
+
+// Recorded loops have very different levels. Normalise each decoded loop to a
+// consistent RMS (with a peak ceiling) so a V12 car does not dominate a V8.
+function normalizeBuffer(context: AudioContext, buffer: AudioBuffer): AudioBuffer {
+  const data = buffer.getChannelData(0);
+  let sum = 0;
+  let peak = 0;
+  for (let i = 0; i < data.length; i += 1) {
+    const value = data[i];
+    sum += value * value;
+    peak = Math.max(peak, Math.abs(value));
+  }
+  const rms = Math.sqrt(sum / data.length);
+  if (rms < 1e-6 || peak < 1e-6) return buffer;
+  let gain = 0.11 / rms;
+  gain = Math.min(gain, 0.92 / peak);
+  gain = clamp(gain, 0.25, 4);
+  for (let i = 0; i < data.length; i += 1) data[i] *= gain;
+  void context;
+  return buffer;
 }
 
 function loadSample(
   context: AudioContext,
+  car: string | undefined,
   engine: string | undefined,
 ): Promise<AudioBuffer | null> {
   let cache = sampleCache.get(context);
@@ -142,10 +211,10 @@ function loadSample(
     cache = new Map();
     sampleCache.set(context, cache);
   }
-  const key = `${engine ?? "default"}:${forcedEngine ?? ""}:${SOURCE}`;
+  const key = `${car ?? ""}:${engine ?? "default"}:${forcedEngine ?? ""}:${SOURCE}`;
   const existing = cache.get(key);
   if (existing) return existing;
-  const def = sampleDef(engine);
+  const def = sampleDef(car, engine);
   const order =
     SOURCE === "fallback"
       ? [def.fallback, def.recorded]
@@ -176,12 +245,23 @@ function surfaceRoadFactor(surface: string | undefined): number {
   return 1;
 }
 
+function limiter(context: AudioContext): DynamicsCompressorNode {
+  const node = context.createDynamicsCompressor();
+  node.threshold.value = -14;
+  node.knee.value = 12;
+  node.ratio.value = 6;
+  node.attack.value = 0.003;
+  node.release.value = 0.25;
+  return node;
+}
+
 export class SampleEngineAudio {
   status: "off" | "starting" | "running" | "error" = "off";
   error = "";
   muted = false;
 
   private readonly engineId: string;
+  private readonly carId: string | undefined;
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private gain: GainNode | null = null;
@@ -190,6 +270,8 @@ export class SampleEngineAudio {
   private noise: AudioBufferSourceNode | null = null;
   private roadGain: GainNode | null = null;
   private roadFilter: BiquadFilterNode | null = null;
+  private rollingGain: GainNode | null = null;
+  private rollingFilter: BiquadFilterNode | null = null;
   private tireGain: GainNode | null = null;
   private tireFilter: BiquadFilterNode | null = null;
   private starting: Promise<void> | null = null;
@@ -202,8 +284,9 @@ export class SampleEngineAudio {
   private lastRoad = 0;
   private lastSurface = "ASPHALT";
 
-  constructor(options: { engine?: string; vehicle?: string } = {}) {
+  constructor(options: { engine?: string; vehicle?: string; car?: string } = {}) {
     this.engineId = options.engine ?? "rotary2";
+    this.carId = options.car;
   }
 
   get contextState(): string {
@@ -231,13 +314,15 @@ export class SampleEngineAudio {
       this.context = context;
       // Resume before the sample fetch so the user gesture still applies.
       await context.resume();
-      const buffer = await loadSample(context, this.engineId);
+      const buffer = await loadSample(context, this.carId, this.engineId);
       if (!buffer) throw new Error("no engine sample available");
-      this.refRpm = refRpmFor(this.engineId);
+      this.refRpm = refRpmFor(this.carId, this.engineId);
 
+      const comp = limiter(context);
+      comp.connect(context.destination);
       const master = context.createGain();
       master.gain.value = MASTER_GAIN;
-      master.connect(context.destination);
+      master.connect(comp);
       const gain = context.createGain();
       gain.gain.value = 0;
       gain.connect(master);
@@ -248,9 +333,9 @@ export class SampleEngineAudio {
       source.start();
       const analyser = context.createAnalyser();
       analyser.fftSize = 256;
-      master.connect(analyser);
+      comp.connect(analyser);
 
-      // Shared noise bed for road and tyre layers.
+      // Shared noise bed for road, rolling tyre, and squeal layers.
       const noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
       const noiseData = noiseBuffer.getChannelData(0);
       for (let i = 0; i < noiseData.length; i += 1) {
@@ -269,6 +354,15 @@ export class SampleEngineAudio {
       noise.connect(roadFilter);
       roadFilter.connect(roadGain);
       roadGain.connect(master);
+      const rollingFilter = context.createBiquadFilter();
+      rollingFilter.type = "bandpass";
+      rollingFilter.frequency.value = 520;
+      rollingFilter.Q.value = 1.2;
+      const rollingGain = context.createGain();
+      rollingGain.gain.value = 0;
+      noise.connect(rollingFilter);
+      rollingFilter.connect(rollingGain);
+      rollingGain.connect(master);
       const tireFilter = context.createBiquadFilter();
       tireFilter.type = "bandpass";
       tireFilter.frequency.value = 1100;
@@ -286,6 +380,8 @@ export class SampleEngineAudio {
       this.noise = noise;
       this.roadFilter = roadFilter;
       this.roadGain = roadGain;
+      this.rollingFilter = rollingFilter;
+      this.rollingGain = rollingGain;
       this.tireFilter = tireFilter;
       this.tireGain = tireGain;
       this.status = "running";
@@ -312,13 +408,13 @@ export class SampleEngineAudio {
     const safeRpm = Math.max(0, Number(rpm) || 0);
     if (this.source) {
       this.source.playbackRate.setTargetAtTime(
-        playbackRate(this.engineId, safeRpm),
+        playbackRate(this.carId, this.engineId, safeRpm),
         now,
         0.04,
       );
     }
     const load = clamp(Number(throttle) || 0, 0, 1);
-    const target = this.muted ? 0 : 0.45 + 0.55 * load;
+    const target = this.muted ? 0 : ENGINE_TRIM * (0.45 + 0.55 * load);
     if (this.gain) this.gain.gain.setTargetAtTime(target, now, 0.06);
 
     // Tyre and road layers from the same wheel telemetry the synth used.
@@ -348,11 +444,22 @@ export class SampleEngineAudio {
     const speedFactor = clamp(speed / 30, 0, 1);
     const roadTarget = this.muted
       ? 0
-      : clamp(0.08 * speedFactor * surfaceRoadFactor(surface), 0, 0.2);
+      : clamp(
+          0.16 * speedFactor * surfaceRoadFactor(surface) * NOISE_TRIM,
+          0,
+          0.4,
+        );
+    const rollingTarget = this.muted
+      ? 0
+      : clamp(0.12 * speedFactor * NOISE_TRIM, 0, 0.3);
     const loadFactor = clamp(wheelLoad / 4500, 0.2, 1);
     const tireTarget = this.muted
       ? 0
-      : clamp(skid * 2.2 * loadFactor * (0.35 + speedFactor), 0, 0.35);
+      : clamp(
+          skid * 2.2 * loadFactor * (0.35 + speedFactor) * NOISE_TRIM,
+          0,
+          0.55,
+        );
     if (this.roadGain) {
       this.roadGain.gain.setTargetAtTime(roadTarget, now, 0.08);
     }
@@ -361,6 +468,16 @@ export class SampleEngineAudio {
         750 + 450 * speedFactor,
         now,
         0.08,
+      );
+    }
+    if (this.rollingGain) {
+      this.rollingGain.gain.setTargetAtTime(rollingTarget, now, 0.1);
+    }
+    if (this.rollingFilter) {
+      this.rollingFilter.frequency.setTargetAtTime(
+        420 + 260 * speedFactor,
+        now,
+        0.1,
       );
     }
     if (this.tireGain) {
@@ -393,6 +510,7 @@ export class SampleEngineAudio {
       load: this.lastLoad,
       skid: this.lastSkid,
       engine: this.engineId,
+      car: this.carId ?? "",
       refRpm: this.refRpm,
       source: SOURCE,
     };
@@ -431,9 +549,10 @@ export class SampleEngineAudio {
     this.muted = muted;
     if (!this.context || !this.gain) return;
     const now = this.context.currentTime;
-    const target = muted ? 0 : 0.45 + 0.55 * this.lastLoad;
+    const target = muted ? 0 : ENGINE_TRIM * (0.45 + 0.55 * this.lastLoad);
     this.gain.gain.setTargetAtTime(target, now, 0.03);
     this.roadGain?.gain.setTargetAtTime(0, now, 0.03);
+    this.rollingGain?.gain.setTargetAtTime(0, now, 0.03);
     this.tireGain?.gain.setTargetAtTime(0, now, 0.03);
   }
 
@@ -494,6 +613,8 @@ export class SampleEngineAudio {
     this.analyser?.disconnect();
     this.roadFilter?.disconnect();
     this.roadGain?.disconnect();
+    this.rollingFilter?.disconnect();
+    this.rollingGain?.disconnect();
     this.tireFilter?.disconnect();
     this.tireGain?.disconnect();
     this.source = null;
@@ -503,6 +624,8 @@ export class SampleEngineAudio {
     this.analyser = null;
     this.roadFilter = null;
     this.roadGain = null;
+    this.rollingFilter = null;
+    this.rollingGain = null;
     this.tireFilter = null;
     this.tireGain = null;
     const context = this.context;
@@ -517,6 +640,7 @@ interface RemoteVoice {
   gain: GainNode;
   engine: string;
   vehicle: string;
+  car: string | undefined;
   ready: boolean;
 }
 
@@ -527,18 +651,23 @@ export class SampleRemoteEngineAudio {
 
   private readonly engineId: string;
   private readonly vehicleId: string;
+  private readonly carId: string | undefined;
   private readonly contextProvider: (() => AudioContext | null) | null;
   private context: AudioContext | null = null;
   private ownsContext = true;
   private master: GainNode | null = null;
   private voices = new Map<number, RemoteVoice>();
-  private profiles = new Map<number, { engine?: string; vehicle?: string }>();
+  private profiles = new Map<
+    number,
+    { engine?: string; vehicle?: string; car?: string }
+  >();
   private startingVoices = new Set<number>();
   private starting: Promise<void> | null = null;
 
   constructor(options: RemoteAudioOptions = {}) {
     this.engineId = options.engine ?? "rotary2";
     this.vehicleId = options.vehicle ?? "sports";
+    this.carId = options.car;
     this.mode = options.mode ?? "full";
     this.contextProvider = options.contextProvider ?? null;
   }
@@ -551,19 +680,31 @@ export class SampleRemoteEngineAudio {
     return this.voices.size;
   }
 
-  profileForSlot(slot: number): { engine: string; vehicle: string } {
+  profileForSlot(slot: number): {
+    engine: string;
+    vehicle: string;
+    car: string | undefined;
+  } {
     const profile = this.profiles.get(slot);
     return {
       engine: profile?.engine ?? this.engineId,
       vehicle: profile?.vehicle ?? this.vehicleId,
+      car: profile?.car ?? this.carId,
     };
   }
 
-  setProfile(slot: number, engine: string, vehicle: string): void {
+  setProfile(
+    slot: number,
+    engine: string,
+    vehicle: string,
+    car?: string,
+  ): void {
     const before = this.profileForSlot(slot);
-    this.profiles.set(slot, { engine, vehicle });
+    this.profiles.set(slot, { engine, vehicle, car });
     const after = this.profileForSlot(slot);
-    if (before.engine !== after.engine) this.remove(slot);
+    if (before.engine !== after.engine || before.car !== after.car) {
+      this.remove(slot);
+    }
   }
 
   async start(): Promise<void> {
@@ -588,9 +729,11 @@ export class SampleRemoteEngineAudio {
       this.ownsContext = shared === null;
       this.context = context;
       await context.resume();
+      const comp = limiter(context);
+      comp.connect(context.destination);
       const master = context.createGain();
-      master.gain.value = 1;
-      master.connect(context.destination);
+      master.gain.value = REMOTE_MASTER;
+      master.connect(comp);
       this.master = master;
       this.status = "running";
     } catch (error) {
@@ -622,14 +765,14 @@ export class SampleRemoteEngineAudio {
     if (!voice.ready) return;
     const now = this.context.currentTime;
     voice.source.playbackRate.setTargetAtTime(
-      playbackRate(voice.engine, Number(state.rpm) || 0),
+      playbackRate(voice.car, voice.engine, Number(state.rpm) || 0),
       now,
       0.04,
     );
     const load = clamp(Number(state.throttle) || 0, 0, 1);
     const target = this.muted
       ? 0
-      : distanceGain(distance) * (0.55 + 0.45 * load);
+      : distanceGain(distance) * (0.45 + 0.35 * load);
     voice.gain.gain.setTargetAtTime(target, now, 0.06);
   }
 
@@ -675,6 +818,7 @@ export class SampleRemoteEngineAudio {
       slot,
       engine: voice.engine,
       vehicle: voice.vehicle,
+      car: voice.car ?? "",
       ready: voice.ready,
       gain: voice.gain.gain.value,
     }));
@@ -707,10 +851,16 @@ export class SampleRemoteEngineAudio {
     this.startingVoices.add(slot);
     const profile = this.profileForSlot(slot);
     try {
-      const buffer = await loadSample(context, profile.engine);
+      const buffer = await loadSample(context, profile.car, profile.engine);
       if (!buffer) return;
       const current = this.profileForSlot(slot);
-      if (current.engine !== profile.engine || this.voices.has(slot)) return;
+      if (
+        current.engine !== profile.engine ||
+        current.car !== profile.car ||
+        this.voices.has(slot)
+      ) {
+        return;
+      }
       const source = context.createBufferSource();
       source.buffer = buffer;
       source.loop = true;
@@ -724,6 +874,7 @@ export class SampleRemoteEngineAudio {
         gain,
         engine: profile.engine,
         vehicle: profile.vehicle,
+        car: profile.car,
         ready: true,
       });
     } catch (error) {

@@ -386,11 +386,11 @@ let remoteSharesPlayerContext = false;
 // Whether this session has AI or multiplayer opponents to voice.
 let sessionHasOpponents = false;
 // Player car audio profile, reused when rebuilding remote voices.
-let playerAudioProfile: { engine?: string; vehicle?: string } | undefined;
-// AI slot (1..9) -> catalog engine/vehicle profile for positional voices.
-const aiAudioProfiles = new Map<number, { engine: string; vehicle: string }>();
+let playerAudioProfile: { engine?: string; vehicle?: string; car?: string } | undefined;
+// AI slot (1..9) -> catalog engine/vehicle/car profile for positional voices.
+const aiAudioProfiles = new Map<number, { engine: string; vehicle: string; car: string }>();
 // Roster snapshot used to assign per-slot profiles when remote audio is rebuilt.
-let sessionAiRoster: Array<{ engine: string; vehicle: string }> = [];
+let sessionAiRoster: Array<{ id: string; engine: string; vehicle: string }> = [];
 let wheel: WheelFfb | null = null;
 let ffbSab: SharedArrayBuffer | null = null;
 const storedAudioPreference = loadAudioPreference();
@@ -858,7 +858,7 @@ function renderAiFrames(
     const profile = aiAudioProfiles.get(nearest.slot);
     if (profile) {
       // No-op when the nearest car keeps the current engine profile.
-      remoteAudio.setProfile(NEAREST_SLOT, profile.engine, profile.vehicle);
+      remoteAudio.setProfile(NEAREST_SLOT, profile.engine, profile.vehicle, profile.car);
     }
     remoteAudio.update(
       NEAREST_SLOT,
@@ -1549,9 +1549,9 @@ function createRemoteAudio(): void {
   if (!mpMode) {
     sessionAiRoster.forEach((car, index) => {
       const slot = index + 1;
-      aiAudioProfiles.set(slot, { engine: car.engine, vehicle: car.vehicle });
+      aiAudioProfiles.set(slot, { engine: car.engine, vehicle: car.vehicle, car: car.id });
       if (AI_AUDIO_MODE !== "nearest") {
-        instance.setProfile(slot, car.engine, car.vehicle);
+        instance.setProfile(slot, car.engine, car.vehicle, car.id);
       }
     });
   }
@@ -1844,7 +1844,7 @@ async function boot() {
   // the session silent. Opponent voices are only added once the worker is up.
   const carOption = findCar(carPack.manifest.id);
   playerAudioProfile = carOption
-    ? { engine: carOption.engine, vehicle: carOption.vehicle }
+    ? { engine: carOption.engine, vehicle: carOption.vehicle, car: carOption.id }
     : undefined;
   audio = new EngineSimAudio(playerAudioProfile);
   sessionHasOpponents = mpMode || (!soloMode && aiCount > 0);
