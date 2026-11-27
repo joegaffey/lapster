@@ -1,8 +1,8 @@
 // Engine audio tuning tool.
 //
-// Standalone dev page. The garage viewer supplies the real car model in a
-// studio; a local longitudinal road-load model turns its wheels and drives the
-// sample audio. Throttle/brake only: there is no steering.
+// Real garage car models in a studio. A longitudinal road-load model drives the
+// wheels and engine audio. Throttle/brake only; no steering. Audio is a toggle;
+// auto gears and Neutral are available.
 
 import {
   CAR_OPTIONS,
@@ -38,6 +38,7 @@ interface SimState {
   brake: number;
   wheelAngle: number;
   acceleration: number;
+  shiftCooldown: number;
 }
 
 const SAMPLES: SampleOption[] = [
@@ -81,6 +82,7 @@ const sampleSelect = $<HTMLSelectElement>("sample");
 const fileInput = $<HTMLInputElement>("file");
 const throttleInput = $<HTMLInputElement>("throttle");
 const brakeInput = $<HTMLInputElement>("brake");
+const autoGearsToggle = $<HTMLInputElement>("auto-gears");
 const gearSelect = $<HTMLSelectElement>("gear");
 const graph = $<HTMLCanvasElement>("graph");
 const status = $<HTMLDivElement>("status");
@@ -101,10 +103,14 @@ try {
 let car: CarOption = CAR_OPTIONS[0];
 let mapping: Mapping = defaultMapping(car);
 let customUrls = new Map<string, string>();
-let tunerMuted = false;
 let lastRate = 0;
 let garageReady = false;
 let garageCategory = "";
+let garageKeysAttached = false;
+let audioOn = false;
+let keyThrottle = false;
+let keyBrake = false;
+let autoGears = true;
 const sim: SimState = {
   speedMps: 0,
   rpm: 900,
@@ -113,6 +119,7 @@ const sim: SimState = {
   brake: 0,
   wheelAngle: 0,
   acceleration: 0,
+  shiftCooldown: 0.5,
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -165,13 +172,16 @@ function redlineRpm(): number {
 }
 
 function selectedRatio(): number {
+  const index = Number(gearSelect.value);
+  if (index < 0) return 0;
   const ratios = gearRatios();
-  const index = clamp(Number(gearSelect.value) || 0, 0, ratios.length - 1);
-  return ratios[index] || 1;
+  return ratios[clamp(index, 0, ratios.length - 1)] || 1;
 }
 
 function rpmToSpeed(rpm: number): number {
-  const wheelRpm = rpm / Math.max(0.1, selectedRatio() * finalDrive());
+  const ratio = selectedRatio();
+  if (ratio <= 0) return 0;
+  const wheelRpm = rpm / Math.max(0.1, ratio * finalDrive());
   return (wheelRpm / 60) * 2 * Math.PI * wheelRadius();
 }
 
@@ -303,24 +313,50 @@ function torqueFactor(rpm: number): number {
 }
 
 function simulate(dt: number): void {
-  sim.gearIndex = clamp(Number(gearSelect.value) || 0, 0, gearRatios().length - 1);
+  sim.shiftCooldown = Math.max(0, sim.shiftCooldown - dt);
+  sim.gearIndex = Number(gearSelect.value);
   const throttle = clamp(Number(throttleInput.value) || 0, 0, 1);
   const brake = clamp(Number(brakeInput.value) || 0, 0, 1);
-  const ratio = selectedRatio();
-  const fd = finalDrive();
-  const radius = wheelRadius();
   const idle = idleRpm();
   const redline = redlineRpm();
-  const rawRpm = (sim.speedMps / (2 * Math.PI * radius)) * ratio * fd * 60;
-  sim.rpm = clamp(rawRpm, idle, redline);
-  const engineTorque = (Number(engineMeta(car).peakTorque) || 300) * torqueFactor(sim.rpm) * throttle;
-  const wheelForce = (engineTorque * ratio * fd * 0.9) / radius;
+  const radius = wheelRadius();
+  const mass = massKg();
   const drag = 0.392 * sim.speedMps * sim.speedMps;
-  const rolling = 0.012 * massKg() * 9.81;
-  const brakeForce = sim.speedMps > 0.05 ? brake * massKg() * 9.0 : 0;
-  const acceleration = (wheelForce - drag - rolling - brakeForce) / massKg();
-  sim.speedMps = Math.max(0, sim.speedMps + acceleration * dt);
-  sim.acceleration = acceleration;
+  const rolling = 0.012 * mass * 9.81;
+  const brakeForce = sim.speedMps > 0.05 ? brake * mass * 9.0 : 0;
+  const neutral = sim.gearIndex < 0;
+
+  if (neutral) {
+    const target = idle + throttle * (redline - idle);
+    sim.rpm += (target - sim.rpm) * Math.min(1, dt / 0.18);
+    sim.rpm = clamp(sim.rpm, idle, redline);
+    const acceleration = (-drag - rolling - brakeForce) / mass;
+    sim.speedMps = Math.max(0, sim.speedMps + acceleration * dt);
+    sim.acceleration = acceleration;
+  } else {
+    const ratio = selectedRatio();
+    const fd = finalDrive();
+    const rawRpm = (sim.speedMps / (2 * Math.PI * radius)) * ratio * fd * 60;
+    sim.rpm = clamp(rawRpm, idle, redline);
+    const engineTorque = (Number(engineMeta(car).peakTorque) || 300) * torqueFactor(sim.rpm) * throttle;
+    const wheelForce = (engineTorque * ratio * fd * 0.9) / radius;
+    const acceleration = (wheelForce - drag - rolling - brakeForce) / mass;
+    sim.speedMps = Math.max(0, sim.speedMps + acceleration * dt);
+    sim.acceleration = acceleration;
+    if (autoGears && sim.shiftCooldown <= 0) {
+      const ratios = gearRatios();
+      if (sim.rpm >= redline * 0.93 && sim.gearIndex < ratios.length - 1) {
+        sim.gearIndex += 1;
+        gearSelect.value = String(sim.gearIndex);
+        sim.shiftCooldown = 0.35;
+      } else if (sim.rpm <= idle + 280 && sim.gearIndex > 0) {
+        sim.gearIndex -= 1;
+        gearSelect.value = String(sim.gearIndex);
+        sim.shiftCooldown = 0.6;
+      }
+    }
+  }
+
   sim.throttle = throttle;
   sim.brake = brake;
   sim.wheelAngle += (sim.speedMps / Math.max(0.05, radius)) * dt;
@@ -366,6 +402,51 @@ function syncGarageWheels(): void {
   }
 }
 
+function attachKeys(win: Window): void {
+  win.addEventListener("keydown", onKeyDown);
+  win.addEventListener("keyup", onKeyUp);
+  win.addEventListener("blur", releaseKeys);
+}
+
+function onKeyDown(event: KeyboardEvent): void {
+  const key = event.key.toLowerCase();
+  if (key === "w" || key === "arrowup") {
+    event.preventDefault();
+    if (!keyThrottle) setThrottleKey(true);
+  } else if (key === "s" || key === "arrowdown") {
+    event.preventDefault();
+    if (!keyBrake) setBrakeKey(true);
+  }
+}
+
+function onKeyUp(event: KeyboardEvent): void {
+  const key = event.key.toLowerCase();
+  if (key === "w" || key === "arrowup") {
+    event.preventDefault();
+    if (keyThrottle) setThrottleKey(false);
+  } else if (key === "s" || key === "arrowdown") {
+    event.preventDefault();
+    if (keyBrake) setBrakeKey(false);
+  }
+}
+
+function releaseKeys(): void {
+  if (keyThrottle) setThrottleKey(false);
+  if (keyBrake) setBrakeKey(false);
+}
+
+function setThrottleKey(active: boolean): void {
+  keyThrottle = active;
+  throttleInput.value = active ? "1" : "0";
+  updateControlLabels();
+}
+
+function setBrakeKey(active: boolean): void {
+  keyBrake = active;
+  brakeInput.value = active ? "1" : "0";
+  updateControlLabels();
+}
+
 function selectGarageBay(): void {
   const viewer = garageWindow()?.__garageViewer;
   if (!viewer) return;
@@ -389,6 +470,10 @@ function waitForGarage(): void {
       garageReady = win.__garageViewerReady === true;
       hideGarageHud();
       selectGarageBay();
+      if (!garageKeysAttached && win) {
+        attachKeys(win);
+        garageKeysAttached = true;
+      }
       setStatus(
         win.__garageViewerError
           ? `Garage failed: ${win.__garageViewerError}`
@@ -408,6 +493,7 @@ function waitForGarage(): void {
 function loadGarage(category: string): void {
   garageCategory = category;
   garageReady = false;
+  garageKeysAttached = false;
   setGarageSelection();
   garageFrame.src = `../garage/?category=${encodeURIComponent(category)}&v=audio-tune-${Date.now()}`;
   waitForGarage();
@@ -437,24 +523,38 @@ function renderMeta(): void {
 
 function rebuildGearSelect(): void {
   const ratios = gearRatios();
-  const current = Number(gearSelect.value) || 0;
-  gearSelect.innerHTML = ratios
-    .map((r: number, i: number) => `<option value="${i}">${i + 1} — ${r.toFixed(2)}</option>`)
-    .join("");
-  gearSelect.value = String(clamp(current, 0, ratios.length - 1));
+  const current = Number(gearSelect.value);
+  gearSelect.innerHTML =
+    `<option value="-1">N</option>` +
+    ratios
+      .map((r: number, i: number) => `<option value="${i}">${i + 1} — ${r.toFixed(2)}</option>`)
+      .join("");
+  gearSelect.value = current >= 0 && current < ratios.length ? String(current) : "0";
 }
 
 function updateGearNote(): void {
+  const index = Number(gearSelect.value);
+  if (index < 0) {
+    gearNote.textContent = "Neutral — engine free revs; car coasts.";
+    gearNote.classList.remove("warn");
+    return;
+  }
   const ratio = selectedRatio();
   const maxSpeed = rpmToSpeed(redlineRpm()) * 3.6;
   const over = sim.speedMps * 3.6 > maxSpeed + 1;
-  gearNote.textContent = `Gear ${Number(gearSelect.value) + 1} · ${ratio.toFixed(2)}:1 · ${maxSpeed.toFixed(0)} km/h at redline${over ? " — over redline, shift up" : ""}`;
+  gearNote.textContent = `Gear ${index + 1} · ${ratio.toFixed(2)}:1 · ${maxSpeed.toFixed(0)} km/h at redline${over ? " — over redline, shift up" : ""}`;
   gearNote.classList.toggle("warn", over);
 }
 
 function updateControlLabels(): void {
   $("throttle-value").textContent = `${(Number(throttleInput.value) * 100).toFixed(0)}%`;
   $("brake-value").textContent = `${(Number(brakeInput.value) * 100).toFixed(0)}%`;
+}
+
+function updateAudioButton(): void {
+  const button = $("audio");
+  button.textContent = audioOn ? "Audio: On" : "Audio: Off";
+  button.classList.toggle("active", audioOn);
 }
 
 function applyMappingToUi(): void {
@@ -511,13 +611,15 @@ async function loadSample(fileId: string): Promise<void> {
 function resetSim(): void {
   sim.speedMps = 0;
   sim.rpm = idleRpm();
-  sim.gearIndex = clamp(Number(gearSelect.value) || 0, 0, gearRatios().length - 1);
+  sim.gearIndex = 0;
   sim.throttle = 0;
   sim.brake = 0;
   sim.wheelAngle = 0;
   sim.acceleration = 0;
-  throttleInput.value = "0";
-  brakeInput.value = "0";
+  sim.shiftCooldown = 0.5;
+  gearSelect.value = "0";
+  setThrottleKey(false);
+  setBrakeKey(false);
   updateControlLabels();
   syncGarageWheels();
 }
@@ -588,25 +690,34 @@ function drawGraph(rpm: number): void {
 
 function updateLive(): void {
   const speedKph = sim.speedMps * 3.6;
+  const gear = sim.gearIndex < 0 ? "N" : String(sim.gearIndex + 1);
   $("rate-readout").textContent = `rpm ${Math.round(sim.rpm)} → ${lastRate.toFixed(3)}x`;
   liveBox.innerHTML = `
     <div class="k">Speed</div><div class="v">${speedKph.toFixed(0)} km/h</div>
     <div class="k">Engine rpm</div><div class="v">${Math.round(sim.rpm)}</div>
-    <div class="k">Gear</div><div class="v">${sim.gearIndex + 1}</div>
+    <div class="k">Gear</div><div class="v">${gear}${autoGears ? " (auto)" : ""}</div>
     <div class="k">Throttle</div><div class="v">${(sim.throttle * 100).toFixed(0)}%</div>
     <div class="k">Brake</div><div class="v">${(sim.brake * 100).toFixed(0)}%</div>
     <div class="k">Playback rate</div><div class="v">${lastRate.toFixed(3)}×</div>
     <div class="k">Sample</div><div class="v">${SAMPLE_BY_ID.get(mapping.fileId)?.label ?? mapping.fileId}</div>
   `;
   speedBig.innerHTML = `${Math.round(speedKph)}<span>km/h</span>`;
-  stageSub.textContent = `gear ${sim.gearIndex + 1} · ${Math.round(sim.rpm)} rpm · throttle ${(sim.throttle * 100).toFixed(0)}%`;
+  stageSub.textContent = `gear ${gear} · ${Math.round(sim.rpm)} rpm · throttle ${(sim.throttle * 100).toFixed(0)}%`;
 }
 
 let lastFrame = performance.now();
+let simAccumulator = 0;
 function frame(now: number): void {
-  const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+  const delta = Math.min(0.25, Math.max(0, (now - lastFrame) / 1000));
   lastFrame = now;
-  simulate(dt);
+  simAccumulator += delta;
+  const step = 1 / 60;
+  let steps = 0;
+  while (simAccumulator >= step && steps < 30) {
+    simulate(step);
+    simAccumulator -= step;
+    steps += 1;
+  }
   syncGarageWheels();
   lastRate = mapRate(mapping, sim.rpm);
   tuner.update(sim.rpm, sim.throttle);
@@ -625,7 +736,11 @@ function initialize(): void {
   ).join("");
   throttleInput.value = "0";
   brakeInput.value = "0";
+  autoGearsToggle.checked = true;
+  autoGears = true;
   updateControlLabels();
+  updateAudioButton();
+  attachKeys(window);
 
   carSelect.addEventListener("change", () => {
     const next = CAR_OPTIONS.find((option) => option.id === carSelect.value);
@@ -648,8 +763,23 @@ function initialize(): void {
   });
   throttleInput.addEventListener("input", updateControlLabels);
   brakeInput.addEventListener("input", updateControlLabels);
+  autoGearsToggle.addEventListener("change", () => {
+    autoGears = autoGearsToggle.checked;
+    if (autoGears && sim.gearIndex < 0) {
+      sim.gearIndex = 0;
+      gearSelect.value = "0";
+    }
+    sim.shiftCooldown = 0.5;
+    updateGearNote();
+  });
   gearSelect.addEventListener("change", () => {
-    sim.gearIndex = clamp(Number(gearSelect.value) || 0, 0, gearRatios().length - 1);
+    const value = Number(gearSelect.value);
+    sim.gearIndex = value;
+    if (value < 0 || autoGears) {
+      autoGears = false;
+      autoGearsToggle.checked = false;
+    }
+    sim.shiftCooldown = 0.4;
     updateGearNote();
   });
   $("reset-sim").addEventListener("click", () => {
@@ -661,19 +791,20 @@ function initialize(): void {
   }
   $("audio").addEventListener("click", async () => {
     try {
-      await tuner.start();
-      await loadSample(mapping.fileId);
-      $("audio").textContent = "Audio on";
-      $("audio").classList.add("active");
-      setStatus("Audio running.");
+      if (!tuner.running) {
+        await tuner.start();
+        await loadSample(mapping.fileId);
+        audioOn = true;
+        tuner.setMuted(false);
+      } else {
+        audioOn = !audioOn;
+        tuner.setMuted(!audioOn);
+      }
+      updateAudioButton();
+      setStatus(audioOn ? "Audio on." : "Audio off.");
     } catch (error) {
       setStatus(`Audio failed: ${error}`);
     }
-  });
-  $("mute").addEventListener("click", () => {
-    tunerMuted = !tunerMuted;
-    tuner.setMuted(tunerMuted);
-    $("mute").classList.toggle("active", tunerMuted);
   });
   $("copy").addEventListener("click", async () => {
     const text = JSON.stringify(store, null, 2);

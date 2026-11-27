@@ -44,6 +44,7 @@
       .hint { color: #7d8996; font-size: 11px; margin: 4px 0 0; }
       .hidden { display: none !important; }
       .warn { color: #f87171; }
+      input[type="checkbox"] { accent-color: #38bdf8; }
       @media (max-width: 900px) {
         body { grid-template-columns: 1fr; grid-template-rows: 1fr 54vh; }
         #panel { border-left: 0; border-top: 1px solid #232b34; }
@@ -62,7 +63,7 @@
     <aside id="panel">
       <header>
         <h1>Engine audio tuner</h1>
-        <button id="audio" class="primary">Start audio</button>
+        <button id="audio" class="primary">Audio: Off</button>
       </header>
       <p class="hint">Real car models in the garage studio. Throttle/brake only — no steering. Drag the car view to orbit.</p>
 
@@ -70,7 +71,7 @@
       <div class="row"><label for="car">Car</label><select id="car"></select></div>
       <div class="row"><label for="sample">Sample</label><select id="sample"></select></div>
       <div class="row"><label for="file">Custom WAV</label><input id="file" type="file" accept="audio/*" /></div>
-      <div class="row"><label></label><button id="car-sample">Use car source</button><button id="mute">Mute</button></div>
+      <div class="row"><label></label><button id="car-sample">Use car source</button></div>
 
       <h2>Engine / gearbox</h2>
       <div id="meta"></div>
@@ -84,8 +85,13 @@
         <label>Brake <output id="brake-value"></output></label>
         <input id="brake" type="range" min="0" max="1" step="0.01" value="0" />
       </div>
+      <div class="row">
+        <label for="auto-gears">Auto gears</label>
+        <input id="auto-gears" type="checkbox" checked />
+      </div>
       <div class="row"><label for="gear">Gear</label><select id="gear"></select></div>
       <div class="row"><label></label><button id="reset-sim">Reset speed</button></div>
+      <p class="hint">Keys: W/↑ throttle, S/↓ brake. Neutral is available in the gear list.</p>
       <div class="hint" id="gear-note"></div>
 
       <h2>RPM → playback rate</h2>
