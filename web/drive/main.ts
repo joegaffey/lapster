@@ -57,13 +57,13 @@ import {
 } from "../src/sim/ai-debug.ts";
 import { initializeSab, validateSab } from "../src/sim/sab.ts";
 import { SAB_TOTAL_SIZE } from "../src/types/asset-layout.ts";
-import { EngineSimAudio } from "../src/audio/engine-sim-audio.ts";
 import {
   NEAREST_SLOT,
-  RemoteEngineAudio,
+  SampleEngineAudio as EngineSimAudio,
+  SampleRemoteEngineAudio as RemoteEngineAudio,
   type RemoteAudioOptions,
   type RemoteEngineState,
-} from "../src/audio/remote-engine-audio.ts";
+} from "../src/audio/sample-engine-audio.ts";
 import {
   aiAudioFromVoices,
   clampAiVoices,
