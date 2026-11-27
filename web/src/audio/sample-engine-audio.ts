@@ -12,8 +12,8 @@
 //   ?sampleRateMax=1.5         override the highest playback rate
 //   ?sampleGain=0.3            override the master gain
 //   ?sampleEngineGain=0.55     engine trim against the noise bus
-//   ?sampleNoiseGain=1.6       tyre/road trim
 
+import { EngineSimAudio, type TireAudioWheel } from "./engine-sim-audio.ts";
 import { distanceGain } from "./remote-engine-mix.ts";
 
 export const NEAREST_SLOT = 0;
@@ -171,18 +171,13 @@ const rateMinOverride = Number(query.get("sampleRateMin"));
 const rateMaxOverride = Number(query.get("sampleRateMax"));
 const gainOverride = Number(query.get("sampleGain"));
 const engineGainOverride = Number(query.get("sampleEngineGain"));
-const noiseGainOverride = Number(query.get("sampleNoiseGain"));
 const MASTER_GAIN =
-  Number.isFinite(gainOverride) && gainOverride > 0 ? gainOverride : 0.32;
+  Number.isFinite(gainOverride) && gainOverride > 0 ? gainOverride : 0.22;
 const ENGINE_TRIM =
   Number.isFinite(engineGainOverride) && engineGainOverride > 0
     ? engineGainOverride
     : 0.55;
-const NOISE_TRIM =
-  Number.isFinite(noiseGainOverride) && noiseGainOverride > 0
-    ? noiseGainOverride
-    : 0.7;
-const REMOTE_MASTER = 0.55;
+const REMOTE_MASTER = 1.0;
 
 const sampleCache = new WeakMap<
   AudioContext,
@@ -302,14 +297,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function surfaceRoadFactor(surface: string | undefined): number {
-  const name = (surface ?? "").toUpperCase();
-  if (name.includes("GRASS")) return 1.6;
-  if (name.includes("KERB")) return 1.3;
-  if (name.includes("ANELLO")) return 1.2;
-  return 1;
-}
-
 function limiter(context: AudioContext): DynamicsCompressorNode {
   const node = context.createDynamicsCompressor();
   node.threshold.value = -14;
@@ -326,19 +313,14 @@ export class SampleEngineAudio {
   muted = false;
 
   private readonly engineId: string;
+  private readonly vehicleId: string;
   private readonly carId: string | undefined;
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private gain: GainNode | null = null;
   private source: AudioBufferSourceNode | null = null;
   private analyser: AnalyserNode | null = null;
-  private noise: AudioBufferSourceNode | null = null;
-  private roadGain: GainNode | null = null;
-  private roadFilter: BiquadFilterNode | null = null;
-  private rollingGain: GainNode | null = null;
-  private rollingFilter: BiquadFilterNode | null = null;
-  private tireGain: GainNode | null = null;
-  private tireFilter: BiquadFilterNode | null = null;
+  private surfaceAudio: EngineSimAudio | null = null;
   private starting: Promise<void> | null = null;
   private refRpm = DEFAULT_SAMPLE.refRpm;
   private lastRpm = 900;
@@ -347,11 +329,10 @@ export class SampleEngineAudio {
   private lastGear = 1;
   private lastLoad = 0;
   private lastSkid = 0;
-  private lastRoad = 0;
-  private lastSurface = "ASPHALT";
 
   constructor(options: { engine?: string; vehicle?: string; car?: string } = {}) {
     this.engineId = options.engine ?? "rotary2";
+    this.vehicleId = options.vehicle ?? "sports";
     this.carId = options.car;
   }
 
@@ -380,6 +361,14 @@ export class SampleEngineAudio {
       this.context = context;
       // Resume before the sample fetch so the user gesture still applies.
       await context.resume();
+      const surface = new EngineSimAudio({
+        engine: this.engineId,
+        vehicle: this.vehicleId,
+        surfaceOnly: true,
+        context,
+      });
+      await surface.start();
+      this.surfaceAudio = surface;
       const buffer = await loadSample(context, this.carId, this.engineId);
       if (!buffer) throw new Error("no engine sample available");
       this.refRpm = refRpmFor(this.carId, this.engineId);
@@ -401,60 +390,17 @@ export class SampleEngineAudio {
       analyser.fftSize = 256;
       comp.connect(analyser);
 
-      // Shared noise bed for road, rolling tyre, and squeal layers.
-      const noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
-      const noiseData = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < noiseData.length; i += 1) {
-        noiseData[i] = Math.random() * 2 - 1;
-      }
-      const noise = context.createBufferSource();
-      noise.buffer = noiseBuffer;
-      noise.loop = true;
-      noise.start();
-      const roadFilter = context.createBiquadFilter();
-      roadFilter.type = "lowpass";
-      roadFilter.frequency.value = 380;
-      roadFilter.Q.value = 0.6;
-      const roadGain = context.createGain();
-      roadGain.gain.value = 0;
-      noise.connect(roadFilter);
-      roadFilter.connect(roadGain);
-      roadGain.connect(master);
-      const rollingFilter = context.createBiquadFilter();
-      rollingFilter.type = "bandpass";
-      rollingFilter.frequency.value = 300;
-      rollingFilter.Q.value = 1.0;
-      const rollingGain = context.createGain();
-      rollingGain.gain.value = 0;
-      noise.connect(rollingFilter);
-      rollingFilter.connect(rollingGain);
-      rollingGain.connect(master);
-      const tireFilter = context.createBiquadFilter();
-      tireFilter.type = "bandpass";
-      tireFilter.frequency.value = 1500;
-      tireFilter.Q.value = 12;
-      const tireGain = context.createGain();
-      tireGain.gain.value = 0;
-      noise.connect(tireFilter);
-      tireFilter.connect(tireGain);
-      tireGain.connect(master);
-
       this.master = master;
       this.gain = gain;
       this.source = source;
       this.analyser = analyser;
-      this.noise = noise;
-      this.roadFilter = roadFilter;
-      this.roadGain = roadGain;
-      this.rollingFilter = rollingFilter;
-      this.rollingGain = rollingGain;
-      this.tireFilter = tireFilter;
-      this.tireGain = tireGain;
       this.status = "running";
     } catch (error) {
       this.status = "error";
       this.error = String(error);
       console.warn("sample engine audio unavailable", error);
+      this.surfaceAudio?.dispose();
+      this.surfaceAudio = null;
       await this.context?.close().catch(() => {});
       this.context = null;
     }
@@ -476,7 +422,7 @@ export class SampleEngineAudio {
     gear: number,
     rpm: number,
     speedMps: number,
-    wheels: unknown,
+    wheels: TireAudioWheel[] = [],
   ): void {
     if (this.status !== "running" || !this.context) return;
     const now = this.context.currentTime;
@@ -497,87 +443,13 @@ export class SampleEngineAudio {
     const target = this.muted ? 0 : this.engineTarget(load);
     if (this.gain) this.gain.gain.setTargetAtTime(target, now, 0.06);
 
-    // Tyre and road layers from the same wheel telemetry the synth used.
-    let skid = 0;
-    let wheelLoad = 0;
-    let surface = this.lastSurface;
-    if (Array.isArray(wheels)) {
-      for (const wheel of wheels as Array<{
-        slipRatio?: number;
-        slipAngle?: number;
-        load?: number;
-        contact?: boolean;
-        surface?: string;
-      }>) {
-        if (wheel?.contact === false) continue;
-        const lateral = Math.max(0, Math.abs(wheel?.slipAngle ?? 0) - 0.09) * 1.4;
-        const longitudinal = Math.max(0, Math.abs(wheel?.slipRatio ?? 0) - 0.14);
-        const slip = Math.max(lateral, longitudinal);
-        if (slip > skid) {
-          skid = slip;
-          wheelLoad = Number(wheel?.load) || 0;
-          if (wheel?.surface) surface = wheel.surface;
-        }
-      }
-    }
-    const speed = Number(speedMps) || 0;
-    const speedFactor = clamp(speed / 30, 0, 1);
-    const roadTarget = this.muted
-      ? 0
-      : clamp(
-          0.09 * speedFactor * surfaceRoadFactor(surface) * NOISE_TRIM,
-          0,
-          0.25,
-        );
-    const rollingTarget = this.muted
-      ? 0
-      : clamp(0.06 * speedFactor * NOISE_TRIM, 0, 0.18);
-    const loadFactor = clamp(wheelLoad / 4500, 0.2, 1);
-    const tireTarget = this.muted
-      ? 0
-      : clamp(
-          skid * 1.7 * loadFactor * (0.35 + speedFactor) * NOISE_TRIM,
-          0,
-          0.32,
-        );
-    if (this.roadGain) {
-      this.roadGain.gain.setTargetAtTime(roadTarget, now, 0.08);
-    }
-    if (this.roadFilter) {
-      this.roadFilter.frequency.setTargetAtTime(
-        380 + 240 * speedFactor,
-        now,
-        0.08,
-      );
-    }
-    if (this.rollingGain) {
-      this.rollingGain.gain.setTargetAtTime(rollingTarget, now, 0.1);
-    }
-    if (this.rollingFilter) {
-      this.rollingFilter.frequency.setTargetAtTime(
-        300 + 140 * speedFactor,
-        now,
-        0.1,
-      );
-    }
-    if (this.tireGain) {
-      this.tireGain.gain.setTargetAtTime(tireTarget, now, 0.05);
-    }
-    if (this.tireFilter) {
-      this.tireFilter.frequency.setTargetAtTime(
-        1500 + 1200 * clamp(skid, 0, 1),
-        now,
-        0.05,
-      );
-    }
+    this.surfaceAudio?.update(_delta, throttle, _brake, gear, rpm, speedMps, wheels);
 
     this.lastRpm = this.audioRpm;
-    this.lastSpeedMps = speed;
+    this.lastSpeedMps = Number(speedMps) || 0;
     this.lastGear = Number(gear) || 1;
     this.lastLoad = load;
-    this.lastSkid = skid;
-    this.lastRoad = roadTarget;
-    this.lastSurface = surface;
+    this.lastSkid = this.surfaceAudio?.tireState().slip ?? this.lastSkid;
   }
 
   state(): Record<string, number | string> {
@@ -604,23 +476,18 @@ export class SampleEngineAudio {
     dirt: number;
     gain: number;
   } {
-    const name = this.lastSurface.toUpperCase();
-    const gainValue = this.lastRoad;
-    return {
-      asphalt: name.includes("ASPHALT") || name === "" ? gainValue : 0,
-      concrete: name.includes("ANELLO") ? gainValue : 0,
-      kerb: name.includes("KERB") ? gainValue : 0,
-      grass: name.includes("GRASS") ? gainValue : 0,
-      dirt: name.includes("DIRT") ? gainValue : 0,
-      gain: gainValue,
+    return this.surfaceAudio?.roadState() ?? {
+      asphalt: 0,
+      concrete: 0,
+      kerb: 0,
+      grass: 0,
+      dirt: 0,
+      gain: 0,
     };
   }
 
   tireState(): { gain: number; slip: number } {
-    return {
-      gain: this.tireGain?.gain.value ?? 0,
-      slip: this.lastSkid,
-    };
+    return this.surfaceAudio?.tireState() ?? { gain: 0, slip: 0 };
   }
 
   level(): number {
@@ -638,9 +505,7 @@ export class SampleEngineAudio {
     const now = this.context.currentTime;
     const target = muted ? 0 : this.engineTarget(this.lastLoad);
     this.gain.gain.setTargetAtTime(target, now, 0.03);
-    this.roadGain?.gain.setTargetAtTime(0, now, 0.03);
-    this.rollingGain?.gain.setTargetAtTime(0, now, 0.03);
-    this.tireGain?.gain.setTargetAtTime(0, now, 0.03);
+    this.surfaceAudio?.setMuted(muted);
   }
 
   toggleMuted(): void {
@@ -689,32 +554,19 @@ export class SampleEngineAudio {
   dispose(): void {
     try {
       this.source?.stop();
-      this.noise?.stop();
     } catch {
       // Already stopped.
     }
+    this.surfaceAudio?.dispose();
+    this.surfaceAudio = null;
     this.source?.disconnect();
-    this.noise?.disconnect();
     this.gain?.disconnect();
     this.master?.disconnect();
     this.analyser?.disconnect();
-    this.roadFilter?.disconnect();
-    this.roadGain?.disconnect();
-    this.rollingFilter?.disconnect();
-    this.rollingGain?.disconnect();
-    this.tireFilter?.disconnect();
-    this.tireGain?.disconnect();
     this.source = null;
-    this.noise = null;
     this.gain = null;
     this.master = null;
     this.analyser = null;
-    this.roadFilter = null;
-    this.roadGain = null;
-    this.rollingFilter = null;
-    this.rollingGain = null;
-    this.tireFilter = null;
-    this.tireGain = null;
     const context = this.context;
     this.context = null;
     this.status = "off";
