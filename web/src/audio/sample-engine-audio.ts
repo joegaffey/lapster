@@ -320,6 +320,7 @@ export class SampleEngineAudio {
   private starting: Promise<void> | null = null;
   private refRpm = DEFAULT_SAMPLE.refRpm;
   private lastRpm = 900;
+  private audioRpm = 900;
   private lastSpeedMps = 0;
   private lastGear = 1;
   private lastLoad = 0;
@@ -458,9 +459,14 @@ export class SampleEngineAudio {
     if (this.status !== "running" || !this.context) return;
     const now = this.context.currentTime;
     const safeRpm = Math.max(0, Number(rpm) || 0);
+    const dt = Math.max(0, Math.min(0.1, Number(_delta) || 0));
+    const previousRpm = this.audioRpm;
+    const filtered = previousRpm + (safeRpm - previousRpm) * (1 - Math.exp(-dt / 0.06));
+    const maxStep = 6_000 * dt;
+    this.audioRpm = clamp(filtered, previousRpm - maxStep, previousRpm + maxStep);
     if (this.source) {
       this.source.playbackRate.setTargetAtTime(
-        playbackRate(this.carId, this.engineId, safeRpm),
+        playbackRate(this.carId, this.engineId, this.audioRpm),
         now,
         0.04,
       );
@@ -543,7 +549,7 @@ export class SampleEngineAudio {
       );
     }
 
-    this.lastRpm = safeRpm;
+    this.lastRpm = this.audioRpm;
     this.lastSpeedMps = speed;
     this.lastGear = Number(gear) || 1;
     this.lastLoad = load;
@@ -585,6 +591,13 @@ export class SampleEngineAudio {
       grass: name.includes("GRASS") ? gainValue : 0,
       dirt: name.includes("DIRT") ? gainValue : 0,
       gain: gainValue,
+    };
+  }
+
+  tireState(): { gain: number; slip: number } {
+    return {
+      gain: this.tireGain?.gain.value ?? 0,
+      slip: this.lastSkid,
     };
   }
 
@@ -873,6 +886,7 @@ export class SampleRemoteEngineAudio {
       engine: voice.engine,
       vehicle: voice.vehicle,
       car: voice.car ?? "",
+      mode: this.mode,
       ready: voice.ready,
       gain: voice.gain.gain.value,
     }));
