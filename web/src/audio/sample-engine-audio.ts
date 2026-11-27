@@ -7,7 +7,10 @@
 //
 // Test knobs (URL query):
 //   ?sampleSource=fallback   prefer the baked fallback
-//   ?sampleRefRpm=3500       override the recorded sample's reference rpm
+//   ?sampleEngine=v8cross    force one sample for every voice
+//   ?sampleRefRpm=3500       override the sample reference rpm
+//   ?sampleRateMin=0.7       override the lowest playback rate
+//   ?sampleRateMax=1.5       override the highest playback rate
 //   ?sampleGain=0.3          override the master gain
 
 import { distanceGain } from "./remote-engine-mix.ts";
@@ -42,23 +45,34 @@ interface SampleDef {
   recorded: string;
   fallback: string;
   refRpm: number;
+  rateMin: number;
+  rateMax: number;
 }
 
+// Narrow rate ranges: the first pass let rpm sweep 0.25x-3x, which made every
+// car dive too low at idle and scream too high at redline. These keep the note
+// moving with rpm without leaving the sample's usable band.
 const SAMPLE_DEFS: Record<string, SampleDef> = {
   rotary2: {
     recorded: "speed-dreams/rotary2.wav",
     fallback: "fallback/rotary2.wav",
     refRpm: 3500,
+    rateMin: 0.7,
+    rateMax: 1.4,
   },
   v8cross: {
     recorded: "speed-dreams/v8-ears68.wav",
     fallback: "fallback/v8cross.wav",
     refRpm: 3000,
+    rateMin: 0.75,
+    rateMax: 1.45,
   },
   v12: {
     recorded: "speed-dreams/v12_smooth.wav",
     fallback: "fallback/v12.wav",
     refRpm: 3000,
+    rateMin: 0.7,
+    rateMax: 1.4,
   },
 };
 
@@ -67,7 +81,10 @@ const ASSET_BASE = new URL("../assets/audio/", import.meta.url);
 
 const query = new URLSearchParams(globalThis.location?.search ?? "");
 const SOURCE = query.get("sampleSource") === "fallback" ? "fallback" : "recorded";
+const forcedEngine = query.get("sampleEngine");
 const refOverride = Number(query.get("sampleRefRpm"));
+const rateMinOverride = Number(query.get("sampleRateMin"));
+const rateMaxOverride = Number(query.get("sampleRateMax"));
 const gainOverride = Number(query.get("sampleGain"));
 const MASTER_GAIN =
   Number.isFinite(gainOverride) && gainOverride > 0 ? gainOverride : 0.3;
@@ -78,12 +95,32 @@ const sampleCache = new WeakMap<
 >();
 
 function sampleDef(engine: string | undefined): SampleDef {
+  const forced = forcedEngine ? SAMPLE_DEFS[forcedEngine] : undefined;
+  if (forced) return forced;
   return (engine && SAMPLE_DEFS[engine]) || DEFAULT_SAMPLE;
 }
 
 function refRpmFor(engine: string | undefined): number {
   if (Number.isFinite(refOverride) && refOverride > 0) return refOverride;
   return sampleDef(engine).refRpm;
+}
+
+function rateRangeFor(engine: string | undefined): [number, number] {
+  const def = sampleDef(engine);
+  const min =
+    Number.isFinite(rateMinOverride) && rateMinOverride > 0
+      ? rateMinOverride
+      : def.rateMin;
+  const max =
+    Number.isFinite(rateMaxOverride) && rateMaxOverride > 0
+      ? rateMaxOverride
+      : def.rateMax;
+  return [Math.min(min, max), Math.max(min, max)];
+}
+
+function playbackRate(engine: string | undefined, rpm: number): number {
+  const [min, max] = rateRangeFor(engine);
+  return clamp(rpm / refRpmFor(engine), min, max);
 }
 
 async function decode(
@@ -105,7 +142,7 @@ function loadSample(
     cache = new Map();
     sampleCache.set(context, cache);
   }
-  const key = `${engine ?? "default"}:${SOURCE}`;
+  const key = `${engine ?? "default"}:${forcedEngine ?? ""}:${SOURCE}`;
   const existing = cache.get(key);
   if (existing) return existing;
   const def = sampleDef(engine);
@@ -131,6 +168,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function surfaceRoadFactor(surface: string | undefined): number {
+  const name = (surface ?? "").toUpperCase();
+  if (name.includes("GRASS")) return 1.6;
+  if (name.includes("KERB")) return 1.3;
+  if (name.includes("ANELLO")) return 1.2;
+  return 1;
+}
+
 export class SampleEngineAudio {
   status: "off" | "starting" | "running" | "error" = "off";
   error = "";
@@ -142,12 +187,20 @@ export class SampleEngineAudio {
   private gain: GainNode | null = null;
   private source: AudioBufferSourceNode | null = null;
   private analyser: AnalyserNode | null = null;
+  private noise: AudioBufferSourceNode | null = null;
+  private roadGain: GainNode | null = null;
+  private roadFilter: BiquadFilterNode | null = null;
+  private tireGain: GainNode | null = null;
+  private tireFilter: BiquadFilterNode | null = null;
   private starting: Promise<void> | null = null;
   private refRpm = DEFAULT_SAMPLE.refRpm;
   private lastRpm = 900;
   private lastSpeedMps = 0;
   private lastGear = 1;
   private lastLoad = 0;
+  private lastSkid = 0;
+  private lastRoad = 0;
+  private lastSurface = "ASPHALT";
 
   constructor(options: { engine?: string; vehicle?: string } = {}) {
     this.engineId = options.engine ?? "rotary2";
@@ -197,10 +250,44 @@ export class SampleEngineAudio {
       analyser.fftSize = 256;
       master.connect(analyser);
 
+      // Shared noise bed for road and tyre layers.
+      const noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+      const noiseData = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < noiseData.length; i += 1) {
+        noiseData[i] = Math.random() * 2 - 1;
+      }
+      const noise = context.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+      noise.start();
+      const roadFilter = context.createBiquadFilter();
+      roadFilter.type = "lowpass";
+      roadFilter.frequency.value = 850;
+      roadFilter.Q.value = 0.7;
+      const roadGain = context.createGain();
+      roadGain.gain.value = 0;
+      noise.connect(roadFilter);
+      roadFilter.connect(roadGain);
+      roadGain.connect(master);
+      const tireFilter = context.createBiquadFilter();
+      tireFilter.type = "bandpass";
+      tireFilter.frequency.value = 1100;
+      tireFilter.Q.value = 9;
+      const tireGain = context.createGain();
+      tireGain.gain.value = 0;
+      noise.connect(tireFilter);
+      tireFilter.connect(tireGain);
+      tireGain.connect(master);
+
       this.master = master;
       this.gain = gain;
       this.source = source;
       this.analyser = analyser;
+      this.noise = noise;
+      this.roadFilter = roadFilter;
+      this.roadGain = roadGain;
+      this.tireFilter = tireFilter;
+      this.tireGain = tireGain;
       this.status = "running";
     } catch (error) {
       this.status = "error";
@@ -218,22 +305,82 @@ export class SampleEngineAudio {
     gear: number,
     rpm: number,
     speedMps: number,
-    _wheels: unknown,
+    wheels: unknown,
   ): void {
     if (this.status !== "running" || !this.context) return;
     const now = this.context.currentTime;
     const safeRpm = Math.max(0, Number(rpm) || 0);
-    const rate = clamp(safeRpm / this.refRpm, 0.25, 3);
     if (this.source) {
-      this.source.playbackRate.setTargetAtTime(rate, now, 0.04);
+      this.source.playbackRate.setTargetAtTime(
+        playbackRate(this.engineId, safeRpm),
+        now,
+        0.04,
+      );
     }
     const load = clamp(Number(throttle) || 0, 0, 1);
     const target = this.muted ? 0 : 0.45 + 0.55 * load;
     if (this.gain) this.gain.gain.setTargetAtTime(target, now, 0.06);
+
+    // Tyre and road layers from the same wheel telemetry the synth used.
+    let skid = 0;
+    let wheelLoad = 0;
+    let surface = this.lastSurface;
+    if (Array.isArray(wheels)) {
+      for (const wheel of wheels as Array<{
+        slipRatio?: number;
+        slipAngle?: number;
+        load?: number;
+        contact?: boolean;
+        surface?: string;
+      }>) {
+        if (wheel?.contact === false) continue;
+        const lateral = Math.max(0, Math.abs(wheel?.slipAngle ?? 0) - 0.09) * 1.4;
+        const longitudinal = Math.max(0, Math.abs(wheel?.slipRatio ?? 0) - 0.14);
+        const slip = Math.max(lateral, longitudinal);
+        if (slip > skid) {
+          skid = slip;
+          wheelLoad = Number(wheel?.load) || 0;
+          if (wheel?.surface) surface = wheel.surface;
+        }
+      }
+    }
+    const speed = Number(speedMps) || 0;
+    const speedFactor = clamp(speed / 30, 0, 1);
+    const roadTarget = this.muted
+      ? 0
+      : clamp(0.08 * speedFactor * surfaceRoadFactor(surface), 0, 0.2);
+    const loadFactor = clamp(wheelLoad / 4500, 0.2, 1);
+    const tireTarget = this.muted
+      ? 0
+      : clamp(skid * 2.2 * loadFactor * (0.35 + speedFactor), 0, 0.35);
+    if (this.roadGain) {
+      this.roadGain.gain.setTargetAtTime(roadTarget, now, 0.08);
+    }
+    if (this.roadFilter) {
+      this.roadFilter.frequency.setTargetAtTime(
+        750 + 450 * speedFactor,
+        now,
+        0.08,
+      );
+    }
+    if (this.tireGain) {
+      this.tireGain.gain.setTargetAtTime(tireTarget, now, 0.05);
+    }
+    if (this.tireFilter) {
+      this.tireFilter.frequency.setTargetAtTime(
+        900 + 800 * clamp(skid, 0, 1),
+        now,
+        0.05,
+      );
+    }
+
     this.lastRpm = safeRpm;
-    this.lastSpeedMps = Number(speedMps) || 0;
+    this.lastSpeedMps = speed;
     this.lastGear = Number(gear) || 1;
     this.lastLoad = load;
+    this.lastSkid = skid;
+    this.lastRoad = roadTarget;
+    this.lastSurface = surface;
   }
 
   state(): Record<string, number | string> {
@@ -244,6 +391,7 @@ export class SampleEngineAudio {
       clutch: 1,
       clutchSlip: 0,
       load: this.lastLoad,
+      skid: this.lastSkid,
       engine: this.engineId,
       refRpm: this.refRpm,
       source: SOURCE,
@@ -258,7 +406,16 @@ export class SampleEngineAudio {
     dirt: number;
     gain: number;
   } {
-    return { asphalt: 0, concrete: 0, kerb: 0, grass: 0, dirt: 0, gain: 0 };
+    const name = this.lastSurface.toUpperCase();
+    const gainValue = this.lastRoad;
+    return {
+      asphalt: name.includes("ASPHALT") || name === "" ? gainValue : 0,
+      concrete: name.includes("ANELLO") ? gainValue : 0,
+      kerb: name.includes("KERB") ? gainValue : 0,
+      grass: name.includes("GRASS") ? gainValue : 0,
+      dirt: name.includes("DIRT") ? gainValue : 0,
+      gain: gainValue,
+    };
   }
 
   level(): number {
@@ -273,8 +430,11 @@ export class SampleEngineAudio {
   setMuted(muted: boolean): void {
     this.muted = muted;
     if (!this.context || !this.gain) return;
+    const now = this.context.currentTime;
     const target = muted ? 0 : 0.45 + 0.55 * this.lastLoad;
-    this.gain.gain.setTargetAtTime(target, this.context.currentTime, 0.03);
+    this.gain.gain.setTargetAtTime(target, now, 0.03);
+    this.roadGain?.gain.setTargetAtTime(0, now, 0.03);
+    this.tireGain?.gain.setTargetAtTime(0, now, 0.03);
   }
 
   toggleMuted(): void {
@@ -293,8 +453,26 @@ export class SampleEngineAudio {
     // Test branch: no tuning surface yet.
   }
 
-  playImpact(_speed: number): void {
-    // Impact one-shots are out of scope for the light sample test.
+  playImpact(speed: number): void {
+    const context = this.context;
+    const master = this.master;
+    if (!context || !master || this.muted) return;
+    const amp = clamp(Number(speed) / 20, 0.1, 1) * 0.35;
+    const frames = Math.floor(context.sampleRate * 0.12);
+    const buffer = context.createBuffer(1, frames, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    const decay = context.sampleRate * 0.03;
+    for (let i = 0; i < frames; i += 1) {
+      data[i] = (Math.random() * 2 - 1) * amp * Math.exp(-i / decay);
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 600;
+    source.connect(filter);
+    filter.connect(master);
+    source.start();
   }
 
   async restart(): Promise<void> {
@@ -305,17 +483,28 @@ export class SampleEngineAudio {
   dispose(): void {
     try {
       this.source?.stop();
+      this.noise?.stop();
     } catch {
       // Already stopped.
     }
     this.source?.disconnect();
+    this.noise?.disconnect();
     this.gain?.disconnect();
     this.master?.disconnect();
     this.analyser?.disconnect();
+    this.roadFilter?.disconnect();
+    this.roadGain?.disconnect();
+    this.tireFilter?.disconnect();
+    this.tireGain?.disconnect();
     this.source = null;
+    this.noise = null;
     this.gain = null;
     this.master = null;
     this.analyser = null;
+    this.roadFilter = null;
+    this.roadGain = null;
+    this.tireFilter = null;
+    this.tireGain = null;
     const context = this.context;
     this.context = null;
     this.status = "off";
@@ -432,12 +621,11 @@ export class SampleRemoteEngineAudio {
     }
     if (!voice.ready) return;
     const now = this.context.currentTime;
-    const rate = clamp(
-      (Number(state.rpm) || 0) / refRpmFor(voice.engine),
-      0.25,
-      3,
+    voice.source.playbackRate.setTargetAtTime(
+      playbackRate(voice.engine, Number(state.rpm) || 0),
+      now,
+      0.04,
     );
-    voice.source.playbackRate.setTargetAtTime(rate, now, 0.04);
     const load = clamp(Number(state.throttle) || 0, 0, 1);
     const target = this.muted
       ? 0
