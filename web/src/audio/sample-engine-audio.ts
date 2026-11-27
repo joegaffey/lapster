@@ -70,31 +70,44 @@ interface SampleMapping {
 
 const CAR_MAPPINGS: Record<string, SampleMapping> = {
   "mazda-rx7": {
-    rpmLow: 900,
-    rpmHigh: 8000,
-    rateLow: 0.3,
-    rateHigh: 0.8,
-    curve: 2.4,
-    gain: 0.26,
-    loadGain: 0,
+    rpmLow: 900, rpmHigh: 8000,
+    rateLow: 0.3, rateHigh: 0.8, curve: 2.4,
+    gain: 0.28, loadGain: 0.35,
   },
   "sc-deckard-conejo": {
-    rpmLow: 1000,
-    rpmHigh: 6930,
-    rateLow: 0.6,
-    rateHigh: 2,
-    curve: 1.75,
-    gain: 0.4,
-    loadGain: 0.35,
+    rpmLow: 1000, rpmHigh: 6930,
+    rateLow: 0.6, rateHigh: 2, curve: 1.75,
+    gain: 0.28, loadGain: 0.35,
   },
   "67gp-cavallo-123": {
-    rpmLow: 1000,
-    rpmHigh: 10000,
-    rateLow: 0.5,
-    rateHigh: 2,
-    curve: 2.05,
-    gain: 0.25,
-    loadGain: 0.35,
+    rpmLow: 1000, rpmHigh: 10000,
+    rateLow: 0.5, rateHigh: 2, curve: 2.05,
+    gain: 0.28, loadGain: 0.35,
+  },
+  "67gp-guthrie-eagle": {
+    rpmLow: 1000, rpmHigh: 9500,
+    rateLow: 0.5, rateHigh: 1.4, curve: 2.45,
+    gain: 0.28, loadGain: 0.35,
+  },
+  "67gp-kuiper-t81": {
+    rpmLow: 1000, rpmHigh: 10000,
+    rateLow: 0.5, rateHigh: 1.4, curve: 2.45,
+    gain: 0.28, loadGain: 0.35,
+  },
+  "67gp-murasama-37a": {
+    rpmLow: 1000, rpmHigh: 10000,
+    rateLow: 0.5, rateHigh: 2, curve: 2.05,
+    gain: 0.28, loadGain: 0.35,
+  },
+  "67gp-mango-ms7": {
+    rpmLow: 1000, rpmHigh: 10000,
+    rateLow: 0.6, rateHigh: 2, curve: 1.75,
+    gain: 0.28, loadGain: 0.35,
+  },
+  "67gp-upping-ut19": {
+    rpmLow: 1000, rpmHigh: 9000,
+    rateLow: 0.5, rateHigh: 1.4, curve: 2.45,
+    gain: 0.28, loadGain: 0.35,
   },
 };
 
