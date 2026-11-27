@@ -44,6 +44,7 @@
       #live .k { color: #7d8996; }
       #live .v { text-align: right; }
       #status { color: #ffd479; min-height: 18px; margin-top: 8px; }
+      #mapping-json { width: 100%; min-height: 180px; margin-top: 4px; padding: 8px; background: #0a0e13; color: #cfe3f5; border: 1px solid #232b34; border-radius: 6px; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
       .hint { color: #7d8996; font-size: 11px; margin: 4px 0 0; }
       .hidden { display: none !important; }
       .warn { color: #f87171; }
@@ -148,8 +149,11 @@
       <div class="row">
         <label></label>
         <button id="copy">Copy JSON</button>
+        <button id="load-json">Load JSON</button>
         <button id="reset">Reset mapping</button>
       </div>
+      <textarea id="mapping-json" spellcheck="false" aria-label="Current car mapping JSON"></textarea>
+      <p class="hint">Current car only. Paste a mapping or a mapping set here and click Load JSON.</p>
       <div id="status"></div>
     </aside>
     <script type="module" src="./main.js"></script>

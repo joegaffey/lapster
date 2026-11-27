@@ -7,6 +7,7 @@
 import {
   CAR_OPTIONS,
   carsInCategory,
+  findCar,
   type CarOption,
 } from "../src/ui/car-selection.ts";
 import {
@@ -87,6 +88,7 @@ const autoGearsToggle = $<HTMLInputElement>("auto-gears");
 const gearSelect = $<HTMLSelectElement>("gear");
 const graph = $<HTMLCanvasElement>("graph");
 const status = $<HTMLDivElement>("status");
+const mappingJson = $<HTMLTextAreaElement>("mapping-json");
 const liveBox = $<HTMLDivElement>("live");
 const metaBox = $<HTMLDivElement>("meta");
 const speedBig = $<HTMLDivElement>("speed-big");
@@ -221,6 +223,28 @@ function mapRate(m: Mapping, rpm: number): number {
   const span = Math.max(1, m.rpmHigh - m.rpmLow);
   const t = clamp((rpm - m.rpmLow) / span, 0, 1);
   return m.rateLow + (m.rateHigh - m.rateLow) * Math.pow(t, m.curve);
+}
+
+function normalizeMapping(target: CarOption, value: any): Mapping {
+  const base = defaultMapping(target);
+  const num = (v: any, fallback: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return {
+    fileId: typeof value?.fileId === "string" ? value.fileId : base.fileId,
+    rpmLow: num(value?.rpmLow, base.rpmLow),
+    rpmHigh: num(value?.rpmHigh, base.rpmHigh),
+    rateLow: num(value?.rateLow, base.rateLow),
+    rateHigh: num(value?.rateHigh, base.rateHigh),
+    curve: num(value?.curve, base.curve),
+    gain: num(value?.gain, base.gain),
+    loadGain: num(value?.loadGain, base.loadGain),
+  };
+}
+
+function updateMappingJson(): void {
+  mappingJson.value = JSON.stringify({ [car.id]: mapping }, null, 2);
 }
 
 class TunerAudio {
@@ -619,6 +643,7 @@ function applyMappingToUi(): void {
   );
   sampleSelect.value = hasOption ? mapping.fileId : "";
   tuner.setMapping(mapping);
+  updateMappingJson();
 }
 
 function readMappingFromUi(): void {
@@ -642,6 +667,7 @@ async function loadSample(fileId: string): Promise<void> {
   mapping.fileId = fileId;
   store[car.id] = mapping;
   saveStore();
+  updateMappingJson();
   try {
     await tuner.load(sampleUrl(fileId));
     setStatus(
@@ -866,12 +892,48 @@ function initialize(): void {
     }
   });
   $("copy").addEventListener("click", async () => {
-    const text = JSON.stringify({ [car.id]: mapping }, null, 2);
+    updateMappingJson();
+    const text = mappingJson.value;
     try {
       await navigator.clipboard.writeText(text);
       setStatus(`Copied ${car.name} mapping.`);
     } catch {
-      setStatus(text.slice(0, 120));
+      mappingJson.focus();
+      mappingJson.select();
+      setStatus("Clipboard unavailable; selected the JSON for manual copy.");
+    }
+  });
+  $("load-json").addEventListener("click", () => {
+    try {
+      const parsed = JSON.parse(mappingJson.value);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("expected a mapping object or a mapping set");
+      }
+      if ("fileId" in parsed || "rpmLow" in parsed) {
+        store[car.id] = normalizeMapping(car, parsed);
+        mapping = { ...store[car.id] };
+        saveStore();
+        applyMappingToUi();
+        void loadSample(mapping.fileId);
+      } else {
+        let applied = false;
+        for (const [id, value] of Object.entries(parsed)) {
+          const option = findCar(id);
+          if (!option || !value || typeof value !== "object") continue;
+          store[option.id] = normalizeMapping(option, value);
+          if (option.id === car.id) applied = true;
+        }
+        saveStore();
+        if (applied) {
+          mapping = { ...mappingFor(car) };
+          applyMappingToUi();
+          void loadSample(mapping.fileId);
+        }
+      }
+      updateMappingJson();
+      setStatus("JSON loaded.");
+    } catch (error) {
+      setStatus(`JSON error: ${error}`);
     }
   });
   $("reset").addEventListener("click", () => {
