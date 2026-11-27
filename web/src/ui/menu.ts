@@ -111,6 +111,34 @@ const STYLE = `
   outline: 2px solid #38bdf8;
   outline-offset: 2px;
 }
+#app-menu .app-menu-body > .app-menu-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  cursor: default;
+}
+#app-menu .app-menu-body > .app-menu-field:hover {
+  background: #151a21;
+}
+#app-menu .app-menu-field > span {
+  min-width: 0;
+}
+#app-menu .app-menu-field select {
+  min-width: 96px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 1px solid #3a4350;
+  border-radius: 4px;
+  background: #0d1117;
+  color: #e6e8eb;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+#app-menu .app-menu-field select:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
 @media (pointer: coarse), (max-width: 720px) {
   #viewer-controls {
     top: 12px;
