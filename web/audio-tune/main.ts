@@ -866,10 +866,10 @@ function initialize(): void {
     }
   });
   $("copy").addEventListener("click", async () => {
-    const text = JSON.stringify(store, null, 2);
+    const text = JSON.stringify({ [car.id]: mapping }, null, 2);
     try {
       await navigator.clipboard.writeText(text);
-      setStatus("Mappings copied.");
+      setStatus(`Copied ${car.name} mapping.`);
     } catch {
       setStatus(text.slice(0, 120));
     }
