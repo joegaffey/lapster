@@ -87,6 +87,15 @@ const CAR_MAPPINGS: Record<string, SampleMapping> = {
     gain: 0.4,
     loadGain: 0.35,
   },
+  "67gp-cavallo-123": {
+    rpmLow: 1000,
+    rpmHigh: 10000,
+    rateLow: 0.5,
+    rateHigh: 2,
+    curve: 2.05,
+    gain: 0.25,
+    loadGain: 0.35,
+  },
 };
 
 function mappingFor(car: string | undefined): SampleMapping | undefined {

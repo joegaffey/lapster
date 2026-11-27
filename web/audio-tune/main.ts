@@ -150,6 +150,16 @@ const DEFAULT_PACK_MAPPINGS: Record<string, Mapping> = {
     gain: 0.4,
     loadGain: 0.35,
   },
+  "67gp-cavallo-123": {
+    fileId: "f123bis",
+    rpmLow: 1000,
+    rpmHigh: 10000,
+    rateLow: 0.5,
+    rateHigh: 2,
+    curve: 2.05,
+    gain: 0.25,
+    loadGain: 0.35,
+  },
 };
 
 const STORE_KEY = "lapster.audioTune.v1";
