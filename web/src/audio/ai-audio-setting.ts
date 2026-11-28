@@ -3,7 +3,7 @@
 export const AI_VOICE_STORAGE_KEY = "lapster.audio.aiVoices.v1";
 export const AI_VOICE_MIN = 0;
 export const AI_VOICE_MAX = 5;
-export const AI_VOICE_DEFAULT = 1;
+export const AI_VOICE_DEFAULT = 3;
 /** Number of plain oscillator voices used by the `?aiAudio=lite` diagnostic. */
 export const AI_LITE_VOICES = 3;
 
@@ -57,7 +57,7 @@ export function aiAudioFromVoices(value: unknown): AiAudioResolution {
   return { mode: "full", voices };
 }
 
-/** Load the persisted voice count, defaulting to one nearest voice. */
+/** Load the persisted voice count, defaulting to three opposing cars. */
 export function loadAiVoices(storage?: AiVoiceStorage | null): number {
   try {
     const target = storage ?? defaultStorage();

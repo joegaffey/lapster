@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openMenu } from "./menu-helpers";
+import { clickMenuControl, openMenu } from "./menu-helpers";
 
 async function waitForDrive(page: import("@playwright/test").Page) {
   await page.waitForFunction(
@@ -51,8 +51,11 @@ async function selectAiVoices(
   page: import("@playwright/test").Page,
   voices: number,
 ): Promise<void> {
-  await openMenu(page);
+  await clickMenuControl(page, "#assists-open");
+  await page.locator("#tab-audio").click();
   await page.selectOption("#ai-audio-voices", String(voices));
+  await page.locator("#assists-close").click();
+  await expect(page.locator("#assists-dialog")).toBeHidden();
 }
 
 async function waitForVoiceCount(
@@ -74,14 +77,15 @@ async function waitForVoiceCount(
   );
 }
 
-test("default AI audio uses one nearest EngineSim voice in its own context", async ({
+test("default AI audio uses three full sample voices in their own context", async ({
   page,
 }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await startRaceAudio(page, "v=ai-audio-nearest");
-  await expect(page.locator("#ai-audio-voices")).toHaveValue("1");
+  await startRaceAudio(page, "v=ai-audio-default", 4);
+  await expect(page.locator("#ai-audio-voices")).toHaveValue("3");
+  await waitForVoiceCount(page, 3);
   await waitForAudibleRemote(page);
 
   const state = await page.evaluate(() => {
@@ -94,12 +98,13 @@ test("default AI audio uses one nearest EngineSim voice in its own context", asy
   });
   expect(state.sharesPlayerContext).toBe(false);
   expect(state.status).toBe("running");
-  expect(state.voices.length).toBe(1);
-  const [voice] = state.voices;
-  expect(voice.slot).toBe(0);
-  expect(voice.mode).toBe("full");
-  expect(voice.ready).toBe(true);
-  expect(voice.gain).toBeGreaterThan(0);
+  expect(state.voices.length).toBe(3);
+  for (const voice of state.voices) {
+    expect(voice.slot).toBeGreaterThanOrEqual(1);
+    expect(voice.mode).toBe("full");
+    expect(voice.ready).toBe(true);
+    expect(voice.gain).toBeGreaterThan(0);
+  }
   expect(pageErrors).toEqual([]);
 });
 

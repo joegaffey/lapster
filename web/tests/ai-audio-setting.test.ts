@@ -41,11 +41,11 @@ test("voice count maps to off, nearest, or full modes", () => {
   assert.deepEqual(aiAudioFromVoices(99), { mode: "full", voices: 5 });
 });
 
-test("missing or corrupt storage loads the one-voice default", () => {
-  assert.equal(loadAiVoices(memoryStorage()), 1);
+test("missing or corrupt storage loads the three-voice default", () => {
+  assert.equal(loadAiVoices(memoryStorage()), 3);
   assert.equal(
     loadAiVoices(memoryStorage({ [AI_VOICE_STORAGE_KEY]: "bad" })),
-    1,
+    3,
   );
   assert.equal(
     loadAiVoices(memoryStorage({ [AI_VOICE_STORAGE_KEY]: "4" })),

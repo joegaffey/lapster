@@ -203,6 +203,7 @@ function settingsDialogHtml(): string {
   <div class="settings-tabs" role="tablist" aria-label="Settings sections">
     <button id="tab-gameplay" class="settings-tab" role="tab" aria-selected="true" aria-controls="settings-gameplay" data-tab="gameplay" type="button">Gameplay</button>
     <button id="tab-controls" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-controls" data-tab="controls" type="button">Controls</button>
+    <button id="tab-audio" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-audio" data-tab="audio" type="button">Audio</button>
     <button id="tab-graphics" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-graphics" data-tab="graphics" type="button">Graphics</button>
   </div>
   <section id="settings-gameplay" class="settings-panel" role="tabpanel" aria-labelledby="tab-gameplay">
@@ -252,6 +253,21 @@ function settingsDialogHtml(): string {
   <section id="settings-controls" class="settings-panel" role="tabpanel" aria-labelledby="tab-controls" hidden>
     <div class="assist-body">
       <div id="wheel-controls"></div>
+    </div>
+  </section>
+  <section id="settings-audio" class="settings-panel" role="tabpanel" aria-labelledby="tab-audio" hidden>
+    <div class="assist-body">
+      <label class="assist-slider">
+        <span>Opponent audio</span>
+        <select id="ai-audio-voices" data-testid="ai-audio-voices">
+          <option value="0">Off</option>
+          <option value="1">1 car</option>
+          <option value="2">2 cars</option>
+          <option value="3">3 cars</option>
+          <option value="4">4 cars</option>
+          <option value="5">5 cars</option>
+        </select>
+      </label>
     </div>
   </section>
   <section id="settings-graphics" class="settings-panel" role="tabpanel" aria-labelledby="tab-graphics" hidden>
