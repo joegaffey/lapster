@@ -2,16 +2,17 @@
 
 ## Status
 
-The current Drive audio is a synthesized spike. It uses the vendored MIT-licensed
-[Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim) runtime as the engine voice and
-adds road, surface, and tire layers in the Drive audio graph. No recorded engine or road
-samples are bundled.
+The current Drive audio is sample-based. It plays recorded Speed Dreams engine
+loops (with baked fallback WAVs) for the player and opponents, plus road,
+surface, and tire layers from the shared `SurfaceAudio` graph. The vendored
+MIT-licensed [Engine_Sim](https://github.com/YigitSalihEmecen/Engine_Sim) runtime
+is retained as a legacy synth/diagnostic path; the Drive runtime does not
+instantiate it.
 
-Opponent audio (local AI and remote multiplayer voices) is layered on the same
-Engine_Sim graph family. It defaults to one nearest-AI voice on the player's
-AudioContext, with a persisted 0-5 "Opponent audio" menu setting. The full
-multi-voice path is available for desktops; the lite oscillator path is kept
-only as a diagnostic. No recorded opponent engine samples are bundled.
+Opponent audio (local AI and remote multiplayer voices) uses the same sampled
+engine profiles. It defaults to three opponent voices, persisted as a 0-5
+"Opponent audio" setting under Settings > Audio. The lite oscillator path is
+kept only as a diagnostic.
 
 The original SPEC target remains a Rust/Wasm `sim-audio` crate reading SAB snapshots directly.
 The spike deliberately uses a main-thread bridge first so the sound can be tuned before the
@@ -19,59 +20,57 @@ DSP is moved behind the worker boundary.
 
 ## Runtime topology
 
-- Audio starts **off** on first use. The toolbar `Audio` button creates/resumes the
-  `AudioContext` from a user gesture and enables the graph. Enabled and muted state are saved
-  in `localStorage`; after a reload the button reflects the saved state and audio starts on the
-  first user interaction because browsers require a gesture.
-- The main thread reads vehicle telemetry each frame and drives Engine_Sim through
-  `EngineSim.updateExternal()`.
-- Engine_Sim owns its AudioWorklet combustion source and Web Audio exhaust/intake/filter
-  graph. Its own drivetrain is bypassed.
-- The surface and tire layers are Web Audio noise graphs driven from the same telemetry.
-- All layers share the master Drive gain, so mute applies to the complete mix.
-- Opponent audio is managed by `RemoteEngineAudio` and owns a separate
-  AudioContext from the player engine, so a failed AI voice cannot take the
-  player audio down. The nearest-AI default runs one EngineSim voice on a
-  dedicated slot; 2-5 voices use one EngineSim voice per AI slot; 0 disables
-  opponent audio.
+- Audio is **on by default**. The first pointer/key gesture starts or resumes the graph; the
+  toolbar `Audio` button toggles mute or starts it manually. Enabled/muted state is saved as
+  `version: 2`; legacy `enabled: false` entries migrate to on. Browsers still require a gesture
+  to start the `AudioContext`.
+- The main thread reads vehicle telemetry each frame and drives `SampleEngineAudio`; the
+  legacy EngineSim path is not started.
+- The player sample voice loops the recorded/fallback buffer, with playback rate from
+  conditioned RPM and gain from load; a limiter protects the mix.
+- The surface and tire layers are Web Audio graphs in `SurfaceAudio`; they share the player's
+  `AudioContext`.
+- The player mix uses the master gain and an engine-only trim; the surface/tyre layer is
+  balanced separately.
+- Opponent audio is managed by `SampleRemoteEngineAudio`. All opponent voices share one
+  remote `AudioContext`, which is separate from the player context so a failed AI voice cannot
+  take the player audio down. The remote class supports a `contextProvider` for a single
+  player+AI context, but Drive keeps them separate (mobile isolation, `5fa2622`).
 - The audio HUD row shows the current wheel surface names and the current road-noise target
   gain.
 
 ## Engine voice
 
-- Engine profile comes from the selected car catalog entry: `rotary2` for the Mazda RX-7
-  and `v8cross` (cross-plane V8) for the Speed Dreams Deckard Conejo. Custom packs that are
-  not in the catalog use the legacy `rotary2`/`sports` fallback. The profile is driven by
-  external vehicle RPM, speed, gear, throttle, brake, and conditioned load.
-- External-state adapter:
-  - locks the clutch for audio purposes;
-  - uses a 60 ms RPM low-pass with a 12,000 rpm/s slew limit outside shifts;
-  - shortens the RPM transition to 15 ms during a forward gear change;
-  - uses fast load attack and 320 ms release;
-  - keeps a 0.38 overrun load floor with reduced overrun attenuation;
-  - disables the false transmission lash rattle.
-- EngineSim transmission mesh whine is currently muted (`mix.transmission = 0`).
-- Forward gear changes trigger a short mechanical click/thump cue. No sampled one-shots.
-- Engine braking/overrun in the vehicle model is separate from the audio load envelope.
+- The player and opponents use recorded Speed Dreams engine loops with baked fallbacks. The
+  car/engine profile selects a sample and its `rateMin`/`rateMax`, `refRpm`, gain, load gain,
+  and curve from `CAR_MAPPINGS`.
+- Playback rate follows RPM, clamped to the mapped RPM window, with short conditioning/slew
+  of the telemetry. Gain follows load; an engine-only trim balances the engine against the
+  surface/tyre layer.
+- The old EngineSim synth (`EngineSimAudio`) remains in the repo as a legacy/diagnostic path;
+  the Drive runtime does not instantiate it.
+- The old EngineSim transmission and overrun details are legacy and are not part of the
+  sample default.
 
 ## Opponent audio
 
 - Applies to local AI opponents and, where a room supplies per-player cars, remote
   multiplayer cars. Multiplayer still fixes one car per room until the roster-car batch
   (TD-0025), so current MP voices share that car's profile.
-- Default setting: 1 voice. Values 0-5 are stored in
-  `lapster.audio.aiVoices.v1`; the app menu exposes "Opponent audio".
+- Default setting: 3 voices. Values 0-5 are stored in
+  `lapster.audio.aiVoices.v1`; the Settings > Audio panel exposes "Opponent audio".
   `?aiAudio=off|nearest|full|lite` remains a diagnostic override.
-- 1 uses one EngineSim voice for the nearest car, switching engine/vehicle
-  profile as the nearest car changes. 2-5 use one EngineSim voice per AI slot,
-  capped by the selected value. 0 disables opponent audio.
-- Opponent voices use their own AudioContext so the player context stays
-  isolated. Distance attenuation cuts off at 250 m with a gentler falloff than
-  the original prototype.
-- AI frames are interpolated by the Drive render path; rpm, throttle, brake,
-  gear, and wheel state come from the 64-float snapshot.
-- The lite oscillator mode is diagnostic only and is not the default. It was
-  too loud and too synthetic for normal use.
+- 1 uses one sample voice for the nearest car, switching engine/vehicle profile as the
+  nearest car changes. 2-5 use one sample voice per AI slot, capped by the selected value.
+  0 disables opponent audio.
+- All opponent voices share one remote AudioContext, separate from the player context. The
+  sample remote supports a `contextProvider` for a single player+AI context, but Drive keeps
+  them separate for mobile failure isolation (`5fa2622`). Distance attenuation cuts off at
+  250 m with a gentler falloff than the original prototype.
+- AI frames are interpolated by the Drive render path; rpm, throttle, brake, gear, and wheel
+  state come from the 64-float snapshot.
+- The lite oscillator mode is diagnostic only and is not the default. It was too loud and too
+  synthetic for normal use.
 
 ## Surface and tire layers
 

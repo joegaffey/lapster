@@ -307,8 +307,6 @@ const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
 const cameraButton = document.querySelector<HTMLButtonElement>("#camera-mode")!;
 const bodyToggle = document.querySelector<HTMLButtonElement>("#body-toggle")!;
 const audioButton = document.querySelector<HTMLButtonElement>("#audio-toggle")!;
-const aiVoicesSelect =
-  document.querySelector<HTMLSelectElement>("#ai-audio-voices");
 const netBadge = document.querySelector<HTMLElement>("#net-badge")!;
 const racePanel = document.querySelector<HTMLElement>("#race-panel")!;
 const racePositionStat = document.querySelector<HTMLElement>("#race-position-stat")!;
@@ -1518,10 +1516,11 @@ function updateAudioButton() {
 }
 
 function updateAiAudioControl(): void {
-  if (!aiVoicesSelect) {
+  const select = document.querySelector<HTMLSelectElement>("#ai-audio-voices");
+  if (!select) {
     return;
   }
-  aiVoicesSelect.value = String(clampAiVoices(aiVoiceSetting));
+  select.value = String(clampAiVoices(aiVoiceSetting));
 }
 
 function clearRemoteAudio(): void {
@@ -1583,12 +1582,16 @@ function applyAiVoices(value: number | string): void {
   createRemoteAudio();
 }
 
-if (aiVoicesSelect) {
-  aiVoicesSelect.addEventListener("change", () => {
-    applyAiVoices(aiVoicesSelect.value);
+function setupAiAudioControl(): void {
+  const select = document.querySelector<HTMLSelectElement>("#ai-audio-voices");
+  if (!select) {
+    return;
+  }
+  select.value = String(clampAiVoices(aiVoiceSetting));
+  select.addEventListener("change", () => {
+    applyAiVoices(select.value);
   });
 }
-updateAiAudioControl();
 
 async function startAudio() {
   if (!audio) {
@@ -2100,6 +2103,7 @@ async function boot() {
       }
     },
   });
+  setupAiAudioControl();
   await Promise.all([
     loadDialTexture("speedometer.png", (width, height, rgba) =>
       viewer.set_speedometer_texture(width, height, rgba),
