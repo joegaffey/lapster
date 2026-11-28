@@ -1,7 +1,7 @@
 # Project Progress
 
-Last updated: 2026-11-25
-Current phase: **Ten-car AI grid — merged to dev (PR #77); track-ed pin on main**
+Last updated: 2026-11-26
+Current phase: **Opponent audio on `feat/car-audio` (stacked on merged categories PR #82); dev preview pending**
 
 This file is the resumable project state. Read `GOALS.md`, `SPEC.md`, `PLAN.md`,
 and this file before continuing. Detailed history is archived in
@@ -53,6 +53,31 @@ Deployment:
 
 ## Current focus
 
+- Per-car opponent audio is implemented on `feat/car-audio` (worktree
+  `/home/joe/code/lapster-car-audio`), stacked on merged categories PR #82.
+  The player keeps the EngineSim voice. Opponent audio defaults to one
+  nearest-AI EngineSim voice on the player's AudioContext; a persisted 0-5
+  "Opponent audio" app-menu setting (`lapster.audio.aiVoices.v1`, default 1)
+  selects off, nearest (1), or 2-5 per-slot voices. Opponent voices use the AI
+  car's catalog engine profile and a 250 m distance cutoff. The lite oscillator
+  path is diagnostic only. Scoped unit and ai-audio/audio browser tests pass;
+  sampled opponent engine loops remain a future asset batch.
+- Car categories are implemented on `feat/car-categories` (worktree
+  `/home/joe/code/lapster-car-categories`) through the local same-category
+  grid batch. ADR-0022 is accepted. Car packs carry an optional
+  `road`/`gp67` manifest category; the launcher selects a category; the garage
+  and multiplayer lobby filter to it; AI opponents load their own car packs
+  from the same category; and Drive renders one rig per slot with per-slot
+  paint. Gate so far: cargo fmt, workspace clippy, workspace tests, wasm
+  check, 128 web unit tests, and the full default viewer project (101 passed,
+  4 skipped after the PWA href fix) plus the two WebGL2 fallback tests. The
+  multiplayer same-category batch (relay room identity plus per-player remote
+  cars) is not implemented yet; see TD-0025.
+- Tyre-smoke realism is implemented on `feat/tyre-smoke-realism` (PR #81):
+  smoke onset now sits above peak-grip slip, uses a squared onset curve, lowers
+  asphalt smoke rate/size/life/alpha, and reduces front-wheel contribution. The
+  full gate passed (130 viewer / 1 skipped, WebGL2 2/2) and manual LAN
+  validation passed after resetting dev tuning. Awaiting merge to `dev`.
 - The ten-car AI grid batch is merged to `dev` as PR #77 (`cb9dee7`): nine AI is
   the new maximum, the default stays three, track-ed and `track-pack` accept
   ten grid slots, the renderer supports nine remote rigs, and both race
@@ -62,8 +87,10 @@ Deployment:
   build and smoke). The hosted smoke assertion was the only failure and was
   fixed to expect ten slots. The track-ed exporter is merged to track-ed `main`
   as PR #8 (`a6f4db3`), and the parent pin is repointed from `2c459aa` to
-  `a6f4db3` in this change. Product-owner browser verification passed for
-  `?ai=9`; 3-vs-9 profiling remains the ADR-0021 follow-up.
+  `a6f4db3`. The batch is released to `main` as `a8dc7db` (PR #79), and `dev` is
+  synced to it. Product-owner browser verification passed for `?ai=9`; the
+  3-vs-9 probe held 500 Hz with 0 dropped ticks (p99 0.275 ms, ~2.4x draw
+  calls/triangles), so no physics debt was filed. See ADR-0021 Verification.
 - Online contact is staged on `feat/online-contact`, created from `dev` at
   `a4b82a7`. 3A (this batch) adds deterministic player/AI contact in the
   physics worker under ADR-0019. 3B (later) adds non-authoritative online

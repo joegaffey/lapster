@@ -7,13 +7,17 @@ import { APP_VERSION } from "../src/version.generated.ts";
 import { checkForUpdate } from "../src/update.ts";
 import { setupPwa } from "../src/pwa.ts";
 import {
-  CAR_OPTIONS,
+  carsInCategory,
+  categoryFromQuery,
   findCar,
+  findCarInCategory,
   loadCarPaint,
   loadSelectedCar,
+  loadSelectedCategory,
   saveCarPaint,
   saveSelectedBay,
   saveSelectedCar,
+  saveSelectedCategory,
   selectedBay as getSelectedBay,
 } from "../src/ui/car-selection.ts";
 import { loadSelectedTrack } from "../src/ui/track-selection.ts";
@@ -107,9 +111,15 @@ setupMenu();
 checkForUpdate();
 
 const params = new URLSearchParams(window.location.search);
+const category = saveSelectedCategory(
+  categoryFromQuery(window.location.search) ?? loadSelectedCategory(),
+);
+const categoryCars = carsInCategory(category);
 const defaultTrack = loadSelectedTrack();
-const requestedCar = loadSelectedCar();
-const CAR_URLS = CAR_OPTIONS.map((car) => withPackVersion(car.url, APP_VERSION));
+const requestedCar = loadSelectedCar(category);
+const CAR_URLS = categoryCars.map((car) =>
+  withPackVersion(car.url, APP_VERSION),
+);
 
 const SURFACE_COLORS: Record<number, string> = {
   0: "#33a6ff",
@@ -211,8 +221,8 @@ async function boot() {
   status.textContent = "loading wasm";
   await init(versionedWasmUrl("../pkg/sim_render_bg.wasm"));
 
-  const carIds = CAR_OPTIONS.map((car) => car.id);
-  const savedBay = getSelectedBay();
+  const carIds = categoryCars.map((car) => car.id);
+  const savedBay = getSelectedBay(window.location.search, carIds.length);
   const requestedIndex = carIds.indexOf(requestedCar.id);
   const initialBay =
     carIds[savedBay] === requestedCar.id ? savedBay : Math.max(0, requestedIndex);
@@ -223,7 +233,7 @@ async function boot() {
   status.textContent = "creating renderer";
   const packs: Array<Uint8Array | null> = carIds.map(() => null);
   packs[initialBay] = initialPack.bytes;
-  const paintable = CAR_OPTIONS.map((car) => car.paintable === true);
+  const paintable = categoryCars.map((car) => car.paintable === true);
   const viewer = await GarageViewer.create_concrete(canvas, carIds, packs, paintable);
   window.__garageViewer = viewer;
 
@@ -269,7 +279,7 @@ async function boot() {
   };
 
   const applySavedPaint = (index: number) => {
-    const car = findCar(bays[index]?.carId ?? carIds[index]);
+    const car = findCarInCategory(bays[index]?.carId ?? carIds[index], category);
     const savedPaint = car ? loadCarPaint(car.id) : null;
     const paint =
       car?.paintable === true ? savedPaint ?? car.defaultPaint ?? null : savedPaint;
@@ -392,7 +402,7 @@ async function boot() {
       try {
         const pack = await loadPack(CAR_URLS[index]);
         await frameYield();
-        viewer.load_bay(index, pack.bytes, CAR_OPTIONS[index].paintable === true);
+        viewer.load_bay(index, pack.bytes, categoryCars[index].paintable === true);
         loadedBays.add(index);
         window.__garageCarsLoaded = loadedBays.size;
         applySavedPaint(index);
@@ -428,9 +438,9 @@ async function boot() {
 
   const applySelectedBay = (info: any) => {
     selectedBay = info.selected;
-    const car = findCar(info.carId) ?? CAR_OPTIONS[0];
-    saveSelectedBay(selectedBay);
-    saveSelectedCar(car.id);
+    const car = findCarInCategory(info.carId, category) ?? categoryCars[0];
+    saveSelectedBay(selectedBay, categoryCars.length);
+    saveSelectedCar(car.id, category);
     asset.textContent = `${debug.asset.id} + ${car.id}`;
     if (info.car) {
       renderCar(info.car);
@@ -449,6 +459,7 @@ async function boot() {
     }
     driveParams.set("car", car.url);
     driveParams.set("bay", String(selectedBay + 1));
+    driveParams.set("category", category);
     if (info.loaded && info.recolorable === true) {
       driveParams.set("paint", String(info.paint));
     } else if (!info.loaded) {

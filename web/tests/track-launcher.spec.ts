@@ -152,7 +152,7 @@ test("launcher shows the stored car and opens the garage with it selected", asyn
   ).toHaveText("Deckard Conejo");
   await expect(page.locator("#drive-form .car-summary")).toHaveAttribute(
     "href",
-    "./web/garage/",
+    /\.\/web\/garage\//,
   );
 
   await page.locator("#drive-form .car-summary").click();
@@ -177,7 +177,7 @@ test("/web/ redirects to the root launcher with the new forms", async ({ page })
   await expect(page.locator("#race-track")).toBeVisible();
 });
 
-test("garage mixes catalog cars across bays", async ({ page }) => {
+test("garage lists cars in the selected category", async ({ page }) => {
   await page.goto("/web/garage/");
   await waitForGarage(page);
   await page.waitForFunction(
@@ -192,19 +192,15 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
       error: (window as any).__garageViewerError,
       bays: JSON.parse(viewer.bay_list()),
       selected: JSON.parse(viewer.bay_info()),
+      category: localStorage.getItem("lapster.category.v1"),
       menuButtons: document.querySelectorAll("#car-list button").length,
     };
   });
   expect(initial.error).toBeUndefined();
+  expect(initial.category).toBe("road");
   expect(initial.bays.map((bay: any) => bay.carId)).toEqual([
     "mazda-rx7",
     "sc-deckard-conejo",
-    "67gp-cavallo-123",
-    "67gp-guthrie-eagle",
-    "67gp-kuiper-t81",
-    "67gp-mango-ms7",
-    "67gp-murasama-37a",
-    "67gp-upping-ut19",
   ]);
   expect(initial.menuButtons).toBe(0);
   expect(initial.selected.carId).toBe("mazda-rx7");
@@ -231,24 +227,29 @@ test("garage mixes catalog cars across bays", async ({ page }) => {
   expect(state.drive).toContain("sc-deckard-conejo");
   expect(state.stored).toBe("sc-deckard-conejo");
 
-  await page.keyboard.press("ArrowRight");
+  await page.goto("/web/garage/?category=gp67");
+  await waitForGarage(page);
   await page.waitForFunction(
     () => JSON.parse((window as any).__garageViewer.bay_info()).loaded === true,
     undefined,
     { timeout: 30_000 },
   );
-  const after = await page.evaluate(() => {
+  const gp67 = await page.evaluate(() => {
     const viewer = (window as any).__garageViewer;
     return {
-      info: JSON.parse(viewer.bay_info()),
-      asset: document.querySelector("#asset")?.textContent,
-      drive: document.querySelector("#drive-car")?.getAttribute("href"),
-      stored: localStorage.getItem("lapster.car.v1"),
+      bays: JSON.parse(viewer.bay_list()),
+      selected: JSON.parse(viewer.bay_info()),
+      category: localStorage.getItem("lapster.category.v1"),
     };
   });
-  expect(after.info.carId).toBe("67gp-cavallo-123");
-  expect(after.info.car.id).toBe("67gp-cavallo-123");
-  expect(after.asset).toContain("67gp-cavallo-123");
-  expect(after.drive).toContain("67gp-cavallo-123");
-  expect(after.stored).toBe("67gp-cavallo-123");
+  expect(gp67.category).toBe("gp67");
+  expect(gp67.bays.map((bay: any) => bay.carId)).toEqual([
+    "67gp-cavallo-123",
+    "67gp-guthrie-eagle",
+    "67gp-kuiper-t81",
+    "67gp-mango-ms7",
+    "67gp-murasama-37a",
+    "67gp-upping-ut19",
+  ]);
+  expect(gp67.selected.carId).toBe("67gp-cavallo-123");
 });

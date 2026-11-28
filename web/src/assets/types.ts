@@ -1,5 +1,7 @@
 export type AssetKind = "Car" | "Track";
 
+export type CarCategory = "road" | "gp67";
+
 export type ChunkKind =
   | "Physics"
   | "Visual"
@@ -61,6 +63,7 @@ export interface AssetManifest {
   magic: number[];
   schema_version: number;
   kind: AssetKind;
+  category?: CarCategory;
   id: string;
   source_hash: number[];
   units: UnitSystem;

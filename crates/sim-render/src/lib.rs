@@ -26,6 +26,7 @@ use sim_core::{
 };
 use sim_types::snapshot_state as snapshot;
 use sim_types::{CarTuning, RaceData, SpawnPoint, SNAPSHOT_STATE_FLOATS};
+use std::collections::HashMap;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -2136,21 +2137,37 @@ fn clamp_remote_slots(remote_slots: Option<usize>) -> usize {
     remote_slots.unwrap_or(0).min(MAX_REMOTE_SLOTS)
 }
 
-/// Only the local Drive slot may take a textured body paint, and only when the
-/// driver selected an explicit paint; AI/remote slots reuse the same car
-/// visual but keep its factory livery.
-fn drive_paint_hints(
-    car_paintable: bool,
-    car_paint: Option<usize>,
-    slot_count: usize,
-) -> Vec<bool> {
-    let mut hints = vec![false; slot_count];
-    if car_paintable && car_paint.is_some() {
-        if let Some(first) = hints.first_mut() {
-            *first = true;
+/// Every Drive slot takes the textured body paint when its own car is
+/// paintable. With an explicit paint, the local slot is painted and later
+/// slots keep receiving palette colours. Without one, the local slot keeps its
+/// factory livery and paintable AI/remote slots receive palette indices 1..9.
+/// Non-paintable slots always keep factory livery.
+fn drive_paint_hints(slot_paintable: &[bool], car_paint: Option<usize>) -> Vec<bool> {
+    slot_paintable
+        .iter()
+        .enumerate()
+        .map(|(slot, &paintable)| paintable && (car_paint.is_some() || slot != 0))
+        .collect()
+}
+
+/// Deduplicate slot packs by manifest id and source hash. Returns the
+/// slot-to-unique-car mapping plus the source index that supplies each unique
+/// car, in first-seen order. The local slot is always source index 0.
+fn dedupe_slot_keys(keys: &[(String, [u8; 32])]) -> (Vec<usize>, Vec<usize>) {
+    let mut index_by_key: HashMap<(String, [u8; 32]), usize> = HashMap::new();
+    let mut slot_indices = Vec::with_capacity(keys.len());
+    let mut unique_source_indices = Vec::new();
+    for (source_index, key) in keys.iter().enumerate() {
+        if let Some(&unique_index) = index_by_key.get(key) {
+            slot_indices.push(unique_index);
+        } else {
+            let unique_index = unique_source_indices.len();
+            index_by_key.insert(key.clone(), unique_index);
+            unique_source_indices.push(source_index);
+            slot_indices.push(unique_index);
         }
     }
-    hints
+    (slot_indices, unique_source_indices)
 }
 
 #[wasm_bindgen]
@@ -2208,12 +2225,12 @@ impl DriveViewer {
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         track_pack_bytes: js_sys::Uint8Array,
-        car_pack_bytes: js_sys::Uint8Array,
+        slot_car_packs: js_sys::Array,
         car_bay: Option<usize>,
         tuning_json: Option<String>,
         remote_slots: Option<usize>,
         car_paint: Option<usize>,
-        car_paintable: bool,
+        slot_paintable: js_sys::Array,
     ) -> Result<DriveViewer, JsValue> {
         let mut tuning = tuning_json
             .and_then(|json| serde_json::from_str::<TuningConfig>(&json).ok())
@@ -2239,20 +2256,61 @@ impl DriveViewer {
             .map(|surface| surface.name.clone())
             .collect::<Vec<_>>();
 
-        let car_bytes = car_pack_bytes.to_vec();
-        let car_pack = sim_asset::Pack::from_bytes(&car_bytes).map_err(js_error)?;
-        if car_pack.kind() != sim_types::AssetKind::Car {
-            return Err(JsValue::from_str(
-                "expected a car pack for the second argument",
-            ));
+        let remote_slots = clamp_remote_slots(remote_slots);
+        let slot_count = 1 + remote_slots;
+        if slot_car_packs.length() as usize != slot_count {
+            return Err(JsValue::from_str(&format!(
+                "expected {slot_count} car packs for {slot_count} Drive slots (local + {remote_slots} remote), got {}",
+                slot_car_packs.length()
+            )));
         }
-        let car_physics = car_pack.car_physics_owned().map_err(js_error)?;
-        let car_visual = car_pack.car_visual_owned().map_err(js_error)?;
-        let car_manifest = car_pack.manifest().clone();
-        let collision_box = CollisionBox::from_aabb(&car_manifest.bounds);
-        drop(car_pack);
-
-        if car_visual
+        if slot_paintable.length() as usize != slot_count {
+            return Err(JsValue::from_str(&format!(
+                "expected {slot_count} slot paintable flags, got {}",
+                slot_paintable.length()
+            )));
+        }
+        let mut parsed_packs = Vec::with_capacity(slot_count);
+        for index in 0..slot_count {
+            let value = slot_car_packs.get(index as u32);
+            if value.is_null() || value.is_undefined() {
+                return Err(JsValue::from_str(&format!(
+                    "slot {index} car pack is missing"
+                )));
+            }
+            let car_bytes = js_sys::Uint8Array::new(&value).to_vec();
+            let pack = parse_garage_pack(&car_bytes).map_err(|error| {
+                let message = error
+                    .as_string()
+                    .unwrap_or_else(|| "invalid car pack".to_string());
+                JsValue::from_str(&format!("slot {index}: {message}"))
+            })?;
+            parsed_packs.push(pack);
+        }
+        let mut slot_paintable_flags = Vec::with_capacity(slot_count);
+        for index in 0..slot_count {
+            let value = slot_paintable.get(index as u32);
+            slot_paintable_flags.push(value.as_bool().unwrap_or(false));
+        }
+        let keys = parsed_packs
+            .iter()
+            .map(|pack| (pack.manifest.id.clone(), pack.manifest.source_hash))
+            .collect::<Vec<_>>();
+        let slot_car_ids = keys.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+        let (slot_car_indices, unique_source_indices) = dedupe_slot_keys(&keys);
+        let mut source_packs = parsed_packs.into_iter().map(Some).collect::<Vec<_>>();
+        let unique_packs = unique_source_indices
+            .into_iter()
+            .map(|index| {
+                source_packs[index]
+                    .take()
+                    .expect("unique slot pack source is present")
+            })
+            .collect::<Vec<_>>();
+        let local_pack = &unique_packs[0];
+        let collision_box = CollisionBox::from_aabb(&local_pack.manifest.bounds);
+        if local_pack
+            .visual
             .meshes
             .iter()
             .any(|mesh| mesh.name == "body_interior")
@@ -2262,46 +2320,55 @@ impl DriveViewer {
             tuning.camera.cockpit.fov_y = 1.0;
         }
 
-        if car_physics.mass < 900.0 {
+        if local_pack.physics.mass < 900.0 {
             tuning.camera.cockpit.eye = [0.0, 0.84, 0.16];
             tuning.camera.cockpit.target = [0.0, 0.78, -20.0];
             tuning.camera.cockpit.fov_y = 1.0;
         }
 
         let car_bay = car_bay.unwrap_or(0) % garage::BAY_COLOR_NAMES.len();
-        let remote_slots = clamp_remote_slots(remote_slots);
-        let cars = [garage::GarageCar {
-            physics: &car_physics,
-            visual: &car_visual,
-            manifest: &car_manifest,
-        }];
+        let cars = unique_packs
+            .iter()
+            .map(|pack| garage::GarageCar {
+                physics: &pack.physics,
+                visual: &pack.visual,
+                manifest: &pack.manifest,
+            })
+            .collect::<Vec<_>>();
         let remote_particle_tuning =
             remote_particles_tuning(&tuning.particles, ParticleQuality::High);
         let particle_tuning = local_particles_tuning(&tuning.particles, ParticleQuality::High);
         let color_offset = car_paint
             .map(|paint| paint % garage::BAY_COLOR_NAMES.len())
             .unwrap_or(if remote_slots == 0 { car_bay } else { 0 });
-        let paint_hints = drive_paint_hints(car_paintable, car_paint, 1 + remote_slots);
+        let paint_hints = drive_paint_hints(&slot_paintable_flags, car_paint);
         let mut scene = Scene::build_garage(
             &track_visual,
             &track_metadata,
             &track_collision,
             &track_manifest,
             &cars,
-            1 + remote_slots,
+            slot_count,
             color_offset,
             false,
             true,
             &paint_hints,
+            Some(&slot_car_indices),
         )
         .map_err(|error| JsValue::from_str(&error))?;
         let mut rigs = std::mem::take(&mut scene.car_rigs);
-        if rigs.len() < 1 + remote_slots {
+        if rigs.len() < slot_count {
             return Err(JsValue::from_str("scene did not build enough car rigs"));
         }
-        rigs.truncate(1 + remote_slots);
+        rigs.truncate(slot_count);
         let (tree_high_meshes, tree_low_meshes, tree_card_meshes) = tree_mesh_indices(&scene);
-        let info = scene.debug_info.clone();
+        let mut info = scene.debug_info.clone();
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&info) {
+            if let Some(object) = value.as_object_mut() {
+                object.insert("slots".to_string(), serde_json::json!(slot_car_ids));
+            }
+            info = value.to_string();
+        }
         let collider = TrackCollider::from_collision(&track_collision, &track_metadata);
         let mut spawn = track_metadata
             .spawns
@@ -2321,7 +2388,12 @@ impl DriveViewer {
         };
         spawn.rotation_xyzw =
             (Quat::from_rotation_y(std::f32::consts::PI) * spawn_rotation).to_array();
-        let mut vehicle = Vehicle::new(car_physics, collider, &spawn);
+        let local_pack = unique_packs
+            .into_iter()
+            .next()
+            .expect("deduped slot packs include the local car");
+        let car_id = local_pack.manifest.id;
+        let mut vehicle = Vehicle::new(local_pack.physics, collider, &spawn);
         vehicle.set_collision_box(collision_box);
         vehicle.set_physics_tuning(&tuning.physics);
         for _ in 0..500 {
@@ -2377,8 +2449,8 @@ impl DriveViewer {
             previous_state,
             rigs,
             local_slot: 0,
-            remote_visible: vec![false; 1 + remote_slots],
-            remote_states: vec![None; 1 + remote_slots],
+            remote_visible: vec![false; slot_count],
+            remote_states: vec![None; slot_count],
             spectator_slot: None,
             info,
             accumulator: 0.0,
@@ -2386,7 +2458,7 @@ impl DriveViewer {
             last_camera_time: None,
             step_times: Vec::with_capacity(256),
             track_id: track_manifest.id,
-            car_id: car_manifest.id,
+            car_id,
             race,
             race_tracker,
             track_source_hash,
@@ -2399,7 +2471,7 @@ impl DriveViewer {
             reverse_lights_on: false,
             surface_names,
             particles: ParticleSystem::new(),
-            remote_particles: (0..=remote_slots).map(|_| ParticleSystem::new()).collect(),
+            remote_particles: (0..slot_count).map(|_| ParticleSystem::new()).collect(),
             particle_instances: Vec::with_capacity(crate::particles::MAX_PARTICLES),
             particle_quality: ParticleQuality::High,
             particle_tuning,
@@ -4280,20 +4352,54 @@ mod tests {
     }
 
     #[test]
-    fn drive_paint_hint_only_enables_the_local_slot_with_selected_paint() {
-        assert_eq!(drive_paint_hints(false, None, 4), vec![false; 4]);
-        assert_eq!(drive_paint_hints(false, Some(3), 4), vec![false; 4]);
+    fn drive_paint_hints_cover_the_per_slot_paintable_matrix() {
         assert_eq!(
-            drive_paint_hints(true, None, 4),
-            vec![false; 4],
-            "paintable but no explicit paint keeps the factory livery"
+            drive_paint_hints(&[true, true, true, true], None),
+            vec![false, true, true, true],
+            "paintable without explicit paint keeps the local factory livery but paints AI"
         );
         assert_eq!(
-            drive_paint_hints(true, Some(3), 4),
-            vec![true, false, false, false]
+            drive_paint_hints(&[true, true, true, true], Some(3)),
+            vec![true; 4],
+            "paintable with explicit paint paints the local and every AI slot"
         );
-        assert_eq!(drive_paint_hints(true, Some(3), 1), vec![true]);
-        assert!(drive_paint_hints(true, Some(3), 0).is_empty());
+        assert_eq!(
+            drive_paint_hints(&[true, false, true, false], None),
+            vec![false, false, true, false],
+            "only paintable AI slots receive palette colours"
+        );
+        assert_eq!(
+            drive_paint_hints(&[true, false, true, false], Some(3)),
+            vec![true, false, true, false],
+            "explicit paint never colours a non-paintable slot"
+        );
+        assert_eq!(drive_paint_hints(&[false], None), vec![false]);
+        assert_eq!(drive_paint_hints(&[false], Some(3)), vec![false]);
+        assert!(drive_paint_hints(&[], None).is_empty());
+    }
+
+    #[test]
+    fn dedupe_slot_keys_reuses_identical_packs_in_slot_order() {
+        let car_a = ("car-a".to_string(), [1; 32]);
+        let car_b = ("car-b".to_string(), [2; 32]);
+        let keys = vec![
+            car_a.clone(),
+            car_b.clone(),
+            car_a.clone(),
+            car_b.clone(),
+            car_a.clone(),
+        ];
+        let (slots, unique_sources) = dedupe_slot_keys(&keys);
+        assert_eq!(unique_sources, vec![0, 1]);
+        assert_eq!(slots, vec![0, 1, 0, 1, 0]);
+
+        let same_id_new_hash = vec![
+            ("car-a".to_string(), [1; 32]),
+            ("car-a".to_string(), [9; 32]),
+        ];
+        let (slots, unique_sources) = dedupe_slot_keys(&same_id_new_hash);
+        assert_eq!(unique_sources, vec![0, 1]);
+        assert_eq!(slots, vec![0, 1]);
     }
 
     #[test]

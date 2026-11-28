@@ -92,16 +92,17 @@ export class PhysicsClient {
   static async create(
     sab: SharedArrayBuffer,
     trackBytes: Uint8Array,
-    carBytes: Uint8Array,
-    aiCount = 0,
+    playerCarBytes: Uint8Array,
+    aiCarBytes: Uint8Array[] = [],
     aiPace = 1,
   ): Promise<PhysicsClient> {
     const url = new URL(`../worker/physics-worker.js?v=${encodeURIComponent(APP_VERSION)}`, import.meta.url);
     const worker = new Worker(url, { type: "module" });
     const client = new PhysicsClient(worker, sab);
-    client.diagnostics.aiCount = aiCount;
+    client.diagnostics.aiCount = aiCarBytes.length;
     const trackCopy = trackBytes.slice();
-    const carCopy = carBytes.slice();
+    const carCopy = playerCarBytes.slice();
+    const aiCopies = aiCarBytes.map((bytes) => bytes.slice());
     const ready = new Promise<void>((resolve, reject) => {
       client.readyResolve = resolve;
       client.readyReject = reject;
@@ -110,17 +111,18 @@ export class PhysicsClient {
         15_000,
       );
     });
-    worker.postMessage(
-      {
-        type: "init",
-        sab,
-        trackBytes: trackCopy,
-        carBytes: carCopy,
-        aiCount,
-        aiPace,
-      },
-      [trackCopy.buffer, carCopy.buffer],
-    );
+    // Structured-clone the packs instead of transferring their buffers.
+    // Mobile browsers have rejected multi-buffer transfer lists for AI grids,
+    // which used to fail worker startup (and, before audio was decoupled, left
+    // the whole session silent).
+    worker.postMessage({
+      type: "init",
+      sab,
+      trackBytes: trackCopy,
+      carBytes: carCopy,
+      aiCarBytes: aiCopies,
+      aiPace,
+    });
     try {
       await ready;
     } catch (error) {

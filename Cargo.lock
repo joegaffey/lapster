@@ -1529,6 +1529,7 @@ name = "sim-worker"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "js-sys",
  "serde_json",
  "sim-asset",
  "sim-core",

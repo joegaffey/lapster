@@ -66,6 +66,7 @@ npx esbuild web/drive/main.ts --bundle --format=esm --outfile=web/drive/main.js 
 npx esbuild web/multiplayer/main.ts --bundle --format=esm --outfile=web/multiplayer/main.js
 npx esbuild web/track-import/main.ts --bundle --format=esm --outfile=web/track-import/main.js --external:../pkg/*
 npx esbuild web/wheel-lab/main.ts --bundle --format=esm --outfile=web/wheel-lab/main.js --external:../pkg/*
+npx esbuild web/audio-tune/main.ts --bundle --format=esm --outfile=web/audio-tune/main.js
 npx esbuild web/worker/physics-worker.ts --bundle --format=esm --outfile=web/worker/physics-worker.js --external:../pkg/worker/*
 mkdir -p web/audio
 cp web/src/audio/engine-sim/combustion-worklet.js web/audio/combustion-worklet.js

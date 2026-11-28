@@ -25,8 +25,8 @@ Upping and related marks belong to their respective owners. Lapster does not imp
 
 ## Pack
 
-- SHA-256: `bcdd37c2288316e64d9672963727c76e9ec9f1d4fdc87e1ace4a2012411caaf3`
-- Byte size: 5,283,316 bytes.
+- SHA-256: `cbb95ee516302ab04e8d8046b106fee1f51b7f9d607b0350e199d426083677ad`
+- Byte size: 5,258,708 bytes.
 - ID: `67gp-upping-ut19`
 - Schema: 3
 - 7,950 vertices, 17,619 triangles, 3 materials,

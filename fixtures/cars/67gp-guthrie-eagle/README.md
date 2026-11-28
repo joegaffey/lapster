@@ -27,8 +27,8 @@ imply manufacturer affiliation.
 
 ## Pack
 
-- SHA-256: `7a034048d7d7287e0fefe0838461b03ed649e163333bdcf52ccb5ec6403665fe`
-- Byte size: 5,354,452 bytes.
+- SHA-256: `9bb0c85d17084e22bc7902a0c03c6410efa99d145b7f7ddf69ae4505b0b86921`
+- Byte size: 5,329,844 bytes.
 - ID: `67gp-guthrie-eagle`
 - Schema: 3
 - 9,105 vertices, 19,328 triangles, 3 materials, 2 textures, 6 draw calls.

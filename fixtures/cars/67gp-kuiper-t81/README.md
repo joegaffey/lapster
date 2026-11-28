@@ -25,8 +25,8 @@ Kuiper and related marks belong to their respective owners. Lapster does not imp
 
 ## Pack
 
-- SHA-256: `091b459998120ffb60d2f3d1cd8c4006612828513614a658702bccc343929870`
-- Byte size: 5,316,260 bytes.
+- SHA-256: `eec94fc1d6b2b6278d58e250d948e7424430b90d7969c17a7559bdd4d7e18b82`
+- Byte size: 5,291,652 bytes.
 - ID: `67gp-kuiper-t81`
 - Schema: 3
 - 8,291 vertices, 19,114 triangles, 3 materials,

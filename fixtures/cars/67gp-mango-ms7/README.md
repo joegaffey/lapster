@@ -25,8 +25,8 @@ Mango and related marks belong to their respective owners. Lapster does not impl
 
 ## Pack
 
-- SHA-256: `6de6c4de5f6d0dbdd334d8703c6575876a218fd6c40b057dee36ee231d76387d`
-- Byte size: 5,117,564 bytes.
+- SHA-256: `07435078735f756ac4778535d12bdc119852b81e644cbaea04f60cfb5943eb7d`
+- Byte size: 5,092,956 bytes.
 - ID: `67gp-mango-ms7`
 - Schema: 3
 - 5,571 vertices, 12,540 triangles, 3 materials,

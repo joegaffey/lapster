@@ -258,10 +258,13 @@ self.onmessage = async (event: MessageEvent) => {
       validateSab(sab);
       waitWord = new Int32Array(sab, HEADER_FIELDS.flags, 1);
       await init(versionedWasmUrl("../pkg/worker/sim_worker_bg.wasm"));
+      const aiCarBytes = Array.isArray(message.aiCarBytes)
+        ? message.aiCarBytes.map((bytes: Uint8Array) => new Uint8Array(bytes))
+        : [];
       simulation = new Simulation(
         message.trackBytes,
         message.carBytes,
-        message.aiCount ?? 0,
+        aiCarBytes,
         message.aiPace ?? 1,
       );
       post("ready", { setup: simulation.setup() });

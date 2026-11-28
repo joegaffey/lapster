@@ -2834,6 +2834,7 @@ fn build_editor_track(
         magic: MAGIC,
         schema_version: SCHEMA_VERSION,
         kind: AssetKind::Track,
+        category: None,
         id: manifest_id,
         source_hash: [0; 32],
         units: ENGINE_UNITS,

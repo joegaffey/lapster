@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  driveRoomUrl,
   lobbyInviteUrl,
   makeRoomCode,
   normalizeRelayUrl,
@@ -48,6 +49,35 @@ test("invite links keep the room, car, and track", () => {
   assert.equal(url.searchParams.get("password"), null);
   assert.equal(url.searchParams.get("ws"), "wss://relay.example.test/ws");
   assert.equal(url.hash, "");
+});
+
+test("room URLs carry the selected category", () => {
+  const invite = new URL(
+    lobbyInviteUrl(
+      "https://example.test/web/multiplayer/",
+      "ABC123",
+      "67gp-cavallo-123",
+      "skidpad05",
+      "wss://relay.example.test/ws",
+      "gp67",
+    ),
+  );
+  assert.equal(invite.searchParams.get("category"), "gp67");
+  assert.equal(invite.searchParams.get("car"), "67gp-cavallo-123");
+
+  const drive = new URL(
+    driveRoomUrl(
+      "https://example.test/web/drive/",
+      "ABC123",
+      "67gp-cavallo-123",
+      "skidpad05",
+      null,
+      "gp67",
+    ),
+  );
+  assert.equal(drive.searchParams.get("category"), "gp67");
+  assert.equal(drive.searchParams.get("mp"), "1");
+  assert.equal(drive.searchParams.get("car"), "67gp-cavallo-123");
 });
 
 test("protocol rejects malformed messages and state arrays", () => {

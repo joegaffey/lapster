@@ -24,6 +24,7 @@ Each source directory has an `import.json` consumed by both scripts:
 ```json
 {
   "id": "sc-deckard-conejo",
+  "category": "road",
   "body": "body/sc-deckard-conejo.acc",
   "xml": "body/sc-deckard-conejo.xml",
   "wheel": "wheel/wheel0.acc",
@@ -34,6 +35,7 @@ Each source directory has an `import.json` consumed by both scripts:
 }
 ```
 
+- `category` is the product category, either `road` or `gp67`.
 - `body`, `xml`, and `wheel` are paths relative to the source directory.
 - `body_lift` is the initial body lift in metres.
 - `glass_names` are regular expressions matched case-insensitively against body
@@ -86,9 +88,10 @@ manifest ID.
    assigns the configured glass materials; rotates and lifts the body; and adds
    four wheel nodes from the configured axle, track, radius, and width, reusing
    one mesh and rotating the right-side nodes 180 degrees about Y.
-3. `asset-compiler bake-glb --textures --physics-xml <xml>` bakes the runtime
-   pack, replacing the GLB physics baseline with the source Speed Dreams XML
-   mass, engine, gearbox, brakes, steering, suspension, tire mu, and aero.
+3. `asset-compiler bake-glb --category <road|gp67> --textures --physics-xml
+   <xml>` bakes the runtime pack, replacing the GLB physics baseline with the
+   source Speed Dreams XML mass, engine, gearbox, brakes, steering, suspension,
+   tire mu, and aero.
 
 The tools are config-driven for the staged Speed Dreams cars. Cars with a
 different XML section layout still need the physics mapping in

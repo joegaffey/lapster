@@ -24,7 +24,8 @@ import removes the source `Logos` mesh; do not imply Mazda affiliation.
 Rebuild the pack:
 
 ```bash
-cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb
+cargo run -p asset-compiler -- bake-glb fixtures/cars/mazda-rx7/mazda-rx7.glb \
+  --category road
 ```
 
 The import applies node transforms, rotates the car to `-Z` forward, extracts four wheels,
