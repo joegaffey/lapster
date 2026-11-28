@@ -38,7 +38,7 @@ test("mobile starts collapsed and exposes touch controls", async ({ page }) => {
   await openMenu(page);
   await expect(page.locator(".hud-exit")).toBeVisible();
   await expect(page.locator(".hud-exit")).toHaveText("Exit");
-  await expect(page.locator(".hud-exit")).toHaveAttribute("href", "../");
+  await expect(page.locator(".hud-exit")).toHaveAttribute("href", "../../");
   await closeMenu(page);
   await expect(throttle).toBeVisible();
   const box = await throttle.boundingBox();

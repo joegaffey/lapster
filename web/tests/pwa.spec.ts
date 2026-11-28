@@ -30,7 +30,7 @@ test("pwa installs a service worker and enables cross-origin isolation", async (
   expect(state.sharedArrayBuffer).toBe("function");
   expect(state.controlled).toBe(true);
   expect(state.manifestName).toBe("Lapster");
-  expect(state.startUrl).toBe("./");
+  expect(state.startUrl).toBe("../");
   expect(state.iconStatus).toBe(200);
 
   await page.goto("/");
