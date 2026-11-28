@@ -1416,12 +1416,19 @@ function loadAudioPreference(): { enabled: boolean; muted: boolean } {
   try {
     const raw = localStorage.getItem(AUDIO_STORAGE_KEY);
     if (!raw) {
-      return { enabled: false, muted: false };
+      return { enabled: true, muted: false };
     }
-    const value = JSON.parse(raw) as { enabled?: unknown; muted?: unknown };
+    const value = JSON.parse(raw) as {
+      version?: unknown;
+      enabled?: unknown;
+      muted?: unknown;
+    };
+    if (value?.version !== 2) {
+      return { enabled: true, muted: value?.muted === true };
+    }
     return { enabled: value?.enabled === true, muted: value?.muted === true };
   } catch {
-    return { enabled: false, muted: false };
+    return { enabled: true, muted: false };
   }
 }
 
@@ -1429,7 +1436,11 @@ function saveAudioPreference(): void {
   try {
     localStorage.setItem(
       AUDIO_STORAGE_KEY,
-      JSON.stringify({ enabled: audioEnabled, muted: audioMuted }),
+      JSON.stringify({
+        version: 2,
+        enabled: audioEnabled,
+        muted: audioMuted,
+      }),
     );
   } catch {
     // Storage may be unavailable in private or embedded contexts.

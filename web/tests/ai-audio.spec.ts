@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { clickMenuControl, openMenu } from "./menu-helpers";
+import { openMenu } from "./menu-helpers";
 
 async function waitForDrive(page: import("@playwright/test").Page) {
   await page.waitForFunction(
@@ -23,7 +23,7 @@ async function startRaceAudio(
   await expect(page.locator("#viewer-loading")).toBeHidden();
   const button = page.locator("#audio-toggle");
   await expect(button).toBeEnabled();
-  await clickMenuControl(page, "#audio-toggle");
+  await page.locator("#menu-open").click();
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
