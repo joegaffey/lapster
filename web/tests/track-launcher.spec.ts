@@ -168,13 +168,11 @@ test("launcher shows the stored car and opens the garage with it selected", asyn
   expect(garage.selected.carId).toBe("sc-deckard-conejo");
 });
 
-test("/web/ redirects to the root launcher with the new forms", async ({ page }) => {
+test("/web/ no longer redirects to the root launcher", async ({ page }) => {
   await page.goto("/web/");
-  await page.waitForURL((url) => url.pathname === "/");
-  await expect(page.locator("#drive-form")).toBeVisible();
-  await expect(page.locator("#race-form")).toBeVisible();
-  await expect(page.locator("#drive-track")).toBeVisible();
-  await expect(page.locator("#race-track")).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/web/");
+  await expect(page.locator("#drive-form")).toHaveCount(0);
+  await expect(page.locator("#race-form")).toHaveCount(0);
 });
 
 test("garage lists cars in the selected category", async ({ page }) => {
