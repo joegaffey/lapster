@@ -192,8 +192,12 @@ export function setupMenu(): void {
   body.className = "app-menu-body";
 
   // Move the existing controls (and the Info toggle injected by setupHud)
-  // into the dialog. Their listeners move with the nodes.
+  // into the dialog. Their listeners move with the nodes. Marked static
+  // controls stay in the toolbar beside the hamburger.
   for (const child of Array.from(controls.childNodes)) {
+    if (child instanceof Element && child.hasAttribute("data-menu-static")) {
+      continue;
+    }
     body.append(child);
   }
 
@@ -259,6 +263,9 @@ export function setupMenu(): void {
     for (const mutation of mutations) {
       for (const node of Array.from(mutation.addedNodes)) {
         if (node === openButton) {
+          continue;
+        }
+        if (node instanceof Element && node.hasAttribute("data-menu-static")) {
           continue;
         }
         body.append(node);

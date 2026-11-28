@@ -82,15 +82,19 @@ test.describe("drive app menu", () => {
 test.describe("viewer app menus", () => {
   test.use({ viewport: { width: 1280, height: 720 } });
 
-  test("garage exposes reset camera and exit through the menu", async ({ page }) => {
+  test("garage exposes exit outside the menu and reset camera inside", async ({ page }) => {
     await page.goto("/web/garage/?track=../../fixtures/tracks/minimal/pack.sima&v=cp6");
     await waitForGarage(page);
+
+    const exit = page.locator("#viewer-controls > .hud-exit");
+    await expect(exit).toBeVisible();
+    await expect(exit).toHaveAttribute("href", "../");
+    await expect(exit).toHaveAttribute("aria-label", "Exit garage");
 
     await openMenu(page);
     await expect(page.locator("#app-menu")).toBeVisible();
     await expect(page.locator("#reset-camera")).toBeVisible();
-    await expect(page.locator(".hud-exit")).toBeVisible();
-    await expect(page.locator(".hud-exit")).toHaveAttribute("href", "../");
+    await expect(page.locator("#app-menu .hud-exit")).toHaveCount(0);
     await closeMenu(page);
 
     await clickMenuControl(page, "#reset-camera");
