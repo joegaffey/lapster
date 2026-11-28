@@ -23,7 +23,7 @@ export const DEFAULT_SURFACE_TUNING: SurfaceTuning = {
   tireLongitudinalScale: 1.0,
   tireLoadReference: 4_500,
   tireSquealScale: 4.2,
-  tireGain: 0.9,
+  tireGain: 1.2,
 };
 
 export class SurfaceAudio {
