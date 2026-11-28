@@ -394,9 +394,8 @@
         <form class="launch-panel" id="race-form" action="./web/drive/" aria-labelledby="race-heading">
           <div class="panel-head">
             <h2 id="race-heading">Race</h2>
-            <span class="panel-badge">Under development</span>
           </div>
-          <p class="panel-note">3 AI · 3 laps</p>
+          <p class="panel-note">3 laps</p>
           <div class="field">
             <label for="race-category">Category</label>
             <div class="select-wrap">
@@ -416,6 +415,22 @@
             <strong data-selected-car-name>Mazda RX-7</strong>
             <span class="car-action">Change car →</span>
           </a>
+          <div class="field">
+            <label for="race-ai">AI drivers</label>
+            <div class="select-wrap">
+              <select id="race-ai" name="ai">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+              </select>
+            </div>
+          </div>
           <div class="field">
             <label for="race-track">Track</label>
             <div class="select-wrap">
@@ -619,6 +634,7 @@
 
         const driveTrack = document.querySelector("#drive-track");
         const raceTrack = document.querySelector("#race-track");
+        const raceAi = document.querySelector("#race-ai");
         const raceButton = document.querySelector("#race-submit");
         for (const option of Array.from(driveTrack.options)) {
           if (option.dataset.raceReady === "true") {
@@ -657,7 +673,13 @@
           writeStored(RACE_TRACK_STORAGE_KEY, raceTrack.value);
         });
 
-        const setupLaunch = (form, trackSelect, storageKey, raceFlag) => {
+        const setupLaunch = (
+          form,
+          trackSelect,
+          storageKey,
+          raceFlag,
+          aiSelect = null,
+        ) => {
           if (!form) return;
           form.addEventListener("submit", (event) => {
             event.preventDefault();
@@ -668,6 +690,9 @@
             url.searchParams.set("track", track);
             url.searchParams.set("race", raceFlag);
             url.searchParams.set("category", selectedCategory);
+            if (aiSelect) {
+              url.searchParams.set("ai", aiSelect.value);
+            }
             window.location.assign(url.toString());
           });
         };
@@ -682,6 +707,7 @@
           raceTrack,
           RACE_TRACK_STORAGE_KEY,
           "1",
+          raceAi,
         );
 
         const RELAY_STORAGE_KEY = "lapster.net.relay.v1";

@@ -44,12 +44,17 @@ test("drive launcher lists the solo tracks", async ({ page }) => {
   await expect(driveTrack.locator('option[value="race-loop"]')).toHaveCount(0);
 });
 
-test("race launcher offers only the loop and flags it under development", async ({
+test("race launcher offers only the loop and an AI drivers selector", async ({
   page,
 }) => {
   await page.goto("/");
-  const raceForm = page.locator("#race-form");
-  await expect(raceForm.locator(".panel-badge")).toHaveText(/Under development/i);
+  await expect(page.locator("#race-form .panel-badge")).toHaveCount(0);
+
+  const raceAi = page.locator("#race-ai");
+  await expect(raceAi).toBeVisible();
+  await expect(raceAi).toHaveValue("3");
+  await expect(raceAi.locator("option")).toHaveCount(9);
+  await expect(raceAi.locator('option[value="9"]')).toHaveCount(1);
 
   const raceTrack = page.locator("#race-track");
   await expect(raceTrack).toBeVisible();
@@ -107,6 +112,7 @@ test("race launcher starts a three-AI race on the loop", async ({ page }) => {
   const url = new URL(page.url());
   expect(url.searchParams.get("track")).toBe("loop-spline-point-terrain");
   expect(url.searchParams.get("race")).toBe("1");
+  expect(url.searchParams.get("ai")).toBe("3");
   expect(
     await page.evaluate(() => localStorage.getItem("lapster.race.track.v1")),
   ).toBe("loop-spline-point-terrain");
@@ -132,6 +138,36 @@ test("race launcher starts a three-AI race on the loop", async ({ page }) => {
   expect(drive.telemetry.aiCount).toBe(3);
   await expect(page.locator("#race-panel")).toBeVisible();
   await expect(page.locator("#race-countdown")).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});
+
+test("race launcher uses the selected AI driver count", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/");
+  await page.locator("#race-track").selectOption("loop-spline-point-terrain");
+  await page.locator("#race-ai").selectOption("5");
+  await page.locator("#race-form button[type=submit]").click();
+  await page.waitForURL(/\/web\/drive\//);
+
+  const url = new URL(page.url());
+  expect(url.searchParams.get("track")).toBe("loop-spline-point-terrain");
+  expect(url.searchParams.get("race")).toBe("1");
+  expect(url.searchParams.get("ai")).toBe("5");
+
+  await waitForDrive(page);
+  await page.waitForFunction(
+    () => JSON.parse((window as any).__driveViewer.telemetry()).aiCount === 5,
+    undefined,
+    { timeout: 10_000 },
+  );
+  const drive = await page.evaluate(() => ({
+    error: (window as any).__driveViewerError,
+    telemetry: JSON.parse((window as any).__driveViewer.telemetry()),
+  }));
+  expect(drive.error).toBeUndefined();
+  expect(drive.telemetry.aiCount).toBe(5);
   expect(pageErrors).toEqual([]);
 });
 
