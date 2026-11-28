@@ -20,8 +20,8 @@ test("audio worklet starts and mutes from the toolbar", async ({ page }) => {
 
   const button = page.locator("#audio-toggle");
   await expect(button).toBeEnabled();
-  await expect(button).toHaveText("Audio: Off");
-  await clickMenuControl(page, "#audio-toggle");
+  await expect(button).toHaveText("Audio: Tap to start");
+  await page.locator("#menu-open").click();
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -49,6 +49,24 @@ test("audio worklet starts and mutes from the toolbar", async ({ page }) => {
   await expect(button).toHaveText("Audio: Muted");
   await expect(button).toHaveAttribute("aria-pressed", "false");
   expect(pageErrors).toEqual([]);
+});
+
+test("audio starts on the first interaction by default on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(
+    "/web/drive/?track=../../fixtures/tracks/minimal/pack.sima&car=../../fixtures/cars/minimal/pack.sima&v=audio-mobile-default",
+  );
+  await waitForReady(page);
+
+  const button = page.locator("#audio-toggle");
+  await expect(button).toHaveText("Audio: Tap to start");
+  await page.locator("#menu-open").click();
+  await page.waitForFunction(
+    () => (window as any).__driveAudio?.status === "running",
+    undefined,
+    { timeout: 10_000 },
+  );
+  await expect(button).toHaveText("Audio: On");
 });
 
 test("audio follows the vehicle rpm and speed", async ({ page }) => {
@@ -210,7 +228,7 @@ test("audio preference survives reload and starts on the first gesture", async (
   await page.goto(url);
   await waitForReady(page);
   const button = page.locator("#audio-toggle");
-  await clickMenuControl(page, "#audio-toggle");
+  await page.locator("#menu-open").click();
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
@@ -259,7 +277,7 @@ test("main-thread fallback starts player audio with AI requested", async ({
     "/web/drive/?track=race-loop&race=1&ai=2&category=gp67&physics=main&v=audio-main-ai",
   );
   await waitForReady(page);
-  await clickMenuControl(page, "#audio-toggle");
+  await page.locator("#menu-open").click();
   await page.waitForFunction(
     () => (window as any).__driveAudio?.status === "running",
     undefined,
