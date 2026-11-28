@@ -171,8 +171,13 @@ const rateMinOverride = Number(query.get("sampleRateMin"));
 const rateMaxOverride = Number(query.get("sampleRateMax"));
 const gainOverride = Number(query.get("sampleGain"));
 const engineGainOverride = Number(query.get("sampleEngineGain"));
+const engineTrimOverride = Number(query.get("sampleEngineTrim"));
 const MASTER_GAIN =
   Number.isFinite(gainOverride) && gainOverride > 0 ? gainOverride : 0.22;
+const SAMPLE_ENGINE_TRIM =
+  Number.isFinite(engineTrimOverride) && engineTrimOverride > 0
+    ? engineTrimOverride
+    : 1.5;
 const ENGINE_TRIM =
   Number.isFinite(engineGainOverride) && engineGainOverride > 0
     ? engineGainOverride
@@ -375,7 +380,10 @@ export class SampleEngineAudio {
       const source = context.createBufferSource();
       source.buffer = buffer;
       source.loop = true;
-      source.connect(gain);
+      const engineTrim = context.createGain();
+      engineTrim.gain.value = SAMPLE_ENGINE_TRIM;
+      source.connect(engineTrim);
+      engineTrim.connect(gain);
       source.start();
       const analyser = context.createAnalyser();
       analyser.fftSize = 256;
